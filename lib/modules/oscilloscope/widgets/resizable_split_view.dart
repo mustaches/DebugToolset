@@ -19,38 +19,23 @@ class ResizableSplitView extends StatefulWidget {
 }
 
 class _ResizableSplitViewState extends State<ResizableSplitView> {
-  late double _ratio;
-
-  bool _isInitialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ratio = widget.initialRatio;
-  }
+  double? _bottomHeight;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final totalHeight = constraints.maxHeight - widget.dividerHeight;
       
-      if (!_isInitialized) {
-        _ratio = (totalHeight * widget.initialRatio + 5.0) / totalHeight;
-        _isInitialized = true;
+      _bottomHeight ??= (totalHeight * (1.0 - widget.initialRatio)) - 5.0;
+      
+      if (_bottomHeight! < 50) {
+        _bottomHeight = 50;
+      }
+      if (_bottomHeight! > totalHeight - 50) {
+        _bottomHeight = totalHeight - 50;
       }
       
-      double topHeight = totalHeight * _ratio;
-      double bottomHeight = totalHeight - topHeight;
-
-      // Ensure min heights
-      if (topHeight < 50) {
-        topHeight = 50;
-        bottomHeight = totalHeight - topHeight;
-      }
-      if (bottomHeight < 50) {
-        bottomHeight = 50;
-        topHeight = totalHeight - bottomHeight;
-      }
+      double topHeight = totalHeight - _bottomHeight!;
 
       return Column(
         children: [
@@ -62,9 +47,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
             behavior: HitTestBehavior.translucent,
             onPanUpdate: (details) {
               setState(() {
-                _ratio += details.delta.dy / totalHeight;
-                if (_ratio < 0.1) _ratio = 0.1;
-                if (_ratio > 0.9) _ratio = 0.9;
+                _bottomHeight = _bottomHeight! - details.delta.dy;
               });
             },
             child: MouseRegion(
@@ -86,7 +69,7 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
             ),
           ),
           SizedBox(
-            height: bottomHeight,
+            height: _bottomHeight!,
             child: widget.bottomWidget,
           ),
         ],
