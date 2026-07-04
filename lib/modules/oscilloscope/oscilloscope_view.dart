@@ -10,6 +10,7 @@ import 'widgets/packet_list_panel.dart';
 import 'widgets/register_info_panel.dart';
 import 'widgets/time_rule_widget.dart';
 import 'widgets/la_toolbar.dart';
+import 'widgets/resizable_split_view.dart';
 
 class OscilloscopeView extends StatelessWidget {
   const OscilloscopeView({super.key});
@@ -53,17 +54,16 @@ class OscilloscopeView extends StatelessWidget {
                             child: TimeRuleWidget(),
                           ),
                         Divider(height: 1, thickness: 1, color: Colors.grey.shade800),
-                        const Expanded(
-                          flex: 8,
-                          child: ClipRect(
-                            child: ChartWidget(),
-                          ),
+                        Expanded(
+                          flex: 10,
+                          child: state.highlightedBusName != null && state.showRegisterInfoPanel
+                            ? const ResizableSplitView(
+                                topWidget: ClipRect(child: ChartWidget()),
+                                bottomWidget: RegisterInfoPanel(),
+                                initialRatio: 0.8,
+                              )
+                            : const ClipRect(child: ChartWidget()),
                         ),
-                        if (state.highlightedBusName != null && state.showRegisterInfoPanel)
-                          const Expanded(
-                            flex: 2,
-                            child: RegisterInfoPanel(),
-                          ),
                       ],
                     ),
                   ),
