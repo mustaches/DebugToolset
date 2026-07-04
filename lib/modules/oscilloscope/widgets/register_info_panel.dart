@@ -731,6 +731,7 @@ class RegisterInfoPanel extends StatelessWidget {
     String parityStr = decoder.parity.isNotEmpty ? decoder.parity.substring(0, 1).toUpperCase() : 'N';
     String formatInfo = '${rate}bps, ${decoder.dataBits}$parityStr${decoder.stopBits}';
     title = '$title - $formatInfo';
+    String? cmdName;
 
     List<InlineSpan> hexSpans = [];
     List<InlineSpan> asciiSpans = [];
@@ -787,7 +788,7 @@ class RegisterInfoPanel extends StatelessWidget {
         
         UartCommandDef? cmd = protocol.commands[cmdId];
         if (cmd != null) {
-          title = '$title  ${cmd.name}';
+          cmdName = cmd.name;
           UartPacketDef? packetDef = isTx ? cmd.tx : cmd.rx;
           if (packetDef != null) {
              List<Widget> fieldWidgets = [];
@@ -891,7 +892,15 @@ class RegisterInfoPanel extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 color: const Color(0xFF2A2A2A),
-                child: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      if (cmdName != null)
+                        TextSpan(text: '   CMD:  $cmdName', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                    ]
+                  )
+                ),
               ),
               Expanded(
                 child: Padding(
