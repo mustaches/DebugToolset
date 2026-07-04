@@ -862,8 +862,7 @@ class RegisterInfoPanel extends StatelessWidget {
                }
              }
              
-             parsedContent = SingleChildScrollView(
-               scrollDirection: Axis.horizontal,
+             parsedContent = _HorizontalScrollableContent(
                child: IntrinsicHeight(
                  child: Row(
                    crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1283,8 +1282,7 @@ class RegisterInfoPanel extends StatelessWidget {
             alignment: Alignment.topLeft,
             child: Padding(
               padding: const EdgeInsets.all(16.0),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
+              child: _HorizontalScrollableContent(
                 child: IntrinsicHeight(
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1425,6 +1423,42 @@ class RegisterInfoPanel extends StatelessWidget {
           ),
           Expanded(child: contentWidget),
         ],
+      ),
+    );
+  }
+}
+
+class _HorizontalScrollableContent extends StatefulWidget {
+  final Widget child;
+  const _HorizontalScrollableContent({required this.child});
+
+  @override
+  State<_HorizontalScrollableContent> createState() => _HorizontalScrollableContentState();
+}
+
+class _HorizontalScrollableContentState extends State<_HorizontalScrollableContent> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scrollbar(
+      controller: _controller,
+      thumbVisibility: true,
+      thickness: 8.0,
+      radius: const Radius.circular(4),
+      child: SingleChildScrollView(
+        controller: _controller,
+        scrollDirection: Axis.horizontal,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 12.0), // give space for scrollbar
+          child: widget.child,
+        ),
       ),
     );
   }
