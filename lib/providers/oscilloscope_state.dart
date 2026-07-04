@@ -907,6 +907,17 @@ class OscilloscopeState extends ChangeNotifier {
             if (cmdDef == null) continue;
             
             var packetDef = isTx ? cmdDef.tx : cmdDef.rx;
+            
+            if (uartField == 'CMD') {
+               if (protocol.header.length < dataPackets.length) {
+                 var p = dataPackets[protocol.header.length];
+                 if (targetSequence.isEmpty || targetSequence.first == p.rawValue) {
+                    searchMatches.add(BusSearchMatch(time: p.startIndex / _sampleRate, startIndex: p.startIndex, endIndex: p.endIndex, busName: bus.name));
+                 }
+               }
+               continue;
+            }
+
             if (packetDef == null) continue;
 
             for (var fieldDef in packetDef.payload) {
@@ -943,8 +954,15 @@ class OscilloscopeState extends ChangeNotifier {
                      int endIdx = p.endIndex;
                      for (int j = 0; j < packets.length - i; j++) {
                         var nextP = packets[i+j];
-                        if (channel == 'TXD' && !nextP.data.startsWith('Tx:')) continue;
-                        if (channel == 'RXD' && !nextP.data.startsWith('Rx:')) continue;
+                        bool isStartTx = p.data.startsWith('Tx:');
+                        bool isStartRx = p.data.startsWith('Rx:');
+                        bool isNextTx = nextP.data.startsWith('Tx:');
+                        bool isNextRx = nextP.data.startsWith('Rx:');
+                        
+                        // Sequence must stay on the same channel (TX or RX) as the starting packet
+                        if (isStartTx && !isNextTx) continue;
+                        if (isStartRx && !isNextRx) continue;
+
                         if (nextP.type != PacketType.data || nextP.rawValue != targetSequence[seqIndex]) {
                            match = false; break;
                         }
