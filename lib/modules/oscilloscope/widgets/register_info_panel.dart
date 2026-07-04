@@ -982,7 +982,7 @@ class RegisterInfoPanel extends StatelessWidget {
                       },
                       icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
                       label: Text(
-                        decoder.protocolFile == null ? 'Mount' : 'Unmount',
+                        decoder.protocolFile == null ? 'Mount' : 'Change/Unmount',
                         style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
                       ),
                       style: ElevatedButton.styleFrom(
@@ -1497,7 +1497,7 @@ class RegisterInfoPanel extends StatelessWidget {
                       },
                       icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
                       label: Text(
-                        decoder.protocolFile == null ? 'Mount' : 'Unmount',
+                        decoder.protocolFile == null ? 'Mount' : 'Change/Unmount',
                         style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
                       ),
                       style: ElevatedButton.styleFrom(
