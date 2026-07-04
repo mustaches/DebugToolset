@@ -887,16 +887,46 @@ class RegisterInfoPanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8, right: 40),
                 color: const Color(0xFF2A2A2A),
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      if (cmdName != null)
-                        TextSpan(text: '   CMD:  $cmdName', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-                    ]
-                  )
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(text: title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            if (cmdName != null)
+                              TextSpan(text: '   CMD:  $cmdName', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                          ]
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        if (decoder.protocolFile != null) {
+                          decoder.protocolFile = null;
+                          state.forceUpdate();
+                        } else {
+                          _selectUartProtocolFile(context, state, decoder);
+                        }
+                      },
+                      icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
+                      label: Text(
+                        decoder.protocolFile == null ? 'Mount' : 'Unmount',
+                        style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF333333),
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0.0),
+                        minimumSize: const Size(0, 24),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               Expanded(
@@ -927,32 +957,7 @@ class RegisterInfoPanel extends StatelessWidget {
                             child: parsedContent
                           )
                         ),
-                      Padding(
-                        padding: EdgeInsets.only(top: parsedContent == null ? 0 : 8.0),
-                        child: Center(
-                          child: InkWell(
-                            onTap: () {
-                              if (decoder.protocolFile != null) {
-                                decoder.protocolFile = null;
-                                state.forceUpdate();
-                              } else {
-                                _selectUartProtocolFile(context, state, decoder);
-                              }
-                            },
-                            child: Text(
-                              decoder.protocolFile == null
-                                  ? 'Please select the UART protocol file'
-                                  : 'Unmount UART Protocol',
-                              style: const TextStyle(
-                                color: Colors.blueAccent,
-                                fontSize: 14,
-                                decoration: TextDecoration.underline,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ),
-                      ),
+
                     ],
                   ),
                 ),
