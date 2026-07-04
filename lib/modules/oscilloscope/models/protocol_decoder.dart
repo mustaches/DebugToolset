@@ -1022,7 +1022,6 @@ class SpiDecoder extends ProtocolDecoder {
       }
     }
 
-    int lastShiftIdx = 0;
     ProtocolPacket? pendingPacket;
 
     ProtocolPacket createPacket(int startIdx, int rawValue, int bytes, String labelPrefix, Color color, int laneIdx) {
@@ -1075,22 +1074,17 @@ class SpiDecoder extends ProtocolDecoder {
 
       if (inFrame) {
         bool isSampleEdge = false;
-        bool isShiftEdge = false;
         if (cpol == 0 && cpha == 0) { 
           isSampleEdge = (lastSck == 0 && sck == 1); 
-          isShiftEdge = (lastSck == 1 && sck == 0); 
         }
         else if (cpol == 0 && cpha == 1) { 
           isSampleEdge = (lastSck == 1 && sck == 0); 
-          isShiftEdge = (lastSck == 0 && sck == 1); 
         }
         else if (cpol == 1 && cpha == 0) { 
           isSampleEdge = (lastSck == 1 && sck == 0); 
-          isShiftEdge = (lastSck == 0 && sck == 1); 
         }
         else if (cpol == 1 && cpha == 1) { 
           isSampleEdge = (lastSck == 0 && sck == 1); 
-          isShiftEdge = (lastSck == 1 && sck == 0); 
         }
 
         if (isSampleEdge) {
@@ -1117,58 +1111,58 @@ class SpiDecoder extends ProtocolDecoder {
               pendingPacket = createPacket(wordStartIdx, phaseData, 1, 'CMD', Colors.purpleAccent, localMosiLane >= 0 ? localMosiLane : 0);
               loadCommandConfig(phaseData);
               
-              if (addrBytes > 0) decodeState = 1;
-              else if (modeClocks > 0) decodeState = 2;
-              else if (dummyClocks > 0) decodeState = 3;
-              else decodeState = 4;
+              if (addrBytes > 0) { decodeState = 1; }
+              else if (modeClocks > 0) { decodeState = 2; }
+              else if (dummyClocks > 0) { decodeState = 3; }
+              else { decodeState = 4; }
               
               phaseClocks = 0; phaseData = 0;
             }
           } else if (decodeState == 1) { // ADDR
             int bitVal = 0;
-            if (addrLines == 4) bitVal = (io3 << 3) | (io2 << 2) | (io1 << 1) | io0;
-            else if (addrLines == 2) bitVal = (io1 << 1) | io0;
-            else bitVal = io0;
+            if (addrLines == 4) { bitVal = (io3 << 3) | (io2 << 2) | (io1 << 1) | io0; }
+            else if (addrLines == 2) { bitVal = (io1 << 1) | io0; }
+            else { bitVal = io0; }
 
             phaseData = (phaseData << addrLines) | bitVal;
             phaseClocks++;
             
             if (phaseClocks == (addrBytes * 8 ~/ addrLines)) {
               pendingPacket = createPacket(wordStartIdx, phaseData, addrBytes, 'ADDR', Colors.blue, localMosiLane >= 0 ? localMosiLane : 0);
-              if (modeClocks > 0) decodeState = 2;
-              else if (dummyClocks > 0) decodeState = 3;
-              else decodeState = 4;
+              if (modeClocks > 0) { decodeState = 2; }
+              else if (dummyClocks > 0) { decodeState = 3; }
+              else { decodeState = 4; }
               phaseClocks = 0; phaseData = 0;
             }
           } else if (decodeState == 2) { // MODE
             int bitVal = 0;
-            if (addrLines == 4) bitVal = (io3 << 3) | (io2 << 2) | (io1 << 1) | io0;
-            else if (addrLines == 2) bitVal = (io1 << 1) | io0;
-            else bitVal = io0;
+            if (addrLines == 4) { bitVal = (io3 << 3) | (io2 << 2) | (io1 << 1) | io0; }
+            else if (addrLines == 2) { bitVal = (io1 << 1) | io0; }
+            else { bitVal = io0; }
 
             phaseData = (phaseData << addrLines) | bitVal;
             phaseClocks++;
             
             if (phaseClocks == modeClocks) {
               pendingPacket = createPacket(wordStartIdx, phaseData, (modeClocks * addrLines) ~/ 8 > 0 ? (modeClocks * addrLines) ~/ 8 : 1, 'MODE', Colors.deepOrange, localMosiLane >= 0 ? localMosiLane : 0);
-              if (dummyClocks > 0) decodeState = 3;
-              else decodeState = 4;
+              if (dummyClocks > 0) { decodeState = 3; }
+              else { decodeState = 4; }
               phaseClocks = 0; phaseData = 0;
             }
           } else if (decodeState == 3) { // DUMMY
             phaseClocks++;
             if (phaseClocks == dummyClocks) {
-              if (dataLines > 0) decodeState = 4;
-              else decodeState = 5; // END
+              if (dataLines > 0) { decodeState = 4; }
+              else { decodeState = 5; } // END
               phaseClocks = 0; phaseData = 0;
             }
           } else if (decodeState == 4) { // DATA
             int bitVal = 0;
             // In read mode, data comes from MISO. In Dual/Quad it uses all lines.
             // Let's just blindly aggregate lines based on dataLines.
-            if (dataLines == 4) bitVal = (io3 << 3) | (io2 << 2) | (io1 << 1) | io0;
-            else if (dataLines == 2) bitVal = (io1 << 1) | io0;
-            else bitVal = io1; // Default read is on MISO (io1). (Write would be io0, but they're mostly reads)
+            if (dataLines == 4) { bitVal = (io3 << 3) | (io2 << 2) | (io1 << 1) | io0; }
+            else if (dataLines == 2) { bitVal = (io1 << 1) | io0; }
+            else { bitVal = io1; } // Default read is on MISO (io1). (Write would be io0, but they're mostly reads)
             // Note: During Page Program (write), data is on MOSI (io0). 
             // In Regfile, we have `access`: "W".
             // So let's check access:

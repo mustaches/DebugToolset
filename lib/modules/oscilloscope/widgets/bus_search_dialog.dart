@@ -165,7 +165,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     if (_selectedBusName != null) {
       try {
         currentBus = buses.firstWhere((b) => b.name == _selectedBusName);
-      } catch (e) {}
+      } catch (_) {}
     }
 
     bool hasDecoder = currentBus?.decoder != null && currentBus!.decoder!.isEnabled;
@@ -209,7 +209,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                 const Text('No digital buses loaded.', style: TextStyle(color: Colors.redAccent))
               else
                 DropdownButtonFormField<String>(
-                  value: _selectedBusName,
+                  initialValue: _selectedBusName,
                   dropdownColor: const Color(0xFF333333),
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
@@ -236,7 +236,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                  const Text('Frame Type', style: TextStyle(color: Colors.white70)),
                  const SizedBox(height: 8),
                  DropdownButtonFormField<String>(
-                   value: _i2cFrameType,
+                   initialValue: _i2cFrameType,
                    dropdownColor: const Color(0xFF333333),
                    style: const TextStyle(color: Colors.white),
                    decoration: const InputDecoration(
@@ -257,7 +257,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                  const Text('Device Address', style: TextStyle(color: Colors.white70)),
                  const SizedBox(height: 8),
                  DropdownButtonFormField<int?>(
-                   value: _i2cDeviceAddress,
+                   initialValue: _i2cDeviceAddress,
                    dropdownColor: const Color(0xFF333333),
                    style: const TextStyle(color: Colors.white),
                    decoration: const InputDecoration(
@@ -304,7 +304,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                            Text(label, style: const TextStyle(color: Colors.white70)),
                            const SizedBox(height: 8),
                            DropdownButtonFormField<int?>(
-                             value: _i2cRegisterAddress,
+                             initialValue: _i2cRegisterAddress,
                              dropdownColor: const Color(0xFF333333),
                              style: const TextStyle(color: Colors.white),
                              decoration: const InputDecoration(
@@ -338,7 +338,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                   const Text('Channel', style: TextStyle(color: Colors.white70)),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
-                    value: _channel,
+                    initialValue: _channel,
                     dropdownColor: const Color(0xFF333333),
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
@@ -359,7 +359,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                 const Text('Match Condition', style: TextStyle(color: Colors.white70)),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  value: _condition,
+                  initialValue: _condition,
                   dropdownColor: const Color(0xFF333333),
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
@@ -375,7 +375,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                 const Text('Endianness', style: TextStyle(color: Colors.white70)),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<bool>(
-                  value: _isBigEndian,
+                  initialValue: _isBigEndian,
                   dropdownColor: const Color(0xFF333333),
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
@@ -412,7 +412,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                           Text(isI2c ? 'Data Format' : 'Format', style: const TextStyle(color: Colors.white70)),
                           const SizedBox(height: 8),
                           DropdownButtonFormField<String>(
-                            value: _format,
+                            initialValue: _format,
                             dropdownColor: const Color(0xFF333333),
                             style: const TextStyle(color: Colors.white),
                             decoration: const InputDecoration(

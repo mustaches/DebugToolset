@@ -1020,9 +1020,13 @@ class RegisterInfoPanel extends StatelessWidget {
     ProtocolPacket? addrPacket;
     List<ProtocolPacket> dataPackets = [];
     for (var p in frame.packets) {
-      if (p.data.startsWith('CMD')) cmdPacket = p;
-      else if (p.data.startsWith('ADDR')) addrPacket = p;
-      else if (p.data.startsWith('DATA')) dataPackets.add(p);
+      if (p.data.startsWith('CMD')) {
+        cmdPacket = p;
+      } else if (p.data.startsWith('ADDR')) {
+        addrPacket = p;
+      } else if (p.data.startsWith('DATA')) {
+        dataPackets.add(p);
+      }
     }
     
     if (cmdPacket == null || cmdPacket.rawValue == null) {
