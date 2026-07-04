@@ -787,6 +787,7 @@ class RegisterInfoPanel extends StatelessWidget {
         
         UartCommandDef? cmd = protocol.commands[cmdId];
         if (cmd != null) {
+          title = '$title  ${cmd.name}';
           UartPacketDef? packetDef = isTx ? cmd.tx : cmd.rx;
           if (packetDef != null) {
              List<Widget> fieldWidgets = [];
@@ -866,22 +867,11 @@ class RegisterInfoPanel extends StatelessWidget {
                }
              }
              
-             parsedContent = Column(
-               crossAxisAlignment: CrossAxisAlignment.start,
-               children: [
-                 Padding(
-                   padding: const EdgeInsets.only(bottom: 8.0),
-                   child: Text('Command: ${cmd.name}', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 14))
-                 ),
-                 Expanded(
-                   child: SingleChildScrollView(
-                     scrollDirection: Axis.horizontal,
-                     child: Row(
-                       children: fieldWidgets
-                     )
-                   )
-                 )
-               ]
+             parsedContent = SingleChildScrollView(
+               scrollDirection: Axis.horizontal,
+               child: Row(
+                 children: fieldWidgets
+               )
              );
           }
         }
