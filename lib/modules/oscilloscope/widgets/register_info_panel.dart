@@ -927,10 +927,6 @@ class RegisterInfoPanel extends StatelessWidget {
                           flex: 2,
                           child: Container(
                             margin: const EdgeInsets.only(top: 8),
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade800)
-                            ),
                             child: parsedContent
                           )
                         ),
