@@ -1396,28 +1396,6 @@ class RegisterInfoPanel extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        if (decoder.protocolFile != null) {
-                          decoder.protocolFile = null;
-                          state.forceUpdate();
-                        } else {
-                          _selectSpiProtocolFile(context, state, decoder);
-                        }
-                      },
-                      icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
-                      label: Text(
-                        decoder.protocolFile == null ? 'Mount' : 'Unmount',
-                        style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF333333),
-                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0.0),
-                        minimumSize: const Size(0, 24),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
                     if (isMemoryCommand && dataPackets.isNotEmpty)
                       ElevatedButton.icon(
                         onPressed: () async {
@@ -1507,6 +1485,28 @@ class RegisterInfoPanel extends StatelessWidget {
                           minimumSize: const Size(0, 24),
                         ),
                       ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        if (decoder.protocolFile != null) {
+                          decoder.protocolFile = null;
+                          state.forceUpdate();
+                        } else {
+                          _selectSpiProtocolFile(context, state, decoder);
+                        }
+                      },
+                      icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
+                      label: Text(
+                        decoder.protocolFile == null ? 'Mount' : 'Unmount',
+                        style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF333333),
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0.0),
+                        minimumSize: const Size(0, 24),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.grey, size: 20),
