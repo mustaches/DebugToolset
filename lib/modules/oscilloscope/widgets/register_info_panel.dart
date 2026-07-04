@@ -805,7 +805,7 @@ class RegisterInfoPanel extends StatelessWidget {
                
                fieldWidgets.add(
                  Container(
-                   width: boxWidth,
+                   constraints: BoxConstraints(minWidth: boxWidth),
                    margin: const EdgeInsets.only(right: 8),
                    padding: const EdgeInsets.all(8),
                    decoration: BoxDecoration(
@@ -817,7 +817,7 @@ class RegisterInfoPanel extends StatelessWidget {
                      mainAxisSize: MainAxisSize.min,
                      crossAxisAlignment: CrossAxisAlignment.center,
                      children: [
-                       const Text('Header', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+                       const Text('Header', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
                        const SizedBox(height: 4),
                        Text(combinedHex, style: const TextStyle(color: Colors.yellowAccent, fontSize: 14)),
                        const SizedBox(height: 8),
@@ -838,7 +838,7 @@ class RegisterInfoPanel extends StatelessWidget {
                  
                  fieldWidgets.add(
                    Container(
-                     width: 70,
+                     constraints: const BoxConstraints(minWidth: 70),
                      margin: const EdgeInsets.only(right: 8),
                      padding: const EdgeInsets.all(8),
                      decoration: BoxDecoration(
@@ -850,7 +850,7 @@ class RegisterInfoPanel extends StatelessWidget {
                        mainAxisSize: MainAxisSize.min,
                        crossAxisAlignment: CrossAxisAlignment.center,
                        children: [
-                         Text(field.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+                         Text(field.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
                          const SizedBox(height: 4),
                          Text(hexVal, style: const TextStyle(color: Colors.yellowAccent, fontSize: 14)),
                          const SizedBox(height: 8),
@@ -954,6 +954,7 @@ class RegisterInfoPanel extends StatelessWidget {
                           flex: 2,
                           child: Container(
                             margin: const EdgeInsets.only(top: 8),
+                            alignment: Alignment.topLeft,
                             child: parsedContent
                           )
                         ),
@@ -1206,7 +1207,7 @@ class RegisterInfoPanel extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Text(field.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(field.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
                         Text(bitInfo, style: const TextStyle(color: Colors.grey, fontSize: 11)),
                         const SizedBox(height: 4),
                         Text(binVal, style: const TextStyle(color: Colors.yellowAccent, fontSize: 14)),
@@ -1263,7 +1264,7 @@ class RegisterInfoPanel extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text('DATA[$i]', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text('DATA[$i]', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
                     const SizedBox(height: 4),
                     Text('0x${val.toRadixString(16).padLeft(2, '0').toUpperCase()}', style: const TextStyle(color: Colors.amber, fontSize: 14)),
                     const SizedBox(height: 4),
