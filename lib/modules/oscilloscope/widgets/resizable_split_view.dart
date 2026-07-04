@@ -21,6 +21,8 @@ class ResizableSplitView extends StatefulWidget {
 class _ResizableSplitViewState extends State<ResizableSplitView> {
   late double _ratio;
 
+  bool _isInitialized = false;
+
   @override
   void initState() {
     super.initState();
@@ -31,6 +33,12 @@ class _ResizableSplitViewState extends State<ResizableSplitView> {
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final totalHeight = constraints.maxHeight - widget.dividerHeight;
+      
+      if (!_isInitialized) {
+        _ratio = (totalHeight * widget.initialRatio + 5.0) / totalHeight;
+        _isInitialized = true;
+      }
+      
       double topHeight = totalHeight * _ratio;
       double bottomHeight = totalHeight - topHeight;
 
