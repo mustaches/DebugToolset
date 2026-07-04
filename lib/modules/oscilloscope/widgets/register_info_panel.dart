@@ -717,22 +717,33 @@ class RegisterInfoPanel extends StatelessWidget {
           content: SizedBox(
             width: 400,
             height: 300,
-            child: files.isEmpty
-              ? const Center(child: Text('No .UartProtocol files found in DeviceProtocol/Uart', style: TextStyle(color: Colors.grey)))
-              : ListView.builder(
-                  itemCount: files.length,
-                  itemBuilder: (context, index) {
-                    String filename = p.basename(files[index].path);
-                    return ListTile(
-                      title: Text(filename, style: const TextStyle(color: Colors.white)),
-                      onTap: () {
-                         decoder.protocolFile = filename;
-                         state.forceUpdate();
-                         Navigator.pop(context);
-                      }
-                    );
+            child: ListView.builder(
+              itemCount: files.length + 1,
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return ListTile(
+                    title: const Text('None (Unmount)', style: TextStyle(color: Colors.grey)),
+                    leading: Icon(Icons.clear, color: decoder.protocolFile == null ? Colors.cyanAccent : Colors.grey),
+                    onTap: () {
+                       decoder.protocolFile = null;
+                       state.forceUpdate();
+                       Navigator.pop(context);
+                    }
+                  );
+                }
+                String filename = p.basename(files[index - 1].path);
+                bool isSelected = decoder.protocolFile == filename;
+                return ListTile(
+                  title: Text(filename, style: TextStyle(color: isSelected ? Colors.cyanAccent : Colors.white)),
+                  leading: Icon(Icons.description, color: isSelected ? Colors.cyanAccent : Colors.grey),
+                  onTap: () {
+                     decoder.protocolFile = filename;
+                     state.forceUpdate();
+                     Navigator.pop(context);
                   }
-                )
+                );
+              }
+            )
           )
         );
       }
@@ -749,22 +760,33 @@ class RegisterInfoPanel extends StatelessWidget {
           content: SizedBox(
             width: 400,
             height: 300,
-            child: state.availableSpiRegfiles.isEmpty
-              ? const Center(child: Text('No SPI Regfiles loaded in system', style: TextStyle(color: Colors.grey)))
-              : ListView.builder(
-                  itemCount: state.availableSpiRegfiles.length,
-                  itemBuilder: (context, index) {
-                    var regfile = state.availableSpiRegfiles[index];
-                    return ListTile(
-                      title: Text(regfile.name, style: const TextStyle(color: Colors.white)),
-                      onTap: () {
-                         decoder.protocolFile = regfile.name;
-                         state.forceUpdate();
-                         Navigator.pop(context);
-                      }
-                    );
+            child: ListView.builder(
+              itemCount: state.availableSpiRegfiles.length + 1,
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return ListTile(
+                    title: const Text('None (Unmount)', style: TextStyle(color: Colors.grey)),
+                    leading: Icon(Icons.clear, color: decoder.protocolFile == null ? Colors.cyanAccent : Colors.grey),
+                    onTap: () {
+                       decoder.protocolFile = null;
+                       state.forceUpdate();
+                       Navigator.pop(context);
+                    }
+                  );
+                }
+                var regfile = state.availableSpiRegfiles[index - 1];
+                bool isSelected = decoder.protocolFile == regfile.name;
+                return ListTile(
+                  title: Text(regfile.name, style: TextStyle(color: isSelected ? Colors.cyanAccent : Colors.white)),
+                  leading: Icon(Icons.description, color: isSelected ? Colors.cyanAccent : Colors.grey),
+                  onTap: () {
+                     decoder.protocolFile = regfile.name;
+                     state.forceUpdate();
+                     Navigator.pop(context);
                   }
-                )
+                );
+              }
+            )
           ),
           actions: [
             TextButton(
@@ -972,14 +994,7 @@ class RegisterInfoPanel extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
-                      onPressed: () {
-                        if (decoder.protocolFile != null) {
-                          decoder.protocolFile = null;
-                          state.forceUpdate();
-                        } else {
-                          _selectUartProtocolFile(context, state, decoder);
-                        }
-                      },
+                      onPressed: () => _selectUartProtocolFile(context, state, decoder),
                       icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
                       label: Text(
                         decoder.protocolFile == null ? 'Mount' : 'Change/Unmount',
@@ -1487,14 +1502,7 @@ class RegisterInfoPanel extends StatelessWidget {
                       ),
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
-                      onPressed: () {
-                        if (decoder.protocolFile != null) {
-                          decoder.protocolFile = null;
-                          state.forceUpdate();
-                        } else {
-                          _selectSpiProtocolFile(context, state, decoder);
-                        }
-                      },
+                      onPressed: () => _selectSpiProtocolFile(context, state, decoder),
                       icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
                       label: Text(
                         decoder.protocolFile == null ? 'Mount' : 'Change/Unmount',
