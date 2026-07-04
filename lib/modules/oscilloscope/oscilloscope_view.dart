@@ -60,7 +60,7 @@ class OscilloscopeView extends StatelessWidget {
                             ? const ResizableSplitView(
                                 topWidget: ClipRect(child: ChartWidget()),
                                 bottomWidget: RegisterInfoPanel(),
-                                initialRatio: 0.8,
+                                initialRatio: 0.75,
                               )
                             : const ClipRect(child: ChartWidget()),
                         ),
