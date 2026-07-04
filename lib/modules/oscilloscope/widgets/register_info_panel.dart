@@ -814,17 +814,14 @@ class RegisterInfoPanel extends StatelessWidget {
                      borderRadius: BorderRadius.circular(4)
                    ),
                    child: Column(
+                     mainAxisSize: MainAxisSize.min,
                      crossAxisAlignment: CrossAxisAlignment.center,
                      children: [
                        const Text('Header', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
                        const SizedBox(height: 4),
                        Text(combinedHex, style: const TextStyle(color: Colors.yellowAccent, fontSize: 14)),
                        const SizedBox(height: 8),
-                       const Expanded(
-                         child: SingleChildScrollView(
-                           child: Text('Frame Header', style: TextStyle(color: Colors.lightGreenAccent, fontSize: 12), textAlign: TextAlign.center)
-                         )
-                       )
+                       const Text('Frame Header', style: TextStyle(color: Colors.lightGreenAccent, fontSize: 12), textAlign: TextAlign.center)
                      ]
                    )
                  )
@@ -850,17 +847,14 @@ class RegisterInfoPanel extends StatelessWidget {
                        borderRadius: BorderRadius.circular(4)
                      ),
                      child: Column(
+                       mainAxisSize: MainAxisSize.min,
                        crossAxisAlignment: CrossAxisAlignment.center,
                        children: [
                          Text(field.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
                          const SizedBox(height: 4),
                          Text(hexVal, style: const TextStyle(color: Colors.yellowAccent, fontSize: 14)),
                          const SizedBox(height: 8),
-                         Expanded(
-                           child: SingleChildScrollView(
-                             child: Text(displayDesc, style: const TextStyle(color: Colors.lightGreenAccent, fontSize: 12), textAlign: TextAlign.center)
-                           )
-                         )
+                         Text(displayDesc, style: const TextStyle(color: Colors.lightGreenAccent, fontSize: 12), textAlign: TextAlign.center)
                        ]
                      )
                    )
@@ -870,8 +864,11 @@ class RegisterInfoPanel extends StatelessWidget {
              
              parsedContent = SingleChildScrollView(
                scrollDirection: Axis.horizontal,
-               child: Row(
-                 children: fieldWidgets
+               child: IntrinsicHeight(
+                 child: Row(
+                   crossAxisAlignment: CrossAxisAlignment.stretch,
+                   children: fieldWidgets
+                 )
                )
              );
           }
@@ -1191,7 +1188,7 @@ class RegisterInfoPanel extends StatelessWidget {
 
                 innerFieldWidgets.add(
                   Container(
-                    constraints: const BoxConstraints(minWidth: 65, minHeight: 85),
+                    constraints: const BoxConstraints(minWidth: 65),
                     margin: EdgeInsets.only(right: field == sortedFields.last ? 0 : 8),
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -1248,7 +1245,7 @@ class RegisterInfoPanel extends StatelessWidget {
           } else {
             fieldWidgets.add(
               Container(
-                constraints: const BoxConstraints(minWidth: 65, minHeight: 85),
+                constraints: const BoxConstraints(minWidth: 65),
                 margin: EdgeInsets.only(right: i == dataPackets.length - 1 ? 0 : 8),
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
