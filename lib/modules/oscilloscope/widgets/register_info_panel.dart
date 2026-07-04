@@ -372,6 +372,18 @@ class RegisterInfoPanel extends StatelessWidget {
                           ),
                         ),
                       const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () => _showMountRegfileDialog(context, state, busName, targetAddress!),
+                        icon: const Icon(Icons.eject, size: 14, color: Colors.cyanAccent),
+                        label: const Text('Change/Unmount', style: TextStyle(color: Colors.cyanAccent, fontSize: 12)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF333333),
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0.0),
+                          minimumSize: const Size(0, 24),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       IconButton(
                         icon: const Icon(Icons.close, color: Colors.grey, size: 20),
                         padding: EdgeInsets.zero,
