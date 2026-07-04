@@ -649,13 +649,30 @@ class RegisterInfoPanel extends StatelessWidget {
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold));
                   }
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.grey, size: 20),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: () {
-                    state.closeRegisterInfoPanel();
-                  },
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () => _showMountRegfileDialog(context, state, busName, targetAddress!),
+                      icon: const Icon(Icons.eject, size: 14, color: Colors.cyanAccent),
+                      label: const Text('Change/Unmount', style: TextStyle(color: Colors.cyanAccent, fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF333333),
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0.0),
+                        minimumSize: const Size(0, 24),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.grey, size: 20),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () {
+                        state.closeRegisterInfoPanel();
+                      },
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -707,6 +724,52 @@ class RegisterInfoPanel extends StatelessWidget {
           )
         );
       }
+    );
+  }
+
+  void _selectSpiProtocolFile(BuildContext context, OscilloscopeState state, SpiDecoder decoder) async {
+    final Directory dir = Directory('DeviceProtocol/SPI');
+    List<FileSystemEntity> files = [];
+    if (await dir.exists()) {
+      files = await dir.list().where((e) => e.path.endsWith('.Regfile')).toList();
+    }
+    
+    if (!context.mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2A2A2A),
+          title: const Text('Select SPI Protocol', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 400,
+            height: 300,
+            child: files.isEmpty
+              ? const Center(child: Text('No .Regfile files found in DeviceProtocol/SPI', style: TextStyle(color: Colors.grey)))
+              : ListView.builder(
+                  itemCount: files.length,
+                  itemBuilder: (context, index) {
+                    String filename = p.basename(files[index].path);
+                    return ListTile(
+                      title: Text(filename, style: const TextStyle(color: Colors.white)),
+                      onTap: () {
+                         decoder.protocolFile = filename;
+                         state.forceUpdate();
+                         Navigator.pop(context);
+                      }
+                    );
+                  }
+                )
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.cyanAccent)),
+            )
+          ],
+        );
+      },
     );
   }
 
@@ -987,7 +1050,16 @@ class RegisterInfoPanel extends StatelessWidget {
         decoration: BoxDecoration(color: const Color(0xFF1E1E1E), border: Border(top: BorderSide(color: Colors.grey.shade800, width: 2))),
         child: Stack(
           children: [
-            const Center(child: Text('No SPI Protocol file mounted', style: TextStyle(color: Colors.grey))),
+            Center(
+              child: InkWell(
+                onTap: () => _selectSpiProtocolFile(context, state, decoder),
+                borderRadius: BorderRadius.circular(4),
+                child: const Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: Text('No SPI Protocol file mounted\n(Click to mount)', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyanAccent, decoration: TextDecoration.underline)),
+                ),
+              ),
+            ),
             Positioned(top: 8, right: 8, child: IconButton(icon: const Icon(Icons.close, color: Colors.grey, size: 20), onPressed: () => state.closeRegisterInfoPanel())),
           ],
         ),
@@ -1320,6 +1392,28 @@ class RegisterInfoPanel extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        if (decoder.protocolFile != null) {
+                          decoder.protocolFile = null;
+                          state.forceUpdate();
+                        } else {
+                          _selectSpiProtocolFile(context, state, decoder);
+                        }
+                      },
+                      icon: Icon(decoder.protocolFile == null ? Icons.upload_file : Icons.eject, size: 14, color: Colors.cyanAccent),
+                      label: Text(
+                        decoder.protocolFile == null ? 'Mount' : 'Unmount',
+                        style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF333333),
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0.0),
+                        minimumSize: const Size(0, 24),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     if (isMemoryCommand && dataPackets.isNotEmpty)
                       ElevatedButton.icon(
                         onPressed: () async {
