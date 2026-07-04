@@ -1,0 +1,287 @@
+{
+  "name": "SN65DP159",
+  "addressMap": {
+    "0x5E": "A1=0, A0=0",
+    "0x5D": "A1=0, A0=1",
+    "0x5C": "A1=1, A0=0",
+    "0x5B": "A1=1, A0=1"
+  },
+  "registers": {
+    "0x00": {
+      "name": "DEVICE_ID_0",
+      "access": "R",
+      "description": "Returns ASCII 'D'",
+      "fields": [{"name": "DEVICE_ID_0", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII character D"}]
+    },
+    "0x01": {
+      "name": "DEVICE_ID_1",
+      "access": "R",
+      "description": "Returns ASCII 'P'",
+      "fields": [{"name": "DEVICE_ID_1", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII character P"}]
+    },
+    "0x02": {
+      "name": "DEVICE_ID_2",
+      "access": "R",
+      "description": "Returns ASCII '1'",
+      "fields": [{"name": "DEVICE_ID_2", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII character 1"}]
+    },
+    "0x03": {
+      "name": "DEVICE_ID_3",
+      "access": "R",
+      "description": "Returns ASCII '5'",
+      "fields": [{"name": "DEVICE_ID_3", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII character 5"}]
+    },
+    "0x04": {
+      "name": "DEVICE_ID_4",
+      "access": "R",
+      "description": "Returns ASCII '9'",
+      "fields": [{"name": "DEVICE_ID_4", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII character 9"}]
+    },
+    "0x05": {
+      "name": "DEVICE_ID_5",
+      "access": "R",
+      "description": "Returns ASCII space",
+      "fields": [{"name": "DEVICE_ID_5", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII space"}]
+    },
+    "0x06": {
+      "name": "DEVICE_ID_6",
+      "access": "R",
+      "description": "Returns ASCII space",
+      "fields": [{"name": "DEVICE_ID_6", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII space"}]
+    },
+    "0x07": {
+      "name": "DEVICE_ID_7",
+      "access": "R",
+      "description": "Returns ASCII space",
+      "fields": [{"name": "DEVICE_ID_7", "startBit": 0, "endBit": 7, "access": "R", "description": "ASCII space"}]
+    },
+    "0x08": {
+      "name": "REV_ID",
+      "access": "R",
+      "description": "This field identifies the device revision.",
+      "fields": [{"name": "REV_ID", "startBit": 0, "endBit": 7, "access": "R", "description": "0000001 = DP159 revision 1"}]
+    },
+    "0x09": {
+      "name": "Misc Control 1",
+      "access": "R/W",
+      "description": "Miscellaneous control register 1",
+      "fields": [
+        {"name": "SWAP_EN", "startBit": 7, "endBit": 7, "valueMap": {"0": "Disable", "1": "Enable"}, "access": "RWU", "description": "This field enables swapping the input main link lanes"},
+        {"name": "LANE_POLARITY", "startBit": 6, "endBit": 6, "valueMap": {"0": "Disabled", "1": "Swaps"}, "access": "RWU", "description": "Swaps the input data and clock lanes polarity."},
+        {"name": "PD_EN", "startBit": 3, "endBit": 3, "valueMap": {"0": "Normal", "1": "Power-down"}, "access": "RW", "description": "Forced power-down by I2C, lowest power state"},
+        {"name": "HPD_AUTO_PWRDWN_DISABLE", "startBit": 2, "endBit": 2, "valueMap": {"0": "Auto", "1": "Disable Auto"}, "access": "RW", "description": "0 = Automatically enters power down mode based on HPD_SNK. 1 = Will not automatically enter power mode based upon HPD_SNK"},
+        {"name": "I2C_DR_CTL", "startBit": 0, "endBit": 1, "valueMap": {"0": "5-kbps", "1": "10-kbps", "2": "100-kbps", "3": "400-kbps"}, "access": "RW", "description": "I2C data rate supported for configuring device"}
+      ]
+    },
+    "0x0A": {
+      "name": "Misc Control 2",
+      "access": "R/W",
+      "description": "Miscellaneous control register 2, handling device mode and equalizer settings.",
+      "fields": [
+        {"name": "APP_MODE", "startBit": 7, "endBit": 7, "valueMap": {"0": "Source", "1": "Sink"}, "access": "R/W", "description": "Application Mode. 0 = Source mode, 1 = Sink mode."},
+        {"name": "HPDSNK_GATE_EN", "startBit": 6, "endBit": 6, "valueMap": {"0": "Passed through", "1": "Not passed"}, "access": "R/W", "description": "HPD_SNK gate enable. 0 = HPD_SNK passed through to HPD_SRC, 1 = HPD_SNK not passed through."},
+        {"name": "EQ_ADA_EN", "startBit": 5, "endBit": 5, "valueMap": {"0": "Fixed EQ", "1": "Adaptive EQ"}, "access": "R/W", "description": "Adaptive equalizer enable. 0 = Fixed EQ, 1 = Adaptive EQ."},
+        {"name": "EQ_EN", "startBit": 4, "endBit": 4, "valueMap": {"0": "Disabled", "1": "Enabled"}, "access": "R/W", "description": "Equalizer enable. 0 = EQ Disabled, 1 = EQ Enabled."},
+        {"name": "AUX_BRG_EN", "startBit": 3, "endBit": 3, "valueMap": {"0": "Disable", "1": "Enable"}, "access": "R/W", "description": "AUX to I2C bridge enable. 0 = Disable, 1 = Enable."},
+        {"name": "APPLY_RXTX_CHANGES", "startBit": 2, "endBit": 2, "access": "W", "description": "Apply RX/TX changes. Write 1 to apply pending changes."},
+        {"name": "DEV_FUNC_MODE", "startBit": 0, "endBit": 1, "valueMap": {"0": "Redriver full range", "1": "Auto crossover 1Gbps", "2": "Auto retimer HDMI2.0", "3": "Retimer full range"}, "access": "R/W", "description": "Device functional mode selection."}
+      ]
+    },
+    "0x0B": {
+      "name": "HDMI Control",
+      "access": "R/W",
+      "description": "HDMI specific control settings, including slew rate, termination, and DDC configuration.",
+      "fields": [
+        {"name": "SLEW_CTL", "startBit": 6, "endBit": 7, "valueMap": {"0": "Fastest", "3": "Slowest"}, "access": "RWU", "description": "Slew rate control for TMDS output."},
+        {"name": "HDMI_SEL", "startBit": 5, "endBit": 5, "valueMap": {"0": "HDMI", "1": "DVI"}, "access": "RWU", "description": "HDMI/DVI mode selection."},
+        {"name": "TX_TERM_CTL", "startBit": 3, "endBit": 4, "valueMap": {"0": "No term", "1": "150-300ohm", "3": "75-150ohm"}, "access": "RWU", "description": "TX termination control."},
+        {"name": "TMDS_CLOCK_RATIO_STATUS", "startBit": 1, "endBit": 1, "valueMap": {"0": "1/10", "1": "1/40"}, "access": "RWU", "description": "TMDS clock ratio status. 0=1/10, 1=1/40."},
+        {"name": "DDC_TRAIN_SET", "startBit": 0, "endBit": 0, "valueMap": {"0": "Enable", "1": "Disable"}, "access": "RW", "description": "DDC training set. 0 = Enable DDC snooping, 1 = Disable."}
+      ]
+    },
+    "0x0C": {
+      "name": "HDMI Output Control",
+      "access": "R/W",
+      "description": "HDMI output voltage swing and pre-emphasis control.",
+      "fields": [
+        {"name": "VSWING_DATA", "startBit": 5, "endBit": 7, "valueMap": {"0": "Vsadj", "1": "+7%", "2": "+14%", "3": "+21%", "4": "-30%", "5": "-21%", "6": "-14%", "7": "-7%"}, "access": "RW", "description": "Data lane output voltage swing adjustment."},
+        {"name": "VSWING_CLK", "startBit": 2, "endBit": 4, "valueMap": {"0": "Vsadj", "1": "+7%", "2": "+14%", "3": "+21%", "4": "-30%", "5": "-21%", "6": "-14%", "7": "-7%"}, "access": "RW", "description": "Clock lane output voltage swing adjustment."},
+        {"name": "HDMI_TWPST1", "startBit": 0, "endBit": 1, "valueMap": {"0": "No de-emphasis", "1": "2-dB"}, "access": "RWU", "description": "HDMI pre-emphasis/de-emphasis control."}
+      ]
+    },
+    "0x0D": {
+      "name": "Equalization Control",
+      "access": "R/W",
+      "description": "Equalization Control Register",
+      "fields": [
+        {"name": "DATA_LANE_EQ", "startBit": 3, "endBit": 5, "access": "RW", "description": "Data Lane EQ – Sets fixed EQ values"},
+        {"name": "CLOCK_LANE_EQ", "startBit": 1, "endBit": 2, "access": "RW", "description": "Clock Lane EQ - Sets fixed EQ values"},
+        {"name": "CLOCK_VOD_HALF", "startBit": 0, "endBit": 0, "access": "RW", "description": "0 = Clock VOD is half the set value when TMDS_CLOCK_RATIO_STATUS states in HDMI2.0 mode. 1 = Disables control so output swing is full swing."}
+      ]
+    },
+    "0x0E": {
+      "name": "EyeScan 1",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_SYNC", "startBit": 4, "endBit": 7, "access": "R", "description": "PV_SYNC[3:0]. Pattern timing pulse."},
+        {"name": "PV_LD", "startBit": 0, "endBit": 3, "access": "RWU", "description": "PV_LD[3:0]. Load pattern-verifier controls into RX lanes."}
+      ]
+    },
+    "0x0F": {
+      "name": "EyeScan 2",
+      "access": "R",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_FAIL", "startBit": 4, "endBit": 7, "access": "RU", "description": "PV_FAIL[3:0]. Pattern verification mismatch detected."},
+        {"name": "PV_TIP", "startBit": 0, "endBit": 3, "access": "RU", "description": "PV_TIP[3:0]. Pattern search/training in progress."}
+      ]
+    },
+    "0x10": {
+      "name": "EyeScan 3",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_CP20", "startBit": 7, "endBit": 7, "access": "RW", "description": "PV_CP20. Customer pattern length 20 or 16 bits. 0 - 16 bits, 1 - 20 bits."},
+        {"name": "PV_LEN", "startBit": 3, "endBit": 5, "access": "RW", "description": "PV_LEN[2:0]. PRBS pattern length"},
+        {"name": "PV_SEL", "startBit": 0, "endBit": 2, "access": "RW", "description": "PV_SEL[2:0]. Pattern select control"}
+      ]
+    },
+    "0x11": {
+      "name": "EyeScan CP Data 1",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_CP[7:0]", "startBit": 0, "endBit": 7, "access": "RW", "description": "PV_CP[7:0]. Custom pattern data."}
+      ]
+    },
+    "0x12": {
+      "name": "EyeScan CP Data 2",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_CP[15:8]", "startBit": 0, "endBit": 7, "access": "RW", "description": "PV_CP[15:8]. Custom pattern data."}
+      ]
+    },
+    "0x13": {
+      "name": "EyeScan CP Data 3",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_CP[19:16]", "startBit": 0, "endBit": 3, "access": "RW", "description": "PV_CP[19:16]. Custom pattern data. Used when PV_CP20 = 1'b1."}
+      ]
+    },
+    "0x14": {
+      "name": "EyeScan 4",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_THR", "startBit": 0, "endBit": 2, "access": "RW", "description": "PV_THR[2:0]. Pattern-verifier retain threshold."}
+      ]
+    },
+    "0x15": {
+      "name": "EyeScan 5",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "DESKEW_CMPLT", "startBit": 7, "endBit": 7, "access": "R", "description": "DESKEW_CMPLT: Indicates TMDS lane deskew has completed when high"},
+        {"name": "BERT_CLR", "startBit": 4, "endBit": 4, "access": "RSU", "description": "BERT_CLR. Clear BERT counter (on rising edge)."},
+        {"name": "TST_INTQ_CLR", "startBit": 3, "endBit": 3, "access": "RSU", "description": "TST_INTQ_CLR. Clear latched interrupt flag."},
+        {"name": "TST_SEL", "startBit": 0, "endBit": 2, "access": "RW", "description": "TST_SEL[2:0]. Test interrupt source select."}
+      ]
+    },
+    "0x16": {
+      "name": "EyeScan 6",
+      "access": "R/W",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "PV_DP_EN", "startBit": 4, "endBit": 7, "access": "RW", "description": "PV_DP_EN[3:0]. Enabled datapath verified based on DP_TST_SEL"},
+        {"name": "DP_TST_SEL", "startBit": 0, "endBit": 2, "access": "RW", "description": "DP_TST_SEL[2:0] Selects pattern reported by BERT_CNT"}
+      ]
+    },
+    "0x17": {
+      "name": "EyeScan 7",
+      "access": "R",
+      "description": "EyeScan Control Register",
+      "fields": [
+        {"name": "TST_INTQ", "startBit": 4, "endBit": 7, "access": "RU", "description": "TST_INTQ[3:0]. Latched interrupt flag."},
+        {"name": "TST_INT", "startBit": 0, "endBit": 3, "access": "RU", "description": "TST_INT[3:0]. Test interrupt flag."}
+      ]
+    },
+    "0x18": {
+      "name": "BERT_CNT Lane 0 [7:0]",
+      "access": "R",
+      "description": "BERT error count. Lane 0",
+      "fields": [{"name": "BERT_CNT_L0_7_0", "startBit": 0, "endBit": 7, "access": "RU", "description": "BERT_CNT[7:0]. BERT error count. Lane 0"}]
+    },
+    "0x19": {
+      "name": "BERT_CNT Lane 0 [11:8]",
+      "access": "R",
+      "description": "BERT error count. Lane 0",
+      "fields": [{"name": "BERT_CNT_L0_11_8", "startBit": 0, "endBit": 3, "access": "RU", "description": "BERT_CNT[11:8]. BERT error count. Lane 0"}]
+    },
+    "0x1A": {
+      "name": "BERT_CNT Lane 1 [7:0]",
+      "access": "R",
+      "description": "BERT error count. Lane 1",
+      "fields": [{"name": "BERT_CNT_L1_7_0", "startBit": 0, "endBit": 7, "access": "RU", "description": "BERT_CNT[19:12]. BERT error count. Lane 1"}]
+    },
+    "0x1B": {
+      "name": "BERT_CNT Lane 1 [11:8]",
+      "access": "R",
+      "description": "BERT error count. Lane 1",
+      "fields": [{"name": "BERT_CNT_L1_11_8", "startBit": 0, "endBit": 3, "access": "RU", "description": "BERT_CNT[23:20]. BERT error count. Lane 1"}]
+    },
+    "0x1C": {
+      "name": "BERT_CNT Lane 2 [7:0]",
+      "access": "R",
+      "description": "BERT error count. Lane 2",
+      "fields": [{"name": "BERT_CNT_L2_7_0", "startBit": 0, "endBit": 7, "access": "RU", "description": "BERT_CNT[31:24]. BERT error count. Lane 2"}]
+    },
+    "0x1D": {
+      "name": "BERT_CNT Lane 2 [11:8]",
+      "access": "R",
+      "description": "BERT error count. Lane 2",
+      "fields": [{"name": "BERT_CNT_L2_11_8", "startBit": 0, "endBit": 3, "access": "RU", "description": "BERT_CNT[35:32]. BERT error count. Lane 2"}]
+    },
+    "0x1E": {
+      "name": "BERT_CNT Lane 3 [7:0]",
+      "access": "R",
+      "description": "BERT error count. Lane 3",
+      "fields": [{"name": "BERT_CNT_L3_7_0", "startBit": 0, "endBit": 7, "access": "RU", "description": "BERT_CNT[19:12]. BERT error count. Lane 3"}]
+    },
+    "0x1F": {
+      "name": "BERT_CNT Lane 3 [11:8]",
+      "access": "R",
+      "description": "BERT error count. Lane 3",
+      "fields": [{"name": "BERT_CNT_L3_11_8", "startBit": 0, "endBit": 3, "access": "RU", "description": "BERT_CNT[23:20]. BERT error count. Lane 3"}]
+    },
+    "0x20": {
+      "name": "AUX Output Control",
+      "access": "R/W",
+      "description": "AUX Output Control Register",
+      "fields": [
+        {"name": "AUX_TX_SR", "startBit": 3, "endBit": 3, "access": "RW", "description": "AUX_TX_SR Slew Rate Control for AUX Output"},
+        {"name": "AUX_SWING", "startBit": 0, "endBit": 2, "valueMap": {"0": "270mV", "1": "355mV", "2": "450mV", "3": "535mV", "4": "625mV", "5": "710mV", "6": "800mV", "7": "Not allowed"}, "access": "RW", "description": "AUX_SWING; Swing Control for AUX Output"}
+      ]
+    },
+    "0xFF": {
+      "name": "Page Index Select",
+      "access": "W",
+      "description": "Selects the page of registers to access.",
+      "fields": [
+        {
+          "name": "PAGE_IDX", 
+          "startBit": 0, 
+          "endBit": 7, 
+          "valueMap": {
+            "0": "Page 0 On/Off function", 
+            "1": "Page 1 Configure PLL/TX/RX blocks"
+          }, 
+          "access": "W", 
+          "description": "Selects the page of registers to access. Typical for TI devices."
+        }
+      ]
+    }
+  }
+}

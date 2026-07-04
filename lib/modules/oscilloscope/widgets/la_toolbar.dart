@@ -1,0 +1,420 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../../providers/oscilloscope_state.dart';
+import '../../../utils/hover_builder.dart';
+import 'trigger_menu_dialog.dart';
+import 'bus_search_dialog.dart';
+
+class LogicAnalyzerToolbar extends StatelessWidget {
+  const LogicAnalyzerToolbar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<OscilloscopeState>();
+
+    return Container(
+      height: 36,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.shade800, width: 1.0),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      child: Row(
+        children: [
+          // Navigation & View Controls
+          _buildToolbarButton(
+            icon: Icons.zoom_in,
+            label: '',
+            tooltip: 'Zoom In',
+            onTap: () {
+              state.zoomFromCenter(1.2);
+            },
+          ),
+          _buildToolbarButton(
+            icon: Icons.zoom_out,
+            label: '',
+            tooltip: 'Zoom Out',
+            onTap: () {
+              state.zoomFromCenter(1 / 1.2);
+            },
+          ),
+          _buildToolbarButton(
+            icon: Icons.fullscreen,
+            label: '',
+            tooltip: 'Zoom to Fit',
+            onTap: () {
+              state.autoSetup();
+            },
+          ),
+          const SizedBox(width: 4),
+          Container(
+            height: 20,
+            width: 1,
+            color: Colors.grey.shade700,
+          ),
+          const SizedBox(width: 4),
+          _buildToolbarButton(
+            icon: Icons.skip_previous,
+            label: '',
+            tooltip: 'Jump to Start',
+            onTap: () {
+              state.jumpToStart();
+            },
+          ),
+          _buildToolbarButton(
+            icon: Icons.fast_rewind,
+            label: '',
+            tooltip: 'Rewind',
+            onTapDown: (_) => state.startScrolling(-1.0),
+            onTapUp: (_) => state.stopScrolling(),
+            onTapCancel: () => state.stopScrolling(),
+          ),
+          _buildToolbarButton(
+            customIcon: CustomPaint(
+              size: const Size(14, 14),
+              painter: TriggerIconPainter(Colors.grey.shade400),
+            ),
+            label: '',
+            tooltip: 'Jump to Trigger',
+            onTap: () {
+              state.jumpToTrigger();
+            },
+          ),
+          _buildToolbarButton(
+            icon: Icons.fast_forward,
+            label: '',
+            tooltip: 'Fast Forward',
+            onTapDown: (_) => state.startScrolling(1.0),
+            onTapUp: (_) => state.stopScrolling(),
+            onTapCancel: () => state.stopScrolling(),
+          ),
+          _buildToolbarButton(
+            icon: Icons.skip_next,
+            label: '',
+            tooltip: 'Jump to End',
+            onTap: () {
+              state.jumpToEnd();
+            },
+          ),
+          const SizedBox(width: 4),
+          Container(
+            height: 20,
+            width: 1,
+            color: Colors.grey.shade700,
+          ),
+          const SizedBox(width: 4),
+          _buildToolbarButton(
+            icon: Icons.search,
+            label: '',
+            tooltip: 'Search',
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (context) => const BusSearchDialog(),
+              );
+            },
+          ),
+          if (state.searchMatches.isNotEmpty) ...[
+             const SizedBox(width: 4),
+             _buildToolbarButton(
+               icon: Icons.navigate_before,
+               label: '',
+               tooltip: 'Previous Match',
+               onTap: () => state.jumpToPrevSearchMatch(),
+             ),
+             Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                alignment: Alignment.center,
+                child: Text('${state.currentSearchMatchIndex + 1}/${state.searchMatches.length}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+             ),
+             _buildToolbarButton(
+               icon: Icons.navigate_next,
+               label: '',
+               tooltip: 'Next Match',
+               onTap: () => state.jumpToNextSearchMatch(),
+             ),
+             _buildToolbarButton(
+               icon: Icons.close,
+               label: '',
+               tooltip: 'Clear Matches',
+               onTap: () => state.clearSearchMatches(),
+             ),
+          ],
+          const SizedBox(width: 4),
+          Container(
+            height: 20,
+            width: 1,
+            color: Colors.grey.shade700,
+          ),
+          const SizedBox(width: 4),
+          _buildToolbarButton(
+            icon: Icons.compare_arrows,
+            label: 'Cursors',
+            tooltip: state.showCursors ? 'X Cursor Off' : 'X Cursor On',
+            isActive: state.showCursors,
+            onTap: () => state.toggleCursors(),
+          ),
+          if (state.showCursors) ...[
+            const SizedBox(width: 4),
+            _buildToolbarButton(
+              icon: state.linkCursors ? Icons.link : Icons.link_off,
+              label: '',
+              tooltip: state.linkCursors ? 'Unlink Cursors' : 'Link Cursors',
+              isActive: state.linkCursors,
+              color: state.linkCursors ? Colors.greenAccent : null,
+              onTap: () => state.toggleLinkCursors(),
+            ),
+            const SizedBox(width: 4),
+            _buildToolbarButton(
+              customIcon: CustomPaint(
+                size: const Size(14, 14),
+                painter: MagnetIconPainter(
+                  state.snapToEdge ? Colors.orangeAccent : Colors.grey.shade400,
+                ),
+              ),
+              label: '',
+              tooltip: state.snapToEdge ? 'Disable Snap to Edge' : 'Enable Snap to Edge',
+              isActive: state.snapToEdge,
+              color: state.snapToEdge ? Colors.orangeAccent : null,
+              onTap: () => state.toggleSnapToEdge(),
+            ),
+            if (state.showXCursors && !state.isCursorX1Visible) ...[
+              const SizedBox(width: 4),
+              _buildToolbarButton(
+                label: 'X1',
+                tooltip: 'Center X1',
+                color: Colors.yellowAccent,
+                isActive: true,
+                onTap: () => state.centerCursorX1(),
+              ),
+            ],
+            if (state.showXCursors && !state.isCursorX2Visible) ...[
+              const SizedBox(width: 4),
+              _buildToolbarButton(
+                label: 'X2',
+                tooltip: 'Center X2',
+                color: Colors.yellowAccent,
+                isActive: true,
+                onTap: () => state.centerCursorX2(),
+              ),
+            ],
+          ],
+          const SizedBox(width: 4),
+          Container(
+            height: 20,
+            width: 1,
+            color: Colors.grey.shade700,
+          ),
+          
+          const Spacer(),
+
+          // Center: Decoders
+          _buildToolbarButton(
+            icon: Icons.add_box_outlined,
+            label: 'Add Decoder',
+            onTap: () {
+              // Future: show Add Decoder Dialog
+              debugPrint('Add Decoder clicked');
+            },
+          ),
+
+          const Spacer(),
+
+          // Right: Status & Settings
+          _buildToolbarButton(
+            icon: Icons.speed,
+            label: _formatSampleRate(state.sampleRate),
+            onTap: () {
+              // Future: allow changing sample rate if supported
+            },
+          ),
+          const SizedBox(width: 4),
+          _buildToolbarButton(
+            icon: Icons.bolt,
+            label: _getTriggerLabel(state),
+            color: Colors.orangeAccent,
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (context) => const TriggerMenuDialog(),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatSampleRate(double rate) {
+    if (rate >= 1e6) {
+      return '${(rate / 1e6).toStringAsFixed(1)} MSa/s';
+    } else if (rate >= 1e3) {
+      return '${(rate / 1e3).toStringAsFixed(1)} kSa/s';
+    } else {
+      return '${rate.toStringAsFixed(0)} Sa/s';
+    }
+  }
+
+  String _getTriggerLabel(OscilloscopeState state) {
+    String source = '';
+    if (state.triggerSourceType == TriggerSourceType.analog) {
+      source = 'CH${state.triggerSourceIndex + 1}';
+    } else {
+      source = 'D${state.triggerSourceIndex}';
+    }
+    
+    String edge = '';
+    switch (state.triggerEdge) {
+      case TriggerEdge.rising:
+        edge = '↑';
+        break;
+      case TriggerEdge.falling:
+        edge = '↓';
+        break;
+      case TriggerEdge.both:
+        edge = '↕';
+        break;
+    }
+    
+    return 'Trigger: $source $edge';
+  }
+
+  Widget _buildToolbarButton({
+    IconData? icon,
+    Widget? customIcon,
+    required String label,
+    VoidCallback? onTap,
+    GestureTapDownCallback? onTapDown,
+    GestureTapUpCallback? onTapUp,
+    GestureTapCancelCallback? onTapCancel,
+    bool isActive = false,
+    String? tooltip,
+    Color? color,
+  }) {
+    Widget btn = HoverBuilder(
+      builder: (context, isHovered) {
+        return GestureDetector(
+          onTap: onTap,
+          onTapDown: onTapDown,
+          onTapUp: onTapUp,
+          onTapCancel: onTapCancel,
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
+            padding: EdgeInsets.symmetric(horizontal: label.isNotEmpty ? 10.0 : 6.0, vertical: 4.0),
+            decoration: BoxDecoration(
+              color: isActive 
+                  ? (color?.withValues(alpha: 0.2) ?? Colors.blueAccent.withValues(alpha: 0.2)) 
+                  : (isHovered ? const Color(0xFF333333) : Colors.transparent),
+              borderRadius: BorderRadius.circular(4.0),
+              border: Border.all(
+                color: isActive 
+                    ? (color?.withValues(alpha: 0.5) ?? Colors.blueAccent.withValues(alpha: 0.5)) 
+                    : (isHovered ? Colors.grey.shade700 : Colors.transparent),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null)
+                  Icon(
+                    icon,
+                    size: 14,
+                    color: isActive ? (color ?? Colors.blueAccent) : (color ?? Colors.grey.shade400),
+                  )
+                else ?customIcon,
+                if (label.isNotEmpty) ...[
+                  if (icon != null || customIcon != null) const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: isActive ? (color ?? Colors.blueAccent) : (color ?? Colors.grey.shade300),
+                      fontSize: 12,
+                      fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                ]
+              ],
+            ),
+          ),
+        );
+      }
+    );
+
+    if (tooltip != null) {
+      btn = Tooltip(
+        message: tooltip,
+        textStyle: const TextStyle(fontSize: 12, color: Colors.yellowAccent),
+        decoration: BoxDecoration(color: const Color(0xFF222222), borderRadius: BorderRadius.circular(4)),
+        child: btn,
+      );
+    }
+    
+    return btn;
+  }
+}
+
+class MagnetIconPainter extends CustomPainter {
+  final Color color;
+  MagnetIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    Paint paint = Paint()
+      ..color = color
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.square;
+
+    // U shape (magnet body)
+    Path path = Path();
+    path.moveTo(size.width * 0.25, size.height * 0.2);
+    path.lineTo(size.width * 0.25, size.height * 0.6);
+    path.arcToPoint(
+      Offset(size.width * 0.75, size.height * 0.6),
+      radius: Radius.circular(size.width * 0.25),
+      clockwise: false,
+    );
+    path.lineTo(size.width * 0.75, size.height * 0.2);
+    canvas.drawPath(path, paint);
+
+    // Magnet tips
+    paint.style = PaintingStyle.fill;
+    canvas.drawRect(Rect.fromLTRB(size.width * 0.15, size.height * 0.1, size.width * 0.35, size.height * 0.35), paint);
+    canvas.drawRect(Rect.fromLTRB(size.width * 0.65, size.height * 0.1, size.width * 0.85, size.height * 0.35), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant MagnetIconPainter oldDelegate) => oldDelegate.color != color;
+}
+
+class TriggerIconPainter extends CustomPainter {
+  final Color color;
+  TriggerIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    Paint paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    // Top horizontal bar
+    canvas.drawLine(
+      Offset(size.width * 0.2, size.height * 0.2), 
+      Offset(size.width * 0.8, size.height * 0.2), 
+      paint
+    );
+    // Vertical stem
+    canvas.drawLine(
+      Offset(size.width * 0.5, size.height * 0.2), 
+      Offset(size.width * 0.5, size.height * 0.8), 
+      paint
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant TriggerIconPainter oldDelegate) => oldDelegate.color != color;
+}

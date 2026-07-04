@@ -1,0 +1,15 @@
+{
+  "name": "AT24C08",
+  "hasSubaddress": true,
+  "addressMap": {
+    "0x50": "A2=0 (Page 0)",
+    "0x51": "A2=0 (Page 1)",
+    "0x52": "A2=0 (Page 2)",
+    "0x53": "A2=0 (Page 3)",
+    "0x54": "A2=1 (Page 0)",
+    "0x55": "A2=1 (Page 1)",
+    "0x56": "A2=1 (Page 2)",
+    "0x57": "A2=1 (Page 3)"
+  },
+  "registers": {}
+}

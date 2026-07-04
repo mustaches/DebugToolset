@@ -1,0 +1,111 @@
+{
+  "name": "TCA9548A",
+  "hasSubaddress": false,
+  "addressMap": {
+    "0x70": "A2=0, A1=0, A0=0",
+    "0x71": "A2=0, A1=0, A0=1",
+    "0x72": "A2=0, A1=1, A0=0",
+    "0x73": "A2=0, A1=1, A0=1",
+    "0x74": "A2=1, A1=0, A0=0",
+    "0x75": "A2=1, A1=0, A0=1",
+    "0x76": "A2=1, A1=1, A0=0",
+    "0x77": "A2=1, A1=1, A0=1"
+  },
+  "registers": {
+    "0x00": {
+      "name": "Control Register",
+      "access": "R/W",
+      "description": "Selects which channel(s) are active. Bit 0 corresponds to channel 0, bit 1 to channel 1, etc.",
+      "fields": [
+        {
+          "name": "B7",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Channel 7 selection",
+          "valueMap": {
+            "0": "Channel 7 disabled",
+            "1": "Channel 7 enabled"
+          }
+        },
+        {
+          "name": "B6",
+          "startBit": 6,
+          "endBit": 6,
+          "access": "R/W",
+          "description": "Channel 6 selection",
+          "valueMap": {
+            "0": "Channel 6 disabled",
+            "1": "Channel 6 enabled"
+          }
+        },
+        {
+          "name": "B5",
+          "startBit": 5,
+          "endBit": 5,
+          "access": "R/W",
+          "description": "Channel 5 selection",
+          "valueMap": {
+            "0": "Channel 5 disabled",
+            "1": "Channel 5 enabled"
+          }
+        },
+        {
+          "name": "B4",
+          "startBit": 4,
+          "endBit": 4,
+          "access": "R/W",
+          "description": "Channel 4 selection",
+          "valueMap": {
+            "0": "Channel 4 disabled",
+            "1": "Channel 4 enabled"
+          }
+        },
+        {
+          "name": "B3",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Channel 3 selection",
+          "valueMap": {
+            "0": "Channel 3 disabled",
+            "1": "Channel 3 enabled"
+          }
+        },
+        {
+          "name": "B2",
+          "startBit": 2,
+          "endBit": 2,
+          "access": "R/W",
+          "description": "Channel 2 selection",
+          "valueMap": {
+            "0": "Channel 2 disabled",
+            "1": "Channel 2 enabled"
+          }
+        },
+        {
+          "name": "B1",
+          "startBit": 1,
+          "endBit": 1,
+          "access": "R/W",
+          "description": "Channel 1 selection",
+          "valueMap": {
+            "0": "Channel 1 disabled",
+            "1": "Channel 1 enabled"
+          }
+        },
+        {
+          "name": "B0",
+          "startBit": 0,
+          "endBit": 0,
+          "access": "R/W",
+          "description": "Channel 0 selection",
+          "valueMap": {
+            "0": "Channel 0 disabled",
+            "1": "Channel 0 enabled"
+          }
+        }
+      ]
+    }
+  }
+}

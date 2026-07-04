@@ -1,0 +1,197 @@
+{
+  "name": "OAS-1000D100",
+  "description": "OAS-1000D100 OpticSensor UART Protocol",
+  "baudRate": 115200,
+  "header": ["0x55", "0xAA"],
+  "commands": {
+    "0x01": {
+      "name": "Baud Rate Setting",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x01"},
+          {"byteOffset": 3, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 4, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved3", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Type", "valueMap": {"0x01": "9600bps", "0x02": "14400bps", "0x03": "19200bps/38400bps", "0x04": "56000bps", "0x07": "115200bps", "0x08": "128000bps", "0x09": "230400bps"}},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      },
+      "rx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x01"},
+          {"byteOffset": 3, "name": "STA", "valueMap": {"0x00": "Failed", "0x01": "Success"}},
+          {"byteOffset": 4, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Type", "description": "Baud rate type"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[1:7]"}
+        ]
+      }
+    },
+    "0x70": {
+      "name": "External Circuit Enable",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x70"},
+          {"byteOffset": 3, "name": "Data1", "value": "0xAB"},
+          {"byteOffset": 4, "name": "Data2", "value": "0xCD"},
+          {"byteOffset": 5, "name": "Data3", "value": "0x00"},
+          {"byteOffset": 6, "name": "Data4", "value": "0x00"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      },
+      "rx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x70"},
+          {"byteOffset": 3, "name": "STA", "valueMap": {"0x00": "Failed", "0x01": "Success"}},
+          {"byteOffset": 4, "name": "Data1", "value": "0x00"},
+          {"byteOffset": 5, "name": "Data2", "value": "0x00"},
+          {"byteOffset": 6, "name": "Data3", "value": "0x00"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[1:7]"}
+        ]
+      }
+    },
+    "0x71": {
+      "name": "External Circuit Disable",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x71"},
+          {"byteOffset": 3, "name": "Data1", "value": "0xAB"},
+          {"byteOffset": 4, "name": "Data2", "value": "0xCD"},
+          {"byteOffset": 5, "name": "Data3", "value": "0x00"},
+          {"byteOffset": 6, "name": "Data4", "value": "0x00"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      },
+      "rx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x71"},
+          {"byteOffset": 3, "name": "STA", "valueMap": {"0x00": "Failed", "0x01": "Success"}},
+          {"byteOffset": 4, "name": "Data1", "value": "0x00"},
+          {"byteOffset": 5, "name": "Data2", "value": "0x00"},
+          {"byteOffset": 6, "name": "Data3", "value": "0x00"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[1:7]"}
+        ]
+      }
+    },
+    "0x80": {
+      "name": "Self-Test Info",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x80"},
+          {"byteOffset": 3, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 4, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved3", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Reserved4", "value": "0xFF"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      },
+      "rx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x80"},
+          {"byteOffset": 3, "name": "STA", "valueMap": {"0x00": "Failed", "0x01": "Success"}},
+          {"byteOffset": 4, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 6, "name": "ErCode", "description": "Error Code"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[1:7]"}
+        ]
+      }
+    },
+    "0x88": {
+      "name": "Single Measurement",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x88"},
+          {"byteOffset": 3, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 4, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved3", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Reserved4", "value": "0xFF"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      },
+      "rx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x88"},
+          {"byteOffset": 3, "name": "STA", "valueMap": {"0x00": "Failed", "0x01": "Success"}},
+          {"byteOffset": 4, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 5, "name": "DATA_H", "description": "Distance High Byte"},
+          {"byteOffset": 6, "name": "DATA_L", "description": "Distance Low Byte"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[1:7]"}
+        ]
+      }
+    },
+    "0x89": {
+      "name": "Continuous Measurement",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x89"},
+          {"byteOffset": 3, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 4, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved3", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Reserved4", "value": "0xFF"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      }
+    },
+    "0x8A": {
+      "name": "Angle Measurement",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x8A"},
+          {"byteOffset": 3, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 4, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved3", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Reserved4", "value": "0xFF"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      },
+      "rx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x8A"},
+          {"byteOffset": 3, "name": "STA", "valueMap": {"0x00": "Failed", "0x01": "Success"}},
+          {"byteOffset": 4, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 5, "name": "ANG_H", "description": "Angle High Byte"},
+          {"byteOffset": 6, "name": "ANG_L", "description": "Angle Low Byte"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[1:7]"}
+        ]
+      }
+    },
+    "0x8E": {
+      "name": "Stop Measurement",
+      "tx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x8E"},
+          {"byteOffset": 3, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 4, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved3", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Reserved4", "value": "0xFF"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[3:7]"}
+        ]
+      },
+      "rx": {
+        "length": 8,
+        "payload": [
+          {"byteOffset": 2, "name": "CMD", "value": "0x8E"},
+          {"byteOffset": 3, "name": "STA", "valueMap": {"0x00": "Failed", "0x01": "Success"}},
+          {"byteOffset": 4, "name": "Reserved1", "value": "0xFF"},
+          {"byteOffset": 5, "name": "Reserved2", "value": "0xFF"},
+          {"byteOffset": 6, "name": "Reserved3", "value": "0xFF"},
+          {"byteOffset": 7, "name": "Checksum", "description": "SUM[1:7]"}
+        ]
+      }
+    }
+  }
+}
