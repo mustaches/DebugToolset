@@ -908,19 +908,20 @@ class RegisterInfoPanel extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
-                        flex: parsedContent == null ? 2 : 1,
-                        child: SingleChildScrollView(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text.rich(TextSpan(children: hexSpans)),
-                              const SizedBox(height: 8),
-                              Text.rich(TextSpan(children: asciiSpans)),
-                            ],
+                      if (parsedContent == null)
+                        Expanded(
+                          flex: 2,
+                          child: SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text.rich(TextSpan(children: hexSpans)),
+                                const SizedBox(height: 8),
+                                Text.rich(TextSpan(children: asciiSpans)),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
                       if (parsedContent != null)
                         Expanded(
                           flex: 2,
@@ -933,31 +934,28 @@ class RegisterInfoPanel extends StatelessWidget {
                             child: parsedContent
                           )
                         ),
-                      Expanded(
-                        flex: parsedContent == null ? 1 : 0,
+                      Padding(
+                        padding: EdgeInsets.only(top: parsedContent == null ? 0 : 8.0),
                         child: Center(
-                          child: Padding(
-                            padding: EdgeInsets.only(top: parsedContent == null ? 0 : 8.0),
-                            child: InkWell(
-                              onTap: () {
-                                if (decoder.protocolFile != null) {
-                                  decoder.protocolFile = null;
-                                  state.forceUpdate();
-                                } else {
-                                  _selectUartProtocolFile(context, state, decoder);
-                                }
-                              },
-                              child: Text(
-                                decoder.protocolFile == null
-                                    ? 'Please select the UART protocol file'
-                                    : 'Unmount UART Protocol',
-                                style: const TextStyle(
-                                  color: Colors.blueAccent,
-                                  fontSize: 14,
-                                  decoration: TextDecoration.underline,
-                                ),
-                                textAlign: TextAlign.center,
+                          child: InkWell(
+                            onTap: () {
+                              if (decoder.protocolFile != null) {
+                                decoder.protocolFile = null;
+                                state.forceUpdate();
+                              } else {
+                                _selectUartProtocolFile(context, state, decoder);
+                              }
+                            },
+                            child: Text(
+                              decoder.protocolFile == null
+                                  ? 'Please select the UART protocol file'
+                                  : 'Unmount UART Protocol',
+                              style: const TextStyle(
+                                color: Colors.blueAccent,
+                                fontSize: 14,
+                                decoration: TextDecoration.underline,
                               ),
+                              textAlign: TextAlign.center,
                             ),
                           ),
                         ),
