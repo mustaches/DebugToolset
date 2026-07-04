@@ -727,15 +727,7 @@ class RegisterInfoPanel extends StatelessWidget {
     );
   }
 
-  void _selectSpiProtocolFile(BuildContext context, OscilloscopeState state, SpiDecoder decoder) async {
-    final Directory dir = Directory('DeviceProtocol/SPI');
-    List<FileSystemEntity> files = [];
-    if (await dir.exists()) {
-      files = await dir.list().where((e) => e.path.endsWith('.Regfile')).toList();
-    }
-    
-    if (!context.mounted) return;
-    
+  void _selectSpiProtocolFile(BuildContext context, OscilloscopeState state, SpiDecoder decoder) {
     showDialog(
       context: context,
       builder: (context) {
@@ -745,16 +737,16 @@ class RegisterInfoPanel extends StatelessWidget {
           content: SizedBox(
             width: 400,
             height: 300,
-            child: files.isEmpty
-              ? const Center(child: Text('No .Regfile files found in DeviceProtocol/SPI', style: TextStyle(color: Colors.grey)))
+            child: state.availableSpiRegfiles.isEmpty
+              ? const Center(child: Text('No SPI Regfiles loaded in system', style: TextStyle(color: Colors.grey)))
               : ListView.builder(
-                  itemCount: files.length,
+                  itemCount: state.availableSpiRegfiles.length,
                   itemBuilder: (context, index) {
-                    String filename = p.basename(files[index].path);
+                    var regfile = state.availableSpiRegfiles[index];
                     return ListTile(
-                      title: Text(filename, style: const TextStyle(color: Colors.white)),
+                      title: Text(regfile.name, style: const TextStyle(color: Colors.white)),
                       onTap: () {
-                         decoder.protocolFile = filename;
+                         decoder.protocolFile = regfile.name;
                          state.forceUpdate();
                          Navigator.pop(context);
                       }
