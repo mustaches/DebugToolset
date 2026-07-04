@@ -801,7 +801,7 @@ class RegisterInfoPanel extends StatelessWidget {
                }
                String combinedHex = hexVals.join(' ');
                
-               double boxWidth = 100.0 + (protocol.header.length - 1) * 50.0;
+               double boxWidth = 70.0 + (protocol.header.length - 1) * 35.0;
                
                fieldWidgets.add(
                  Container(
@@ -841,7 +841,7 @@ class RegisterInfoPanel extends StatelessWidget {
                  
                  fieldWidgets.add(
                    Container(
-                     width: 100,
+                     width: 70,
                      margin: const EdgeInsets.only(right: 8),
                      padding: const EdgeInsets.all(8),
                      decoration: BoxDecoration(
@@ -1191,7 +1191,7 @@ class RegisterInfoPanel extends StatelessWidget {
 
                 innerFieldWidgets.add(
                   Container(
-                    constraints: const BoxConstraints(minWidth: 85, minHeight: 85),
+                    constraints: const BoxConstraints(minWidth: 65, minHeight: 85),
                     margin: EdgeInsets.only(right: field == sortedFields.last ? 0 : 8),
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -1248,7 +1248,7 @@ class RegisterInfoPanel extends StatelessWidget {
           } else {
             fieldWidgets.add(
               Container(
-                constraints: const BoxConstraints(minWidth: 85, minHeight: 85),
+                constraints: const BoxConstraints(minWidth: 65, minHeight: 85),
                 margin: EdgeInsets.only(right: i == dataPackets.length - 1 ? 0 : 8),
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
