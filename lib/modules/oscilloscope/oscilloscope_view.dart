@@ -54,14 +54,14 @@ class OscilloscopeView extends StatelessWidget {
                           ),
                         Divider(height: 1, thickness: 1, color: Colors.grey.shade800),
                         const Expanded(
-                          flex: 7,
+                          flex: 8,
                           child: ClipRect(
                             child: ChartWidget(),
                           ),
                         ),
                         if (state.highlightedBusName != null && state.showRegisterInfoPanel)
                           const Expanded(
-                            flex: 3,
+                            flex: 2,
                             child: RegisterInfoPanel(),
                           ),
                       ],
