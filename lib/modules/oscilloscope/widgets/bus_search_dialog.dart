@@ -1053,8 +1053,16 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                              ),
                              items: _availableSpiFrameTypes.map((type) {
-                                String labelCn = type == 'Any' ? '读或写' : (type == 'Write Only' ? '仅写' : '仅读');
-                                String labelEn = type == 'Any' ? 'Write or Read' : type;
+                                String labelCn;
+                                String labelEn;
+                                switch (type) {
+                                  case 'Any': labelCn = '不限制'; labelEn = 'Any'; break;
+                                  case 'MOSI': labelCn = 'MOSI'; labelEn = 'MOSI'; break;
+                                  case 'MISO': labelCn = 'MISO'; labelEn = 'MISO'; break;
+                                  case 'Write Only': labelCn = '仅写'; labelEn = 'Write Only'; break;
+                                  case 'Read Only': labelCn = '仅读'; labelEn = 'Read Only'; break;
+                                  default: labelCn = type; labelEn = type; break;
+                                }
                                 return DropdownMenuItem(value: type, child: _buildItemText(labelCn, labelEn));
                              }).toList(),
                              onChanged: (val) {
