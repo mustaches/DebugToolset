@@ -828,7 +828,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                          child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
                                        ),
                                      ..._cachedI2cDevices.map((addr) {
-                                       String hex = '0x';
+                                       String hex = '0x${addr.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                        String alias = '';
                                        if (currentBus != null && currentBus!.decoder is I2cDecoder) {
                                            var i2cDec = currentBus!.decoder as I2cDecoder;
@@ -894,7 +894,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                               ),
                                            DropdownMenuItem<int?>(value: null, child: _buildItemText('不限', 'Any (leave blank)')),
                                            ..._cachedI2cRegisters.map((addr) {
-                                             String hex = '0x';
+                                             String hex = '0x${addr.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                              String alias = '';
                                              if (currentBus != null && _i2cDeviceAddress != null) {
                                                 var regfile = state.getRegfileFor(currentBus!.name, _i2cDeviceAddress!);
@@ -1056,7 +1056,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                          child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
                                        ),
                                      ..._cachedSpiCommands.map((cmd) {
-                                       String hex = '0x';
+                                       String hex = '0x${cmd.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                        String alias = '';
                                        if (currentBus != null && _selectedSpiProtocol != null) {
                                            var regfiles = state.availableSpiRegfiles.where((r) => r.name == _selectedSpiProtocol);
@@ -1110,7 +1110,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                               ),
                                            DropdownMenuItem<int?>(value: null, child: _buildItemText('不限', 'Any (leave blank)')),
                                            ..._cachedSpiAddresses.map((addr) {
-                                             String hex = '0x';
+                                             String hex = '0x${addr.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                              return DropdownMenuItem<int?>(value: addr, child: Text(hex));
                                            })
                                          ],
