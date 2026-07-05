@@ -284,11 +284,37 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     return addrs.toList()..sort();
   }
 
-  List<String> _getAvailableI2cFrameTypes(DigitalBus bus) {
+  List<String> _getAvailableI2cFrameTypes(DigitalBus bus, OscilloscopeState state) {
     if (bus.decoder == null || bus.decoder!.name != 'I2C') return ['Any', 'Read Only', 'Write Only'];
     bool hasRead = false;
     bool hasWrite = false;
+    
+    Set<int>? validAddrs;
+    if (_selectedI2cProtocol != null) {
+       var regfiles = state.availableRegfiles.where((r) => r.name == _selectedI2cProtocol);
+       if (regfiles.isNotEmpty) {
+          var regfile = regfiles.first;
+          validAddrs = {};
+          if (regfile.addresses != null) validAddrs.addAll(regfile.addresses!);
+          if (regfile.addressMap != null) validAddrs.addAll(regfile.addressMap!.keys);
+          if (validAddrs.isEmpty) validAddrs = null;
+       }
+    }
+
     for (var frame in bus.decoder!.frames) {
+      if (validAddrs != null) {
+         bool matchAddr = false;
+         for (var p in frame.packets) {
+            if (p.type == PacketType.address && p.rawValue != null) {
+               if (validAddrs.contains(p.rawValue!)) {
+                  matchAddr = true;
+               }
+               break;
+            }
+         }
+         if (!matchAddr) continue;
+      }
+      
       if (frame.summary.startsWith('Read')) hasRead = true;
       if (frame.summary.startsWith('Write')) hasWrite = true;
       if (hasRead && hasWrite) break;
@@ -370,7 +396,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     _lastDeviceAddressForCache = _i2cDeviceAddress;
     _lastI2cProtocolForCache = _selectedI2cProtocol;
 
-    _availableI2cFrameTypes = _getAvailableI2cFrameTypes(bus);
+    _availableI2cFrameTypes = _getAvailableI2cFrameTypes(bus, state);
     if (!_availableI2cFrameTypes.contains(_i2cFrameType)) {
       _i2cFrameType = 'Any';
     }
