@@ -41,6 +41,8 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
 
   List<String> _availableI2cFrameTypes = ['Any'];
   String? _lastI2cFrameTypeForCache;
+  String? _selectedI2cProtocol;
+  String? _lastI2cProtocolForCache;
   List<String> _availableSpiFrameTypes = ['Any'];
   List<int> _cachedSpiCommands = [];
   List<int> _cachedSpiAddresses = [];
@@ -316,6 +318,17 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
         }
       }
     }
+    
+    if (_selectedI2cProtocol != null) {
+       var regfiles = state.availableRegfiles.where((r) => r.name == _selectedI2cProtocol);
+       if (regfiles.isNotEmpty) {
+          var regfile = regfiles.first;
+          if (regfile.addresses != null && regfile.addresses!.isNotEmpty) {
+             addrs = addrs.intersection(regfile.addresses!.toSet());
+          }
+       }
+    }
+    
     var list = addrs.toList();
     list.sort();
     return list;
@@ -348,13 +361,14 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   }
 
   void _updateI2cCaches(OscilloscopeState state, DigitalBus bus) {
-    if (_lastBusNameForCache == bus.name && _lastI2cFrameTypeForCache == _i2cFrameType && _lastDeviceAddressForCache == _i2cDeviceAddress) {
+    if (_lastBusNameForCache == bus.name && _lastI2cFrameTypeForCache == _i2cFrameType && _lastDeviceAddressForCache == _i2cDeviceAddress && _lastI2cProtocolForCache == _selectedI2cProtocol) {
       return;
     }
     
     _lastBusNameForCache = bus.name;
     _lastI2cFrameTypeForCache = _i2cFrameType;
     _lastDeviceAddressForCache = _i2cDeviceAddress;
+    _lastI2cProtocolForCache = _selectedI2cProtocol;
 
     _availableI2cFrameTypes = _getAvailableI2cFrameTypes(bus);
     if (!_availableI2cFrameTypes.contains(_i2cFrameType)) {
@@ -675,9 +689,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                              } else if (decoderType == 'SPI') {
                                 initialProtocolFile = (currentBus!.decoder as SpiDecoder).protocolFile;
                              } else if (decoderType == 'I2C') {
-                                 if (currentBus != null && _i2cDeviceAddress != null) {
-                                    initialProtocolFile = state.mountedRegfiles[currentBus.name]?[_i2cDeviceAddress]?.name;
-                                 }
+                                initialProtocolFile = _selectedI2cProtocol;
                              }
                              return DropdownButtonFormField<String?>(
                                initialValue: initialProtocolFile,
@@ -695,7 +707,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                   if (decoderType == 'SPI') ...state.availableSpiRegfiles.map((r) => DropdownMenuItem(value: r.name, child: Text(r.name))),
                                   if (decoderType == 'I2C') ...state.availableRegfiles.map((r) => DropdownMenuItem(value: r.name, child: Text(r.name))),
                                ],
-                               onChanged: (decoderType == 'I2C' && _i2cDeviceAddress == null) ? null : (val) {
+                               onChanged: (val) {
                                   setState(() {
                                      if (decoderType == 'UART') {
                                         (currentBus!.decoder as UartDecoder).protocolFile = val;
@@ -703,19 +715,17 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                      } else if (decoderType == 'SPI') {
                                         (currentBus!.decoder as SpiDecoder).protocolFile = val;
                                         state.forceUpdate();
-                                     } else if (decoderType == 'I2C' && _i2cDeviceAddress != null) {
-                                        var regfile = val == null ? null : state.availableRegfiles.firstWhere((r) => r.name == val);
-                                        state.mountI2cDevice(currentBus!.name, _i2cDeviceAddress!, regfile);
+                                     } else if (decoderType == 'I2C') {
+                                        _selectedI2cProtocol = val;
+                                        _lastI2cFrameTypeForCache = null;
+                                        _lastDeviceAddressForCache = null;
+                                        _lastI2cProtocolForCache = null;
                                      }
                                   });
                                }
                              );
                           }),
-                          if (decoderType == 'I2C' && _i2cDeviceAddress == null)
-                             const Padding(
-                               padding: EdgeInsets.only(top: 4.0),
-                               child: Text('请先在下方选择设备地址', style: TextStyle(color: Colors.redAccent, fontSize: 11)),
-                             ),
+
                         ]
                       ],
                     ),
@@ -807,6 +817,12 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                       setState(() {
                                          _i2cDeviceAddress = val;
                                          _lastDeviceAddressForCache = null;
+                                         if (_selectedI2cProtocol != null && val != null) {
+                                            var regfiles = state.availableRegfiles.where((r) => r.name == _selectedI2cProtocol);
+                                            if (regfiles.isNotEmpty) {
+                                               state.mountI2cDevice(currentBus!.name, val, regfiles.first);
+                                            }
+                                         }
                                       });
                                    },
                                    hint: const Text('选择设备 (Select a Device)', style: TextStyle(color: Colors.white38)),
