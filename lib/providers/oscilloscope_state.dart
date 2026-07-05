@@ -1348,7 +1348,7 @@ class OscilloscopeState extends ChangeNotifier {
           if (pf != null && pf.isNotEmpty) {
             try {
               var regfile = availableSpiRegfiles.firstWhere((r) => r.name == pf);
-              (bus.decoder as SpiDecoder).protocolData = { 'registers': regfile.registers };
+              (bus.decoder as SpiDecoder).protocolData = { 'registers': regfile.registers, 'commands': regfile.commands };
             } catch (_) {}
           } else {
             (bus.decoder as SpiDecoder).protocolData = null;

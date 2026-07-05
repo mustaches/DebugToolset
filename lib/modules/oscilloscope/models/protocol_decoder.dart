@@ -1010,8 +1010,11 @@ class SpiDecoder extends ProtocolDecoder {
       modeClocks = 0;
       addrBytes = 0;
       
-      if (protocolData != null && protocolData!['registers'] != null) {
-        var reg = protocolData!['registers'][cmd];
+      if (protocolData != null) {
+        var reg;
+        if (protocolData!['commands'] != null) reg = protocolData!['commands'][cmd];
+        if (reg == null && protocolData!['registers'] != null) reg = protocolData!['registers'][cmd];
+        
         if (reg != null) {
           addrLines = reg.rawJson['addrLines'] ?? 1;
           dataLines = reg.rawJson['dataLines'] ?? 1;
@@ -1167,8 +1170,10 @@ class SpiDecoder extends ProtocolDecoder {
             // In Regfile, we have `access`: "W".
             // So let's check access:
             bool isWrite = false;
-            if (protocolData != null && protocolData!['registers'] != null) {
-              var reg = protocolData!['registers'][cmdValue];
+            if (protocolData != null) {
+              var reg;
+              if (protocolData!['commands'] != null) reg = protocolData!['commands'][cmdValue];
+              if (reg == null && protocolData!['registers'] != null) reg = protocolData!['registers'][cmdValue];
               if (reg != null && reg.access == 'W') isWrite = true;
             }
             if (dataLines == 1 && isWrite) bitVal = io0;
@@ -1177,7 +1182,8 @@ class SpiDecoder extends ProtocolDecoder {
             phaseClocks++;
             
             if (phaseClocks == (8 ~/ dataLines)) {
-              pendingPacket = createPacket(wordStartIdx, phaseData, 1, 'DATA', Colors.green, localMisoLane >= 0 ? localMisoLane : 0);
+              int targetLane = isWrite ? (localMosiLane >= 0 ? localMosiLane : 0) : (localMisoLane >= 0 ? localMisoLane : 0);
+              pendingPacket = createPacket(wordStartIdx, phaseData, 1, 'DATA', Colors.green, targetLane);
               phaseClocks = 0; phaseData = 0;
             }
           }

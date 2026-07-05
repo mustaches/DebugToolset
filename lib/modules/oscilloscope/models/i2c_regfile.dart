@@ -99,6 +99,7 @@ class I2cRegfile {
   final Map<int, I2cRegisterDef> registers;
   final List<int>? addresses;
   final Map<int, String>? addressMap;
+  final Map<int, I2cRegisterDef>? commands;
   final bool? hasSubaddress;
 
   I2cRegfile({
@@ -106,6 +107,7 @@ class I2cRegfile {
     required this.registers,
     this.addresses,
     this.addressMap,
+    this.commands,
     this.hasSubaddress,
   });
 
@@ -151,12 +153,28 @@ class I2cRegfile {
         }
       });
     }
+    Map<int, I2cRegisterDef>? cmds;
+    if (json['commands'] != null) {
+      cmds = {};
+      (json['commands'] as Map<String, dynamic>).forEach((k, v) {
+        int? addr;
+        if (k.toLowerCase().startsWith('0x')) {
+          addr = int.tryParse(k.substring(2), radix: 16);
+        } else {
+          addr = int.tryParse(k);
+        }
+        if (addr != null) {
+          cmds![addr] = I2cRegisterDef.fromJson(v);
+        }
+      });
+    }
     
     return I2cRegfile(
       name: json['name'] ?? 'Unknown',
       registers: regs,
       addresses: addresses,
       addressMap: addressMap,
+      commands: cmds,
       hasSubaddress: json['hasSubaddress'] as bool?,
     );
   }

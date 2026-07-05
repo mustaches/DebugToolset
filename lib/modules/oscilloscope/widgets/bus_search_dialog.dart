@@ -215,10 +215,15 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
           break;
         }
       }
-      if (cmd != null && regfile != null && regfile.registers.containsKey(cmd)) {
-        String access = regfile.registers[cmd]!.access ?? '';
-        if (access.contains('R')) hasRead = true;
-        if (access.contains('W')) hasWrite = true;
+      if (cmd != null && regfile != null) {
+        var cmdDef = (regfile.commands != null && regfile.commands!.containsKey(cmd)) 
+            ? regfile.commands![cmd] 
+            : regfile.registers[cmd];
+        if (cmdDef != null) {
+          String access = cmdDef.access ?? '';
+          if (access.contains('R')) hasRead = true;
+          if (access.contains('W')) hasWrite = true;
+        }
       }
     }
     
@@ -252,10 +257,15 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
         }
       }
       if (cmd != null) {
-        if (frameType != 'Any' && regfile != null && regfile.registers.containsKey(cmd)) {
-           String access = regfile.registers[cmd]!.access ?? '';
-           if (frameType == 'Read Only' && !access.contains('R')) continue;
-           if (frameType == 'Write Only' && !access.contains('W')) continue;
+        if (frameType != 'Any' && regfile != null) {
+           var cmdDef = (regfile.commands != null && regfile.commands!.containsKey(cmd)) 
+               ? regfile.commands![cmd] 
+               : regfile.registers[cmd];
+           if (cmdDef != null) {
+             String access = cmdDef.access ?? '';
+             if (frameType == 'Read Only' && !access.contains('R')) continue;
+             if (frameType == 'Write Only' && !access.contains('W')) continue;
+           }
         }
         cmds.add(cmd);
       }
@@ -1095,7 +1105,9 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                           var regfiles = state.availableSpiRegfiles.where((r) => r.name == protocolFile);
                                           if (regfiles.isNotEmpty) {
                                               var regfile = regfiles.first;
-                                              if (regfile.registers.containsKey(cmd)) {
+                                              if (regfile.commands != null && regfile.commands!.containsKey(cmd)) {
+                                                  alias = ' (${regfile.commands![cmd]!.name})';
+                                              } else if (regfile.registers.containsKey(cmd)) {
                                                   alias = ' (${regfile.registers[cmd]!.name})';
                                               }
                                           }

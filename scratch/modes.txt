@@ -1,0 +1,722 @@
+7.4 Device Functional Modes
+Table 7-9 lists the functional modes supported by the TLA2518.
+Table 7-9. Functional Modes
+FUNCTIONAL MODE
+CONVERSION CONTROL
+MUX CONTROL
+CONV_MODE[1:0]
+SEQ_MODE[1:0]
+Manual
+CS rising edge
+Register write to MANUAL_CHID
+00b
+00b
+On-the-fly
+CS rising edge
+First 5 bits after the CS falling edge
+00b
+10b
+Auto-sequence
+CS rising edge
+Channel sequencer
+00b
+01b
+Autonomous
+Internal to the device
+Channel sequencer
+01b
+01b
+Turbo comparator
+Internal to the device
+Channel sequencer
+10b
+01b
+The device powers up in manual mode and can be configured into either of these modes by writing the 
+configuration registers for the desired mode.
+7.4.1 Device Power-Up and Reset
+On power-up, the BOR bit is set indicating a power-cycle or reset event. The device can be reset by setting the 
+RST bit or by recycling power on the AVDD pin.
+7.4.2 Manual Mode
+Manual mode allows the external host processor to directly select the analog input channel. Figure 7-13 shows 
+the steps for operating the device in manual mode.
+Idle
+SEQ_MODE = 0b
+CONV_MODE = 0b
+Configure channels as AIN/GPIO using PIN_CFG
+Calibrate offset error (CAL = 1b)
+Select Manual mode 
+(CONV_MODE = 00b, SEQ_MODE = 00b)
+Configure desired Channel ID in MANUAL_CHID field
+Host starts conversion and reads conversion result
+Same 
+Channel ID?
+Yes
+No
+Figure 7-13. Device Operation in Manual Mode
+In manual mode, the command to switch to a new channel (indicated by cycle N in Figure 7-14) is decoded by 
+the device on the CS rising edge. The CS rising edge is also the start of the conversion signal, and therefore 
+the device samples the previously selected MUX channel in cycle N+1. The newly selected analog input channel 
+data are available in cycle N+2. For switching the analog input channel, a register write to the MANUAL_CHID 
+field requires 24 clocks; see the Register Write section for more details. After a channel is selected, the number 
+of clocks required for reading the output data depends on the device output data frame size; see the Output Data 
+Format section for more details.
+www.ti.com
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+Copyright © 2024 Texas Instruments Incorporated
+Submit Document Feedback
+25
+Product Folder Links: ADS7038 ADS7038H
+tCONV
+CS
+Sample 
+AINx
+Sample 
+AINx
+SCLK
+Sample 
+AINy
+Sample
+AINz
+Data AINx
+Data AINx
+Data AINy
+SDO
+24 clocks
+MUX OUT = AINx
+MUX OUT = AINy
+MUX OUT = AINz
+100-ns
+tCYCLE
+MUX
+Switch to AINy
+Switch to AINz
+Switch to AINx
+SDI
+Cycle N
+Cycle (N + 1)
+Cycle (N + 2)
+Figure 7-14. Starting Conversions and Reading Data in Manual Mode
+7.4.3 On-the-Fly Mode
+In the on-the-fly mode of operation, the analog input channel is selected, as shown in Figure 7-15, using the first 
+five bits on SDI without waiting for the CS rising edge. Thus, the ADC samples the newly selected channel on 
+the CS rising edge and there is no latency between the channel selection and the ADC output data.
+5
+4
+3
+2
+24
+1
+1
+1
+tCONV
+CS
+Sample
+AINx
+Sample
+AINx
+SCLK
+Sample
+AINy
+Sample
+AINz
+12
+Data AINx
+SDO
+MUX OUT = AINx
+MUX OUT = AINy
+MUX OUT = AINx
+100-ns
+tCYCLE
+MUX
+SEQ_MODE = 
+10b
+4-bit AINy ID
+SDI
+1
+4-bit AINz ID
+Data AINy
+Data AINx
+5
+4
+3
+2
+1
+12
+MUX OUT = AINz
+No Cycle Latency
+Figure 7-15. Starting Conversions and Reading Data in On-the-Fly Mode
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+www.ti.com
+26
+Submit Document Feedback
+Copyright © 2024 Texas Instruments Incorporated
+Product Folder Links: ADS7038 ADS7038H
+The number of clocks required for reading the output data depends on the device output data frame size; see the 
+Output Data Format section for more details.
+7.4.4 Auto-Sequence Mode
+In auto-sequence mode, the internal channel sequencer switches the multiplexer to the next analog input 
+channel after every conversion. The desired analog input channels can be configured for sequencing in the 
+AUTO_SEQ_CH_SEL register. To enable the channel sequencer, set SEQ_START = 1b. After every conversion, 
+the channel sequencer switches the multiplexer to the next analog input in ascending order. To stop the channel 
+sequencer from selecting channels, set SEQ_START = 0b.
+In the example shown in Figure 7-16, AIN2 and AIN6 are enabled for sequencing in AUTO_SEQ_CH_SEL. The 
+channel sequencer loops through AIN2 and AIN6 and repeats until SEQ_START is set to 0b. The number of 
+clocks required for reading the output data depends on the device output data frame size; see the Output Data 
+Format section for more details.
+CS
+Sample
+AINx
+SCLK
+Sample
+AIN2
+Sample
+AIN6
+Data AINx
+Data AINx
+Data AIN2
+SDO
+24 clocks
+MUX OUT = AIN6
+tCYCLE
+MUX
+SEQ_START
+SDI
+12 clocks
+Scan channels AIN2 and AIN6 and repeat
+Data AIN6
+MUX OUT = AIN2
+MUX OUT = AINx
+Sample
+AIN2
+Data AIN2
+MUX OUT = AIN6
+Sample
+AIN6
+MUX OUT = AIN2
+Figure 7-16. Starting Conversions and Reading Data in Auto-Sequence Mode
+7.4.5 Autonomous Mode
+In autonomous mode, the device can be programmed to monitor the voltage applied on the analog input pins of 
+the device and generate an ALERT signal internal to the device when the programmable high or low threshold 
+values are crossed. The internal ALERT signal can be mapped to any one digital output channel by configuring 
+the channel ID in the ALERT_PIN[3:0] register field. In autonomous mode, the device generates the start of 
+conversion using the internal oscillator. The first start of conversion must be provided by the host and the device 
+generates the subsequent start of conversions.
+www.ti.com
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+Copyright © 2024 Texas Instruments Incorporated
+Submit Document Feedback
+27
+Product Folder Links: ADS7038 ADS7038H
+Figure 7-17 shows the steps for configuring the functional mode to autonomous mode. Abort the ongoing 
+sequence by setting SEQ_START to 0b before changing the functional mode or device configuration.
+Idle
+SEQ_MODE = 0b
+CONV_MODE = 0b
+Configure channels as AIN/GPIO using PIN_CFG
+Calibrate offset error (CAL = 1b)
+Enable analog inputs for sequencing (AUTO_SEQ_CH_SEL)
+Select Auto-sequence mode (SEQ_MODE = 01b)
+Configure alert condition using HIGH_TH_CHx, 
+LOW_TH_CHx,EVENT_COUNT_CHx, HYSTERESIS_CHx, and 
+EVENT_REGION_CHx fields
+Enable analog inputs to trigger ALERT pin using ALERT_CH_SEL
+Configure ALERT pin using ALERT_DRIVE and ALERT_LOGIC fields
+Configure sampling rate of analog inputs using OSC_SEL and CLK_DIV
+Set mode to autonomous monitoring (CONV_MODE = 01b)
+(optional) Enable averaging and min/max recording (OSR[2:0] and STATS_EN)
+Channel 
+selection
+Threshold & Alert 
+configuration
+Sampling rate 
+configuration
+ALERT?
+Configuration
+Enable threshold comparison (DWC_EN = 1b)
+Enable autonomous monitoring (SEQ_START = 1b)
+Stop autonomous monitoring (SEQ_START = 0b)
+Disable threshold comparison (DWC_EN = 0b)
+Read alert flags ±EVENT_FLAG, EVENT_HIGH_FLAG, EVENT_LOW_FLAG
+Clear alert flags ±EVENT_HIGH_FLAG, EVENT_LOW_FLAG
+Active Operation
+(Digital 
+communication 
+interface can be idle)
+Yes
+No
+ALERT Detected
+(optional) read conversion results in 
+MIN_VALUE_CHx, MAX_VALUE_CHx, and 
+LAST_VALUE_CHx registers
+Figure 7-17. Configuring the Device in Autonomous Mode
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+www.ti.com
+28
+Submit Document Feedback
+Copyright © 2024 Texas Instruments Incorporated
+Product Folder Links: ADS7038 ADS7038H
+7.4.6 Turbo Comparator Mode
+Turbo comparator mode allows fast comparison with high/low thresholds using the digital window comparator. 
+ADC output data is not available in this mode.
+Figure 7-18 lists the comparison start and read frames for turbo comparator mode. The desired analog input 
+channels can be configured for sequencing in the AUTO_SEQ_CH_SEL register. To enable the channel 
+sequencer, set SEQ_START to 1b. After every comparison, the channel sequencer switches the multiplexer 
+to the next analog input in ascending order. To stop the channel sequencer from selecting channels, set 
+SEQ_START to 0b. See sction on Oscillator and Timing Control for more details on configuring speed in turbo 
+comparator mode.
+Abort the ongoing sequence by setting SEQ_START to 0b before changing the functional mode or device 
+configuration.
+Idle
+SEQ_MODE = 0b
+CONV_MODE = 0b
+Configure channels as AIN/GPIO using PIN_CFG
+Calibrate offset error (CAL = 1b)
+Enable analog inputs for sequencing (AUTO_SEQ_CH_SEL)
+Select auto-sequence mode (SEQ_MODE = 01b)
+Configure alert condition using HIGH_TH_CHx, 
+LOW_TH_CHx,EVENT_COUNT_CHx, HYSTERESIS_CHx, and 
+EVENT_REGION_CHx fields
+Enable analog inputs to trigger ALERT pin using ALERT_CH_SEL
+Configure ALERT pin using ALERT_DRIVE and ALERT_LOGIC fields
+Configure sampling rate of analog inputs using OSC_SEL and CLK_DIV
+Select turbo comparator mode (CONV_MODE = 10b)
+Channel 
+selection
+Threshold & Alert 
+configuration
+Sampling rate 
+configuration
+ALERT?
+Configuration
+Enable threshold comparison (DWC_EN = 1b)
+Start turbo comparator mode (SEQ_START = 1b)
+Stop turbo comparator mode (SEQ_START = 0b)
+Disable threshold comparison (DWC_EN = 0b)
+Read alert flags ±EVENT_FLAG, EVENT_HIGH_FLAG, EVENT_LOW_FLAG
+Clear alert flags ±EVENT_HIGH_FLAG, EVENT_LOW_FLAG
+Active Operation
+(Digital 
+communication 
+interface can be idle)
+Yes
+No
+ALERT Detected
+Figure 7-18. Device Operation in Turbo Comparator Mode
+www.ti.com
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+Copyright © 2024 Texas Instruments Incorporated
+Submit Document Feedback
+29
+Product Folder Links: ADS7038 ADS7038H
+8 Register Map
+8.1 ADS7038 Registers
+Table 8-1 lists the ADS7038 registers. All register offset addresses not listed in Table 8-1 should be considered 
+as reserved locations and the register contents should not be modified.
+Table 8-1. ADS7038 Registers
+Address
+Acronym
+Register Name
+Section
+0x0
+SYSTEM_STATUS
+SYSTEM_STATUS Register (Address = 0x0) [reset = 0x81]
+0x1
+GENERAL_CFG
+GENERAL_CFG Register (Address = 0x1) [reset = 0x0]
+0x2
+DATA_CFG
+DATA_CFG Register (Address = 0x2) [reset = 0x0]
+0x3
+OSR_CFG
+OSR_CFG Register (Address = 0x3) [reset = 0x0]
+0x4
+OPMODE_CFG
+OPMODE_CFG Register (Address = 0x4) [reset = 0x0]
+0x5
+PIN_CFG
+PIN_CFG Register (Address = 0x5) [reset = 0x0]
+0x7
+GPIO_CFG
+GPIO_CFG Register (Address = 0x7) [reset = 0x0]
+0x9
+GPO_DRIVE_CFG
+GPO_DRIVE_CFG Register (Address = 0x9) [reset = 0x0]
+0xB
+GPO_VALUE
+GPO_VALUE Register (Address = 0xB) [reset = 0x0]
+0xD
+GPI_VALUE
+GPI_VALUE Register (Address = 0xD) [reset = 0x0]
+0x10
+SEQUENCE_CFG
+SEQUENCE_CFG Register (Address = 0x10) [reset = 0x0]
+0x11
+CHANNEL_SEL
+CHANNEL_SEL Register (Address = 0x11) [reset = 0x0]
+0x12
+AUTO_SEQ_CH_SEL
+AUTO_SEQ_CH_SEL Register (Address = 0x12) [reset = 0x0]
+0x14
+ALERT_CH_SEL
+ALERT_CH_SEL Register (Address = 0x14) [reset = 0x0]
+0x16
+ALERT_MAP
+ALERT_MAP Register (Address = 0x16) [reset = 0x0]
+0x17
+ALERT_PIN_CFG
+ALERT_PIN_CFG Register (Address = 0x17) [reset = 0x0]
+0x18
+EVENT_FLAG
+EVENT_FLAG Register (Address = 0x18) [reset = 0x0]
+0x1A
+EVENT_HIGH_FLAG
+EVENT_HIGH_FLAG Register (Address = 0x1A) [reset = 0x0]
+0x1C
+EVENT_LOW_FLAG
+EVENT_LOW_FLAG Register (Address = 0x1C) [reset = 0x0]
+0x1E
+EVENT_RGN
+EVENT_RGN Register (Address = 0x1E) [reset = 0x0]
+0x20
+HYSTERESIS_CH0
+HYSTERESIS_CH0 Register (Address = 0x20) [reset = 0xF0]
+0x21
+HIGH_TH_CH0
+HIGH_TH_CH0 Register (Address = 0x21) [reset = 0xFF]
+0x22
+EVENT_COUNT_CH0
+EVENT_COUNT_CH0 Register (Address = 0x22) [reset = 0x0]
+0x23
+LOW_TH_CH0
+LOW_TH_CH0 Register (Address = 0x23) [reset = 0x0]
+0x24
+HYSTERESIS_CH1
+HYSTERESIS_CH1 Register (Address = 0x24) [reset = 0xF0]
+0x25
+HIGH_TH_CH1
+HIGH_TH_CH1 Register (Address = 0x25) [reset = 0xFF]
+0x26
+EVENT_COUNT_CH1
+EVENT_COUNT_CH1 Register (Address = 0x26) [reset = 0x0]
+0x27
+LOW_TH_CH1
+LOW_TH_CH1 Register (Address = 0x27) [reset = 0x0]
+0x28
+HYSTERESIS_CH2
+HYSTERESIS_CH2 Register (Address = 0x28) [reset = 0xF0]
+0x29
+HIGH_TH_CH2
+HIGH_TH_CH2 Register (Address = 0x29) [reset = 0xFF]
+0x2A
+EVENT_COUNT_CH2
+EVENT_COUNT_CH2 Register (Address = 0x2A) [reset = 0x0]
+0x2B
+LOW_TH_CH2
+LOW_TH_CH2 Register (Address = 0x2B) [reset = 0x0]
+0x2C
+HYSTERESIS_CH3
+HYSTERESIS_CH3 Register (Address = 0x2C) [reset = 0xF0]
+0x2D
+HIGH_TH_CH3
+HIGH_TH_CH3 Register (Address = 0x2D) [reset = 0xFF]
+0x2E
+EVENT_COUNT_CH3
+EVENT_COUNT_CH3 Register (Address = 0x2E) [reset = 0x0]
+0x2F
+LOW_TH_CH3
+LOW_TH_CH3 Register (Address = 0x2F) [reset = 0x0]
+0x30
+HYSTERESIS_CH4
+HYSTERESIS_CH4 Register (Address = 0x30) [reset = 0xF0]
+0x31
+HIGH_TH_CH4
+HIGH_TH_CH4 Register (Address = 0x31) [reset = 0xFF]
+0x32
+EVENT_COUNT_CH4
+EVENT_COUNT_CH4 Register (Address = 0x32) [reset = 0x0]
+0x33
+LOW_TH_CH4
+LOW_TH_CH4 Register (Address = 0x33) [reset = 0x0]
+0x34
+HYSTERESIS_CH5
+HYSTERESIS_CH5 Register (Address = 0x34) [reset = 0xF0]
+0x35
+HIGH_TH_CH5
+HIGH_TH_CH5 Register (Address = 0x35) [reset = 0xFF]
+0x36
+EVENT_COUNT_CH5
+EVENT_COUNT_CH5 Register (Address = 0x36) [reset = 0x0]
+0x37
+LOW_TH_CH5
+LOW_TH_CH5 Register (Address = 0x37) [reset = 0x0]
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+www.ti.com
+30
+Submit Document Feedback
+Copyright © 2024 Texas Instruments Incorporated
+Product Folder Links: ADS7038 ADS7038H
+Table 8-1. ADS7038 Registers (continued)
+Address
+Acronym
+Register Name
+Section
+0x38
+HYSTERESIS_CH6
+HYSTERESIS_CH6 Register (Address = 0x38) [reset = 0xF0]
+0x39
+HIGH_TH_CH6
+HIGH_TH_CH6 Register (Address = 0x39) [reset = 0xFF]
+0x3A
+EVENT_COUNT_CH6
+EVENT_COUNT_CH6 Register (Address = 0x3A) [reset = 0x0]
+0x3B
+LOW_TH_CH6
+LOW_TH_CH6 Register (Address = 0x3B) [reset = 0x0]
+0x3C
+HYSTERESIS_CH7
+HYSTERESIS_CH7 Register (Address = 0x3C) [reset = 0xF0]
+0x3D
+HIGH_TH_CH7
+HIGH_TH_CH7 Register (Address = 0x3D) [reset = 0xFF]
+0x3E
+EVENT_COUNT_CH7
+EVENT_COUNT_CH7 Register (Address = 0x3E) [reset = 0x0]
+0x3F
+LOW_TH_CH7
+LOW_TH_CH7 Register (Address = 0x3F) [reset = 0x0]
+0x4E
+RESERVED
+RESERVED Register (Address = 0x4E) [reset = 0x0]
+0x60
+MAX_CH0_LSB
+MAX_CH0_LSB Register (Address = 0x60) [reset = 0x0]
+0x61
+MAX_CH0_MSB
+MAX_CH0_MSB Register (Address = 0x61) [reset = 0x0]
+0x62
+MAX_CH1_LSB
+MAX_CH1_LSB Register (Address = 0x62) [reset = 0x0]
+0x63
+MAX_CH1_MSB
+MAX_CH1_MSB Register (Address = 0x63) [reset = 0x0]
+0x64
+MAX_CH2_LSB
+MAX_CH2_LSB Register (Address = 0x64) [reset = 0x0]
+0x65
+MAX_CH2_MSB
+MAX_CH2_MSB Register (Address = 0x65) [reset = 0x0]
+0x66
+MAX_CH3_LSB
+MAX_CH3_LSB Register (Address = 0x66) [reset = 0x0]
+0x67
+MAX_CH3_MSB
+MAX_CH3_MSB Register (Address = 0x67) [reset = 0x0]
+0x68
+MAX_CH4_LSB
+MAX_CH4_LSB Register (Address = 0x68) [reset = 0x0]
+0x69
+MAX_CH4_MSB
+MAX_CH4_MSB Register (Address = 0x69) [reset = 0x0]
+0x6A
+MAX_CH5_LSB
+MAX_CH5_LSB Register (Address = 0x6A) [reset = 0x0]
+0x6B
+MAX_CH5_MSB
+MAX_CH5_MSB Register (Address = 0x6B) [reset = 0x0]
+0x6C
+MAX_CH6_LSB
+MAX_CH6_LSB Register (Address = 0x6C) [reset = 0x0]
+0x6D
+MAX_CH6_MSB
+MAX_CH6_MSB Register (Address = 0x6D) [reset = 0x0]
+0x6E
+MAX_CH7_LSB
+MAX_CH7_LSB Register (Address = 0x6E) [reset = 0x0]
+0x6F
+MAX_CH7_MSB
+MAX_CH7_MSB Register (Address = 0x6F) [reset = 0x0]
+0x80
+MIN_CH0_LSB
+MIN_CH0_LSB Register (Address = 0x80) [reset = 0xFF]
+0x81
+MIN_CH0_MSB
+MIN_CH0_MSB Register (Address = 0x81) [reset = 0xFF]
+0x82
+MIN_CH1_LSB
+MIN_CH1_LSB Register (Address = 0x82) [reset = 0xFF]
+0x83
+MIN_CH1_MSB
+MIN_CH1_MSB Register (Address = 0x83) [reset = 0xFF]
+0x84
+MIN_CH2_LSB
+MIN_CH2_LSB Register (Address = 0x84) [reset = 0xFF]
+0x85
+MIN_CH2_MSB
+MIN_CH2_MSB Register (Address = 0x85) [reset = 0xFF]
+0x86
+MIN_CH3_LSB
+MIN_CH3_LSB Register (Address = 0x86) [reset = 0xFF]
+0x87
+MIN_CH3_MSB
+MIN_CH3_MSB Register (Address = 0x87) [reset = 0xFF]
+0x88
+MIN_CH4_LSB
+MIN_CH4_LSB Register (Address = 0x88) [reset = 0xFF]
+0x89
+MIN_CH4_MSB
+MIN_CH4_MSB Register (Address = 0x89) [reset = 0xFF]
+0x8A
+MIN_CH5_LSB
+MIN_CH5_LSB Register (Address = 0x8A) [reset = 0xFF]
+0x8B
+MIN_CH5_MSB
+MIN_CH5_MSB Register (Address = 0x8B) [reset = 0xFF]
+0x8C
+MIN_CH6_LSB
+MIN_CH6_LSB Register (Address = 0x8C) [reset = 0xFF]
+0x8D
+MIN_CH6_MSB
+MIN_CH6_MSB Register (Address = 0x8D) [reset = 0xFF]
+0x8E
+MIN_CH7_LSB
+MIN_CH7_LSB Register (Address = 0x8E) [reset = 0xFF]
+0x8F
+MIN_CH7_MSB
+MIN_CH7_MSB Register (Address = 0x8F) [reset = 0xFF]
+0xA0
+RECENT_CH0_LSB
+RECENT_CH0_LSB Register (Address = 0xA0) [reset = 0x0]
+0xA1
+RECENT_CH0_MSB
+RECENT_CH0_MSB Register (Address = 0xA1) [reset = 0x0]
+0xA2
+RECENT_CH1_LSB
+RECENT_CH1_LSB Register (Address = 0xA2) [reset = 0x0]
+0xA3
+RECENT_CH1_MSB
+RECENT_CH1_MSB Register (Address = 0xA3) [reset = 0x0]
+0xA4
+RECENT_CH2_LSB
+RECENT_CH2_LSB Register (Address = 0xA4) [reset = 0x0]
+0xA5
+RECENT_CH2_MSB
+RECENT_CH2_MSB Register (Address = 0xA5) [reset = 0x0]
+0xA6
+RECENT_CH3_LSB
+RECENT_CH3_LSB Register (Address = 0xA6) [reset = 0x0]
+0xA7
+RECENT_CH3_MSB
+RECENT_CH3_MSB Register (Address = 0xA7) [reset = 0x0]
+0xA8
+RECENT_CH4_LSB
+RECENT_CH4_LSB Register (Address = 0xA8) [reset = 0x0]
+www.ti.com
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+Copyright © 2024 Texas Instruments Incorporated
+Submit Document Feedback
+31
+Product Folder Links: ADS7038 ADS7038H
+Table 8-1. ADS7038 Registers (continued)
+Address
+Acronym
+Register Name
+Section
+0xA9
+RECENT_CH4_MSB
+RECENT_CH4_MSB Register (Address = 0xA9) [reset = 0x0]
+0xAA
+RECENT_CH5_LSB
+RECENT_CH5_LSB Register (Address = 0xAA) [reset = 0x0]
+0xAB
+RECENT_CH5_MSB
+RECENT_CH5_MSB Register (Address = 0xAB) [reset = 0x0]
+0xAC
+RECENT_CH6_LSB
+RECENT_CH6_LSB Register (Address = 0xAC) [reset = 0x0]
+0xAD
+RECENT_CH6_MSB
+RECENT_CH6_MSB Register (Address = 0xAD) [reset = 0x0]
+0xAE
+RECENT_CH7_LSB
+RECENT_CH7_LSB Register (Address = 0xAE) [reset = 0x0]
+0xAF
+RECENT_CH7_MSB
+RECENT_CH7_MSB Register (Address = 0xAF) [reset = 0x0]
+0xC3
+GPO0_TRIG_EVENT_SEL
+GPO0_TRIG_EVENT_SEL Register (Address = 0xC3) [reset = 0x0]
+0xC5
+GPO1_TRIG_EVENT_SEL
+GPO1_TRIG_EVENT_SEL Register (Address = 0xC5) [reset = 0x0]
+0xC7
+GPO2_TRIG_EVENT_SEL
+GPO2_TRIG_EVENT_SEL Register (Address = 0xC7) [reset = 0x0]
+0xC9
+GPO3_TRIG_EVENT_SEL
+GPO3_TRIG_EVENT_SEL Register (Address = 0xC9) [reset = 0x0]
+0xCB
+GPO4_TRIG_EVENT_SEL
+GPO4_TRIG_EVENT_SEL Register (Address = 0xCB) [reset = 0x0]
+0xCD
+GPO5_TRIG_EVENT_SEL
+GPO5_TRIG_EVENT_SEL Register (Address = 0xCD) [reset = 0x0]
+0xCF
+GPO6_TRIG_EVENT_SEL
+GPO6_TRIG_EVENT_SEL Register (Address = 0xCF) [reset = 0x0]
+0xD1
+GPO7_TRIG_EVENT_SEL
+GPO7_TRIG_EVENT_SEL Register (Address = 0xD1) [reset = 0x0]
+0xE9
+GPO_TRIGGER_CFG
+GPO_TRIGGER_CFG Register (Address = 0xE9) [reset = 0x0]
+0xEB
+GPO_VALUE_TRIG
+GPO_VALUE_TRIG Register (Address = 0xEB) [reset = 0x0]
+Complex bit access types are encoded to fit into small table cells. Table 8-2 shows the codes that are used for 
+access types in this section.
+Table 8-2. ADS7038 Access Type Codes
+Access Type
+Code
+Description
+Read Type
+R
+R
+Read
+Write Type
+W
+W
+Write
+Reset or Default Value
+-n
+Value after reset or the default 
+value
+Register Array Variables
+i,j,k,l,m,n
+When these variables are used in 
+a register name, an offset, or an 
+address, they refer to the value of 
+a register array where the register 
+is part of a group of repeating 
+registers. The register groups 
+form a hierarchical structure and 
+the array is represented with a 
+formula.
+y
+When this variable is used in a 
+register name, an offset, or an 
+address it refers to the value of 
+a register array.
+ADS7038, ADS7038H
+SBAS979C – JUNE 2019 – REVISED SEPTEMBER 2024
+www.ti.com
+32
+Submit Document Feedback
+Copyright © 2024 Texas Instruments Incorporated
+Product Folder Links: ADS7038 ADS7038H

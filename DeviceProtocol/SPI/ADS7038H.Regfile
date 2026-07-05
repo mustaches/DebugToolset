@@ -1,0 +1,1882 @@
+{
+  "name": "ADS7038H",
+  "hasSubaddress": true,
+  "commands": {
+    "0x00": {
+      "name": "NOP",
+      "access": "W",
+      "description": "No operation"
+    },
+    "0x08": {
+      "name": "Write",
+      "access": "W",
+      "description": "Single register write",
+      "addrBytes": 1
+    },
+    "0x10": {
+      "name": "Read",
+      "access": "R",
+      "description": "Single register read",
+      "addrBytes": 1
+    },
+    "0x18": {
+      "name": "Set Bit",
+      "access": "W",
+      "description": "Set bit in register",
+      "addrBytes": 1
+    },
+    "0x20": {
+      "name": "Clear Bit",
+      "access": "W",
+      "description": "Clear bit in register",
+      "addrBytes": 1
+    },
+    "0x80": {
+      "name": "On-the-fly-CH0-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 0 Selection"
+    },
+    "0x88": {
+      "name": "On-the-fly-CH1-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 1 Selection"
+    },
+    "0x90": {
+      "name": "On-the-fly-CH2-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 2 Selection"
+    },
+    "0x98": {
+      "name": "On-the-fly-CH3-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 3 Selection"
+    },
+    "0xA0": {
+      "name": "On-the-fly-CH4-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 4 Selection"
+    },
+    "0xA8": {
+      "name": "On-the-fly-CH5-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 5 Selection"
+    },
+    "0xB0": {
+      "name": "On-the-fly-CH6-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 6 Selection"
+    },
+    "0xB8": {
+      "name": "On-the-fly-CH7-ID",
+      "access": "W",
+      "description": "On-the-fly Mode Channel 7 Selection"
+    }
+  },
+  "registers": {
+    "0x00": {
+      "name": "SYSTEM_STATUS",
+      "access": "R/W",
+      "description": "0x0 SYSTEM_STATUS SYSTEM_STATUS Register (Address = 0x0) [reset = 0x81]",
+      "fields": [
+        {
+          "name": "RSVD",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Reads return 1b."
+        },
+        {
+          "name": "SEQ STATUS _",
+          "startBit": 6,
+          "endBit": 6,
+          "access": "R",
+          "description": "Status of the channel sequencer. 0b = Sequence stopped 1b = Sequence in progress",
+          "valueMap": {
+            "0": "Sequence stopped",
+            "1": "Sequence in progress"
+          }
+        },
+        {
+          "name": "CRCERR FUSE _",
+          "startBit": 2,
+          "endBit": 2,
+          "access": "R",
+          "description": "Device power-up configuration CRC check status. To re-evaluate this bit, software reset the device or power cycle AVDD. 0b = No problems detected in power-up configuration. 1b = Device configuration not loaded correctly.",
+          "valueMap": {
+            "0": "No problems detected in power-up configuration.",
+            "1": "Device configuration not loaded correctly."
+          }
+        },
+        {
+          "name": "CRCERR IN _",
+          "startBit": 1,
+          "endBit": 1,
+          "access": "R/W",
+          "description": "Status of CRC check on incoming data. Write 1b to clear this error flag. 0b = No CRC error. 1b = CRC error detected. All register writes, except to addresses 0x00 and 0x01, are blocked.",
+          "valueMap": {
+            "0": "No CRC error.",
+            "1": "CRC error detected. All register writes, except to addresses 0x00 and 0x01, are blocked."
+          }
+        },
+        {
+          "name": "BOR",
+          "startBit": 0,
+          "endBit": 0,
+          "access": "R/W",
+          "description": "Brown out reset indicator. This bit is set if brown out condition occurs or device is power cycled. Write 1b to this bit to clear the flag. 0b = No brown out from the last time this bit was cleared. 1b = Brown out condition detected or device power cycled.",
+          "valueMap": {
+            "0": "No brown out from the last time this bit was cleared.",
+            "1": "Brown out condition detected or device power cycled."
+          }
+        }
+      ]
+    },
+    "0x01": {
+      "name": "GENERAL_CFG",
+      "access": "R/W",
+      "description": "0x1 GENERAL_CFG GENERAL_CFG Register (Address = 0x1) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "CRC EN _",
+          "startBit": 6,
+          "endBit": 6,
+          "access": "R/W",
+          "description": "Enable or disable the CRC on device interface. 0b = CRC module disabled. 1b = CRC appended to data output. CRC check is enabled on incoming data.",
+          "valueMap": {
+            "0": "CRC module disabled.",
+            "1": "CRC appended to data output. CRC check is enabled on incoming data."
+          }
+        },
+        {
+          "name": "STATS EN _",
+          "startBit": 5,
+          "endBit": 5,
+          "access": "R/W",
+          "description": "Enable or disable the statistics module. 0b = Minimum, maximum, and recent value registers are not updated. 1b = Clear minimum, maximum, and recent value registers and conitnue updating with new conversion results.",
+          "valueMap": {
+            "0": "Minimum, maximum, and recent value registers are not updated.",
+            "1": "Clear minimum, maximum, and recent value registers and conitnue updating with new conversion results."
+          }
+        }
+      ]
+    },
+    "0x02": {
+      "name": "DATA_CFG",
+      "access": "R/W",
+      "description": "0x2 DATA_CFG DATA_CFG Register (Address = 0x2) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "FIX PAT _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Device outputs fixed data bits which can be helpful for debugging communication with the device. 0b = Normal operation. 1b = Device outputs fixed code 0xA5A repeatitively when reading ADC data.",
+          "valueMap": {
+            "0": "Normal operation.",
+            "1": "Device outputs fixed code 0xA5A repeatitively when reading ADC data."
+          }
+        },
+        {
+          "name": "APPEND STATUS[1:0] _",
+          "startBit": 5,
+          "endBit": 5,
+          "access": "R/W",
+          "description": "Append 4-bit channel ID or status flags to output data. 00b: 01b: 10b: 11b: 0b = Channel ID and status flags are not appended to ADC data. 1b = 4-bit channel ID is appended to ADC data. 10b = 4-bit status flags are appended to ADC data. 11b = Reserved.",
+          "valueMap": {
+            "0": "Channel ID and status flags are not appended to ADC data.",
+            "1": "4-bit channel ID is appended to ADC data.",
+            "2": "4-bit status flags are appended to ADC data.",
+            "3": "Reserved."
+          }
+        },
+        {
+          "name": "CPOL CPHA[1:0] _",
+          "startBit": 1,
+          "endBit": 1,
+          "access": "R/W",
+          "description": "This field sets the polarity and phase of SPI communication. 0b = CPOL = 0, CPHA = 0. 1b = CPOL = 0, CPHA = 1. 10b = CPOL = 1, CPHA = 0. 11b = CPOL = 1, CPHA = 1."
+        }
+      ]
+    },
+    "0x03": {
+      "name": "OSR_CFG",
+      "access": "R/W",
+      "description": "0x3 OSR_CFG OSR_CFG Register (Address = 0x3) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "OSR[2:0]",
+          "startBit": 2,
+          "endBit": 2,
+          "access": "R/W",
+          "description": "Selects the oversampling ratio for ADC conversion result. 0b = No averaging 1b = 2 samples 10b = 4 samples 11b = 8 samples 100b = 16 samples 101b = 32 samples 110b = 64 samples 111b = 128 samples",
+          "valueMap": {
+            "0": "No averaging",
+            "1": "2 samples",
+            "2": "4 samples",
+            "3": "8 samples",
+            "4": "16 samples",
+            "5": "32 samples",
+            "6": "64 samples",
+            "7": "128 samples"
+          }
+        }
+      ]
+    },
+    "0x04": {
+      "name": "OPMODE_CFG",
+      "access": "R/W",
+      "description": "0x4 OPMODE_CFG OPMODE_CFG Register (Address = 0x4) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "CONV ON ERR _ _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Control continuation of autonomous modes if CRC error is detected on communication interface. 0b = If CRC error is detected, device continues channel sequencing and pin configuration is retained. See the CRCERR IN bit for more details. _ 1b = If CRC error is detected, devicel changes all channels to analog inpts and channel sequencing is paused until CRCERR IN = 1b. After clearing _ CRCERR IN flag, device resumes channel sequencing and pin confguration is _ restored.",
+          "valueMap": {
+            "0": "If CRC error is detected, device continues channel sequencing and pin configuration is retained. See the CRCERR IN bit for more details. _"
+          }
+        },
+        {
+          "name": "CONV MODE[1:0] _",
+          "startBit": 6,
+          "endBit": 6,
+          "access": "R/W",
+          "description": "These bits set the mode of conversion of the ADC. 0b = Manual mode; conversions are initiated by host. 1b = Autonomous mode; conversions are initiated by the internal state machine.",
+          "valueMap": {
+            "0": "Manual mode; conversions are initiated by host.",
+            "1": "Autonomous mode; conversions are initiated by the internal state machine."
+          }
+        },
+        {
+          "name": "OSC SEL _",
+          "startBit": 4,
+          "endBit": 4,
+          "access": "R/W",
+          "description": "Selects the oscillator for internal timing generation. 0b = High-speed oscillator. 1b = Low-power oscillator.",
+          "valueMap": {
+            "0": "High-speed oscillator.",
+            "1": "Low-power oscillator."
+          }
+        },
+        {
+          "name": "CLK DIV[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Sampling speed control in autonomous monitoring mode (CONV MODE = _ 01b). See the section on oscillator and timing control for details."
+        }
+      ]
+    },
+    "0x05": {
+      "name": "PIN_CFG",
+      "access": "R/W",
+      "description": "0x5 PIN_CFG PIN_CFG Register (Address = 0x5) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "PIN CFG[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Configure device channels AIN / GPIO [7:0] as analog inputs or GPIOs. 0b = Channel is configured as analog input. 1b = Channel is configured as GPIO.",
+          "valueMap": {
+            "0": "Channel is configured as analog input.",
+            "1": "Channel is configured as GPIO."
+          }
+        }
+      ]
+    },
+    "0x07": {
+      "name": "GPIO_CFG",
+      "access": "R/W",
+      "description": "0x7 GPIO_CFG GPIO_CFG Register (Address = 0x7) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPIO CFG[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Configure GPIO[7:0] as either digital inputs or digital outputs. 0b = GPIO is configured as digital input. 1b = GPIO is configured as digital output.",
+          "valueMap": {
+            "0": "GPIO is configured as digital input.",
+            "1": "GPIO is configured as digital output."
+          }
+        }
+      ]
+    },
+    "0x09": {
+      "name": "GPO_DRIVE_CFG",
+      "access": "R/W",
+      "description": "0x9 GPO_DRIVE_CFG GPO_DRIVE_CFG Register (Address = 0x9) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO DRIVE CFG[7:0] _ _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Configure digital outputs GPO[7:0] as open-drain or push-pull outputs. 0b = Digital output is open-drain; connect external pullup resistor. 1b = Push-pull driver is used for digital output.",
+          "valueMap": {
+            "0": "Digital output is open-drain; connect external pullup resistor.",
+            "1": "Push-pull driver is used for digital output."
+          }
+        }
+      ]
+    },
+    "0x0B": {
+      "name": "GPO_VALUE",
+      "access": "R/W",
+      "description": "0xB GPO_VALUE GPO_VALUE Register (Address = 0xB) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO VALUE[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Logic level to be set on digital outputs GPO[7:0]. 0b = Digital output set to logic 0. 1b = Digital output set to logic 1.",
+          "valueMap": {
+            "0": "Digital output set to logic 0.",
+            "1": "Digital output set to logic 1."
+          }
+        }
+      ]
+    },
+    "0x0D": {
+      "name": "GPI_VALUE",
+      "access": "R/W",
+      "description": "0xD GPI_VALUE GPI_VALUE Register (Address = 0xD) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPI VALUE[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Readback the logic level on GPIO[7:0]. 0b = GPIO is at logic 0. 1b = GPIO is at logic 1.",
+          "valueMap": {
+            "0": "GPIO is at logic 0.",
+            "1": "GPIO is at logic 1."
+          }
+        }
+      ]
+    },
+    "0x10": {
+      "name": "SEQUENCE_CFG",
+      "access": "R/W",
+      "description": "0x10 SEQUENCE_CFG SEQUENCE_CFG Register (Address = 0x10) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "SEQ START _",
+          "startBit": 4,
+          "endBit": 4,
+          "access": "R/W",
+          "description": "Control for start of channel sequence when using auto sequence mode (SEQ MODE = 01b). _ 0b = Stop channel sequencing. 1b = Start channel sequencing in ascending order for channels enabled in AUTO SEQ CHSEL register. _ _",
+          "valueMap": {
+            "0": "Stop channel sequencing.",
+            "1": "Start channel sequencing in ascending order for channels enabled in AUTO SEQ CHSEL register. _ _"
+          }
+        }
+      ]
+    },
+    "0x11": {
+      "name": "CHANNEL_SEL",
+      "access": "R/W",
+      "description": "0x11 CHANNEL_SEL CHANNEL_SEL Register (Address = 0x11) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MANUAL CHID[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "In manual mode (SEQ MODE = 00b), this field contains the 4-bit _ channel ID of the analog input channel for next ADC conversion. For valid ADC data, the selected channel must not be configured as GPIO in PIN CFG register. 1xxx = Reserved. _ 0b = AIN0 1b = AIN1 10b = AIN2 11b = AIN3 100b = AIN4 101b = AIN5 110b = AIN6 111b = AIN7",
+          "valueMap": {
+            "0": "AIN0",
+            "1": "AIN1",
+            "2": "AIN2",
+            "3": "AIN3",
+            "4": "AIN4",
+            "5": "AIN5",
+            "6": "AIN6",
+            "7": "AIN7"
+          }
+        }
+      ]
+    },
+    "0x12": {
+      "name": "AUTO_SEQ_CH_SEL",
+      "access": "R/W",
+      "description": "0x12 AUTO_SEQ_CH_SEL AUTO_SEQ_CH_SEL Register (Address = 0x12) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "AUTO SEQ CH SEL[7:0] _ _ _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select analog input channels AIN[7:0] in for auto sequencing mode. 0b = Analog input channel is not enabled in scanning sequence. 1b = Analog input channel is enabled in scanning sequence.",
+          "valueMap": {
+            "0": "Analog input channel is not enabled in scanning sequence.",
+            "1": "Analog input channel is enabled in scanning sequence."
+          }
+        }
+      ]
+    },
+    "0x14": {
+      "name": "ALERT_CH_SEL",
+      "access": "R/W",
+      "description": "0x14 ALERT_CH_SEL ALERT_CH_SEL Register (Address = 0x14) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "ALERT CH SEL[7:0] _ _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select channels for which the alert flags can assert the internal ALERT signal. The ALERT signal can be mapped to the digital output channel configured in the ALERT PIN[3:0] field. _ 0b = Alert flags for this channel do not assert the ALERT pin. 1b = Alert flags for this channel assert the ALERT pin.",
+          "valueMap": {
+            "0": "Alert flags for this channel do not assert the ALERT pin.",
+            "1": "Alert flags for this channel assert the ALERT pin."
+          }
+        }
+      ]
+    },
+    "0x16": {
+      "name": "ALERT_MAP",
+      "access": "R/W",
+      "description": "0x16 ALERT_MAP ALERT_MAP Register (Address = 0x16) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "ALERT CRCIN _",
+          "startBit": 0,
+          "endBit": 0,
+          "access": "R/W",
+          "description": "Enable or disable the alert notification for CRC error on input data (CRCERR IN = 1b). _ 0b = ALERT signal is not asserted when CRCERR IN = 1b. _ 1b = ALERT signal is asserted when CRCERR IN = 1b. Clear _ CRCERR IN for deasserting the ALERT pin. _"
+        }
+      ]
+    },
+    "0x17": {
+      "name": "ALERT_PIN_CFG",
+      "access": "R/W",
+      "description": "0x17 ALERT_PIN_CFG ALERT_PIN_CFG Register (Address = 0x17) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "ALERT PIN[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Internal ALERT output of the digital window comparator will be output on this channel. This channel must be configured as digital output."
+        }
+      ]
+    },
+    "0x18": {
+      "name": "EVENT_FLAG",
+      "access": "R/W",
+      "description": "0x18 EVENT_FLAG EVENT_FLAG Register (Address = 0x18) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "EVENT FLAG[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Alert flags indicating digital window comparator status for CH[7:0]. Clear individual bits of EVENT HIGH FLAG or EVENT LOW FLAG registers to clear the corresponding alert flag. _ _ _ _ 0b = Event condition not detected. 1b = Event condition detected.",
+          "valueMap": {
+            "0": "Event condition not detected.",
+            "1": "Event condition detected."
+          }
+        }
+      ]
+    },
+    "0x1A": {
+      "name": "EVENT_HIGH_FLAG",
+      "access": "R/W",
+      "description": "0x1A EVENT_HIGH_FLAG EVENT_HIGH_FLAG Register (Address = 0x1A) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "EVENT HIGH FLAG[7:0] _ _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Alert flag corresponding to high threshold of analog input or rising edge of digital input on CH[7:0]. Write 1b to clear this flag. 0b = No alert condition detected. 1b = Either high threshold was exceeded (analog input) or rising edge was detected (digital input).",
+          "valueMap": {
+            "0": "No alert condition detected.",
+            "1": "Either high threshold was exceeded (analog input) or rising edge was detected (digital input)."
+          }
+        }
+      ]
+    },
+    "0x1C": {
+      "name": "EVENT_LOW_FLAG",
+      "access": "R/W",
+      "description": "0x1C EVENT_LOW_FLAG EVENT_LOW_FLAG Register (Address = 0x1C) [reset = 0x0]",
+      "fields": []
+    },
+    "0x1E": {
+      "name": "EVENT_RGN",
+      "access": "R/W",
+      "description": "0x1E EVENT_RGN EVENT_RGN Register (Address = 0x1E) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "EVENT RGN[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Choice of region used in monitoring analog/digital inputs CH[7:0]. 0b = Alert flag is set if: (conversion result < low threshold) or (conversion result > high threshold). For digital inputs, logic 1 sets the alert flag. 1b = Alert flag is set if: (low threshold > conversion result < high threshold). For digital inputs, logic 0 sets the alert flag.",
+          "valueMap": {
+            "0": "Alert flag is set if: (conversion result < low threshold) or (conversion result > high threshold). For digital inputs, logic 1 sets the alert flag.",
+            "1": "Alert flag is set if: (low threshold > conversion result < high threshold). For digital inputs, logic 0 sets the alert flag."
+          }
+        }
+      ]
+    },
+    "0x20": {
+      "name": "HYSTERESIS_CH0",
+      "access": "R/W",
+      "description": "0x20 HYSTERESIS_CH0 HYSTERESIS_CH0 Register (Address = 0x20) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH0 LSB[3:0 _ _ _ ]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH0[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x21": {
+      "name": "HIGH_TH_CH0",
+      "access": "R/W",
+      "description": "0x21 HIGH_TH_CH0 HIGH_TH_CH0 Register (Address = 0x21) [reset = 0xFF]",
+      "fields": []
+    },
+    "0x22": {
+      "name": "EVENT_COUNT_CH0",
+      "access": "R/W",
+      "description": "0x22 EVENT_COUNT_CH0 EVENT_COUNT_CH0 Register (Address = 0x22) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH0 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of low threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "EVENT COUNT CH0[3:0 _ _ ]",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Configuration for checking 'n+1' consecutive samples above threshold before setting alert flag."
+        }
+      ]
+    },
+    "0x23": {
+      "name": "LOW_TH_CH0",
+      "access": "R/W",
+      "description": "0x23 LOW_TH_CH0 LOW_TH_CH0 Register (Address = 0x23) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH0 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x24": {
+      "name": "HYSTERESIS_CH1",
+      "access": "R/W",
+      "description": "0x24 HYSTERESIS_CH1 HYSTERESIS_CH1 Register (Address = 0x24) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH1 LS _ _ _ B[3:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH1[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x25": {
+      "name": "HIGH_TH_CH1",
+      "access": "R/W",
+      "description": "0x25 HIGH_TH_CH1 HIGH_TH_CH1 Register (Address = 0x25) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH1 M _ _ _ SB[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x26": {
+      "name": "EVENT_COUNT_CH1",
+      "access": "R/W",
+      "description": "0x26 EVENT_COUNT_CH1 EVENT_COUNT_CH1 Register (Address = 0x26) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH1 LS _ _ _ B[3:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of low threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "EVENT COUNT CH1[3:0] _ _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Configuration for checking 'n+1' consecutive samples above threshold before setting alert flag."
+        }
+      ]
+    },
+    "0x27": {
+      "name": "LOW_TH_CH1",
+      "access": "R/W",
+      "description": "0x27 LOW_TH_CH1 LOW_TH_CH1 Register (Address = 0x27) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH1 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x28": {
+      "name": "HYSTERESIS_CH2",
+      "access": "R/W",
+      "description": "0x28 HYSTERESIS_CH2 HYSTERESIS_CH2 Register (Address = 0x28) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH2 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH2[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x29": {
+      "name": "HIGH_TH_CH2",
+      "access": "R/W",
+      "description": "0x29 HIGH_TH_CH2 HIGH_TH_CH2 Register (Address = 0x29) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH2 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x2A": {
+      "name": "EVENT_COUNT_CH2",
+      "access": "R/W",
+      "description": "0x2A EVENT_COUNT_CH2 EVENT_COUNT_CH2 Register (Address = 0x2A) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH2 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of low threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "EVENT COUNT CH2[3:0 _ _ ]",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Configuration for checking 'n+1' consecutive samples above threshold before setting alert flag."
+        }
+      ]
+    },
+    "0x2B": {
+      "name": "LOW_TH_CH2",
+      "access": "R/W",
+      "description": "0x2B LOW_TH_CH2 LOW_TH_CH2 Register (Address = 0x2B) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH2 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x2C": {
+      "name": "HYSTERESIS_CH3",
+      "access": "R/W",
+      "description": "0x2C HYSTERESIS_CH3 HYSTERESIS_CH3 Register (Address = 0x2C) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH3 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH3[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x2D": {
+      "name": "HIGH_TH_CH3",
+      "access": "R/W",
+      "description": "0x2D HIGH_TH_CH3 HIGH_TH_CH3 Register (Address = 0x2D) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH3 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x2E": {
+      "name": "EVENT_COUNT_CH3",
+      "access": "R/W",
+      "description": "0x2E EVENT_COUNT_CH3 EVENT_COUNT_CH3 Register (Address = 0x2E) [reset = 0x0]",
+      "fields": []
+    },
+    "0x2F": {
+      "name": "LOW_TH_CH3",
+      "access": "R/W",
+      "description": "0x2F LOW_TH_CH3 LOW_TH_CH3 Register (Address = 0x2F) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH3 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x30": {
+      "name": "HYSTERESIS_CH4",
+      "access": "R/W",
+      "description": "0x30 HYSTERESIS_CH4 HYSTERESIS_CH4 Register (Address = 0x30) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH4 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH4[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x31": {
+      "name": "HIGH_TH_CH4",
+      "access": "R/W",
+      "description": "0x31 HIGH_TH_CH4 HIGH_TH_CH4 Register (Address = 0x31) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH4 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x32": {
+      "name": "EVENT_COUNT_CH4",
+      "access": "R/W",
+      "description": "0x32 EVENT_COUNT_CH4 EVENT_COUNT_CH4 Register (Address = 0x32) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH4 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of low threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "EVENT COUNT CH4[3:0 _ _ ]",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Configuration for checking 'n+1' consecutive samples above threshold before setting alert flag."
+        }
+      ]
+    },
+    "0x33": {
+      "name": "LOW_TH_CH4",
+      "access": "R/W",
+      "description": "0x33 LOW_TH_CH4 LOW_TH_CH4 Register (Address = 0x33) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH4 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x34": {
+      "name": "HYSTERESIS_CH5",
+      "access": "R/W",
+      "description": "0x34 HYSTERESIS_CH5 HYSTERESIS_CH5 Register (Address = 0x34) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH5 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH5[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x35": {
+      "name": "HIGH_TH_CH5",
+      "access": "R/W",
+      "description": "0x35 HIGH_TH_CH5 HIGH_TH_CH5 Register (Address = 0x35) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH5 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x36": {
+      "name": "EVENT_COUNT_CH5",
+      "access": "R/W",
+      "description": "0x36 EVENT_COUNT_CH5 EVENT_COUNT_CH5 Register (Address = 0x36) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH5 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of low threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "EVENT COUNT CH5[3:0 _ _ ]",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Configuration for checking 'n+1' consecutive samples above threshold before setting alert flag."
+        }
+      ]
+    },
+    "0x37": {
+      "name": "LOW_TH_CH5",
+      "access": "R/W",
+      "description": "0x37 LOW_TH_CH5 LOW_TH_CH5 Register (Address = 0x37) [reset = 0x0]",
+      "fields": []
+    },
+    "0x38": {
+      "name": "HYSTERESIS_CH6",
+      "access": "R/W",
+      "description": "0x38 HYSTERESIS_CH6 HYSTERESIS_CH6 Register (Address = 0x38) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH6 _ _ LSB[3:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH6[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x39": {
+      "name": "HIGH_TH_CH6",
+      "access": "R/W",
+      "description": "0x39 HIGH_TH_CH6 HIGH_TH_CH6 Register (Address = 0x39) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH6 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x3A": {
+      "name": "EVENT_COUNT_CH6",
+      "access": "R/W",
+      "description": "0x3A EVENT_COUNT_CH6 EVENT_COUNT_CH6 Register (Address = 0x3A) [reset = 0x0]",
+      "fields": []
+    },
+    "0x3B": {
+      "name": "LOW_TH_CH6",
+      "access": "R/W",
+      "description": "0x3B LOW_TH_CH6 LOW_TH_CH6 Register (Address = 0x3B) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH6 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x3C": {
+      "name": "HYSTERESIS_CH7",
+      "access": "R/W",
+      "description": "0x3C HYSTERESIS_CH7 HYSTERESIS_CH7 Register (Address = 0x3C) [reset = 0xF0]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH7 LS _ _ _ B[3:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of high threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "HYSTERESIS CH7[3:0] _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "4-bit hysteresis for high and low thresholds. This 4-bit hysteris is left shifted 3 times and applied on the lower 7-bits of the threshold. Total hysteresis = 7-bits [4-bits, 000b]"
+        }
+      ]
+    },
+    "0x3D": {
+      "name": "HIGH_TH_CH7",
+      "access": "R/W",
+      "description": "0x3D HIGH_TH_CH7 HIGH_TH_CH7 Register (Address = 0x3D) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "HIGH THRESHOLD CH7 M _ _ _ SB[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x3E": {
+      "name": "EVENT_COUNT_CH7",
+      "access": "R/W",
+      "description": "0x3E EVENT_COUNT_CH7 EVENT_COUNT_CH7 Register (Address = 0x3E) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH7 LS _ _ _ B[3:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Lower 4-bits of low threshold for analog input. These bits are compared with bits 3:0 of ADC conversion result."
+        },
+        {
+          "name": "EVENT COUNT CH7[3:0] _ _",
+          "startBit": 3,
+          "endBit": 3,
+          "access": "R/W",
+          "description": "Configuration for checking 'n+1' consecutive samples above threshold before setting alert flag."
+        }
+      ]
+    },
+    "0x3F": {
+      "name": "LOW_TH_CH7",
+      "access": "R/W",
+      "description": "0x3F LOW_TH_CH7 LOW_TH_CH7 Register (Address = 0x3F) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LOW THRESHOLD CH7 _ _ MSB[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "MSB aligned high threshold for analog input. These bits are compared with top 8 bits of ADC conversion result."
+        }
+      ]
+    },
+    "0x60": {
+      "name": "MAX_CH0_LSB",
+      "access": "R/W",
+      "description": "0x60 MAX_CH0_LSB MAX_CH0_LSB Register (Address = 0x60) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH0 LSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x61": {
+      "name": "MAX_CH0_MSB",
+      "access": "R/W",
+      "description": "0x61 MAX_CH0_MSB MAX_CH0_MSB Register (Address = 0x61) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH0 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x62": {
+      "name": "MAX_CH1_LSB",
+      "access": "R/W",
+      "description": "0x62 MAX_CH1_LSB MAX_CH1_LSB Register (Address = 0x62) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH1 LSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x63": {
+      "name": "MAX_CH1_MSB",
+      "access": "R/W",
+      "description": "0x63 MAX_CH1_MSB MAX_CH1_MSB Register (Address = 0x63) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH1 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x64": {
+      "name": "MAX_CH2_LSB",
+      "access": "R/W",
+      "description": "0x64 MAX_CH2_LSB MAX_CH2_LSB Register (Address = 0x64) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH2 LSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x65": {
+      "name": "MAX_CH2_MSB",
+      "access": "R/W",
+      "description": "0x65 MAX_CH2_MSB MAX_CH2_MSB Register (Address = 0x65) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH2 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x66": {
+      "name": "MAX_CH3_LSB",
+      "access": "R/W",
+      "description": "0x66 MAX_CH3_LSB MAX_CH3_LSB Register (Address = 0x66) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH3 LSB[7:0] _ _ _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x67": {
+      "name": "MAX_CH3_MSB",
+      "access": "R/W",
+      "description": "0x67 MAX_CH3_MSB MAX_CH3_MSB Register (Address = 0x67) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH3 MSB[7:0] _ _ _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x68": {
+      "name": "MAX_CH4_LSB",
+      "access": "R/W",
+      "description": "0x68 MAX_CH4_LSB MAX_CH4_LSB Register (Address = 0x68) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH4 LSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x69": {
+      "name": "MAX_CH4_MSB",
+      "access": "R/W",
+      "description": "0x69 MAX_CH4_MSB MAX_CH4_MSB Register (Address = 0x69) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH4 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x6A": {
+      "name": "MAX_CH5_LSB",
+      "access": "R/W",
+      "description": "0x6A MAX_CH5_LSB MAX_CH5_LSB Register (Address = 0x6A) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH5 LSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x6B": {
+      "name": "MAX_CH5_MSB",
+      "access": "R/W",
+      "description": "0x6B MAX_CH5_MSB MAX_CH5_MSB Register (Address = 0x6B) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH5 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x6C": {
+      "name": "MAX_CH6_LSB",
+      "access": "R/W",
+      "description": "0x6C MAX_CH6_LSB MAX_CH6_LSB Register (Address = 0x6C) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH6 LSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x6D": {
+      "name": "MAX_CH6_MSB",
+      "access": "R/W",
+      "description": "0x6D MAX_CH6_MSB MAX_CH6_MSB Register (Address = 0x6D) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH6 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x6E": {
+      "name": "MAX_CH7_LSB",
+      "access": "R/W",
+      "description": "0x6E MAX_CH7_LSB MAX_CH7_LSB Register (Address = 0x6E) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH7 LSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x6F": {
+      "name": "MAX_CH7_MSB",
+      "access": "R/W",
+      "description": "0x6F MAX_CH7_MSB MAX_CH7_MSB Register (Address = 0x6F) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "MAX VALUE CH7 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Maximum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0."
+        }
+      ]
+    },
+    "0x80": {
+      "name": "MIN_CH0_LSB",
+      "access": "R/W",
+      "description": "0x80 MIN_CH0_LSB MIN_CH0_LSB Register (Address = 0x80) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH0 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x81": {
+      "name": "MIN_CH0_MSB",
+      "access": "R/W",
+      "description": "0x81 MIN_CH0_MSB MIN_CH0_MSB Register (Address = 0x81) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH0 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x82": {
+      "name": "MIN_CH1_LSB",
+      "access": "R/W",
+      "description": "0x82 MIN_CH1_LSB MIN_CH1_LSB Register (Address = 0x82) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH1 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x83": {
+      "name": "MIN_CH1_MSB",
+      "access": "R/W",
+      "description": "0x83 MIN_CH1_MSB MIN_CH1_MSB Register (Address = 0x83) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH1 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x84": {
+      "name": "MIN_CH2_LSB",
+      "access": "R/W",
+      "description": "0x84 MIN_CH2_LSB MIN_CH2_LSB Register (Address = 0x84) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH2 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x85": {
+      "name": "MIN_CH2_MSB",
+      "access": "R/W",
+      "description": "0x85 MIN_CH2_MSB MIN_CH2_MSB Register (Address = 0x85) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH2 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x86": {
+      "name": "MIN_CH3_LSB",
+      "access": "R/W",
+      "description": "0x86 MIN_CH3_LSB MIN_CH3_LSB Register (Address = 0x86) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH3 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x87": {
+      "name": "MIN_CH3_MSB",
+      "access": "R/W",
+      "description": "0x87 MIN_CH3_MSB MIN_CH3_MSB Register (Address = 0x87) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH3 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x88": {
+      "name": "MIN_CH4_LSB",
+      "access": "R/W",
+      "description": "0x88 MIN_CH4_LSB MIN_CH4_LSB Register (Address = 0x88) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH4 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x89": {
+      "name": "MIN_CH4_MSB",
+      "access": "R/W",
+      "description": "0x89 MIN_CH4_MSB MIN_CH4_MSB Register (Address = 0x89) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH4 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x8A": {
+      "name": "MIN_CH5_LSB",
+      "access": "R/W",
+      "description": "0x8A MIN_CH5_LSB MIN_CH5_LSB Register (Address = 0x8A) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH5 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x8B": {
+      "name": "MIN_CH5_MSB",
+      "access": "R/W",
+      "description": "0x8B MIN_CH5_MSB MIN_CH5_MSB Register (Address = 0x8B) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH5 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x8C": {
+      "name": "MIN_CH6_LSB",
+      "access": "R/W",
+      "description": "0x8C MIN_CH6_LSB MIN_CH6_LSB Register (Address = 0x8C) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH6 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x8D": {
+      "name": "MIN_CH6_MSB",
+      "access": "R/W",
+      "description": "0x8D MIN_CH6_MSB MIN_CH6_MSB Register (Address = 0x8D) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH6 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x8E": {
+      "name": "MIN_CH7_LSB",
+      "access": "R/W",
+      "description": "0x8E MIN_CH7_LSB MIN_CH7_LSB Register (Address = 0x8E) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH7 LSB[7: _ _ _ 0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0x8F": {
+      "name": "MIN_CH7_MSB",
+      "access": "R/W",
+      "description": "0x8F MIN_CH7_MSB MIN_CH7_MSB Register (Address = 0x8F) [reset = 0xFF]",
+      "fields": [
+        {
+          "name": "MIN VALUE CH7 MSB[7 _ _ _ :0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Minimum code recorded on the analog input channel from the last time this register was read. Reading the register will reset the value to 0xFF."
+        }
+      ]
+    },
+    "0xA0": {
+      "name": "RECENT_CH0_LSB",
+      "access": "R/W",
+      "description": "0xA0 RECENT_CH0_LSB RECENT_CH0_LSB Register (Address = 0xA0) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH0 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA1": {
+      "name": "RECENT_CH0_MSB",
+      "access": "R/W",
+      "description": "0xA1 RECENT_CH0_MSB RECENT_CH0_MSB Register (Address = 0xA1) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH0 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA2": {
+      "name": "RECENT_CH1_LSB",
+      "access": "R/W",
+      "description": "0xA2 RECENT_CH1_LSB RECENT_CH1_LSB Register (Address = 0xA2) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH1 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA3": {
+      "name": "RECENT_CH1_MSB",
+      "access": "R/W",
+      "description": "0xA3 RECENT_CH1_MSB RECENT_CH1_MSB Register (Address = 0xA3) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH1 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA4": {
+      "name": "RECENT_CH2_LSB",
+      "access": "R/W",
+      "description": "0xA4 RECENT_CH2_LSB RECENT_CH2_LSB Register (Address = 0xA4) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH2 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA5": {
+      "name": "RECENT_CH2_MSB",
+      "access": "R/W",
+      "description": "0xA5 RECENT_CH2_MSB RECENT_CH2_MSB Register (Address = 0xA5) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH2 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA6": {
+      "name": "RECENT_CH3_LSB",
+      "access": "R/W",
+      "description": "0xA6 RECENT_CH3_LSB RECENT_CH3_LSB Register (Address = 0xA6) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH3 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA7": {
+      "name": "RECENT_CH3_MSB",
+      "access": "R/W",
+      "description": "0xA7 RECENT_CH3_MSB RECENT_CH3_MSB Register (Address = 0xA7) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH3 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA8": {
+      "name": "RECENT_CH4_LSB",
+      "access": "R/W",
+      "description": "0xA8 RECENT_CH4_LSB RECENT_CH4_LSB Register (Address = 0xA8) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH4 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xA9": {
+      "name": "RECENT_CH4_MSB",
+      "access": "R/W",
+      "description": "0xA9 RECENT_CH4_MSB RECENT_CH4_MSB Register (Address = 0xA9) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH4 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xAA": {
+      "name": "RECENT_CH5_LSB",
+      "access": "R/W",
+      "description": "0xAA RECENT_CH5_LSB RECENT_CH5_LSB Register (Address = 0xAA) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH5 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xAB": {
+      "name": "RECENT_CH5_MSB",
+      "access": "R/W",
+      "description": "0xAB RECENT_CH5_MSB RECENT_CH5_MSB Register (Address = 0xAB) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH5 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xAC": {
+      "name": "RECENT_CH6_LSB",
+      "access": "R/W",
+      "description": "0xAC RECENT_CH6_LSB RECENT_CH6_LSB Register (Address = 0xAC) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH6 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xAD": {
+      "name": "RECENT_CH6_MSB",
+      "access": "R/W",
+      "description": "0xAD RECENT_CH6_MSB RECENT_CH6_MSB Register (Address = 0xAD) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH6 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xAE": {
+      "name": "RECENT_CH7_LSB",
+      "access": "R/W",
+      "description": "0xAE RECENT_CH7_LSB RECENT_CH7_LSB Register (Address = 0xAE) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH7 LSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "Next 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xAF": {
+      "name": "RECENT_CH7_MSB",
+      "access": "R/W",
+      "description": "0xAF RECENT_CH7_MSB RECENT_CH7_MSB Register (Address = 0xAF) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "LAST VALUE CH7 MSB[ _ _ _ 7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R",
+          "description": "MSB aligned first 8 bits of the last result for this analog input channel."
+        }
+      ]
+    },
+    "0xC3": {
+      "name": "GPO0_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xC3 GPO0_TRIG_EVENT_SEL GPO0_TRIG_EVENT_SEL Register (Address = 0xC3) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO0 TRIG EVENT SE _ _ _ L[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select the inputs AIN/GPIO[7:0], analog or digital, which can trigger an event based update on GPO0. 0b = Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO0 output. 1b = Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO0 output.",
+          "valueMap": {
+            "0": "Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO0 output.",
+            "1": "Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO0 output."
+          }
+        }
+      ]
+    },
+    "0xC5": {
+      "name": "GPO1_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xC5 GPO1_TRIG_EVENT_SEL GPO1_TRIG_EVENT_SEL Register (Address = 0xC5) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO1 TRIG EVENT SE _ _ _ L[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select the inputs AIN/GPIO[7:0], analog or digital, which can trigger an event based update on GPO1. 0b = Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO1 output. 1b = Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO1 output.",
+          "valueMap": {
+            "0": "Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO1 output.",
+            "1": "Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO1 output."
+          }
+        }
+      ]
+    },
+    "0xC7": {
+      "name": "GPO2_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xC7 GPO2_TRIG_EVENT_SEL GPO2_TRIG_EVENT_SEL Register (Address = 0xC7) [reset = 0x0]",
+      "fields": []
+    },
+    "0xC9": {
+      "name": "GPO3_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xC9 GPO3_TRIG_EVENT_SEL GPO3_TRIG_EVENT_SEL Register (Address = 0xC9) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO3 TRIG EVENT SE _ _ _ L[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select the inputs AIN/GPIO[7:0], analog or digital, which can trigger an event based update on GPO3. 0b = Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO3 output. 1b = Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO3 output.",
+          "valueMap": {
+            "0": "Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO3 output.",
+            "1": "Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO3 output."
+          }
+        }
+      ]
+    },
+    "0xCB": {
+      "name": "GPO4_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xCB GPO4_TRIG_EVENT_SEL GPO4_TRIG_EVENT_SEL Register (Address = 0xCB) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO4 TRIG EVENT SE _ _ _ L[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select the inputs AIN/GPIO[7:0], analog or digital, which can trigger an event based update on GPO4. 0b = Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO4 output. 1b = Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO4 output.",
+          "valueMap": {
+            "0": "Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO4 output.",
+            "1": "Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO4 output."
+          }
+        }
+      ]
+    },
+    "0xCD": {
+      "name": "GPO5_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xCD GPO5_TRIG_EVENT_SEL GPO5_TRIG_EVENT_SEL Register (Address = 0xCD) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO5 TRIG EVENT SE _ _ _ L[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select the inputs AIN/GPIO[7:0], analog or digital, which can trigger an event based update on GPO5. 0b = Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO5 output. 1b = Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO5 output.",
+          "valueMap": {
+            "0": "Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO5 output.",
+            "1": "Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO5 output."
+          }
+        }
+      ]
+    },
+    "0xCF": {
+      "name": "GPO6_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xCF GPO6_TRIG_EVENT_SEL GPO6_TRIG_EVENT_SEL Register (Address = 0xCF) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO6 TRIG EVENT SE _ _ _ L[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select the inputs AIN/GPIO[7:0], analog or digital, which can trigger an event based update on GPO6. 0b = Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO6 output. 1b = Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO6 output.",
+          "valueMap": {
+            "0": "Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO6 output.",
+            "1": "Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO6 output."
+          }
+        }
+      ]
+    },
+    "0xD1": {
+      "name": "GPO7_TRIG_EVENT_SEL",
+      "access": "R/W",
+      "description": "0xD1 GPO7_TRIG_EVENT_SEL GPO7_TRIG_EVENT_SEL Register (Address = 0xD1) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO7 TRIG EVENT SE _ _ _ L[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Select the inputs AIN/GPIO[7:0], analog or digital, which can trigger an event based update on GPO7. 0b = Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO7 output. 1b = Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO7 output.",
+          "valueMap": {
+            "0": "Alert flags for the AIN/GPIO corresponding to this bit do not trigger GPO7 output.",
+            "1": "Alert flags for the AIN/GPIO corresponding to this bit do trigger GPO7 output."
+          }
+        }
+      ]
+    },
+    "0xE9": {
+      "name": "GPO_TRIGGER_CFG",
+      "access": "R/W",
+      "description": "0xE9 GPO_TRIGGER_CFG GPO_TRIGGER_CFG Register (Address = 0xE9) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO TRIGGER UPDATE _ _ EN[7:0] _",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Update digital outputs GPO[7:0] when the corresponding trigger is set. 0b = Digital output is not updated in response to the alert flags. 1b = Digital output is updated when the corresponding alert flags are set. Configure GPOx TRIG EVENT SEL register to select which _ _ _ alert flags can trigger an update on the desired GPO.",
+          "valueMap": {
+            "0": "Digital output is not updated in response to the alert flags.",
+            "1": "Digital output is updated when the corresponding alert flags are set. Configure GPOx TRIG EVENT SEL register to select which _ _ _ alert flags can trigger an update on the desired GPO."
+          }
+        }
+      ]
+    },
+    "0xEB": {
+      "name": "GPO_VALUE_TRIG",
+      "access": "R/W",
+      "description": "0xEB GPO_VALUE_TRIG GPO_VALUE_TRIG Register (Address = 0xEB) [reset = 0x0]",
+      "fields": [
+        {
+          "name": "GPO VALUE ON TRIGG _ _ _ ER[7:0]",
+          "startBit": 7,
+          "endBit": 7,
+          "access": "R/W",
+          "description": "Value to be set on digital outputs GPO[7:0] when the corresponding trigger occurs. GPO update on alert flags must be enabled in the corresponding bit in the GPO TRIGGER CFG register. _ _ 0b = Digital output is set to logic 0. 1b = Digital output is set to logic 1.",
+          "valueMap": {
+            "0": "Digital output is set to logic 0.",
+            "1": "Digital output is set to logic 1."
+          }
+        }
+      ]
+    }
+  }
+}

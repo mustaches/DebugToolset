@@ -1151,7 +1151,9 @@ class RegisterInfoPanel extends StatelessWidget {
     }
     
     int cmdValue = cmdPacket.rawValue!;
-    var regDef = regfile.registers[cmdValue];
+    var regDef = (regfile.commands != null && regfile.commands!.containsKey(cmdValue)) 
+        ? regfile.commands![cmdValue] 
+        : regfile.registers[cmdValue];
     
     String cmdName = regDef?.name ?? 'Unknown Command (0x${cmdValue.toRadixString(16).toUpperCase().padLeft(2, '0')})';
     String cmdDesc = regDef?.description ?? '';
@@ -1291,8 +1293,13 @@ class RegisterInfoPanel extends StatelessWidget {
           
           List<Widget> innerFieldWidgets = [];
 
-          if (regDef != null) {
-            var sortedFields = List.of(regDef.fields);
+          var decodeDef = regDef;
+          if (regfile.hasSubaddress == true && addrPacket != null && addrPacket.rawValue != null) {
+            decodeDef = regfile.registers[addrPacket.rawValue!];
+          }
+
+          if (decodeDef != null) {
+            var sortedFields = List.of(decodeDef.fields);
             sortedFields.sort((a, b) => b.startBit.compareTo(a.startBit));
 
             for (var field in sortedFields) {
