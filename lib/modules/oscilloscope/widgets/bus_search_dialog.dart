@@ -349,9 +349,12 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
        var regfiles = state.availableRegfiles.where((r) => r.name == _selectedI2cProtocol);
        if (regfiles.isNotEmpty) {
           var regfile = regfiles.first;
-          if (regfile.addresses != null && regfile.addresses!.isNotEmpty) {
-             addrs = addrs.intersection(regfile.addresses!.toSet());
-          }
+            List<int> validAddrs = [];
+            if (regfile.addresses != null) validAddrs.addAll(regfile.addresses!);
+            if (regfile.addressMap != null) validAddrs.addAll(regfile.addressMap!.keys);
+            if (validAddrs.isNotEmpty) {
+               addrs = addrs.intersection(validAddrs.toSet());
+            }
        }
     }
     
