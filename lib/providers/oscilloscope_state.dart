@@ -1012,6 +1012,8 @@ class OscilloscopeState extends ChangeNotifier {
           if (spiCommand != null && frameCmd != spiCommand) continue;
           if (spiFrameType == 'Write Only' && !access.contains('W')) continue;
           if (spiFrameType == 'Read Only' && !access.contains('R')) continue;
+          if (spiFrameType == 'MOSI' && !frame.summary.startsWith('MOSI')) continue;
+          if (spiFrameType == 'MISO' && !frame.summary.startsWith('MISO')) continue;
           if (spiAddress != null && frameAddr != spiAddress) continue;
           
           if (targetSequence.isNotEmpty) {

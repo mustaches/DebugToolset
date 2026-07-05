@@ -191,17 +191,22 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
 
   List<String> _getAvailableSpiFrameTypes(DigitalBus bus, OscilloscopeState state, String? protocolName) {
     if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return ['Any'];
+    
+    if (protocolName == null) {
+      return ['Any', 'MISO', 'MOSI'];
+    }
+    
     Set<String> types = {'Any'};
     dynamic regfile;
-    if (protocolName != null) {
-      for (var r in state.availableSpiRegfiles) {
-        if (r.name == protocolName) {
-          regfile = r;
-          break;
-        }
+    for (var r in state.availableSpiRegfiles) {
+      if (r.name == protocolName) {
+        regfile = r;
+        break;
       }
     }
     
+    bool hasRead = false;
+    bool hasWrite = false;
     for (var frame in bus.decoder!.frames) {
       int? cmd;
       for (var p in frame.packets) {
@@ -212,16 +217,15 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
       }
       if (cmd != null && regfile != null && regfile.registers.containsKey(cmd)) {
         String access = regfile.registers[cmd]!.access ?? '';
-        if (access.contains('R') && access.contains('W')) {
-           types.add('Read Only'); types.add('Write Only');
-        } else if (access.contains('R')) {
-           types.add('Read Only');
-        } else if (access.contains('W')) {
-           types.add('Write Only');
-        }
-      } else {
-        types.add('Read Only'); types.add('Write Only');
+        if (access.contains('R')) hasRead = true;
+        if (access.contains('W')) hasWrite = true;
       }
+    }
+    
+    if (hasRead) types.add('Read Only');
+    if (hasWrite) types.add('Write Only');
+    if (!hasRead && !hasWrite) {
+       types.add('Read Only'); types.add('Write Only');
     }
     return types.toList()..sort();
   }
