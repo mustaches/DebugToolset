@@ -384,6 +384,17 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
         }
       }
     }
+
+    if (_selectedI2cProtocol != null) {
+       var regfiles = state.availableRegfiles.where((r) => r.name == _selectedI2cProtocol);
+       if (regfiles.isNotEmpty) {
+          var regfile = regfiles.first;
+          if (regfile.registers.isNotEmpty) {
+             addrs = addrs.intersection(regfile.registers.keys.toSet());
+          }
+       }
+    }
+    
     var list = addrs.toList();
     list.sort();
     return list;
