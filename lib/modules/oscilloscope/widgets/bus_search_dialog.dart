@@ -35,6 +35,13 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   int? _lastDeviceAddressForCache;
   List<String> _cachedUartProtocols = [];
 
+  String? _lastUartBusNameForCache;
+  String? _lastUartChannelForCache;
+  String? _lastUartProtocolFileForCache;
+  int _lastUartTotalPointsForCache = -1;
+  Map<String, Map<int, String>> _cachedUartFieldValues = {};
+  List<String> _cachedUartFields = [];
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +80,93 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   void dispose() {
     _valueController.dispose();
     super.dispose();
+  }
+
+  void _updateUartCaches(OscilloscopeState state, DigitalBus? bus) {
+    if (bus == null || bus.decoder?.name != 'UART' || (bus.decoder as UartDecoder).protocolFile == null) {
+      _cachedUartFields.clear();
+      _cachedUartFieldValues.clear();
+      return;
+    }
+
+    String protocolFile = (bus.decoder as UartDecoder).protocolFile!;
+    int currentPoints = state.digitalChannel.totalPointsAdded;
+
+    if (_lastUartBusNameForCache == bus.name &&
+        _lastUartChannelForCache == _channel &&
+        _lastUartProtocolFileForCache == protocolFile &&
+        _lastUartTotalPointsForCache == currentPoints) {
+      return; // Cache is valid
+    }
+
+    _lastUartBusNameForCache = bus.name;
+    _lastUartChannelForCache = _channel;
+    _lastUartProtocolFileForCache = protocolFile;
+    _lastUartTotalPointsForCache = currentPoints;
+
+    _cachedUartFields = [];
+    _cachedUartFieldValues = {};
+
+    var protocol = state.availableUartProtocols[protocolFile];
+    if (protocol != null) {
+      Map<String, Map<int, String>> definedValues = {'CMD': {}};
+      for (var cmdId in protocol.commands.keys) {
+        definedValues['CMD']![cmdId] = protocol.commands[cmdId]!.name;
+      }
+
+      for (var cmd in protocol.commands.values) {
+        var txPayload = cmd.tx?.payload ?? [];
+        var rxPayload = cmd.rx?.payload ?? [];
+        for (var f in [...txPayload, ...rxPayload]) {
+          if (f.valueMap != null && f.valueMap!.isNotEmpty) {
+            if (definedValues[f.name] == null) definedValues[f.name] = {};
+            definedValues[f.name]!.addAll(f.valueMap!);
+          }
+        }
+      }
+
+      UartDecoder uDecoder = bus.decoder as UartDecoder;
+      for (var frame in uDecoder.frames) {
+        bool isTx = frame.summary.startsWith('Tx');
+        if (_channel == 'TXD' && !isTx) continue;
+        if (_channel == 'RXD' && isTx) continue;
+
+        List<ProtocolPacket> dataPackets = frame.packets.where((p) => p.type == PacketType.data && p.rawValue != null).toList();
+
+        bool headerMatch = true;
+        for (int j = 0; j < protocol.header.length; j++) {
+          if (j >= dataPackets.length || dataPackets[j].rawValue != protocol.header[j]) {
+            headerMatch = false;
+            break;
+          }
+        }
+        if (!headerMatch || dataPackets.length <= protocol.header.length) continue;
+
+        int cmdId = dataPackets[protocol.header.length].rawValue!;
+        
+        if (!_cachedUartFields.contains('CMD')) _cachedUartFields.add('CMD');
+        if (_cachedUartFieldValues['CMD'] == null) _cachedUartFieldValues['CMD'] = {};
+        _cachedUartFieldValues['CMD']![cmdId] = definedValues['CMD']?[cmdId] ?? '';
+
+        var cmdDef = protocol.commands[cmdId];
+        if (cmdDef == null) continue;
+
+        var packetDef = isTx ? cmdDef.tx : cmdDef.rx;
+        if (packetDef == null) continue;
+
+        for (var fieldDef in packetDef.payload) {
+          if (fieldDef.byteOffset < dataPackets.length) {
+            if (!_cachedUartFields.contains(fieldDef.name)) _cachedUartFields.add(fieldDef.name);
+            var p = dataPackets[fieldDef.byteOffset];
+            int val = p.rawValue!;
+            if (_cachedUartFieldValues[fieldDef.name] == null) _cachedUartFieldValues[fieldDef.name] = {};
+            _cachedUartFieldValues[fieldDef.name]![val] = definedValues[fieldDef.name]?[val] ?? '';
+          }
+        }
+      }
+      _cachedUartFields.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      if (_cachedUartFields.isEmpty) _cachedUartFields.add('CMD');
+    }
   }
 
   void _updateCaches(OscilloscopeState state, DigitalBus? bus) {
@@ -215,40 +309,19 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     bool hasDecoder = currentBus?.decoder != null && currentBus!.decoder!.isEnabled;
     String decoderType = currentBus?.decoder?.name ?? '';
     bool isI2c = hasDecoder && decoderType == 'I2C';
-    bool isRawUart = hasDecoder && decoderType == 'UART' && (currentBus!.decoder as UartDecoder).protocolFile == null;
-    bool isUartWithProtocol = hasDecoder && decoderType == 'UART' && (currentBus!.decoder as UartDecoder).protocolFile != null;
+    bool isRawUart = hasDecoder && decoderType == 'UART' && (currentBus.decoder as UartDecoder).protocolFile == null;
+    bool isUartWithProtocol = hasDecoder && decoderType == 'UART' && (currentBus.decoder as UartDecoder).protocolFile != null;
 
     if (isI2c) {
        _updateCaches(state, currentBus);
     }
     
-    List<String> uartFields = ['CMD'];
-    Map<String, Map<int, String>> fieldValues = {};
     if (isUartWithProtocol) {
-      var protocol = state.availableUartProtocols[(currentBus!.decoder as UartDecoder).protocolFile];
-      if (protocol != null) {
-        Map<int, String> cmdValues = {};
-        for (var cmdId in protocol.commands.keys) {
-          cmdValues[cmdId] = protocol.commands[cmdId]!.name;
-        }
-        fieldValues['CMD'] = cmdValues;
-
-        for (var cmd in protocol.commands.values) {
-          var txPayload = cmd.tx?.payload ?? [];
-          var rxPayload = cmd.rx?.payload ?? [];
-          for (var f in [...txPayload, ...rxPayload]) {
-            if (!uartFields.contains(f.name)) {
-               uartFields.add(f.name);
-            }
-            if (f.valueMap != null && f.valueMap!.isNotEmpty) {
-               if (fieldValues[f.name] == null) fieldValues[f.name] = {};
-               fieldValues[f.name]!.addAll(f.valueMap!);
-            }
-          }
-        }
-      }
-      uartFields.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+       _updateUartCaches(state, currentBus);
     }
+    
+    List<String> uartFields = isUartWithProtocol ? _cachedUartFields : ['CMD'];
+    Map<String, Map<int, String>> fieldValues = isUartWithProtocol ? _cachedUartFieldValues : {};
     String currentUartField = uartFields.contains(_uartField) ? _uartField : (uartFields.isNotEmpty ? uartFields.first : 'CMD');
 
     List<String> conditions = [];
@@ -374,9 +447,9 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                              } else if (decoderType == 'SPI') {
                                 initialProtocolFile = (currentBus!.decoder as SpiDecoder).protocolFile;
                              } else if (decoderType == 'I2C') {
-                                if (currentBus != null && _i2cDeviceAddress != null) {
-                                   initialProtocolFile = state.mountedRegfiles[currentBus!.name]?[_i2cDeviceAddress!]?.name;
-                                }
+                                 if (currentBus != null && _i2cDeviceAddress != null) {
+                                    initialProtocolFile = state.mountedRegfiles[currentBus.name]?[_i2cDeviceAddress]?.name;
+                                 }
                              }
                              return DropdownButtonFormField<String?>(
                                initialValue: initialProtocolFile,
@@ -713,7 +786,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                 ),
                                 items: fieldValues[currentUartField]!.entries.map((e) => DropdownMenuItem(
                                   value: e.key.toString(),
-                                  child: Text('0x${e.key.toRadixString(16).toUpperCase().padLeft(2, '0')} (${e.value})'),
+                                  child: Text(e.value.isEmpty ? '0x${e.key.toRadixString(16).toUpperCase().padLeft(2, '0')}' : '0x${e.key.toRadixString(16).toUpperCase().padLeft(2, '0')} (${e.value})'),
                                 )).toList(),
                                 onChanged: (val) {
                                    setState(() {
