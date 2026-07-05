@@ -1342,8 +1342,8 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                             if (fieldValues[currentUartField] != null && fieldValues[currentUartField]!.isNotEmpty)
                               DropdownButtonFormField<String>(
                                 key: ValueKey(currentUartField),
-                                initialValue: (fieldValues[currentUartField]?.containsKey(int.tryParse(_valueController.text) ?? -1) ?? false) 
-                                       ? (int.tryParse(_valueController.text) ?? -1).toString() : null,
+                                initialValue: (fieldValues[currentUartField]?.containsKey(int.tryParse(_valueController.text, radix: 16) ?? -1) ?? false) 
+                                       ? _valueController.text.toUpperCase().padLeft(2, '0') : null,
                                 dropdownColor: const Color(0xFF333333),
                                 style: const TextStyle(color: Colors.white),
                                 decoration: const InputDecoration(
@@ -1355,7 +1355,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                   hintStyle: TextStyle(color: Colors.white38),
                                 ),
                                 items: fieldValues[currentUartField]!.entries.map((e) => DropdownMenuItem(
-                                  value: e.key.toString(),
+                                  value: e.key.toRadixString(16).toUpperCase().padLeft(2, '0'),
                                   child: Text(e.value.isEmpty ? '0x${e.key.toRadixString(16).toUpperCase().padLeft(2, '0')}' : '0x${e.key.toRadixString(16).toUpperCase().padLeft(2, '0')} (${e.value})'),
                                 )).toList(),
                                 onChanged: (val) {
