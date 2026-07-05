@@ -315,8 +315,8 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
          if (!matchAddr) continue;
       }
       
-      if (frame.summary.startsWith('Read')) hasRead = true;
-      if (frame.summary.startsWith('Write')) hasWrite = true;
+      if (frame.summary.startsWith('R')) hasRead = true;
+      if (frame.summary.startsWith('W')) hasWrite = true;
       if (hasRead && hasWrite) break;
     }
     List<String> types = ['Any'];
@@ -332,8 +332,8 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     if (bus.decoder == null || bus.decoder!.name != 'I2C') return [];
     Set<int> addrs = {};
     for (var frame in bus.decoder!.frames) {
-      bool isRead = frame.summary.startsWith('Read');
-      bool isWrite = frame.summary.startsWith('Write');
+      bool isRead = frame.summary.startsWith('R');
+      bool isWrite = frame.summary.startsWith('W');
       if (frameType == 'Read Only' && !isRead) continue;
       if (frameType == 'Write Only' && !isWrite) continue;
       
@@ -364,8 +364,8 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     if (bus.decoder == null || bus.decoder!.name != 'I2C') return [];
     Set<int> addrs = {};
     for (var frame in bus.decoder!.frames) {
-      bool isRead = frame.summary.startsWith('Read');
-      bool isWrite = frame.summary.startsWith('Write');
+      bool isRead = frame.summary.startsWith('R');
+      bool isWrite = frame.summary.startsWith('W');
       if (frameType == 'Read Only' && !isRead) continue;
       if (frameType == 'Write Only' && !isWrite) continue;
       
