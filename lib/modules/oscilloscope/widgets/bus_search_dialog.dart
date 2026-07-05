@@ -353,7 +353,11 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
             if (regfile.addresses != null) validAddrs.addAll(regfile.addresses!);
             if (regfile.addressMap != null) validAddrs.addAll(regfile.addressMap!.keys);
             if (validAddrs.isNotEmpty) {
-               addrs = addrs.intersection(validAddrs.toSet());
+               if (addrs.isEmpty) {
+                   addrs = validAddrs.toSet();
+               } else {
+                   addrs = addrs.intersection(validAddrs.toSet());
+               }
             }
        }
     }
@@ -367,20 +371,28 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     if (bus.decoder == null || bus.decoder!.name != 'I2C') return [];
     Set<int> addrs = {};
     for (var frame in bus.decoder!.frames) {
-      bool isRead = frame.summary.startsWith('R');
-      bool isWrite = frame.summary.startsWith('W');
-      if (frameType == 'Read Only' && !isRead) continue;
-      if (frameType == 'Write Only' && !isWrite) continue;
+      bool isReadFrame = frame.summary.startsWith('R');
+      bool isWriteFrame = frame.summary.startsWith('W');
+      if (frameType == 'Read Only' && !isReadFrame) continue;
+      if (frameType == 'Write Only' && !isWriteFrame) continue;
       
       int? currentAddr;
-      for (var p in frame.packets) {
+      bool isWrite = false;
+      for (int i = 0; i < frame.packets.length; i++) {
+        var p = frame.packets[i];
         if (p.type == PacketType.address && p.rawValue != null) {
           currentAddr = p.rawValue;
-        } else if (p.type == PacketType.data && p.data.startsWith('ADDR:') && p.rawValue != null) {
-          if (deviceAddr == null || currentAddr == deviceAddr) {
-             addrs.add(p.rawValue!);
+          if (i + 1 < frame.packets.length && frame.packets[i+1].type == PacketType.readWrite) {
+             isWrite = frame.packets[i+1].data == 'WRITE';
+             i++; // Skip RW packet
           }
-          break;
+        } else if (p.type == PacketType.data && currentAddr != null) {
+          if (deviceAddr == null || currentAddr == deviceAddr) {
+             if (isWrite && p.rawValue != null) {
+                 addrs.add(p.rawValue!);
+                 break;
+             }
+          }
         }
       }
     }
@@ -390,7 +402,11 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
        if (regfiles.isNotEmpty) {
           var regfile = regfiles.first;
           if (regfile.registers.isNotEmpty) {
-             addrs = addrs.intersection(regfile.registers.keys.toSet());
+             if (addrs.isEmpty) {
+                 addrs = regfile.registers.keys.toSet();
+             } else {
+                 addrs = addrs.intersection(regfile.registers.keys.toSet());
+             }
           }
        }
     }
