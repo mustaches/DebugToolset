@@ -1,0 +1,139 @@
+﻿              ] else if (isSpi) ...[
+                 // SPI Specific UI
+                 Row(
+                   crossAxisAlignment: CrossAxisAlignment.start,
+                   children: [
+                     Expanded(
+                       flex: 1,
+                       child: Column(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           _buildLabel('帧类型', 'Frame Type'),
+                           const SizedBox(height: 8),
+                           DropdownButtonFormField<String>(
+                             initialValue: _availableSpiFrameTypes.contains(_spiFrameType) ? _spiFrameType : 'Any',
+                             dropdownColor: const Color(0xFF333333),
+                             style: const TextStyle(color: Colors.white),
+                             decoration: const InputDecoration(
+                               filled: true,
+                               fillColor: Color(0xFF1E1E1E),
+                               border: OutlineInputBorder(),
+                               contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                             ),
+                             items: _availableSpiFrameTypes.map((type) {
+                                String labelCn = type == 'Any' ? '读或写' : (type == 'Write Only' ? '仅写' : '仅读');
+                                String labelEn = type == 'Any' ? 'Write or Read' : type;
+                                return DropdownMenuItem(value: type, child: _buildItemText(labelCn, labelEn));
+                             }).toList(),
+                             onChanged: (val) {
+                               setState(() {
+                                 _spiFrameType = val!;
+                                 _lastSpiFrameTypeForCache = null;
+                               });
+                             },
+                           ),
+                         ],
+                       ),
+                     ),
+                     const SizedBox(width: 16),
+                     
+                     Expanded(
+                       flex: 2,
+                       child: Row(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           Expanded(
+                             flex: 1,
+                             child: Column(
+                               crossAxisAlignment: CrossAxisAlignment.start,
+                               children: [
+                                 _buildLabel('指令', 'Command'),
+                                 const SizedBox(height: 8),
+                                 DropdownButtonFormField<int?>(
+                                   initialValue: _spiCommand,
+                                   dropdownColor: const Color(0xFF333333),
+                                   style: const TextStyle(color: Colors.white),
+                                   decoration: const InputDecoration(
+                                     filled: true,
+                                     fillColor: Color(0xFF1E1E1E),
+                                     border: OutlineInputBorder(),
+                                     contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                   ),
+                                   items: [
+                                     if (_spiCommand != null && !_cachedSpiCommands.contains(_spiCommand))
+                                       DropdownMenuItem<int?>(
+                                         value: _spiCommand,
+                                         child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
+                                       ),
+                                     ..._cachedSpiCommands.map((cmd) {
+                                       String hex = '0x';
+                                       String alias = '';
+                                       if (currentBus != null && _selectedSpiProtocol != null) {
+                                           var regfiles = state.availableSpiRegfiles.where((r) => r.name == _selectedSpiProtocol);
+                                           if (regfiles.isNotEmpty) {
+                                               var regfile = regfiles.first;
+                                               if (regfile.registers.containsKey(cmd)) {
+                                                   alias = ' ';
+                                               }
+                                           }
+                                       }
+                                       return DropdownMenuItem<int?>(value: cmd, child: Text(hex + alias));
+                                     })
+                                   ],
+                                   onChanged: (_cachedSpiCommands.isEmpty) ? null : (val) {
+                                      setState(() {
+                                         _spiCommand = val;
+                                         _lastSpiCommandForCache = null;
+                                      });
+                                   },
+                                   hint: const Text('选择指令 (Select a Command)', style: TextStyle(color: Colors.white38)),
+                                 ),
+                               ],
+                             ),
+                           ),
+                           const SizedBox(width: 16),
+                           
+                           Expanded(
+                             flex: 1,
+                             child: Builder(
+                               builder: (context) {
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                       _buildLabel('寄存器地址', 'Register Addr'),
+                                       const SizedBox(height: 8),
+                                       DropdownButtonFormField<int?>(
+                                         initialValue: _spiAddress,
+                                         dropdownColor: const Color(0xFF333333),
+                                         style: const TextStyle(color: Colors.white),
+                                         decoration: const InputDecoration(
+                                           filled: true,
+                                           fillColor: Color(0xFF1E1E1E),
+                                           border: OutlineInputBorder(),
+                                           contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                         ),
+                                         items: [
+                                            if (_spiAddress != null && !_cachedSpiAddresses.contains(_spiAddress))
+                                              DropdownMenuItem<int?>(
+                                                value: _spiAddress,
+                                                child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
+                                              ),
+                                           DropdownMenuItem<int?>(value: null, child: _buildItemText('不限', 'Any (leave blank)')),
+                                           ..._cachedSpiAddresses.map((addr) {
+                                             String hex = '0x';
+                                             return DropdownMenuItem<int?>(value: addr, child: Text(hex));
+                                           })
+                                         ],
+                                         onChanged: (_cachedSpiCommands.isEmpty) ? null : (val) => setState(() => _spiAddress = val),
+                                       ),
+                                    ],
+                                  );
+                               }
+                             ),
+                           ),
+                         ],
+                       ),
+                     ),
+                   ],
+                 ),
+              ] else if (hasDecoder) ...[

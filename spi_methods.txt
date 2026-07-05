@@ -1,0 +1,127 @@
+﻿  List<String> _getAvailableSpiFrameTypes(DigitalBus bus, OscilloscopeState state, String? protocolName) {
+    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return ['Any'];
+    Set<String> types = {'Any'};
+    dynamic regfile;
+    if (protocolName != null) {
+      for (var r in state.availableSpiRegfiles) {
+        if (r.name == protocolName) {
+          regfile = r;
+          break;
+        }
+      }
+    }
+    
+    for (var frame in bus.decoder!.frames) {
+      int? cmd;
+      for (var p in frame.packets) {
+        if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue != null) {
+          cmd = p.rawValue;
+          break;
+        }
+      }
+      if (cmd != null && regfile != null && regfile.registers.containsKey(cmd)) {
+        String access = regfile.registers[cmd]!.access ?? '';
+        if (access.contains('R') && access.contains('W')) {
+           types.add('Read Only'); types.add('Write Only');
+        } else if (access.contains('R')) {
+           types.add('Read Only');
+        } else if (access.contains('W')) {
+           types.add('Write Only');
+        }
+      } else {
+        types.add('Read Only'); types.add('Write Only');
+      }
+    }
+    return types.toList()..sort();
+  }
+
+  List<int> _getFilteredSpiCommands(DigitalBus bus, OscilloscopeState state, String frameType, String? protocolName) {
+    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return [];
+    Set<int> cmds = {};
+    dynamic regfile;
+    if (protocolName != null) {
+      for (var r in state.availableSpiRegfiles) {
+        if (r.name == protocolName) {
+          regfile = r;
+          break;
+        }
+      }
+    }
+
+    for (var frame in bus.decoder!.frames) {
+      int? cmd;
+      for (var p in frame.packets) {
+        if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue != null) {
+          cmd = p.rawValue;
+          break;
+        }
+      }
+      if (cmd != null) {
+        if (frameType != 'Any' && regfile != null && regfile.registers.containsKey(cmd)) {
+           String access = regfile.registers[cmd]!.access ?? '';
+           if (frameType == 'Read Only' && !access.contains('R')) continue;
+           if (frameType == 'Write Only' && !access.contains('W')) continue;
+        }
+        cmds.add(cmd);
+      }
+    }
+    return cmds.toList()..sort();
+  }
+
+  List<int> _getFilteredSpiAddresses(DigitalBus bus, OscilloscopeState state, String frameType, int? selectedCmd, String? protocolName) {
+    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return [];
+    Set<int> addrs = {};
+    for (var frame in bus.decoder!.frames) {
+      int? cmd;
+      int? addr;
+      bool hasCmd = false;
+      for (var p in frame.packets) {
+        if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue != null) {
+          cmd = p.rawValue;
+          hasCmd = true;
+        } else if (hasCmd && p.type == PacketType.data && p.data.startsWith('ADDR:') && p.rawValue != null) {
+          addr = p.rawValue;
+          break;
+        }
+      }
+      
+      if (addr != null) {
+        if (selectedCmd != null && cmd != selectedCmd) continue;
+        addrs.add(addr);
+      }
+    }
+    return addrs.toList()..sort();
+  }
+
+  void _updateSpiCaches(OscilloscopeState state, DigitalBus? bus) {
+    if (bus == null || bus.decoder?.name != 'SPI') return;
+
+    String? protocolFile = (bus.decoder as SpiDecoder).protocolFile;
+    _selectedSpiProtocol = protocolFile;
+
+    if (_lastSpiBusNameForCache == bus.name && _lastSpiFrameTypeForCache == _spiFrameType && _lastSpiCommandForCache == _spiCommand) {
+      return;
+    }
+
+    _lastSpiBusNameForCache = bus.name;
+    _lastSpiFrameTypeForCache = _spiFrameType;
+    _lastSpiCommandForCache = _spiCommand;
+
+    _availableSpiFrameTypes = _getAvailableSpiFrameTypes(bus, state, protocolFile);
+    if (!_availableSpiFrameTypes.contains(_spiFrameType)) {
+      _spiFrameType = 'Any';
+    }
+
+    _cachedSpiCommands = _getFilteredSpiCommands(bus, state, _spiFrameType, protocolFile);
+    if (_spiCommand != null && !_cachedSpiCommands.contains(_spiCommand)) {
+      _spiCommand = null;
+    }
+    if (_spiCommand == null && _cachedSpiCommands.length == 1) {
+      _spiCommand = _cachedSpiCommands.first;
+    }
+
+    _cachedSpiAddresses = _getFilteredSpiAddresses(bus, state, _spiFrameType, _spiCommand, protocolFile);
+    if (_spiAddress != null && !_cachedSpiAddresses.contains(_spiAddress)) {
+      _spiAddress = null;
+    }
+  }

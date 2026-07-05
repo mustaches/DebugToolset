@@ -836,6 +836,9 @@ class OscilloscopeState extends ChangeNotifier {
     String? i2cFrameType, // 'Any', 'Write Only', 'Read Only'
     int? i2cDeviceAddress,
     int? i2cRegisterAddress,
+    String? spiFrameType,
+    int? spiCommand,
+    int? spiAddress,
     String? uartField,
   }) {
     searchMatches.clear();
@@ -976,6 +979,102 @@ class OscilloscopeState extends ChangeNotifier {
                   }
                }
             }
+          }
+        }
+      } else if (decoderType == 'SPI') {
+        dynamic protocol;
+        String? protoFile = (bus.decoder as SpiDecoder).protocolFile;
+        if (protoFile != null) {
+           for (var r in availableSpiRegfiles) {
+             if (r.name == protoFile) { protocol = r; break; }
+           }
+        }
+        for (var frame in bus.decoder!.frames) {
+          int? frameCmd;
+          int? frameAddr;
+          String access = '';
+          
+          bool hasCmd = false;
+          for (var p in frame.packets) {
+             if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue != null) {
+                frameCmd = p.rawValue;
+                hasCmd = true;
+                if (protocol != null && protocol.registers.containsKey(frameCmd)) {
+                   access = protocol.registers[frameCmd]!.access ?? '';
+                }
+             } else if (hasCmd && p.type == PacketType.data && p.data.startsWith('ADDR:') && p.rawValue != null) {
+                frameAddr = p.rawValue;
+                break;
+             }
+          }
+          
+          // Conditions
+          if (spiCommand != null && frameCmd != spiCommand) continue;
+          if (spiFrameType == 'Write Only' && !access.contains('W')) continue;
+          if (spiFrameType == 'Read Only' && !access.contains('R')) continue;
+          if (spiAddress != null && frameAddr != spiAddress) continue;
+          
+          if (targetSequence.isNotEmpty) {
+             bool foundSequence = false;
+             int matchStartIndex = -1;
+             int matchEndIndex = -1;
+             
+             List<ProtocolPacket> searchablePackets = [];
+             for (var p in frame.packets) {
+                if (p.type == PacketType.data && p.data.startsWith('DATA:') && p.rawValue != null) {
+                   searchablePackets.add(p);
+                } else if (p.type == PacketType.data && (p.data.startsWith('MOSI:') || p.data.startsWith('MISO:')) && p.rawValue != null) {
+                   searchablePackets.add(p);
+                }
+             }
+             
+             if (targetSequence.length == 1) {
+                for (var p in searchablePackets) {
+                   if (p.rawValue == targetSequence[0]) {
+                      foundSequence = true;
+                      matchStartIndex = p.startIndex;
+                      matchEndIndex = p.endIndex;
+                      break;
+                   }
+                }
+             } else {
+                for (int i = 0; i <= searchablePackets.length - targetSequence.length; i++) {
+                   bool match = true;
+                   for (int j = 0; j < targetSequence.length; j++) {
+                      if (searchablePackets[i+j].rawValue != targetSequence[j]) {
+                         match = false;
+                         break;
+                      }
+                   }
+                   if (match) {
+                      foundSequence = true;
+                      matchStartIndex = searchablePackets[i].startIndex;
+                      matchEndIndex = searchablePackets[i+targetSequence.length-1].endIndex;
+                      break;
+                   }
+                }
+             }
+             
+             if (!foundSequence) continue;
+             searchMatches.add(BusSearchMatch(time: matchStartIndex / _sampleRate, startIndex: matchStartIndex, endIndex: matchEndIndex, busName: bus.name));
+          } else {
+             int matchStartIndex = frame.startIndex;
+             int matchEndIndex = frame.endIndex;
+             
+             if (spiAddress != null) {
+                for (var p in frame.packets) {
+                   if (p.type == PacketType.data && p.data.startsWith('ADDR:') && p.rawValue == spiAddress) {
+                      matchStartIndex = p.startIndex; matchEndIndex = p.endIndex; break;
+                   }
+                }
+             } else if (spiCommand != null) {
+                for (var p in frame.packets) {
+                   if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue == spiCommand) {
+                      matchStartIndex = p.startIndex; matchEndIndex = p.endIndex; break;
+                   }
+                }
+             }
+             searchMatches.add(BusSearchMatch(time: matchStartIndex / _sampleRate, startIndex: matchStartIndex, endIndex: matchEndIndex, busName: bus.name));
           }
         }
       } else if (decoderType == 'I2C') {

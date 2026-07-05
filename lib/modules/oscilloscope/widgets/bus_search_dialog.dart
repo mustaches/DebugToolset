@@ -33,6 +33,21 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   List<int> _cachedI2cRegisters = [];
   String? _lastBusNameForCache;
   int? _lastDeviceAddressForCache;
+
+  // SPI Specific Fields
+  String _spiFrameType = 'Any';
+  int? _spiCommand;
+  int? _spiAddress;
+
+  List<String> _availableI2cFrameTypes = ['Any'];
+  String? _lastI2cFrameTypeForCache;
+  List<String> _availableSpiFrameTypes = ['Any'];
+  List<int> _cachedSpiCommands = [];
+  List<int> _cachedSpiAddresses = [];
+  String? _lastSpiBusNameForCache;
+  String? _lastSpiFrameTypeForCache;
+  int? _lastSpiCommandForCache;
+  String? _selectedSpiProtocol;
   List<String> _cachedUartProtocols = [];
 
   String? _lastUartBusNameForCache;
@@ -59,6 +74,9 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
       _i2cFrameType = conf['i2cFrameType'] ?? 'Any';
       _i2cDeviceAddress = conf['i2cDeviceAddress'];
       _i2cRegisterAddress = conf['i2cRegisterAddress'];
+      _spiFrameType = conf['spiFrameType'] ?? 'Any';
+      _spiCommand = conf['spiCommand'];
+      _spiAddress = conf['spiAddress'];
     } else if (state.digitalChannel.buses.isNotEmpty) {
       _selectedBusName = state.digitalChannel.buses.first.name;
     }
@@ -169,31 +187,233 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     }
   }
 
-  void _updateCaches(OscilloscopeState state, DigitalBus? bus) {
-    if (bus == null || bus.decoder?.name != 'I2C') {
-      _cachedI2cDevices.clear();
-      _cachedI2cRegisters.clear();
-      _i2cDeviceAddress = null;
-      _i2cRegisterAddress = null;
-      return;
+  List<String> _getAvailableSpiFrameTypes(DigitalBus bus, OscilloscopeState state, String? protocolName) {
+    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return ['Any'];
+    Set<String> types = {'Any'};
+    dynamic regfile;
+    if (protocolName != null) {
+      for (var r in state.availableSpiRegfiles) {
+        if (r.name == protocolName) {
+          regfile = r;
+          break;
+        }
+      }
     }
+    
+    for (var frame in bus.decoder!.frames) {
+      int? cmd;
+      for (var p in frame.packets) {
+        if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue != null) {
+          cmd = p.rawValue;
+          break;
+        }
+      }
+      if (cmd != null && regfile != null && regfile.registers.containsKey(cmd)) {
+        String access = regfile.registers[cmd]!.access ?? '';
+        if (access.contains('R') && access.contains('W')) {
+           types.add('Read Only'); types.add('Write Only');
+        } else if (access.contains('R')) {
+           types.add('Read Only');
+        } else if (access.contains('W')) {
+           types.add('Write Only');
+        }
+      } else {
+        types.add('Read Only'); types.add('Write Only');
+      }
+    }
+    return types.toList()..sort();
+  }
 
-    if (_lastBusNameForCache != bus.name) {
-      _cachedI2cDevices = state.getDetectedI2cDevices(bus);
-      _lastBusNameForCache = bus.name;
-      if (!_cachedI2cDevices.contains(_i2cDeviceAddress)) {
-         _i2cDeviceAddress = _cachedI2cDevices.isNotEmpty ? _cachedI2cDevices.first : null;
+  List<int> _getFilteredSpiCommands(DigitalBus bus, OscilloscopeState state, String frameType, String? protocolName) {
+    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return [];
+    Set<int> cmds = {};
+    dynamic regfile;
+    if (protocolName != null) {
+      for (var r in state.availableSpiRegfiles) {
+        if (r.name == protocolName) {
+          regfile = r;
+          break;
+        }
       }
     }
 
-    if (_lastDeviceAddressForCache != _i2cDeviceAddress) {
-       if (_i2cDeviceAddress != null) {
-          _cachedI2cRegisters = state.getDetectedI2cRegisters(bus, _i2cDeviceAddress!);
-       } else {
-          _cachedI2cRegisters.clear();
-       }
-       _lastDeviceAddressForCache = _i2cDeviceAddress;
-       _i2cRegisterAddress = null; // Reset register selection when device changes
+    for (var frame in bus.decoder!.frames) {
+      int? cmd;
+      for (var p in frame.packets) {
+        if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue != null) {
+          cmd = p.rawValue;
+          break;
+        }
+      }
+      if (cmd != null) {
+        if (frameType != 'Any' && regfile != null && regfile.registers.containsKey(cmd)) {
+           String access = regfile.registers[cmd]!.access ?? '';
+           if (frameType == 'Read Only' && !access.contains('R')) continue;
+           if (frameType == 'Write Only' && !access.contains('W')) continue;
+        }
+        cmds.add(cmd);
+      }
+    }
+    return cmds.toList()..sort();
+  }
+
+  List<int> _getFilteredSpiAddresses(DigitalBus bus, OscilloscopeState state, String frameType, int? selectedCmd, String? protocolName) {
+    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return [];
+    Set<int> addrs = {};
+    for (var frame in bus.decoder!.frames) {
+      int? cmd;
+      int? addr;
+      bool hasCmd = false;
+      for (var p in frame.packets) {
+        if (p.type == PacketType.data && p.data.startsWith('CMD:') && p.rawValue != null) {
+          cmd = p.rawValue;
+          hasCmd = true;
+        } else if (hasCmd && p.type == PacketType.data && p.data.startsWith('ADDR:') && p.rawValue != null) {
+          addr = p.rawValue;
+          break;
+        }
+      }
+      
+      if (addr != null) {
+        if (selectedCmd != null && cmd != selectedCmd) continue;
+        addrs.add(addr);
+      }
+    }
+    return addrs.toList()..sort();
+  }
+
+  List<String> _getAvailableI2cFrameTypes(DigitalBus bus) {
+    if (bus.decoder == null || bus.decoder!.name != 'I2C') return ['Any', 'Read Only', 'Write Only'];
+    bool hasRead = false;
+    bool hasWrite = false;
+    for (var frame in bus.decoder!.frames) {
+      if (frame.summary.startsWith('Read')) hasRead = true;
+      if (frame.summary.startsWith('Write')) hasWrite = true;
+      if (hasRead && hasWrite) break;
+    }
+    List<String> types = ['Any'];
+    if (hasRead) types.add('Read Only');
+    if (hasWrite) types.add('Write Only');
+    if (!hasRead && !hasWrite) {
+      types.add('Read Only'); types.add('Write Only');
+    }
+    return types;
+  }
+
+  List<int> _getFilteredI2cDevices(DigitalBus bus, OscilloscopeState state, String frameType) {
+    if (bus.decoder == null || bus.decoder!.name != 'I2C') return [];
+    Set<int> addrs = {};
+    for (var frame in bus.decoder!.frames) {
+      bool isRead = frame.summary.startsWith('Read');
+      bool isWrite = frame.summary.startsWith('Write');
+      if (frameType == 'Read Only' && !isRead) continue;
+      if (frameType == 'Write Only' && !isWrite) continue;
+      
+      for (var p in frame.packets) {
+        if (p.type == PacketType.address && p.rawValue != null) {
+          addrs.add(p.rawValue!);
+          break;
+        }
+      }
+    }
+    var list = addrs.toList();
+    list.sort();
+    return list;
+  }
+
+  List<int> _getFilteredI2cRegisters(DigitalBus bus, OscilloscopeState state, String frameType, int? deviceAddr) {
+    if (bus.decoder == null || bus.decoder!.name != 'I2C') return [];
+    Set<int> addrs = {};
+    for (var frame in bus.decoder!.frames) {
+      bool isRead = frame.summary.startsWith('Read');
+      bool isWrite = frame.summary.startsWith('Write');
+      if (frameType == 'Read Only' && !isRead) continue;
+      if (frameType == 'Write Only' && !isWrite) continue;
+      
+      int? currentAddr;
+      for (var p in frame.packets) {
+        if (p.type == PacketType.address && p.rawValue != null) {
+          currentAddr = p.rawValue;
+        } else if (p.type == PacketType.data && p.data.startsWith('ADDR:') && p.rawValue != null) {
+          if (deviceAddr == null || currentAddr == deviceAddr) {
+             addrs.add(p.rawValue!);
+          }
+          break;
+        }
+      }
+    }
+    var list = addrs.toList();
+    list.sort();
+    return list;
+  }
+
+  void _updateI2cCaches(OscilloscopeState state, DigitalBus bus) {
+    if (_lastBusNameForCache == bus.name && _lastI2cFrameTypeForCache == _i2cFrameType && _lastDeviceAddressForCache == _i2cDeviceAddress) {
+      return;
+    }
+    
+    _lastBusNameForCache = bus.name;
+    _lastI2cFrameTypeForCache = _i2cFrameType;
+    _lastDeviceAddressForCache = _i2cDeviceAddress;
+
+    _availableI2cFrameTypes = _getAvailableI2cFrameTypes(bus);
+    if (!_availableI2cFrameTypes.contains(_i2cFrameType)) {
+      _i2cFrameType = 'Any';
+    }
+
+    _cachedI2cDevices = _getFilteredI2cDevices(bus, state, _i2cFrameType);
+    if (_i2cDeviceAddress != null && !_cachedI2cDevices.contains(_i2cDeviceAddress)) {
+      _i2cDeviceAddress = null;
+    }
+    if (_i2cDeviceAddress == null && _cachedI2cDevices.length == 1) {
+      _i2cDeviceAddress = _cachedI2cDevices.first;
+    }
+
+    _cachedI2cRegisters = _getFilteredI2cRegisters(bus, state, _i2cFrameType, _i2cDeviceAddress);
+    if (_i2cRegisterAddress != null && !_cachedI2cRegisters.contains(_i2cRegisterAddress)) {
+      _i2cRegisterAddress = null;
+    }
+  }
+
+  void _updateSpiCaches(OscilloscopeState state, DigitalBus? bus) {
+    if (bus == null || bus.decoder?.name != 'SPI') return;
+
+    String? protocolFile = (bus.decoder as SpiDecoder).protocolFile;
+    _selectedSpiProtocol = protocolFile;
+
+    if (_lastSpiBusNameForCache == bus.name && _lastSpiFrameTypeForCache == _spiFrameType && _lastSpiCommandForCache == _spiCommand) {
+      return;
+    }
+
+    _lastSpiBusNameForCache = bus.name;
+    _lastSpiFrameTypeForCache = _spiFrameType;
+    _lastSpiCommandForCache = _spiCommand;
+
+    _availableSpiFrameTypes = _getAvailableSpiFrameTypes(bus, state, protocolFile);
+    if (!_availableSpiFrameTypes.contains(_spiFrameType)) {
+      _spiFrameType = 'Any';
+    }
+
+    _cachedSpiCommands = _getFilteredSpiCommands(bus, state, _spiFrameType, protocolFile);
+    if (_spiCommand != null && !_cachedSpiCommands.contains(_spiCommand)) {
+      _spiCommand = null;
+    }
+    if (_spiCommand == null && _cachedSpiCommands.length == 1) {
+      _spiCommand = _cachedSpiCommands.first;
+    }
+
+    _cachedSpiAddresses = _getFilteredSpiAddresses(bus, state, _spiFrameType, _spiCommand, protocolFile);
+    if (_spiAddress != null && !_cachedSpiAddresses.contains(_spiAddress)) {
+      _spiAddress = null;
+    }
+  }
+
+  void _updateCaches(OscilloscopeState state, DigitalBus? bus) {
+    if (bus == null) return;
+    if (bus.decoder?.name == 'I2C') {
+       _updateI2cCaches(state, bus);
+    } else if (bus.decoder?.name == 'SPI') {
+       _updateSpiCaches(state, bus);
     }
   }
 
@@ -242,7 +462,12 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
       'i2cFrameType': _i2cFrameType,
       'i2cDeviceAddress': _i2cDeviceAddress,
       'i2cRegisterAddress': _i2cRegisterAddress,
+      'spiFrameType': _spiFrameType,
+      'spiCommand': _spiCommand,
+      'spiAddress': _spiAddress,
     };
+
+    bool isSpi = bus.decoder != null && bus.decoder!.name == 'SPI';
 
     int matchCount = state.searchAdvancedBusValue(
 
@@ -255,7 +480,10 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
       i2cFrameType: isI2c ? _i2cFrameType : null,
       i2cDeviceAddress: isI2c ? _i2cDeviceAddress : null,
       i2cRegisterAddress: isI2c ? _i2cRegisterAddress : null,
-      uartField: (!isI2c && bus.decoder != null && bus.decoder!.name == 'UART' && (bus.decoder as UartDecoder).protocolFile != null) ? _uartField : null,
+      spiFrameType: isSpi ? _spiFrameType : null,
+      spiCommand: isSpi ? _spiCommand : null,
+      spiAddress: isSpi ? _spiAddress : null,
+      uartField: (!isI2c && !isSpi && bus.decoder != null && bus.decoder!.name == 'UART' && (bus.decoder as UartDecoder).protocolFile != null) ? _uartField : null,
     );
 
     if (matchCount > 0) {
@@ -498,79 +726,18 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
               
               if (isI2c) ...[
                  // I2C Specific UI
-                 _buildLabel('帧类型', 'Frame Type'),
-                 const SizedBox(height: 8),
-                 DropdownButtonFormField<String>(
-                   initialValue: _i2cFrameType,
-                   dropdownColor: const Color(0xFF333333),
-                   style: const TextStyle(color: Colors.white),
-                   decoration: const InputDecoration(
-                     filled: true,
-                     fillColor: Color(0xFF1E1E1E),
-                     border: OutlineInputBorder(),
-                     contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                   ),
-                   items: [
-                     DropdownMenuItem(value: 'Any', child: _buildItemText('读或写', 'Write or Read')),
-                     DropdownMenuItem(value: 'Write Only', child: _buildItemText('仅写', 'Write Only')),
-                     DropdownMenuItem(value: 'Read Only', child: _buildItemText('仅读', 'Read Only')),
-                   ],
-                   onChanged: (val) => setState(() => _i2cFrameType = val!),
-                 ),
-                 const SizedBox(height: 16),
-                 
-                 _buildLabel('设备地址', 'Device Address'),
-                 const SizedBox(height: 8),
-                 DropdownButtonFormField<int?>(
-                   initialValue: _i2cDeviceAddress,
-                   dropdownColor: const Color(0xFF333333),
-                   style: const TextStyle(color: Colors.white),
-                   decoration: const InputDecoration(
-                     filled: true,
-                     fillColor: Color(0xFF1E1E1E),
-                     border: OutlineInputBorder(),
-                     contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                   ),
-                   items: _cachedI2cDevices.map((addr) {
-                     String hex = '0x${addr.toRadixString(16).toUpperCase().padLeft(2, '0')}';
-                     String alias = '';
-                     if (currentBus != null && currentBus.decoder is I2cDecoder) {
-                         var i2cDec = currentBus.decoder as I2cDecoder;
-                         if (i2cDec.deviceAliases.containsKey(addr)) {
-                             alias = ' ${i2cDec.deviceAliases[addr]}';
-                         }
-                     }
-                     return DropdownMenuItem<int?>(value: addr, child: Text(hex + alias));
-                   }).toList(),
-                   onChanged: (val) {
-                      setState(() {
-                         _i2cDeviceAddress = val;
-                         _lastDeviceAddressForCache = null;
-                      });
-                   },
-                   hint: const Text('选择设备 (Select a Device)', style: TextStyle(color: Colors.white38)),
-                 ),
-                 const SizedBox(height: 16),
-                 
-                 Builder(
-                   builder: (context) {
-                      bool isMemory = false;
-                      if (currentBus != null && _i2cDeviceAddress != null) {
-                         var regfile = state.getRegfileFor(currentBus.name, _i2cDeviceAddress!);
-                         if (regfile != null && regfile.hasSubaddress == true) isMemory = true;
-                         // Also check common EEPROM addresses
-                         if (_i2cDeviceAddress! >= 0x50 && _i2cDeviceAddress! <= 0x57) isMemory = true;
-                      }
-                      String labelCn = isMemory ? '片内首地址' : '寄存器地址';
-                      String labelEn = isMemory ? 'Internal Addr' : 'Register Addr';
-                      
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                           _buildLabel(labelCn, labelEn),
+                 Row(
+                   crossAxisAlignment: CrossAxisAlignment.start,
+                   children: [
+                     Expanded(
+                       flex: 1,
+                       child: Column(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           _buildLabel('帧类型', 'Frame Type'),
                            const SizedBox(height: 8),
-                           DropdownButtonFormField<int?>(
-                             initialValue: _i2cRegisterAddress,
+                           DropdownButtonFormField<String>(
+                             initialValue: _availableI2cFrameTypes.contains(_i2cFrameType) ? _i2cFrameType : 'Any',
                              dropdownColor: const Color(0xFF333333),
                              style: const TextStyle(color: Colors.white),
                              decoration: const InputDecoration(
@@ -579,27 +746,346 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                border: OutlineInputBorder(),
                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                              ),
-                             items: [
-                               DropdownMenuItem<int?>(value: null, child: _buildItemText('不限', 'Any (leave blank)')),
-                               ..._cachedI2cRegisters.map((addr) {
-                                 String hex = '0x${addr.toRadixString(16).toUpperCase().padLeft(2, '0')}';
-                                 String alias = '';
-                                 if (currentBus != null && _i2cDeviceAddress != null) {
-                                    var regfile = state.getRegfileFor(currentBus.name, _i2cDeviceAddress!);
-                                    if (regfile != null && regfile.registers.containsKey(addr)) {
-                                       alias = ' ${regfile.registers[addr]!.name}';
-                                    }
-                                 }
-                                 return DropdownMenuItem<int?>(value: addr, child: Text(hex + alias));
-                               })
-                             ],
-                             onChanged: (val) => setState(() => _i2cRegisterAddress = val),
+                             items: _availableI2cFrameTypes.map((type) {
+                                String labelCn = type == 'Any' ? '读或写' : (type == 'Write Only' ? '仅写' : '仅读');
+                                String labelEn = type == 'Any' ? 'Write or Read' : type;
+                                return DropdownMenuItem(value: type, child: _buildItemText(labelCn, labelEn));
+                             }).toList(),
+                             onChanged: (val) {
+                               setState(() {
+                                 _i2cFrameType = val!;
+                                 _lastI2cFrameTypeForCache = null;
+                               });
+                             },
                            ),
+                         ],
+                       ),
+                     ),
+                     const SizedBox(width: 16),
+                     
+                     Expanded(
+                       flex: 2,
+                       child: Row(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           Expanded(
+                             flex: 1,
+                             child: Column(
+                               crossAxisAlignment: CrossAxisAlignment.start,
+                               children: [
+                                 _buildLabel('设备地址', 'Device Address'),
+                                 const SizedBox(height: 8),
+                                 DropdownButtonFormField<int?>(
+                                   initialValue: _i2cDeviceAddress,
+                                   dropdownColor: const Color(0xFF333333),
+                                   style: const TextStyle(color: Colors.white),
+                                   decoration: const InputDecoration(
+                                     filled: true,
+                                     fillColor: Color(0xFF1E1E1E),
+                                     border: OutlineInputBorder(),
+                                     contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                   ),
+                                   items: [
+                                     if (_i2cDeviceAddress != null && !_cachedI2cDevices.contains(_i2cDeviceAddress))
+                                       DropdownMenuItem<int?>(
+                                         value: _i2cDeviceAddress,
+                                         child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
+                                       ),
+                                     ..._cachedI2cDevices.map((addr) {
+                                       String hex = '0x';
+                                       String alias = '';
+                                       if (currentBus != null && currentBus!.decoder is I2cDecoder) {
+                                           var i2cDec = currentBus!.decoder as I2cDecoder;
+                                           if (i2cDec.deviceAliases.containsKey(addr)) {
+                                               alias = ' ';
+                                           }
+                                       }
+                                       return DropdownMenuItem<int?>(value: addr, child: Text(hex + alias));
+                                     })
+                                   ],
+                                   onChanged: (_cachedI2cDevices.isEmpty) ? null : (val) {
+                                      setState(() {
+                                         _i2cDeviceAddress = val;
+                                         _lastDeviceAddressForCache = null;
+                                      });
+                                   },
+                                   hint: const Text('选择设备 (Select a Device)', style: TextStyle(color: Colors.white38)),
+                                 ),
+                               ],
+                             ),
+                           ),
+                           const SizedBox(width: 16),
+                           
+                           Expanded(
+                             flex: 1,
+                             child: Builder(
+                               builder: (context) {
+                                  bool isMemory = false;
+                                  if (currentBus != null && _i2cDeviceAddress != null) {
+                                     var regfile = state.getRegfileFor(currentBus!.name, _i2cDeviceAddress!);
+                                     if (regfile != null && regfile.hasSubaddress == true) isMemory = true;
+                                     if (_i2cDeviceAddress! >= 0x50 && _i2cDeviceAddress! <= 0x57) isMemory = true;
+                                  }
+                                  String labelCn = isMemory ? '片内首地址' : '寄存器地址';
+                                  String labelEn = isMemory ? 'Internal Addr' : 'Register Addr';
+                                  
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                       _buildLabel(labelCn, labelEn),
+                                       const SizedBox(height: 8),
+                                       DropdownButtonFormField<int?>(
+                                         initialValue: _i2cRegisterAddress,
+                                         dropdownColor: const Color(0xFF333333),
+                                         style: const TextStyle(color: Colors.white),
+                                         decoration: const InputDecoration(
+                                           filled: true,
+                                           fillColor: Color(0xFF1E1E1E),
+                                           border: OutlineInputBorder(),
+                                           contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                         ),
+                                         items: [
+                                            if (_i2cRegisterAddress != null && !_cachedI2cRegisters.contains(_i2cRegisterAddress))
+                                              DropdownMenuItem<int?>(
+                                                value: _i2cRegisterAddress,
+                                                child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
+                                              ),
+                                           DropdownMenuItem<int?>(value: null, child: _buildItemText('不限', 'Any (leave blank)')),
+                                           ..._cachedI2cRegisters.map((addr) {
+                                             String hex = '0x';
+                                             String alias = '';
+                                             if (currentBus != null && _i2cDeviceAddress != null) {
+                                                var regfile = state.getRegfileFor(currentBus!.name, _i2cDeviceAddress!);
+                                                if (regfile != null && regfile.registers.containsKey(addr)) {
+                                                   alias = ' ';
+                                                }
+                                             }
+                                             return DropdownMenuItem<int?>(value: addr, child: Text(hex + alias));
+                                           })
+                                         ],
+                                         onChanged: (_cachedI2cDevices.isEmpty) ? null : (val) => setState(() => _i2cRegisterAddress = val),
+                                       ),
+                                    ],
+                                  );
+                               }
+                             ),
+                           ),
+                         ],
+                       ),
+                     ),
+                   ],
+                 ),
+                 const SizedBox(height: 16),
+                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 1,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildLabel('数据格式', 'Data Format'),
+                          const SizedBox(height: 8),
+                          DropdownButtonFormField<String>(
+                            initialValue: _format,
+                            dropdownColor: const Color(0xFF333333),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
+                              filled: true,
+                              fillColor: Color(0xFF1E1E1E),
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'Hex', child: Text('Hex')),
+                              DropdownMenuItem(value: 'Dec', child: Text('Dec')),
+                              DropdownMenuItem(value: 'Bin', child: Text('Bin')),
+                              DropdownMenuItem(value: 'ASCII', child: Text('ASCII')),
+                            ],
+                            onChanged: (val) {
+                               setState(() {
+                                 _format = val!;
+                                 _valueController.clear();
+                               });
+                            },
+                          ),
                         ],
-                      );
-                   }
-                 )
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildLabel('数据内容', 'Data Content'),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _valueController,
+                            style: const TextStyle(color: Colors.white),
+                            inputFormatters: [
+                              if (_format == 'Hex')
+                                FilteringTextInputFormatter.allow(RegExp(r'[0-9a-fA-F ]')),
+                              if (_format == 'Dec')
+                                FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
+                              if (_format == 'Bin')
+                                FilteringTextInputFormatter.allow(RegExp(r'[01 ]')),
+                            ],
+                            decoration: InputDecoration(
+                              filled: true,
+                              fillColor: const Color(0xFF1E1E1E),
+                              border: const OutlineInputBorder(),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              hintText: _format == 'ASCII' ? 'e.g. hello (留空不限)' : 'e.g. 12 34 (空格分隔，大小受限于位宽)',
+                              hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
+                            ),
+                            onSubmitted: (_) => _onSearch(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ] else if (hasDecoder && currentBus!.decoder?.name == 'SPI') ...[
+                 // SPI Specific UI
+                 Row(
+                   crossAxisAlignment: CrossAxisAlignment.start,
+                   children: [
+                     Expanded(
+                       flex: 1,
+                       child: Column(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           _buildLabel('帧类型', 'Frame Type'),
+                           const SizedBox(height: 8),
+                           DropdownButtonFormField<String>(
+                             initialValue: _availableSpiFrameTypes.contains(_spiFrameType) ? _spiFrameType : 'Any',
+                             dropdownColor: const Color(0xFF333333),
+                             style: const TextStyle(color: Colors.white),
+                             decoration: const InputDecoration(
+                               filled: true,
+                               fillColor: Color(0xFF1E1E1E),
+                               border: OutlineInputBorder(),
+                               contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                             ),
+                             items: _availableSpiFrameTypes.map((type) {
+                                String labelCn = type == 'Any' ? '读或写' : (type == 'Write Only' ? '仅写' : '仅读');
+                                String labelEn = type == 'Any' ? 'Write or Read' : type;
+                                return DropdownMenuItem(value: type, child: _buildItemText(labelCn, labelEn));
+                             }).toList(),
+                             onChanged: (val) {
+                               setState(() {
+                                 _spiFrameType = val!;
+                                 _lastSpiFrameTypeForCache = null;
+                               });
+                             },
+                           ),
+                         ],
+                       ),
+                     ),
+                     const SizedBox(width: 16),
+                     
+                     Expanded(
+                       flex: 2,
+                       child: Row(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           Expanded(
+                             flex: 1,
+                             child: Column(
+                               crossAxisAlignment: CrossAxisAlignment.start,
+                               children: [
+                                 _buildLabel('指令', 'Command'),
+                                 const SizedBox(height: 8),
+                                 DropdownButtonFormField<int?>(
+                                   initialValue: _spiCommand,
+                                   dropdownColor: const Color(0xFF333333),
+                                   style: const TextStyle(color: Colors.white),
+                                   decoration: const InputDecoration(
+                                     filled: true,
+                                     fillColor: Color(0xFF1E1E1E),
+                                     border: OutlineInputBorder(),
+                                     contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                   ),
+                                   items: [
+                                     if (_spiCommand != null && !_cachedSpiCommands.contains(_spiCommand))
+                                       DropdownMenuItem<int?>(
+                                         value: _spiCommand,
+                                         child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
+                                       ),
+                                     ..._cachedSpiCommands.map((cmd) {
+                                       String hex = '0x';
+                                       String alias = '';
+                                       if (currentBus != null && _selectedSpiProtocol != null) {
+                                           var regfiles = state.availableSpiRegfiles.where((r) => r.name == _selectedSpiProtocol);
+                                           if (regfiles.isNotEmpty) {
+                                               var regfile = regfiles.first;
+                                               if (regfile.registers.containsKey(cmd)) {
+                                                   alias = ' ';
+                                               }
+                                           }
+                                       }
+                                       return DropdownMenuItem<int?>(value: cmd, child: Text(hex + alias));
+                                     })
+                                   ],
+                                   onChanged: (_cachedSpiCommands.isEmpty) ? null : (val) {
+                                      setState(() {
+                                         _spiCommand = val;
+                                         _lastSpiCommandForCache = null;
+                                      });
+                                   },
+                                   hint: const Text('选择指令 (Select a Command)', style: TextStyle(color: Colors.white38)),
+                                 ),
+                               ],
+                             ),
+                           ),
+                           const SizedBox(width: 16),
+                           
+                           Expanded(
+                             flex: 1,
+                             child: Builder(
+                               builder: (context) {
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                       _buildLabel('寄存器地址', 'Register Addr'),
+                                       const SizedBox(height: 8),
+                                       DropdownButtonFormField<int?>(
+                                         initialValue: _spiAddress,
+                                         dropdownColor: const Color(0xFF333333),
+                                         style: const TextStyle(color: Colors.white),
+                                         decoration: const InputDecoration(
+                                           filled: true,
+                                           fillColor: Color(0xFF1E1E1E),
+                                           border: OutlineInputBorder(),
+                                           contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                         ),
+                                         items: [
+                                            if (_spiAddress != null && !_cachedSpiAddresses.contains(_spiAddress))
+                                              DropdownMenuItem<int?>(
+                                                value: _spiAddress,
+                                                child: Text('0x (无匹配/No match)', style: const TextStyle(color: Colors.grey)),
+                                              ),
+                                           DropdownMenuItem<int?>(value: null, child: _buildItemText('不限', 'Any (leave blank)')),
+                                           ..._cachedSpiAddresses.map((addr) {
+                                             String hex = '0x';
+                                             return DropdownMenuItem<int?>(value: addr, child: Text(hex));
+                                           })
+                                         ],
+                                         onChanged: (_cachedSpiCommands.isEmpty) ? null : (val) => setState(() => _spiAddress = val),
+                                       ),
+                                    ],
+                                  );
+                               }
+                             ),
+                           ),
+                         ],
+                       ),
+                     ),
+                   ],
+                 ),
               ] else if (hasDecoder) ...[
+
                 if (isRawUart) ...[
                   const SizedBox(height: 16),
                   Row(
@@ -857,7 +1343,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                 ]
               ],
               
-              if (!disableInput && !isRawUart && !isUartWithProtocol) ...[
+              if (!disableInput && !isRawUart && !isUartWithProtocol && !isI2c && !(hasDecoder && currentBus!.decoder?.name == 'SPI')) ...[
                 const SizedBox(height: 16),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
