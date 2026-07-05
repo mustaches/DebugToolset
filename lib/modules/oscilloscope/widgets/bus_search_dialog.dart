@@ -847,7 +847,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                        if (currentBus != null && currentBus!.decoder is I2cDecoder) {
                                            var i2cDec = currentBus!.decoder as I2cDecoder;
                                            if (i2cDec.deviceAliases.containsKey(addr)) {
-                                               alias = ' ';
+                                               alias = ' (${i2cDec.deviceAliases[addr]})';
                                            }
                                        }
                                        return DropdownMenuItem<int?>(value: addr, child: Text(hex + alias));
@@ -910,10 +910,18 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                            ..._cachedI2cRegisters.map((addr) {
                                              String hex = '0x${addr.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                              String alias = '';
-                                             if (currentBus != null && _i2cDeviceAddress != null) {
+                                             if (currentBus != null && _selectedI2cProtocol != null) {
+                                                var regfiles = state.availableRegfiles.where((r) => r.name == _selectedI2cProtocol);
+                                                if (regfiles.isNotEmpty) {
+                                                   var regfile = regfiles.first;
+                                                   if (regfile.registers.containsKey(addr)) {
+                                                      alias = ' (${regfile.registers[addr]!.name})';
+                                                   }
+                                                }
+                                             } else if (currentBus != null && _i2cDeviceAddress != null) {
                                                 var regfile = state.getRegfileFor(currentBus!.name, _i2cDeviceAddress!);
                                                 if (regfile != null && regfile.registers.containsKey(addr)) {
-                                                   alias = ' ';
+                                                   alias = ' (${regfile.registers[addr]!.name})';
                                                 }
                                              }
                                              return DropdownMenuItem<int?>(value: addr, child: Text(hex + alias));
@@ -1077,7 +1085,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                            if (regfiles.isNotEmpty) {
                                                var regfile = regfiles.first;
                                                if (regfile.registers.containsKey(cmd)) {
-                                                   alias = ' ';
+                                                   alias = ' (${regfile.registers[cmd]!.name})';
                                                }
                                            }
                                        }
