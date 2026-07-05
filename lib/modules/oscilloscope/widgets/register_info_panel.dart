@@ -290,8 +290,13 @@ class RegisterInfoPanel extends StatelessWidget {
                   Row(
                     children: [
                       if (regfile.name.startsWith('AT24C'))
-                        ElevatedButton.icon(
-                          onPressed: () async {
+                        PopupMenuButton<String>(
+                          tooltip: 'Save memory dump',
+                          color: const Color(0xFF2A2A2A),
+                          offset: const Offset(0, 30),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                          onSelected: (String format) async {
+
                              const XTypeGroup binType = XTypeGroup(label: 'Binary File', extensions: ['bin']);
                              const XTypeGroup hexType = XTypeGroup(label: 'Intel Hex File', extensions: ['hex']);
                              
@@ -315,17 +320,16 @@ class RegisterInfoPanel extends StatelessWidget {
                              String baseName = '${regfile.name.replaceAll('/', '_')}_S0x${sHex}_L0x$lHex';
 
                              final fileLocation = await getSaveLocation(
-                               acceptedTypeGroups: [binType, hexType],
-                               suggestedName: baseName,
+                               acceptedTypeGroups: format == 'hex' ? [hexType] : [binType],
+                               suggestedName: '$baseName.$format',
                                initialDirectory: dumpDir,
                              );
                              
                              if (fileLocation != null) {
                                String path = fileLocation.path;
-                               String format = 'bin';
-                               if (path.toLowerCase().endsWith('.hex')) {
-                                 format = 'hex';
-                               } else if (!path.toLowerCase().endsWith('.bin')) {
+                               if (format == 'hex' && !path.toLowerCase().endsWith('.hex')) {
+                                 path += '.hex';
+                               } else if (format == 'bin' && !path.toLowerCase().endsWith('.bin')) {
                                  path += '.bin';
                                }
                                
@@ -363,12 +367,31 @@ class RegisterInfoPanel extends StatelessWidget {
                                }
                              }
                           },
-                          icon: const Icon(Icons.download, size: 16, color: Colors.cyanAccent),
-                          label: const Text('DUMP', style: TextStyle(color: Colors.cyanAccent, fontSize: 12)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF333333),
+                          itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                            const PopupMenuItem<String>(
+                              value: 'bin',
+                              child: Text('Save as *.bin', style: TextStyle(color: Colors.white)),
+                            ),
+                            const PopupMenuItem<String>(
+                              value: 'hex',
+                              child: Text('Save as *.hex', style: TextStyle(color: Colors.white)),
+                            ),
+                          ],
+                          child: Container(
+                            constraints: const BoxConstraints(minHeight: 24),
                             padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                            minimumSize: const Size(0, 24),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF333333),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.download, size: 16, color: Colors.cyanAccent),
+                                SizedBox(width: 8),
+                                Text('DUMP', style: TextStyle(color: Colors.cyanAccent, fontSize: 12, fontWeight: FontWeight.w500)),
+                              ],
+                            ),
                           ),
                         ),
                       const SizedBox(width: 8),
@@ -1412,8 +1435,13 @@ class RegisterInfoPanel extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (isMemoryCommand && dataPackets.isNotEmpty)
-                      ElevatedButton.icon(
-                        onPressed: () async {
+                      PopupMenuButton<String>(
+                        tooltip: 'Save memory dump',
+                        color: const Color(0xFF2A2A2A),
+                        offset: const Offset(0, 30),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                        onSelected: (String format) async {
+
                            const XTypeGroup binType = XTypeGroup(label: 'Binary File', extensions: ['bin']);
                            const XTypeGroup hexType = XTypeGroup(label: 'Intel Hex File', extensions: ['hex']);
                            
@@ -1434,17 +1462,16 @@ class RegisterInfoPanel extends StatelessWidget {
                            String baseName = '${regfile?.name.replaceAll('/', '_') ?? 'SPI'}_S0x${sHex}_L0x$lHex';
 
                            final fileLocation = await getSaveLocation(
-                             acceptedTypeGroups: [binType, hexType],
-                             suggestedName: baseName,
+                             acceptedTypeGroups: format == 'hex' ? [hexType] : [binType],
+                             suggestedName: '$baseName.$format',
                              initialDirectory: dumpDir,
                            );
                            
                            if (fileLocation != null) {
                              String path = fileLocation.path;
-                             String format = 'bin';
-                             if (path.toLowerCase().endsWith('.hex')) {
-                               format = 'hex';
-                             } else if (!path.toLowerCase().endsWith('.bin')) {
+                             if (format == 'hex' && !path.toLowerCase().endsWith('.hex')) {
+                               path += '.hex';
+                             } else if (format == 'bin' && !path.toLowerCase().endsWith('.bin')) {
                                path += '.bin';
                              }
                              
@@ -1492,12 +1519,31 @@ class RegisterInfoPanel extends StatelessWidget {
                              }
                            }
                         },
-                        icon: const Icon(Icons.download, size: 16, color: Colors.cyanAccent),
-                        label: const Text('DUMP', style: TextStyle(color: Colors.cyanAccent, fontSize: 12)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF333333),
+                        itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                          const PopupMenuItem<String>(
+                            value: 'bin',
+                            child: Text('Save as *.bin', style: TextStyle(color: Colors.white)),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'hex',
+                            child: Text('Save as *.hex', style: TextStyle(color: Colors.white)),
+                          ),
+                        ],
+                        child: Container(
+                          constraints: const BoxConstraints(minHeight: 24),
                           padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                          minimumSize: const Size(0, 24),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF333333),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.download, size: 16, color: Colors.cyanAccent),
+                              SizedBox(width: 8),
+                              Text('DUMP', style: TextStyle(color: Colors.cyanAccent, fontSize: 12, fontWeight: FontWeight.w500)),
+                            ],
+                          ),
                         ),
                       ),
                     const SizedBox(width: 8),

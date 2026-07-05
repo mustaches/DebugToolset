@@ -1012,8 +1012,10 @@ class OscilloscopeState extends ChangeNotifier {
           if (spiCommand != null && frameCmd != spiCommand) continue;
           if (spiFrameType == 'Write Only' && !access.contains('W')) continue;
           if (spiFrameType == 'Read Only' && !access.contains('R')) continue;
-          if (spiFrameType == 'MOSI' && !frame.summary.startsWith('MOSI')) continue;
-          if (spiFrameType == 'MISO' && !frame.summary.startsWith('MISO')) continue;
+          if (protoFile != null) {
+              if (spiFrameType == 'MOSI' && !frame.summary.startsWith('MOSI')) continue;
+              if (spiFrameType == 'MISO' && !frame.summary.startsWith('MISO')) continue;
+          }
           if (spiAddress != null && frameAddr != spiAddress) continue;
           
           if (targetSequence.isNotEmpty) {
@@ -1023,10 +1025,21 @@ class OscilloscopeState extends ChangeNotifier {
              
              List<ProtocolPacket> searchablePackets = [];
              for (var p in frame.packets) {
-                if (p.type == PacketType.data && p.data.startsWith('DATA:') && p.rawValue != null) {
-                   searchablePackets.add(p);
-                } else if (p.type == PacketType.data && (p.data.startsWith('MOSI:') || p.data.startsWith('MISO:')) && p.rawValue != null) {
-                   searchablePackets.add(p);
+                bool isMosiLane = p.laneIndex == 0;
+                bool isMisoLane = p.laneIndex == 1;
+                
+                if (protoFile == null) {
+                    if (spiFrameType == 'MOSI' && !isMosiLane) continue;
+                    if (spiFrameType == 'MISO' && !isMisoLane) continue;
+                    if (p.type == PacketType.data && p.rawValue != null) {
+                       searchablePackets.add(p);
+                    }
+                } else {
+                    if (p.type == PacketType.data && p.data.startsWith('DATA:') && p.rawValue != null) {
+                       searchablePackets.add(p);
+                    } else if (p.type == PacketType.data && (p.data.startsWith('MOSI:') || p.data.startsWith('MISO:')) && p.rawValue != null) {
+                       searchablePackets.add(p);
+                    }
                 }
              }
              

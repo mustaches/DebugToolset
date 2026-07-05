@@ -348,7 +348,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
           backgroundColor: const Color(0xFF2A2A2A),
           title: const Text('通道快速设置', style: TextStyle(color: Colors.white, fontSize: 16)),
           content: SizedBox(
-            width: 550,
+            width: 715,
             child: SingleChildScrollView(
               child: Consumer<OscilloscopeState>(
                 builder: (ctx, consumerState, child) {
