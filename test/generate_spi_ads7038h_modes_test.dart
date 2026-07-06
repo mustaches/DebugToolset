@@ -39,7 +39,6 @@ void main() {
     }
     
     void drawSpiFrame(List<int> mosiBytes, List<int> misoBytes) {
-       int csPin = 0;
        int sckPin = 1;
        int mosiPin = 2;
        int misoPin = 3;
@@ -83,34 +82,34 @@ void main() {
     }
     
     // Command definitions
-    final int CMD_WRITE = 0x08;
-    final int CMD_READ  = 0x10;
+    final int cmdWrite = 0x08;
+    final int cmdRead  = 0x10;
     
     // Registers
-    final int REG_SYSTEM_STATUS = 0x00;
-    final int REG_GENERAL_CFG   = 0x01;
-    final int REG_OPMODE_CFG    = 0x04;
-    final int REG_SEQUENCE_CFG  = 0x10;
-    final int REG_CHANNEL_SEL   = 0x11;
-    final int REG_AUTO_SEQ_CH   = 0x12;
+    final int regSystemStatus = 0x00;
+    final int regGeneralCfg   = 0x01;
+    final int regOpmodeCfg    = 0x04;
+    final int regSequenceCfg  = 0x10;
+    final int regChannelSel   = 0x11;
+    final int regAutoSeqCh   = 0x12;
     
     // --- Mode 1: Device Power-Up and Reset ---
     // Reset via GENERAL_CFG (bit 0 = RST)
-    drawSpiFrame([CMD_WRITE, REG_GENERAL_CFG, 0x01], []);
+    drawSpiFrame([cmdWrite, regGeneralCfg, 0x01], []);
     addDelay(0.005);
     // Read SYSTEM_STATUS to verify BOR bit
-    drawSpiFrame([CMD_READ, REG_SYSTEM_STATUS, 0x00], []); // req
+    drawSpiFrame([cmdRead, regSystemStatus, 0x00], []); // req
     drawSpiFrame([0x00, 0x00, 0x00], [0x81, 0x00, 0x00]); // resp: BOR=1
     
     addDelay(0.01);
     
     // --- Mode 2: Manual Mode ---
     // Write OPMODE_CFG CONV_MODE=00b (0x00)
-    drawSpiFrame([CMD_WRITE, REG_OPMODE_CFG, 0x00], []);
+    drawSpiFrame([cmdWrite, regOpmodeCfg, 0x00], []);
     // Write SEQUENCE_CFG SEQ_MODE=00b (0x00)
-    drawSpiFrame([CMD_WRITE, REG_SEQUENCE_CFG, 0x00], []);
+    drawSpiFrame([cmdWrite, regSequenceCfg, 0x00], []);
     // Cycle N: Select Channel 2 (MANUAL_CHID = 2)
-    drawSpiFrame([CMD_WRITE, REG_CHANNEL_SEL, 0x02], []);
+    drawSpiFrame([cmdWrite, regChannelSel, 0x02], []);
     // Cycle N+1: Sample AIN2
     drawSpiFrame([0x00, 0x00], [0x00, 0x00]); // Dummy conversion cycle
     // Cycle N+2: Data AIN2 available (e.g., read out ADC value)
@@ -120,7 +119,7 @@ void main() {
     
     // --- Mode 3: On-the-Fly Mode ---
     // Write SEQUENCE_CFG SEQ_MODE=10b (0x02)
-    drawSpiFrame([CMD_WRITE, REG_SEQUENCE_CFG, 0x02], []);
+    drawSpiFrame([cmdWrite, regSequenceCfg, 0x02], []);
     // Cycle N: Send On-the-Fly ID for CH3 (1 0011 000 = 0x98)
     drawSpiFrame([0x98, 0x00], [0xA5, 0x5A]); // reads previous conversion AIN2, commands CH3
     // Cycle N+1: Send On-the-Fly ID for CH5 (1 0101 000 = 0xA8)
@@ -130,9 +129,9 @@ void main() {
     
     // --- Mode 4: Auto-sequence Mode ---
     // Enable sequencing for AIN2 and AIN6 -> AUTO_SEQ_CH_SEL (bit2=1, bit6=1) = 0x44
-    drawSpiFrame([CMD_WRITE, REG_AUTO_SEQ_CH, 0x44], []);
+    drawSpiFrame([cmdWrite, regAutoSeqCh, 0x44], []);
     // Select Auto-sequence Mode: SEQ_MODE=01b (0x01), SEQ_START=1 (0x10) -> SEQUENCE_CFG = 0x11
-    drawSpiFrame([CMD_WRITE, REG_SEQUENCE_CFG, 0x11], []);
+    drawSpiFrame([cmdWrite, regSequenceCfg, 0x11], []);
     // Sequence reads
     drawSpiFrame([0x00, 0x00], [0x00, 0x00]); // sample AIN2
     drawSpiFrame([0x00, 0x00], [0x02, 0x22]); // Data AIN2, sample AIN6
@@ -143,24 +142,24 @@ void main() {
     
     // --- Mode 5: Autonomous Mode ---
     // Set DWC_EN=1 (0x10) and CONV_MODE=01b (0x01) -> OPMODE_CFG = 0x11
-    drawSpiFrame([CMD_WRITE, REG_OPMODE_CFG, 0x11], []);
+    drawSpiFrame([cmdWrite, regOpmodeCfg, 0x11], []);
     // SEQ_START=1 (0x10) in SEQUENCE_CFG (assuming SEQ_MODE=01b still set, so 0x11)
-    drawSpiFrame([CMD_WRITE, REG_SEQUENCE_CFG, 0x11], []);
+    drawSpiFrame([cmdWrite, regSequenceCfg, 0x11], []);
     addDelay(0.005);
     // Read ALERT flags EVENT_FLAG (0x18)
-    drawSpiFrame([CMD_READ, 0x18, 0x00], []);
+    drawSpiFrame([cmdRead, 0x18, 0x00], []);
     drawSpiFrame([0x00, 0x00, 0x00], [0x04, 0x00, 0x00]); // ALERT on CH2
     
     addDelay(0.01);
     
     // --- Mode 6: Turbo Comparator Mode ---
     // Set DWC_EN=1 (0x10) and CONV_MODE=10b (0x02) -> OPMODE_CFG = 0x12
-    drawSpiFrame([CMD_WRITE, REG_OPMODE_CFG, 0x12], []);
+    drawSpiFrame([cmdWrite, regOpmodeCfg, 0x12], []);
     // Start turbo (SEQ_START=1, SEQ_MODE=01b)
-    drawSpiFrame([CMD_WRITE, REG_SEQUENCE_CFG, 0x11], []);
+    drawSpiFrame([cmdWrite, regSequenceCfg, 0x11], []);
     addDelay(0.005);
     // Read ALERT flags EVENT_FLAG (0x18)
-    drawSpiFrame([CMD_READ, 0x18, 0x00], []);
+    drawSpiFrame([cmdRead, 0x18, 0x00], []);
     drawSpiFrame([0x00, 0x00, 0x00], [0x40, 0x00, 0x00]); // ALERT on CH6
     
     

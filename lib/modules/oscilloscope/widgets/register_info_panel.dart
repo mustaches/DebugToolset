@@ -109,6 +109,10 @@ class RegisterInfoPanel extends StatelessWidget {
     if (bus.decoder is SpiDecoder) {
       return _buildSpiPanel(context, state, busName, selectedFrame, bus.decoder as SpiDecoder);
     }
+    
+    if (bus.decoder is Ads7038hDecoder) {
+      return _buildAds7038hPanel(context, state, busName, selectedFrame, bus.decoder as Ads7038hDecoder);
+    }
 
     if (bus.decoder is! I2cDecoder) {
       return Container(
@@ -1581,6 +1585,126 @@ class RegisterInfoPanel extends StatelessWidget {
             ),
           ),
           Expanded(child: contentWidget),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAds7038hPanel(BuildContext context, OscilloscopeState state, String busName, ProtocolFrame frame, Ads7038hDecoder decoder) {
+    List<Widget> fieldWidgets = [];
+    
+    for (var packet in frame.packets) {
+      if (packet.type == PacketType.data) {
+        String label = 'Unknown';
+        String value = '';
+        String hex = '';
+        
+        if (packet.data.startsWith('CMD:')) {
+          label = 'Command';
+          hex = packet.data.substring(5);
+          if (packet.rawValue == 0x08) value = 'Write';
+          else if (packet.rawValue == 0x10) value = 'Read';
+          else if (packet.rawValue == 0x00) value = 'NOP';
+          else if (packet.rawValue != null && packet.rawValue! >= 0x80 && packet.rawValue! <= 0xB8) value = 'On-the-fly Channel ${(packet.rawValue! >> 3) & 0x07}';
+        } else if (packet.data.startsWith('ADDR:')) {
+          label = 'Address';
+          hex = packet.data.substring(6);
+          if (packet.rawValue == 0x01) value = 'GENERAL_CFG';
+          else if (packet.rawValue == 0x04) value = 'OPMODE_CFG';
+          else if (packet.rawValue == 0x10) value = 'SEQUENCE_CFG';
+          else if (packet.rawValue == 0x12) value = 'AUTO_SEQ_CH_SEL';
+        } else if (packet.data.startsWith('DATA:')) {
+          label = 'Data';
+          hex = packet.data.substring(6);
+        } else if (packet.data.startsWith('MODE:')) {
+          int colonIdx = packet.data.indexOf(':', 6);
+          if (colonIdx != -1) {
+             label = packet.data.substring(0, colonIdx);
+             hex = packet.data.substring(colonIdx + 2);
+          } else {
+             label = packet.data;
+          }
+        } else if (packet.data.startsWith('ADC_RAW:')) {
+          label = 'ADC Raw';
+          hex = packet.data.substring(9);
+          value = '${packet.rawValue}';
+        } else if (packet.data.startsWith('ADC_VAL:')) {
+          label = 'ADC Value';
+          hex = packet.data.substring(9);
+          value = '${packet.rawValue}';
+        } else {
+          label = packet.data;
+        }
+
+        fieldWidgets.add(
+          Container(
+            constraints: const BoxConstraints(minWidth: 70),
+            margin: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF333333),
+              border: Border.all(color: Colors.grey.shade700),
+              borderRadius: BorderRadius.circular(4)
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
+                const SizedBox(height: 4),
+                if (hex.isNotEmpty) Text(hex, style: const TextStyle(color: Colors.yellowAccent, fontSize: 14)),
+                if (value.isNotEmpty) Text(value, style: const TextStyle(color: Colors.lightGreenAccent, fontSize: 12), textAlign: TextAlign.center),
+              ]
+            )
+          )
+        );
+      }
+    }
+    
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border(top: BorderSide(color: Colors.grey.shade800, width: 2))
+      ),
+      child: Stack(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                color: const Color(0xFF2A2A2A),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('ADS7038H Frame Details - Mode: ${decoder.currentMode}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.grey, size: 20),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () {
+                        state.closeRegisterInfoPanel();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: fieldWidgets.isEmpty ? [const Center(child: Text('No details', style: TextStyle(color: Colors.grey)))] : fieldWidgets,
+                      )
+                    )
+                  )
+                )
+              ),
+            ],
+          ),
         ],
       ),
     );

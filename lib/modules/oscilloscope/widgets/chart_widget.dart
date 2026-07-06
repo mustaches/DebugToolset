@@ -631,7 +631,15 @@ class _ChartWidgetState extends State<ChartWidget> {
                           String freqStr = deltaTime > 0 ? formatFreq(1.0 / deltaTime) : '---';
 
                           int ch = state.selectedChannelIndex;
-                          double deltaV = (state.cursorY2 - state.cursorY1).abs() / state.channels[ch].yScale; 
+                          
+                          double getVoltage(double py) {
+                            double adcValue = (constraints.maxHeight / 2 + state.channels[ch].yOffset - py) / state.channels[ch].yScale;
+                            return adcValue * (5.0 / 4096.0); // Assume 5V reference
+                          }
+
+                          double v1 = getVoltage(state.cursorY1);
+                          double v2 = getVoltage(state.cursorY2);
+                          double deltaV = (v2 - v1).abs();
 
                           double t1 = state.cursorX1;
                           double t2 = state.cursorX2;
@@ -666,9 +674,9 @@ class _ChartWidgetState extends State<ChartWidget> {
                               Text('ΔT: $timeStr', style: const TextStyle(color: Colors.yellowAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                               Text('1/ΔT: $freqStr', style: const TextStyle(color: Colors.yellowAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 4),
-                              Text('Y1: ${state.cursorY1.toStringAsFixed(1)} px', style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                              Text('Y2: ${state.cursorY2.toStringAsFixed(1)} px', style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                              Text('ΔAmp: ${deltaV.toStringAsFixed(1)} (CH${ch+1})', style: const TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                              Text('Y1: ${v1.toStringAsFixed(3)} V', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                              Text('Y2: ${v2.toStringAsFixed(3)} V', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                              Text('ΔAmp: ${deltaV.toStringAsFixed(3)} V (CH${ch+1})', style: const TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                             ],
                           );
                         }

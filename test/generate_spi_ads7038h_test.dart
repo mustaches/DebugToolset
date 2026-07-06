@@ -39,7 +39,6 @@ void main() {
     int currentSample = (0.01 * sampleRate).toInt();
     
     void drawSpiFrame(List<int> mosiBytes, List<int> misoBytes) {
-       int csPin = 0;
        int sckPin = 1;
        int mosiPin = 2;
        int misoPin = 3;

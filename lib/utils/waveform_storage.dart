@@ -13,6 +13,7 @@ class WaveformStorage {
     Map<String, dynamic> metadata = {
       'xScale': state.xScale,
       'triggerLevel': state.triggerLevel,
+      'sampleRate': state.sampleRate,
       'analogChannels': [],
       'digitalChannel': {
         'count': state.digitalChannel.count,
@@ -156,9 +157,12 @@ class WaveformStorage {
 
       dCh.restoreFromUnrolled(dUnrolled, dCount);
       
-      // 7. Update UI Scale
+      // 7. Update UI Scale and Sample Rate
       if (metadata['xScale'] != null) {
         state.setXScale(metadata['xScale']);
+      }
+      if (metadata['sampleRate'] != null) {
+        state.setSampleRate(metadata['sampleRate'].toDouble());
       }
       
       // Trigger decode after load

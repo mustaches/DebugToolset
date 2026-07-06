@@ -558,7 +558,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
       'spiAddress': _spiAddress,
     };
 
-    bool isSpi = bus.decoder != null && bus.decoder!.name == 'SPI';
+    bool isSpi = bus.decoder != null && (bus.decoder!.name == 'SPI' || bus.decoder!.name == 'SPI_ADS7038H');
 
     int matchCount = state.searchAdvancedBusValue(
 
@@ -630,7 +630,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     bool isI2c = hasDecoder && decoderType == 'I2C';
     bool isRawUart = hasDecoder && decoderType == 'UART' && (currentBus.decoder as UartDecoder).protocolFile == null;
     bool isUartWithProtocol = hasDecoder && decoderType == 'UART' && (currentBus.decoder as UartDecoder).protocolFile != null;
-    bool isSpi = hasDecoder && decoderType == 'SPI';
+    bool isSpi = hasDecoder && (decoderType == 'SPI' || decoderType == 'SPI_ADS7038H');
 
     if (isI2c || isSpi) {
        _updateCaches(state, currentBus);
@@ -898,8 +898,8 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                      ..._cachedI2cDevices.map((addr) {
                                        String hex = '0x${addr.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                        String alias = '';
-                                       if (currentBus != null && currentBus!.decoder is I2cDecoder) {
-                                           var i2cDec = currentBus!.decoder as I2cDecoder;
+                                       if (currentBus != null && currentBus.decoder is I2cDecoder) {
+                                           var i2cDec = currentBus.decoder as I2cDecoder;
                                            if (i2cDec.deviceAliases.containsKey(addr)) {
                                                alias = ' (${i2cDec.deviceAliases[addr]})';
                                            }
@@ -932,7 +932,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                builder: (context) {
                                   bool isMemory = false;
                                   if (currentBus != null && _i2cDeviceAddress != null) {
-                                     var regfile = state.getRegfileFor(currentBus!.name, _i2cDeviceAddress!);
+                                     var regfile = state.getRegfileFor(currentBus.name, _i2cDeviceAddress!);
                                      if (regfile != null && regfile.hasSubaddress == true) isMemory = true;
                                      if (_i2cDeviceAddress! >= 0x50 && _i2cDeviceAddress! <= 0x57) isMemory = true;
                                   }
@@ -973,7 +973,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                                    }
                                                 }
                                              } else if (currentBus != null && _i2cDeviceAddress != null) {
-                                                var regfile = state.getRegfileFor(currentBus!.name, _i2cDeviceAddress!);
+                                                var regfile = state.getRegfileFor(currentBus.name, _i2cDeviceAddress!);
                                                 if (regfile != null && regfile.registers.containsKey(addr)) {
                                                    alias = ' (${regfile.registers[addr]!.name})';
                                                 }
@@ -1100,7 +1100,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                   String hex = '0x${cmd.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                   String alias = '';
                                   if (currentBus != null) {
-                                      String? protocolFile = (currentBus!.decoder as SpiDecoder).protocolFile;
+                                      String? protocolFile = (currentBus.decoder as SpiDecoder).protocolFile;
                                       if (protocolFile != null) {
                                           var regfiles = state.availableSpiRegfiles.where((r) => r.name == protocolFile);
                                           if (regfiles.isNotEmpty) {
@@ -1461,7 +1461,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                 ]
               ],
               
-              if (!disableInput && !isRawUart && !isUartWithProtocol && !isI2c && !(hasDecoder && currentBus!.decoder?.name == 'SPI')) ...[
+              if (!disableInput && !isRawUart && !isUartWithProtocol && !isI2c && !(hasDecoder && (currentBus.decoder?.name == 'SPI' || currentBus.decoder?.name == 'SPI_ADS7038H'))) ...[
                 const SizedBox(height: 16),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,

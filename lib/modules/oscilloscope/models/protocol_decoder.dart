@@ -1011,7 +1011,7 @@ class SpiDecoder extends ProtocolDecoder {
       addrBytes = 0;
       
       if (protocolData != null) {
-        var reg;
+        dynamic reg;
         if (protocolData!['commands'] != null) reg = protocolData!['commands'][cmd];
         if (reg == null && protocolData!['registers'] != null) reg = protocolData!['registers'][cmd];
         
@@ -1057,6 +1057,12 @@ class SpiDecoder extends ProtocolDecoder {
       }
       
       if (csPin >= 0 && lastCs == 0 && cs == 1) {
+        if (phaseClocks > 0) {
+          int targetLane = (decodeState == 4) ? (localMisoLane >= 0 ? localMisoLane : 0) : (localMosiLane >= 0 ? localMosiLane : 0);
+          String label = decodeState == 4 ? 'DATA' : (decodeState == 1 ? 'ADDR' : 'MODE');
+          pendingPacket = createPacket(wordStartIdx, phaseData, (phaseClocks + 7) ~/ 8, label, Colors.green, targetLane);
+          phaseClocks = 0; phaseData = 0;
+        }
         if (pendingPacket != null) {
           pendingPacket.endIndex = i;
           currentFramePackets.add(pendingPacket);
@@ -1171,7 +1177,7 @@ class SpiDecoder extends ProtocolDecoder {
             // So let's check access:
             bool isWrite = false;
             if (protocolData != null) {
-              var reg;
+              dynamic reg;
               if (protocolData!['commands'] != null) reg = protocolData!['commands'][cmdValue];
               if (reg == null && protocolData!['registers'] != null) reg = protocolData!['registers'][cmdValue];
               if (reg != null && reg.access == 'W') isWrite = true;
@@ -1217,4 +1223,206 @@ class SpiDecoder extends ProtocolDecoder {
     }
   }
 
+}
+
+class Ads7038hDecoder extends ProtocolDecoder {
+  int sckPin;
+  int mosiPin;
+  int misoPin;
+  int csPin;
+  
+  Map<int, double> extractedAnalogPoints = {};
+  String currentMode = 'Manual';
+
+  @override
+  String get name => 'SPI_ADS7038H';
+
+  @override
+  int get maxLanes => 2;
+  
+  @override
+  String getLaneLabel(int laneIndex) {
+    if (laneIndex == 0) return 'SPI Bytes';
+    if (laneIndex == 1) return 'Function / Mode';
+    return 'Lane \$laneIndex';
+  }
+
+  Ads7038hDecoder({
+    this.sckPin = -1,
+    this.mosiPin = -1,
+    this.misoPin = -1,
+    this.csPin = -1,
+  });
+
+  ProtocolPacket createPacket(int startIdx, int endIdx, int rawValue, int bytes, String labelPrefix, Color color, int laneIdx) {
+      String hexStr = rawValue.toRadixString(16).toUpperCase().padLeft(bytes * 2, '0');
+      return ProtocolPacket(
+        startIndex: startIdx,
+        endIndex: endIdx,
+        data: '$labelPrefix: 0x$hexStr',
+        rawValue: rawValue,
+        type: PacketType.data,
+        color: color,
+        laneIndex: laneIdx,
+      );
+  }
+
+  factory Ads7038hDecoder.fromJson(Map<String, dynamic> json) {
+    return Ads7038hDecoder(
+      sckPin: json['sckPin'] ?? -1,
+      mosiPin: json['mosiPin'] ?? -1,
+      misoPin: json['misoPin'] ?? -1,
+      csPin: json['csPin'] ?? -1,
+    )
+      ..isEnabled = json['isEnabled'] ?? true
+      ..packets = []
+      ..frames = [];
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'SPI_ADS7038H',
+      'sckPin': sckPin,
+      'mosiPin': mosiPin,
+      'misoPin': misoPin,
+      'csPin': csPin,
+      'isEnabled': isEnabled,
+    };
+  }
+
+  @override
+  void decode(Uint32List data, int head, int count, double sampleRate) {
+    packets.clear();
+    frames.clear();
+    pinClocks.clear();
+    extractedAnalogPoints.clear();
+    if (!isEnabled || sckPin < 0) return;
+
+    bool skippedFirstDummy = false;
+    int lastCs = 1;
+    int lastSck = 0;
+    bool inFrame = false;
+    int frameStartIndex = 0;
+    
+    int totalClocks = 0;
+    int mosiData = 0;
+    int misoData = 0;
+    List<int> clockIndices = [];
+
+    int startIdx = count == data.length ? head : 0;
+    for (int i = 0; i < count; i++) {
+      int idx = (startIdx + i) % data.length;
+      int state = data[idx];
+
+      int cs = csPin >= 0 ? ((state >> csPin) & 1) : 0;
+      int sck = (state >> sckPin) & 1;
+      int mosi = mosiPin >= 0 ? ((state >> mosiPin) & 1) : 0;
+      int miso = misoPin >= 0 ? ((state >> misoPin) & 1) : 0;
+
+      if (csPin >= 0 && lastCs == 1 && cs == 0) {
+        inFrame = true;
+        frameStartIndex = i;
+        totalClocks = 0;
+        mosiData = 0;
+        misoData = 0;
+        clockIndices.clear();
+      }
+
+      if (inFrame) {
+        bool isSampleEdge = (lastSck == 0 && sck == 1);
+        if (isSampleEdge) {
+          mosiData = ((mosiData << 1) | mosi) & 0xFFFFFF;
+          misoData = ((misoData << 1) | miso) & 0xFFFFFF;
+          totalClocks++;
+          clockIndices.add(i);
+          pinClocks.putIfAbsent(sckPin, () => []).add(ProtocolClock(index: i, label: totalClocks.toString()));
+        }
+      }
+
+      if (csPin >= 0 && lastCs == 0 && cs == 1) {
+        if (totalClocks > 0) {
+           List<ProtocolPacket> currentFramePackets = [];
+           currentFramePackets.add(ProtocolPacket(startIndex: frameStartIndex, endIndex: frameStartIndex + 1, data: 'CS', type: PacketType.start, color: Colors.orange));
+           
+           if (totalClocks >= 24) {
+              int shift = totalClocks - 24;
+              int validMosi = (mosiData >> shift) & 0xFFFFFF;
+              int validMiso = (misoData >> shift) & 0xFFFFFF;
+              
+              int cmdValue = (validMosi >> 16) & 0xFF;
+              int addrValue = (validMosi >> 8) & 0xFF;
+              int dataValue = validMosi & 0xFF;
+              
+              int idxCmd = clockIndices.isNotEmpty ? clockIndices[0] : frameStartIndex;
+              int endCmd = clockIndices.length > 8 ? clockIndices[8] : (clockIndices.isNotEmpty ? clockIndices.last : i);
+              int idxAddr = clockIndices.length > 8 ? clockIndices[8] : frameStartIndex;
+              int endAddr = clockIndices.length > 16 ? clockIndices[16] : (clockIndices.isNotEmpty ? clockIndices.last : i);
+              int idxData = clockIndices.length > 16 ? clockIndices[16] : frameStartIndex;
+              int endData = i;
+              
+              currentFramePackets.add(createPacket(idxCmd, endCmd, cmdValue, 1, 'CMD', Colors.blue, 0));
+              currentFramePackets.add(createPacket(idxAddr, endAddr, addrValue, 1, 'ADDR', Colors.deepOrange, 0));
+              
+              int actualData = (cmdValue == 0x10) ? (validMiso & 0xFF) : dataValue;
+              
+              currentFramePackets.add(createPacket(idxData, endData, actualData, 1, 'DATA', Colors.green, 0));
+              
+              if (cmdValue >= 0x80 && cmdValue <= 0xB8) { 
+                 currentMode = 'On-the-fly';
+                 currentFramePackets.add(createPacket(idxCmd, endCmd, cmdValue, 1, 'MODE: On-the-fly', Colors.purple, 1));
+              }
+              
+              if (cmdValue == 0x08 && addrValue == 0x04) {
+                  if ((dataValue & 0x03) == 0x01) { currentMode = 'Autonomous'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: Autonomous', Colors.purple, 1)); }
+                  else if ((dataValue & 0x03) == 0x00) { currentMode = 'Manual'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: Manual', Colors.purple, 1)); }
+              }
+              if (cmdValue == 0x08 && addrValue == 0x10) {
+                  if ((dataValue & 0x03) == 0x01) { currentMode = 'Auto-seq'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: Auto-seq', Colors.purple, 1)); }
+                  else if ((dataValue & 0x03) == 0x02) { currentMode = 'On-the-fly'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: On-the-fly', Colors.purple, 1)); }
+              }
+              
+           } else if (totalClocks >= 12) {
+              int adcVal = 0;
+              if (totalClocks == 12) {
+                 adcVal = misoData & 0xFFF;
+              } else if (totalClocks == 16) {
+                 adcVal = (misoData >> 4) & 0xFFF;
+              } else {
+                 adcVal = misoData & ((1 << totalClocks) - 1);
+              }
+              
+              int idxData = clockIndices.isNotEmpty ? clockIndices[0] : frameStartIndex;
+              int endData = i;
+              currentFramePackets.add(createPacket(idxData, endData, adcVal, 2, 'ADC_RAW', Colors.green, 0));
+              
+              if (!skippedFirstDummy) {
+                 skippedFirstDummy = true;
+              } else {
+                 extractedAnalogPoints[idx] = adcVal.toDouble();
+              }
+              
+              currentFramePackets.add(createPacket(idxData, endData, adcVal, 2, 'ADC_VAL', Colors.red, 1));
+           }
+
+           currentFramePackets.add(ProtocolPacket(startIndex: i, endIndex: i + 1, data: 'CS', type: PacketType.stop, color: Colors.orange));
+           
+           frames.add(ProtocolFrame(
+             startIndex: frameStartIndex, 
+             endIndex: i, 
+             summary: 'ADS7038H Frame ($totalClocks clocks)', 
+             packets: List.from(currentFramePackets)
+           ));
+        }
+        inFrame = false;
+      }
+
+      lastCs = cs;
+      lastSck = sck;
+    }
+    
+    for (var frame in frames) {
+       packets.addAll(frame.packets);
+    }
+  }
 }

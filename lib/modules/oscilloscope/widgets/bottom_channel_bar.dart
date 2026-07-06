@@ -913,6 +913,12 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
         busType = 'i2c';
         sclPin = (bus.decoder as I2cDecoder).sclPin;
         sdaPin = (bus.decoder as I2cDecoder).sdaPin;
+      } else if (bus.decoder is Ads7038hDecoder) {
+        busType = 'spi_ads7038h';
+        spiSckPin = (bus.decoder as Ads7038hDecoder).sckPin;
+        spiMosiPin = (bus.decoder as Ads7038hDecoder).mosiPin;
+        spiMisoPin = (bus.decoder as Ads7038hDecoder).misoPin;
+        spiCsPin = (bus.decoder as Ads7038hDecoder).csPin;
       } else if (bus.decoder is SpiDecoder) {
         busType = 'spi';
         spiSckPin = (bus.decoder as SpiDecoder).sckPin;
@@ -966,6 +972,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                             DropdownMenuItem(value: 'uart', child: Text('UART 协议分析器')),
                             DropdownMenuItem(value: 'i2c', child: Text('I2C 协议分析器')),
                             DropdownMenuItem(value: 'spi', child: Text('SPI 协议分析器')),
+                            DropdownMenuItem(value: 'spi_ads7038h', child: Text('ADS7038H 专属分析器')),
                           ],
                           onChanged: (v) => setState(() => busType = v!),
                         ),
@@ -1229,7 +1236,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                         ],
                       ),
                     ],
-                    if (busType == 'spi') ...[
+                    if (busType == 'spi' || busType == 'spi_ads7038h') ...[
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -1464,6 +1471,11 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                       int newStartPin = sclPin < sdaPin ? sclPin : sdaPin;
                       int newEndPin = sclPin > sdaPin ? sclPin : sdaPin;
                       state.updateDigitalBus(DigitalBus(name: nameController.text.trim(), startPin: newStartPin, endPin: newEndPin, format: DigitalBusFormat.hex, color: bus.color, yScale: bus.yScale, yOffset: bus.yOffset, isExpanded: bus.isExpanded, decoder: I2cDecoder(sclPin: sclPin, sdaPin: sdaPin)), bus.name);
+                    } else if (busType == 'spi_ads7038h') {
+                      List<int> activePins = [spiSckPin, spiMosiPin, spiMisoPin, spiCsPin].where((p) => p >= 0).toList();
+                      int newStartPin = activePins.isEmpty ? 0 : activePins.reduce((a, b) => a < b ? a : b);
+                      int newEndPin = activePins.isEmpty ? 0 : activePins.reduce((a, b) => a > b ? a : b);
+                      state.updateDigitalBus(DigitalBus(name: nameController.text.trim(), startPin: newStartPin, endPin: newEndPin, format: DigitalBusFormat.hex, color: bus.color, yScale: bus.yScale, yOffset: bus.yOffset, isExpanded: bus.isExpanded, decoder: Ads7038hDecoder(sckPin: spiSckPin, mosiPin: spiMosiPin, misoPin: spiMisoPin, csPin: spiCsPin)), bus.name);
                     } else if (busType == 'spi') {
                       List<int> activePins = [spiSckPin, spiMosiPin, spiMisoPin, spiCsPin, spiIo2Pin, spiIo3Pin].where((p) => p >= 0).toList();
                       int newStartPin = activePins.isEmpty ? 0 : activePins.reduce((a, b) => a < b ? a : b);
@@ -1555,6 +1567,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                             DropdownMenuItem(value: 'uart', child: Text('UART 协议分析器')),
                             DropdownMenuItem(value: 'i2c', child: Text('I2C 协议分析器')),
                             DropdownMenuItem(value: 'spi', child: Text('SPI 协议分析器')),
+                            DropdownMenuItem(value: 'spi_ads7038h', child: Text('ADS7038H 专属分析器')),
                           ],
                           onChanged: (v) => setState(() => busType = v!),
                         ),
@@ -1820,7 +1833,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                         ],
                       ),
                     ],
-                    if (busType == 'spi') ...[
+                    if (busType == 'spi' || busType == 'spi_ads7038h') ...[
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -2055,6 +2068,11 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                       int startPin = sclPin < sdaPin ? sclPin : sdaPin;
                       int endPin = sclPin > sdaPin ? sclPin : sdaPin;
                       state.addDigitalBus(nameController.text.trim(), startPin, endPin, DigitalBusFormat.hex, decoder: I2cDecoder(sclPin: sclPin, sdaPin: sdaPin));
+                    } else if (busType == 'spi_ads7038h') {
+                      List<int> activePins = [spiSckPin, spiMosiPin, spiMisoPin, spiCsPin].where((p) => p >= 0).toList();
+                      int newStartPin = activePins.isEmpty ? 0 : activePins.reduce((a, b) => a < b ? a : b);
+                      int newEndPin = activePins.isEmpty ? 0 : activePins.reduce((a, b) => a > b ? a : b);
+                      state.addDigitalBus(nameController.text.trim(), newStartPin, newEndPin, DigitalBusFormat.hex, decoder: Ads7038hDecoder(sckPin: spiSckPin, mosiPin: spiMosiPin, misoPin: spiMisoPin, csPin: spiCsPin));
                     } else if (busType == 'spi') {
                       List<int> activePins = [spiSckPin, spiMosiPin, spiMisoPin, spiCsPin, spiIo2Pin, spiIo3Pin].where((p) => p >= 0).toList();
                       int newStartPin = activePins.isEmpty ? 0 : activePins.reduce((a, b) => a < b ? a : b);

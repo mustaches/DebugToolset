@@ -4,7 +4,7 @@
   "commands": {
     "0x00": {
       "name": "NOP",
-      "access": "W",
+      "access": "R",
       "description": "No operation"
     },
     "0x08": {
@@ -33,42 +33,42 @@
     },
     "0x80": {
       "name": "On-the-fly-CH0-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 0 Selection"
     },
     "0x88": {
       "name": "On-the-fly-CH1-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 1 Selection"
     },
     "0x90": {
       "name": "On-the-fly-CH2-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 2 Selection"
     },
     "0x98": {
       "name": "On-the-fly-CH3-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 3 Selection"
     },
     "0xA0": {
       "name": "On-the-fly-CH4-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 4 Selection"
     },
     "0xA8": {
       "name": "On-the-fly-CH5-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 5 Selection"
     },
     "0xB0": {
       "name": "On-the-fly-CH6-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 6 Selection"
     },
     "0xB8": {
       "name": "On-the-fly-CH7-ID",
-      "access": "W",
+      "access": "R",
       "description": "On-the-fly Mode Channel 7 Selection"
     }
   },

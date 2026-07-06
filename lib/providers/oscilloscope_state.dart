@@ -205,6 +205,7 @@ class DigitalBus {
         if (dJson['type'] == 'UART') return UartDecoder.fromJson(dJson);
         if (dJson['type'] == 'I2C') return I2cDecoder.fromJson(dJson);
         if (dJson['type'] == 'SPI') return SpiDecoder.fromJson(dJson);
+        if (dJson['type'] == 'SPI_ADS7038H') return Ads7038hDecoder.fromJson(dJson);
 
         return null;
       }() : null,
@@ -1356,6 +1357,47 @@ class OscilloscopeState extends ChangeNotifier {
         }
 
         bus.decoder!.decode(digitalChannel.states, digitalChannel.head, digitalChannel.count, _sampleRate);
+        
+        if (bus.decoder is Ads7038hDecoder) {
+           var adsDec = bus.decoder as Ads7038hDecoder;
+           if (adsDec.extractedAnalogPoints.isNotEmpty) {
+              // Populate virtual analog channel (CH4 or a dynamically added channel)
+              // Let's use the 4th channel (index 3) for now, or add a 5th if we can.
+              // OscilloscopeState has a fixed 4 channels. We'll use CH4 (index 3) and override it.
+              var vCh = channels[3];
+              vCh.name = 'V_AIN (ADS7038H)';
+              vCh.color = Colors.purpleAccent;
+              vCh.isVisible = true;
+              
+              // Zero-order hold
+              double lastVal = 0.0;
+              bool first = true;
+              int startIdx = digitalChannel.count == digitalChannel.maxPoints ? digitalChannel.head : 0;
+              for (int i = 0; i < digitalChannel.count; i++) {
+                 int realIdx = (startIdx + i) % digitalChannel.maxPoints;
+                 if (adsDec.extractedAnalogPoints.containsKey(realIdx)) {
+                    lastVal = adsDec.extractedAnalogPoints[realIdx]! - 2048.0;
+                    first = false;
+                 }
+                 vCh.points[realIdx] = first ? 0.0 : lastVal;
+              }
+              vCh.count = digitalChannel.count;
+              vCh.head = digitalChannel.head;
+              vCh.totalPointsAdded = digitalChannel.totalPointsAdded;
+              
+              for (int i = 0; i < digitalChannel.count; i++) {
+                 int realIdx = (startIdx + i) % digitalChannel.maxPoints;
+                 int chunkIdx = realIdx ~/ OscilloscopeState.chunkSize;
+                 if (realIdx % OscilloscopeState.chunkSize == 0) {
+                    vCh.chunkMins[chunkIdx] = vCh.points[realIdx];
+                    vCh.chunkMaxs[chunkIdx] = vCh.points[realIdx];
+                 } else {
+                    if (vCh.points[realIdx] < vCh.chunkMins[chunkIdx]) vCh.chunkMins[chunkIdx] = vCh.points[realIdx];
+                    if (vCh.points[realIdx] > vCh.chunkMaxs[chunkIdx]) vCh.chunkMaxs[chunkIdx] = vCh.points[realIdx];
+                 }
+              }
+           }
+        }
       }
     }
   }
@@ -2023,6 +2065,11 @@ class OscilloscopeState extends ChangeNotifier {
         setAlias(decoder.misoPin, 'MISO(IO1)');
         setAlias(decoder.io2Pin, 'IO2');
         setAlias(decoder.io3Pin, 'IO3');
+      } else if (decoder is Ads7038hDecoder) {
+        setAlias(decoder.csPin, 'CS');
+        setAlias(decoder.sckPin, 'SCLK');
+        setAlias(decoder.mosiPin, 'MOSI');
+        setAlias(decoder.misoPin, 'MISO');
       } else if (decoder is I2cDecoder) {
         setAlias(decoder.sclPin, 'SCL');
         setAlias(decoder.sdaPin, 'SDA');
@@ -2067,6 +2114,11 @@ class OscilloscopeState extends ChangeNotifier {
         setAlias(decoder.misoPin, 'MISO(IO1)');
         setAlias(decoder.io2Pin, 'IO2');
         setAlias(decoder.io3Pin, 'IO3');
+      } else if (decoder is Ads7038hDecoder) {
+        setAlias(decoder.csPin, 'CS');
+        setAlias(decoder.sckPin, 'SCLK');
+        setAlias(decoder.mosiPin, 'MOSI');
+        setAlias(decoder.misoPin, 'MISO');
       } else if (decoder is I2cDecoder) {
         setAlias(decoder.sclPin, 'SCL');
         setAlias(decoder.sdaPin, 'SDA');
