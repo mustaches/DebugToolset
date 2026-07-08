@@ -39,7 +39,33 @@ class _ChartWidgetState extends State<ChartWidget> {
   final ValueNotifier<Offset?> _hoverPosY2 = ValueNotifier(null);
 
   @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent || event is KeyRepeatEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.f3) {
+        final keys = HardwareKeyboard.instance.logicalKeysPressed;
+        bool isShift = keys.contains(LogicalKeyboardKey.shiftLeft) || keys.contains(LogicalKeyboardKey.shiftRight);
+        if (mounted) {
+          final state = context.read<OscilloscopeState>();
+          if (isShift) {
+            state.jumpToPrevSearchMatch();
+          } else {
+            state.jumpToNextSearchMatch();
+          }
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     _hoverPosX1.dispose();
     _hoverPosX2.dispose();
     _hoverPosY1.dispose();

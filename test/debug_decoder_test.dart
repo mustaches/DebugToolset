@@ -1,5 +1,5 @@
+// ignore_for_file: avoid_print
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/material.dart';
 import 'package:debug_tool_set/modules/oscilloscope/models/protocol_decoder.dart';
 import 'dart:typed_data';
 
@@ -23,9 +23,9 @@ void main() {
     var stateList = Uint32List.fromList(states);
     decoder.decode(stateList, 0, stateList.length, 1000000);
     
-    print('Decoded packets count: ' + decoder.packets.length.toString());
+    print('Decoded packets count: ${decoder.packets.length}');
     for (var p in decoder.packets) {
-       print('Packet: ' + p.data + ', Lane: ' + p.laneIndex.toString() + ', Type: ' + p.type.toString());
+       print('Packet: ${p.data}, Lane: ${p.laneIndex}, Type: ${p.type}');
     }
   });
 }

@@ -44,20 +44,7 @@ class TriggerMenuDialog extends StatelessWidget {
             ),
             const SizedBox(height: 12),
 
-            // Source Type Selection
-            _buildDropdownRow(
-              label: 'Type',
-              value: state.triggerSourceType,
-              items: TriggerSourceType.values,
-              onChanged: (val) {
-                if (val != null) {
-                  // Reset index to 0 when type changes
-                  state.setTriggerSource(val, 0);
-                }
-              },
-              itemBuilder: (item) => item == TriggerSourceType.analog ? 'Analog (CH)' : 'Digital (D)',
-            ),
-            const SizedBox(height: 12),
+
 
             // Source Channel Selection
             _buildSourceSelector(state),
@@ -141,26 +128,17 @@ class TriggerMenuDialog extends StatelessWidget {
   }
 
   Widget _buildSourceSelector(OscilloscopeState state) {
-    List<int> indices = [];
-    if (state.triggerSourceType == TriggerSourceType.analog) {
-      indices = List.generate(4, (i) => i);
-    } else {
-      indices = List.generate(32, (i) => i);
-    }
+    List<int> indices = List.generate(4, (i) => i);
 
     return _buildDropdownRow(
       label: 'Source',
-      value: state.triggerSourceIndex,
+      value: state.triggerSourceType == TriggerSourceType.analog ? state.triggerSourceIndex : 0,
       items: indices,
       onChanged: (val) {
-        if (val != null) state.setTriggerSource(state.triggerSourceType, val);
+        if (val != null) state.setTriggerSource(TriggerSourceType.analog, val);
       },
       itemBuilder: (item) {
-        if (state.triggerSourceType == TriggerSourceType.analog) {
-          return 'CH${item + 1}';
-        } else {
-          return 'D$item';
-        }
+        return 'CH${item + 1}';
       },
     );
   }

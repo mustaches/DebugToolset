@@ -190,7 +190,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   }
 
   List<String> _getAvailableSpiFrameTypes(DigitalBus bus, OscilloscopeState state, String? protocolName) {
-    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return ['Any'];
+    if (bus.decoder == null || !bus.decoder!.isEnabled || (bus.decoder!.name != 'SPI' && bus.decoder!.name != 'SPI_ADS7038H')) return ['Any'];
     
     if (protocolName == null) {
       return ['Any', 'MISO', 'MOSI'];
@@ -236,7 +236,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   }
 
   List<int> _getFilteredSpiCommands(DigitalBus bus, OscilloscopeState state, String frameType, String? protocolName) {
-    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return [];
+    if (bus.decoder == null || !bus.decoder!.isEnabled || (bus.decoder!.name != 'SPI' && bus.decoder!.name != 'SPI_ADS7038H')) return [];
     Set<int> cmds = {};
     dynamic regfile;
     if (protocolName != null) {
@@ -274,7 +274,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   }
 
   List<int> _getFilteredSpiAddresses(DigitalBus bus, OscilloscopeState state, String frameType, int? selectedCmd, String? protocolName) {
-    if (bus.decoder == null || !bus.decoder!.isEnabled || bus.decoder!.name != 'SPI') return [];
+    if (bus.decoder == null || !bus.decoder!.isEnabled || (bus.decoder!.name != 'SPI' && bus.decoder!.name != 'SPI_ADS7038H')) return [];
     Set<int> addrs = {};
     for (var frame in bus.decoder!.frames) {
       int? cmd;
@@ -468,9 +468,14 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
   }
 
   void _updateSpiCaches(OscilloscopeState state, DigitalBus? bus) {
-    if (bus == null || bus.decoder?.name != 'SPI') return;
+    if (bus == null || (bus.decoder?.name != 'SPI' && bus.decoder?.name != 'SPI_ADS7038H')) return;
 
-    String? protocolFile = (bus.decoder as SpiDecoder).protocolFile;
+    String? protocolFile;
+    if (bus.decoder?.name == 'SPI') {
+      protocolFile = (bus.decoder as SpiDecoder).protocolFile;
+    } else if (bus.decoder?.name == 'SPI_ADS7038H') {
+      protocolFile = (bus.decoder as Ads7038hDecoder).protocolFile;
+    }
 
     if (_lastSpiBusNameForCache == bus.name && _lastSpiFrameTypeForCache == _spiFrameType && _lastSpiCommandForCache == _spiCommand) {
       return;
@@ -503,7 +508,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
     if (bus == null) return;
     if (bus.decoder?.name == 'I2C') {
        _updateI2cCaches(state, bus);
-    } else if (bus.decoder?.name == 'SPI') {
+    } else if (bus.decoder?.name == 'SPI' || bus.decoder?.name == 'SPI_ADS7038H') {
        _updateSpiCaches(state, bus);
     }
   }
@@ -766,6 +771,8 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                 initialProtocolFile = (currentBus!.decoder as UartDecoder).protocolFile;
                              } else if (decoderType == 'SPI') {
                                 initialProtocolFile = (currentBus!.decoder as SpiDecoder).protocolFile;
+                             } else if (decoderType == 'SPI_ADS7038H') {
+                                initialProtocolFile = (currentBus!.decoder as Ads7038hDecoder).protocolFile;
                              } else if (decoderType == 'I2C') {
                                 initialProtocolFile = _selectedI2cProtocol;
                              }
@@ -782,7 +789,7 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                items: [
                                   DropdownMenuItem(value: null, child: _buildItemText('无', 'None')),
                                   if (decoderType == 'UART') ..._cachedUartProtocols.map((name) => DropdownMenuItem(value: name, child: Text(name))),
-                                  if (decoderType == 'SPI') ...state.availableSpiRegfiles.map((r) => DropdownMenuItem(value: r.name, child: Text(r.name))),
+                                  if (isSpi) ...state.availableSpiRegfiles.map((r) => DropdownMenuItem(value: r.name, child: Text(r.name))),
                                   if (decoderType == 'I2C') ...state.availableRegfiles.map((r) => DropdownMenuItem(value: r.name, child: Text(r.name))),
                                ],
                                onChanged: (val) {
@@ -792,6 +799,9 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                         state.forceUpdate();
                                      } else if (decoderType == 'SPI') {
                                         (currentBus!.decoder as SpiDecoder).protocolFile = val;
+                                        state.forceUpdate();
+                                     } else if (decoderType == 'SPI_ADS7038H') {
+                                        (currentBus!.decoder as Ads7038hDecoder).protocolFile = val;
                                         state.forceUpdate();
                                      } else if (decoderType == 'I2C') {
                                         _selectedI2cProtocol = val;
@@ -1100,7 +1110,12 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                                   String hex = '0x${cmd.toRadixString(16).toUpperCase().padLeft(2, "0")}';
                                   String alias = '';
                                   if (currentBus != null) {
-                                      String? protocolFile = (currentBus.decoder as SpiDecoder).protocolFile;
+                                      String? protocolFile;
+                                      if (currentBus.decoder?.name == 'SPI') {
+                                        protocolFile = (currentBus.decoder as SpiDecoder).protocolFile;
+                                      } else if (currentBus.decoder?.name == 'SPI_ADS7038H') {
+                                        protocolFile = (currentBus.decoder as Ads7038hDecoder).protocolFile;
+                                      }
                                       if (protocolFile != null) {
                                           var regfiles = state.availableSpiRegfiles.where((r) => r.name == protocolFile);
                                           if (regfiles.isNotEmpty) {
@@ -1595,13 +1610,13 @@ class _BusSearchDialogState extends State<BusSearchDialog> {
                           IconButton(
                             icon: const Icon(Icons.arrow_back_ios, size: 14, color: Colors.white),
                             onPressed: () => state.jumpToPrevSearchMatch(),
-                            tooltip: 'Previous Match',
+                            tooltip: 'Previous Match (Shift+F3)',
                           ),
                           Text('${state.currentSearchMatchIndex + 1}/${state.searchMatches.length}', style: const TextStyle(color: Colors.white)),
                           IconButton(
                             icon: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.white),
                             onPressed: () => state.jumpToNextSearchMatch(),
-                            tooltip: 'Next Match',
+                            tooltip: 'Next Match (F3)',
                           ),
                         ],
                       )

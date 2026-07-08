@@ -47,7 +47,8 @@ class OscilloscopeView extends StatelessWidget {
                           flex: 1,
                           child: MinimapWidget(),
                         ),
-                        const LogicAnalyzerToolbar(),
+                        if (state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty)
+                          const LogicAnalyzerToolbar(),
                         if (state.digitalChannel.enabledPins.isNotEmpty)
                           const SizedBox(
                             height: 24,

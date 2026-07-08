@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'package:flutter_test/flutter_test.dart';
 import 'package:debug_tool_set/providers/oscilloscope_state.dart';
 import 'package:debug_tool_set/providers/terminal_state.dart';
@@ -113,16 +114,23 @@ void main() {
     drawCommandFrame(cmdWrite, regGeneralCfg, 0x01);
     addDelay(0.00005);
     
-    // 2. Configure Autonomous Mode for CH3
-    // AUTO_SEQ_CH_SEL: bit 3 = 1 -> 0x08
+    // 2. Select channels for auto-sequencing
+    // AUTO_SEQ_CH_SEL: bit 3 = 1 -> 0x08 (Select CH3)
     drawCommandFrame(cmdWrite, regAutoSeqCh, 0x08);
     addDelay(0.00001);
     
+    // 3. Configure Sequence Configuration
+    // SEQUENCE_CFG: SEQ_MODE=01b (Auto-sequence) -> 0x01
+    drawCommandFrame(cmdWrite, regSequenceCfg, 0x01);
+    addDelay(0.00001);
+    
+    // 4. Configure Operating Mode
     // OPMODE_CFG: CONV_MODE=01b (Autonomous) -> 0x01
     drawCommandFrame(cmdWrite, regOpmodeCfg, 0x01);
     addDelay(0.00001);
     
-    // SEQUENCE_CFG: SEQ_MODE=01b (Auto), SEQ_START=1 -> 0x11
+    // 5. Start Sequence
+    // SEQUENCE_CFG: SEQ_START=1, SEQ_MODE=01b -> 0x11
     drawCommandFrame(cmdWrite, regSequenceCfg, 0x11);
     addDelay(0.00005);
     

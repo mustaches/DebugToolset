@@ -1230,9 +1230,17 @@ class Ads7038hDecoder extends ProtocolDecoder {
   int mosiPin;
   int misoPin;
   int csPin;
+  String? protocolFile;
   
   Map<int, double> extractedAnalogPoints = {};
   String currentMode = 'Manual';
+  
+  int manualChannel = 0;
+  List<int> autoSeqChannels = [];
+  int autoSeqIndex = 0;
+  int currentChannel = 0;
+  int nextChannel = 0;
+  bool isSeqRunning = false;
 
   @override
   String get name => 'SPI_ADS7038H';
@@ -1252,6 +1260,7 @@ class Ads7038hDecoder extends ProtocolDecoder {
     this.mosiPin = -1,
     this.misoPin = -1,
     this.csPin = -1,
+    this.protocolFile,
   });
 
   ProtocolPacket createPacket(int startIdx, int endIdx, int rawValue, int bytes, String labelPrefix, Color color, int laneIdx) {
@@ -1273,6 +1282,7 @@ class Ads7038hDecoder extends ProtocolDecoder {
       mosiPin: json['mosiPin'] ?? -1,
       misoPin: json['misoPin'] ?? -1,
       csPin: json['csPin'] ?? -1,
+      protocolFile: json['protocolFile'],
     )
       ..isEnabled = json['isEnabled'] ?? true
       ..packets = []
@@ -1287,6 +1297,7 @@ class Ads7038hDecoder extends ProtocolDecoder {
       'mosiPin': mosiPin,
       'misoPin': misoPin,
       'csPin': csPin,
+      'protocolFile': protocolFile,
       'isEnabled': isEnabled,
     };
   }
@@ -1327,6 +1338,9 @@ class Ads7038hDecoder extends ProtocolDecoder {
         mosiData = 0;
         misoData = 0;
         clockIndices.clear();
+        
+        // When CS goes low, currentChannel takes the value of nextChannel
+        currentChannel = nextChannel;
       }
 
       if (inFrame) {
@@ -1359,7 +1373,7 @@ class Ads7038hDecoder extends ProtocolDecoder {
               int idxAddr = clockIndices.length > 8 ? clockIndices[8] : frameStartIndex;
               int endAddr = clockIndices.length > 16 ? clockIndices[16] : (clockIndices.isNotEmpty ? clockIndices.last : i);
               int idxData = clockIndices.length > 16 ? clockIndices[16] : frameStartIndex;
-              int endData = i;
+              int endData = clockIndices.isNotEmpty ? clockIndices.last : i;
               
               currentFramePackets.add(createPacket(idxCmd, endCmd, cmdValue, 1, 'CMD', Colors.blue, 0));
               currentFramePackets.add(createPacket(idxAddr, endAddr, addrValue, 1, 'ADDR', Colors.deepOrange, 0));
@@ -1368,19 +1382,52 @@ class Ads7038hDecoder extends ProtocolDecoder {
               
               currentFramePackets.add(createPacket(idxData, endData, actualData, 1, 'DATA', Colors.green, 0));
               
+              String lane1Text = '';
+              
               if (cmdValue >= 0x80 && cmdValue <= 0xB8) { 
                  currentMode = 'On-the-fly';
-                 currentFramePackets.add(createPacket(idxCmd, endCmd, cmdValue, 1, 'MODE: On-the-fly', Colors.purple, 1));
+                 int ch = (cmdValue >> 3) & 0x07;
+                 lane1Text = 'MODE: On-the-fly (CH $ch)';
+                 nextChannel = ch;
+              } else if (cmdValue == 0x08) {
+                  if (addrValue == 0x01 && (dataValue & 0x01) == 0x01) {
+                      lane1Text = 'ADS7038H Reset';
+                  } else if (addrValue == 0x11) { // CHANNEL_SEL
+                      manualChannel = dataValue & 0x07;
+                  } else if (addrValue == 0x12) { // AUTO_SEQ_CH_SEL
+                      autoSeqChannels.clear();
+                      for (int c = 0; c < 8; c++) {
+                         if ((dataValue & (1 << c)) != 0) autoSeqChannels.add(c);
+                      }
+                      lane1Text = 'auto sequencing mode: select ch${autoSeqChannels.join(',')}';
+                  } else if (addrValue == 0x04) { // OPMODE_CFG
+                      if ((dataValue & 0x03) == 0x01) { currentMode = 'Autonomous'; }
+                      else if ((dataValue & 0x03) == 0x00) { currentMode = 'Manual'; }
+                      lane1Text = 'Set OPMODE: $currentMode';
+                  } else if (addrValue == 0x10) { // SEQUENCE_CFG
+                      String seqModeStr = 'Unknown';
+                      if ((dataValue & 0x03) == 0x01) { seqModeStr = 'Auto-seq'; currentMode = 'Auto-seq'; }
+                      else if ((dataValue & 0x03) == 0x02) { seqModeStr = 'On-the-fly'; currentMode = 'On-the-fly'; }
+                      else if ((dataValue & 0x03) == 0x00) { seqModeStr = 'Manual'; currentMode = 'Manual'; }
+                      lane1Text = 'Set SEQ_MODE: $seqModeStr';
+                      
+                      isSeqRunning = (dataValue & 0x10) != 0;
+                      if (isSeqRunning) {
+                          lane1Text += ' (SEQ_START=1)';
+                          autoSeqIndex = 0;
+                          if (autoSeqChannels.isNotEmpty) {
+                              nextChannel = autoSeqChannels[autoSeqIndex];
+                              autoSeqIndex = (autoSeqIndex + 1) % autoSeqChannels.length;
+                          }
+                      }
+                  }
               }
               
-              if (cmdValue == 0x08 && addrValue == 0x04) {
-                  if ((dataValue & 0x03) == 0x01) { currentMode = 'Autonomous'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: Autonomous', Colors.purple, 1)); }
-                  else if ((dataValue & 0x03) == 0x00) { currentMode = 'Manual'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: Manual', Colors.purple, 1)); }
+              if (lane1Text.isEmpty) {
+                 lane1Text = 'MODE: $currentMode';
               }
-              if (cmdValue == 0x08 && addrValue == 0x10) {
-                  if ((dataValue & 0x03) == 0x01) { currentMode = 'Auto-seq'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: Auto-seq', Colors.purple, 1)); }
-                  else if ((dataValue & 0x03) == 0x02) { currentMode = 'On-the-fly'; currentFramePackets.add(createPacket(idxData, endData, dataValue, 1, 'MODE: On-the-fly', Colors.purple, 1)); }
-              }
+              
+              currentFramePackets.add(createPacket(idxCmd, endData, 0, 1, lane1Text, Colors.purple, 1));
               
            } else if (totalClocks >= 12) {
               int adcVal = 0;
@@ -1393,7 +1440,7 @@ class Ads7038hDecoder extends ProtocolDecoder {
               }
               
               int idxData = clockIndices.isNotEmpty ? clockIndices[0] : frameStartIndex;
-              int endData = i;
+              int endData = clockIndices.isNotEmpty ? clockIndices.last : i;
               currentFramePackets.add(createPacket(idxData, endData, adcVal, 2, 'ADC_RAW', Colors.green, 0));
               
               if (!skippedFirstDummy) {
@@ -1402,7 +1449,8 @@ class Ads7038hDecoder extends ProtocolDecoder {
                  extractedAnalogPoints[idx] = adcVal.toDouble();
               }
               
-              currentFramePackets.add(createPacket(idxData, endData, adcVal, 2, 'ADC_VAL', Colors.red, 1));
+              String adcLabel = 'Mode: $currentMode, Ch: $currentChannel, ADC_VAL: $adcVal';
+              currentFramePackets.add(createPacket(idxData, endData, adcVal, 2, adcLabel, Colors.red, 1));
            }
 
            currentFramePackets.add(ProtocolPacket(startIndex: i, endIndex: i + 1, data: 'CS', type: PacketType.stop, color: Colors.orange));
@@ -1414,6 +1462,17 @@ class Ads7038hDecoder extends ProtocolDecoder {
              packets: List.from(currentFramePackets)
            ));
         }
+        
+        // At the end of the frame, if sequence is running, update nextChannel
+        if (currentMode == 'Auto-seq' || currentMode == 'Autonomous') {
+            if (isSeqRunning && autoSeqChannels.isNotEmpty) {
+                nextChannel = autoSeqChannels[autoSeqIndex];
+                autoSeqIndex = (autoSeqIndex + 1) % autoSeqChannels.length;
+            }
+        } else if (currentMode == 'Manual') {
+            nextChannel = manualChannel;
+        }
+        
         inFrame = false;
       }
 

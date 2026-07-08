@@ -1602,17 +1602,27 @@ class RegisterInfoPanel extends StatelessWidget {
         if (packet.data.startsWith('CMD:')) {
           label = 'Command';
           hex = packet.data.substring(5);
-          if (packet.rawValue == 0x08) value = 'Write';
-          else if (packet.rawValue == 0x10) value = 'Read';
-          else if (packet.rawValue == 0x00) value = 'NOP';
-          else if (packet.rawValue != null && packet.rawValue! >= 0x80 && packet.rawValue! <= 0xB8) value = 'On-the-fly Channel ${(packet.rawValue! >> 3) & 0x07}';
+          if (packet.rawValue == 0x08) {
+            value = 'Write';
+          } else if (packet.rawValue == 0x10) {
+            value = 'Read';
+          } else if (packet.rawValue == 0x00) {
+            value = 'NOP';
+          } else if (packet.rawValue != null && packet.rawValue! >= 0x80 && packet.rawValue! <= 0xB8) {
+            value = 'On-the-fly Channel ${(packet.rawValue! >> 3) & 0x07}';
+          }
         } else if (packet.data.startsWith('ADDR:')) {
           label = 'Address';
           hex = packet.data.substring(6);
-          if (packet.rawValue == 0x01) value = 'GENERAL_CFG';
-          else if (packet.rawValue == 0x04) value = 'OPMODE_CFG';
-          else if (packet.rawValue == 0x10) value = 'SEQUENCE_CFG';
-          else if (packet.rawValue == 0x12) value = 'AUTO_SEQ_CH_SEL';
+          if (packet.rawValue == 0x01) {
+            value = 'GENERAL_CFG';
+          } else if (packet.rawValue == 0x04) {
+            value = 'OPMODE_CFG';
+          } else if (packet.rawValue == 0x10) {
+            value = 'SEQUENCE_CFG';
+          } else if (packet.rawValue == 0x12) {
+            value = 'AUTO_SEQ_CH_SEL';
+          }
         } else if (packet.data.startsWith('DATA:')) {
           label = 'Data';
           hex = packet.data.substring(6);

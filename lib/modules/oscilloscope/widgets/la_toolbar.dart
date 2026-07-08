@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/oscilloscope_state.dart';
 import '../../../utils/hover_builder.dart';
-import 'trigger_menu_dialog.dart';
+import 'la_trigger_menu_dialog.dart';
 import 'bus_search_dialog.dart';
 
 class LogicAnalyzerToolbar extends StatelessWidget {
@@ -121,7 +121,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
              _buildToolbarButton(
                icon: Icons.navigate_before,
                label: '',
-               tooltip: 'Previous Match',
+               tooltip: 'Previous Match (Shift+F3)',
                onTap: () => state.jumpToPrevSearchMatch(),
              ),
              Container(
@@ -132,7 +132,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
              _buildToolbarButton(
                icon: Icons.navigate_next,
                label: '',
-               tooltip: 'Next Match',
+               tooltip: 'Next Match (F3)',
                onTap: () => state.jumpToNextSearchMatch(),
              ),
              _buildToolbarButton(
@@ -238,7 +238,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
             onTap: () {
               showDialog(
                 context: context,
-                builder: (context) => const TriggerMenuDialog(),
+                builder: (context) => const LATriggerMenuDialog(),
               );
             },
           ),
@@ -258,27 +258,29 @@ class LogicAnalyzerToolbar extends StatelessWidget {
   }
 
   String _getTriggerLabel(OscilloscopeState state) {
-    String source = '';
     if (state.triggerSourceType == TriggerSourceType.analog) {
-      source = 'CH${state.triggerSourceIndex + 1}';
-    } else {
-      source = 'D${state.triggerSourceIndex}';
+      return 'Trigger: External (OSC)';
+    }
+
+    final config = state.digitalTrigger;
+    if (config.type == DigitalTriggerType.pinEdge) {
+      String edge = '';
+      switch (config.edge) {
+        case TriggerEdge.rising: edge = '↑'; break;
+        case TriggerEdge.falling: edge = '↓'; break;
+        case TriggerEdge.both: edge = '↕'; break;
+      }
+      return 'Trigger: D${config.pinIndex} $edge';
+    } else if (config.type == DigitalTriggerType.busValue) {
+      String busName = config.busName ?? '?';
+      String val = config.targetValues.isNotEmpty ? '0x${config.targetValues.first.toRadixString(16).toUpperCase()}' : '?';
+      return 'Trigger: $busName == $val';
+    } else if (config.type == DigitalTriggerType.busSequence) {
+      String busName = config.busName ?? '?';
+      return 'Trigger: $busName Seq';
     }
     
-    String edge = '';
-    switch (state.triggerEdge) {
-      case TriggerEdge.rising:
-        edge = '↑';
-        break;
-      case TriggerEdge.falling:
-        edge = '↓';
-        break;
-      case TriggerEdge.both:
-        edge = '↕';
-        break;
-    }
-    
-    return 'Trigger: $source $edge';
+    return 'Trigger: Digital';
   }
 
   Widget _buildToolbarButton({

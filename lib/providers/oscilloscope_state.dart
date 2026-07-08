@@ -396,6 +396,9 @@ class OscilloscopeState extends ChangeNotifier {
   TriggerEdge _triggerEdge = TriggerEdge.rising;
   TriggerEdge get triggerEdge => _triggerEdge;
 
+  DigitalTriggerConfig digitalTrigger = DigitalTriggerConfig();
+  int _digitalTriggerSequenceStep = 0;
+
   bool _isWaitingForTrigger = false;
   bool get isWaitingForTrigger => _isWaitingForTrigger;
   
@@ -424,6 +427,14 @@ class OscilloscopeState extends ChangeNotifier {
     _triggerEdge = edge;
     notifyListeners();
   }
+
+  void setDigitalTrigger(DigitalTriggerConfig config) {
+    digitalTrigger = config;
+    if (_triggerSourceType == TriggerSourceType.digital) {
+       _digitalTriggerSequenceStep = 0;
+    }
+    notifyListeners();
+  }
   
   void forceTrigger() {
     if (_isWaitingForTrigger) {
@@ -436,6 +447,7 @@ class OscilloscopeState extends ChangeNotifier {
   void _armTrigger() {
     _isWaitingForTrigger = true;
     _postTriggerCount = 0;
+    _digitalTriggerSequenceStep = 0;
     _isPaused = false;
     clearData();
   }
@@ -982,9 +994,14 @@ class OscilloscopeState extends ChangeNotifier {
             }
           }
         }
-      } else if (decoderType == 'SPI') {
+      } else if (decoderType == 'SPI' || decoderType == 'SPI_ADS7038H') {
         dynamic protocol;
-        String? protoFile = (bus.decoder as SpiDecoder).protocolFile;
+        String? protoFile;
+        if (decoderType == 'SPI') {
+           protoFile = (bus.decoder as SpiDecoder).protocolFile;
+        } else {
+           protoFile = (bus.decoder as Ads7038hDecoder).protocolFile;
+        }
         if (protoFile != null) {
            for (var r in availableSpiRegfiles) {
              if (r.name == protoFile) { protocol = r; break; }
@@ -1353,6 +1370,11 @@ class OscilloscopeState extends ChangeNotifier {
             } catch (_) {}
           } else {
             (bus.decoder as SpiDecoder).protocolData = null;
+          }
+        } else if (bus.decoder is Ads7038hDecoder) {
+          String? pf = (bus.decoder as Ads7038hDecoder).protocolFile;
+          if (pf != null && pf.isNotEmpty) {
+            // Ads7038hDecoder does not have protocolData property
           }
         }
 
@@ -2518,14 +2540,74 @@ class OscilloscopeState extends ChangeNotifier {
       } else {
         int prev = _lastDigitalStateForTrigger;
         int curr = currentDigital;
-        int bitMask = 1 << _triggerSourceIndex;
         
-        bool prevBit = (prev & bitMask) != 0;
-        bool currBit = (curr & bitMask) != 0;
-        
-        if (_triggerEdge == TriggerEdge.rising && !prevBit && currBit) triggerMet = true;
-        if (_triggerEdge == TriggerEdge.falling && prevBit && !currBit) triggerMet = true;
-        if (_triggerEdge == TriggerEdge.both && prevBit != currBit) triggerMet = true;
+        if (digitalTrigger.type == DigitalTriggerType.pinEdge) {
+          int bitMask = 1 << digitalTrigger.pinIndex;
+          bool prevBit = (prev & bitMask) != 0;
+          bool currBit = (curr & bitMask) != 0;
+          
+          if (digitalTrigger.edge == TriggerEdge.rising && !prevBit && currBit) triggerMet = true;
+          if (digitalTrigger.edge == TriggerEdge.falling && prevBit && !currBit) triggerMet = true;
+          if (digitalTrigger.edge == TriggerEdge.both && prevBit != currBit) triggerMet = true;
+        } else if (digitalTrigger.busName != null) {
+          // Bus Value or Sequence
+          try {
+            var bus = digitalChannel.buses.firstWhere((b) => b.name == digitalTrigger.busName);
+            int numPins = (bus.startPin - bus.endPin).abs() + 1;
+            int step = bus.startPin < bus.endPin ? 1 : -1;
+            
+            int busVal = 0;
+            for (int p = 0; p < numPins; p++) {
+              int physicalPin = bus.startPin + p * step;
+              int bitVal = (curr >> physicalPin) & 1;
+              int targetBitPosition = digitalTrigger.isBigEndian ? (numPins - 1 - p) : p;
+              busVal |= (bitVal << targetBitPosition);
+            }
+            
+            int prevBusVal = 0;
+            for (int p = 0; p < numPins; p++) {
+              int physicalPin = bus.startPin + p * step;
+              int bitVal = (prev >> physicalPin) & 1;
+              int targetBitPosition = digitalTrigger.isBigEndian ? (numPins - 1 - p) : p;
+              prevBusVal |= (bitVal << targetBitPosition);
+            }
+
+            if (digitalTrigger.type == DigitalTriggerType.busValue) {
+               if (digitalTrigger.targetValues.isNotEmpty) {
+                  // Trigger only on the edge when the value changes to the target value
+                  if (busVal == digitalTrigger.targetValues.first && prevBusVal != busVal) {
+                     triggerMet = true;
+                  }
+               }
+            } else if (digitalTrigger.type == DigitalTriggerType.busSequence) {
+               if (digitalTrigger.targetValues.isNotEmpty) {
+                  if (busVal != prevBusVal) {
+                     if (busVal == digitalTrigger.targetValues[_digitalTriggerSequenceStep]) {
+                        _digitalTriggerSequenceStep++;
+                        if (_digitalTriggerSequenceStep >= digitalTrigger.targetValues.length) {
+                           triggerMet = true;
+                           _digitalTriggerSequenceStep = 0;
+                        }
+                     } else {
+                        // Reset sequence if it doesn't match the next step.
+                        // Optionally, we could check if it matches the first step to restart immediately.
+                        if (busVal == digitalTrigger.targetValues.first) {
+                           _digitalTriggerSequenceStep = 1;
+                           if (1 >= digitalTrigger.targetValues.length) {
+                              triggerMet = true;
+                              _digitalTriggerSequenceStep = 0;
+                           }
+                        } else {
+                           _digitalTriggerSequenceStep = 0;
+                        }
+                     }
+                  }
+               }
+            }
+          } catch (_) {
+            // Bus not found
+          }
+        }
         
         _lastDigitalStateForTrigger = curr;
       }
