@@ -503,6 +503,45 @@ class MinimapOverlayPainter extends CustomPainter {
       drawCursor(state.cursorX1, 'X1', Colors.yellowAccent);
       drawCursor(state.cursorX2, 'X2', Colors.yellowAccent);
     }
+
+    // Draw Trigger Marker
+    if (!state.isWaitingForTrigger && state.postTriggerCount > 0 && state.postTriggerCount <= state.maxCount) {
+      double maxPoints = state.minimapMaxPoints.toDouble();
+      int triggerIndex = state.maxCount - state.postTriggerCount;
+      double x = (triggerIndex / maxPoints) * size.width;
+
+      if (x >= 0 && x <= size.width) {
+        final triggerPaint = Paint()
+          ..color = Colors.orangeAccent
+          ..strokeWidth = 1.0;
+        
+        canvas.drawLine(Offset(x, 0), Offset(x, size.height), triggerPaint);
+        
+        final textPainter = TextPainter(
+          text: const TextSpan(text: 'T', style: TextStyle(color: Colors.orangeAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        
+        double boxWidth = textPainter.width + 4;
+        double boxHeight = textPainter.height + 2;
+        
+        // Draw 'T' at top of minimap (slightly offset to avoid overlap if possible, or just top)
+        canvas.drawRect(
+           Rect.fromLTWH(x - boxWidth / 2, 0, boxWidth, boxHeight),
+           Paint()..color = Colors.black.withValues(alpha: 0.8)..style = PaintingStyle.fill
+        );
+        textPainter.paint(canvas, Offset(x - textPainter.width / 2, 1));
+        
+        // Draw a small triangle pointing down
+        Path triangle = Path();
+        triangle.moveTo(x - 4, boxHeight);
+        triangle.lineTo(x + 4, boxHeight);
+        triangle.lineTo(x, boxHeight + 6);
+        triangle.close();
+        canvas.drawPath(triangle, Paint()..color = Colors.orangeAccent..style = PaintingStyle.fill);
+      }
+    }
   }
 
   @override

@@ -14,25 +14,45 @@ import 'package:path/path.dart' as p;
 enum TriggerMode { auto, normal, single }
 enum TriggerSourceType { analog, digital }
 enum TriggerEdge { rising, falling, both }
-enum DigitalTriggerType { pinEdge, busValue, busSequence }
+enum DigitalTriggerType { singleChannel, bus, advancedBus, protocol }
 
 class DigitalTriggerConfig {
   DigitalTriggerType type;
-  String? busName;
-  int pinIndex; // for pinEdge type
-  TriggerEdge edge; // for pinEdge type
+  
+  // Single Channel
+  int pinIndex;
+  TriggerEdge edge;
+  
+  // Bus
+  int busLsbPin;
+  int busMsbPin;
+  bool isBusSequence;
   List<int> targetValues; // single value or sequence
+  List<int> sequenceDelays; // matching sequence items
+  
+  // Advanced Bus & Protocol placeholders
+  String? advancedProtocolType; // 'I2C', 'SPI', 'UART'
+  String? protocolTriggerType; // ...
+  
+  // Global
   bool isBigEndian;
   bool enablePreTrigger;
+  double triggerPositionPercentage;
 
   DigitalTriggerConfig({
-    this.type = DigitalTriggerType.pinEdge,
-    this.busName,
+    this.type = DigitalTriggerType.singleChannel,
     this.pinIndex = 0,
     this.edge = TriggerEdge.rising,
+    this.busLsbPin = 0,
+    this.busMsbPin = 7,
+    this.isBusSequence = false,
     this.targetValues = const [],
+    this.sequenceDelays = const [],
+    this.advancedProtocolType,
+    this.protocolTriggerType,
     this.isBigEndian = false,
     this.enablePreTrigger = false,
+    this.triggerPositionPercentage = 5.0,
   });
 }
 
@@ -387,7 +407,7 @@ class OscilloscopeState extends ChangeNotifier {
   TriggerMode _triggerMode = TriggerMode.auto;
   TriggerMode get triggerMode => _triggerMode;
 
-  TriggerSourceType _triggerSourceType = TriggerSourceType.analog;
+  TriggerSourceType _triggerSourceType = TriggerSourceType.digital;
   TriggerSourceType get triggerSourceType => _triggerSourceType;
 
   int _triggerSourceIndex = 0; // 0-3 for analog, 0-31 for digital
@@ -398,6 +418,7 @@ class OscilloscopeState extends ChangeNotifier {
 
   DigitalTriggerConfig digitalTrigger = DigitalTriggerConfig();
   int _digitalTriggerSequenceStep = 0;
+  int _digitalTriggerDelayCounter = 0;
 
   bool _isWaitingForTrigger = false;
   bool get isWaitingForTrigger => _isWaitingForTrigger;
@@ -405,16 +426,14 @@ class OscilloscopeState extends ChangeNotifier {
   int _lastDigitalStateForTrigger = 0;
   double _lastAnalogStateForTrigger = 0.0;
   int _postTriggerCount = 0;
-
+  int get postTriggerCount => _postTriggerCount;
+  
   void setTriggerMode(TriggerMode mode) {
     _triggerMode = mode;
     if (_triggerMode == TriggerMode.normal || _triggerMode == TriggerMode.single) {
       _armTrigger();
-    } else {
       _isWaitingForTrigger = false;
-      _isPaused = false;
     }
-    notifyListeners();
   }
 
   void setTriggerSource(TriggerSourceType type, int index) {
@@ -432,6 +451,7 @@ class OscilloscopeState extends ChangeNotifier {
     digitalTrigger = config;
     if (_triggerSourceType == TriggerSourceType.digital) {
        _digitalTriggerSequenceStep = 0;
+       _digitalTriggerDelayCounter = 0;
     }
     notifyListeners();
   }
@@ -440,7 +460,6 @@ class OscilloscopeState extends ChangeNotifier {
     if (_isWaitingForTrigger) {
       _isWaitingForTrigger = false;
       _postTriggerCount = 0;
-      notifyListeners();
     }
   }
 
@@ -448,6 +467,7 @@ class OscilloscopeState extends ChangeNotifier {
     _isWaitingForTrigger = true;
     _postTriggerCount = 0;
     _digitalTriggerSequenceStep = 0;
+    _digitalTriggerDelayCounter = 0;
     _isPaused = false;
     clearData();
   }
@@ -1296,6 +1316,9 @@ class OscilloscopeState extends ChangeNotifier {
   double _sampleRate = 500000.0;
   double get sampleRate => _sampleRate;
 
+  int _memoryDepth = OscilloscopeState.maxPointsPerChannel;
+  int get memoryDepth => _memoryDepth;
+
   String? _activeEventListBusName;
   String? get activeEventListBusName => _activeEventListBusName;
 
@@ -1352,6 +1375,12 @@ class OscilloscopeState extends ChangeNotifier {
   void setSampleRate(double rate) {
     _sampleRate = rate;
     decodeAllProtocols();
+    notifyListeners();
+  }
+
+  void setMemoryDepth(int depth) {
+    _memoryDepth = depth;
+    // In a full implementation, this would reallocate buffers
     notifyListeners();
   }
 
@@ -2541,7 +2570,7 @@ class OscilloscopeState extends ChangeNotifier {
         int prev = _lastDigitalStateForTrigger;
         int curr = currentDigital;
         
-        if (digitalTrigger.type == DigitalTriggerType.pinEdge) {
+        if (digitalTrigger.type == DigitalTriggerType.singleChannel) {
           int bitMask = 1 << digitalTrigger.pinIndex;
           bool prevBit = (prev & bitMask) != 0;
           bool currBit = (curr & bitMask) != 0;
@@ -2549,65 +2578,79 @@ class OscilloscopeState extends ChangeNotifier {
           if (digitalTrigger.edge == TriggerEdge.rising && !prevBit && currBit) triggerMet = true;
           if (digitalTrigger.edge == TriggerEdge.falling && prevBit && !currBit) triggerMet = true;
           if (digitalTrigger.edge == TriggerEdge.both && prevBit != currBit) triggerMet = true;
-        } else if (digitalTrigger.busName != null) {
-          // Bus Value or Sequence
-          try {
-            var bus = digitalChannel.buses.firstWhere((b) => b.name == digitalTrigger.busName);
-            int numPins = (bus.startPin - bus.endPin).abs() + 1;
-            int step = bus.startPin < bus.endPin ? 1 : -1;
-            
-            int busVal = 0;
-            for (int p = 0; p < numPins; p++) {
-              int physicalPin = bus.startPin + p * step;
-              int bitVal = (curr >> physicalPin) & 1;
-              int targetBitPosition = digitalTrigger.isBigEndian ? (numPins - 1 - p) : p;
-              busVal |= (bitVal << targetBitPosition);
-            }
-            
-            int prevBusVal = 0;
-            for (int p = 0; p < numPins; p++) {
-              int physicalPin = bus.startPin + p * step;
-              int bitVal = (prev >> physicalPin) & 1;
-              int targetBitPosition = digitalTrigger.isBigEndian ? (numPins - 1 - p) : p;
-              prevBusVal |= (bitVal << targetBitPosition);
-            }
+        } else if (digitalTrigger.type == DigitalTriggerType.bus) {
+          int numPins = (digitalTrigger.busLsbPin - digitalTrigger.busMsbPin).abs() + 1;
+          int step = digitalTrigger.busLsbPin < digitalTrigger.busMsbPin ? 1 : -1;
+          
+          int busVal = 0;
+          for (int p = 0; p < numPins; p++) {
+            int physicalPin = digitalTrigger.busLsbPin + p * step;
+            int bitVal = (curr >> physicalPin) & 1;
+            int targetBitPosition = digitalTrigger.isBigEndian ? (numPins - 1 - p) : p;
+            busVal |= (bitVal << targetBitPosition);
+          }
+          
+          int prevBusVal = 0;
+          for (int p = 0; p < numPins; p++) {
+            int physicalPin = digitalTrigger.busLsbPin + p * step;
+            int bitVal = (prev >> physicalPin) & 1;
+            int targetBitPosition = digitalTrigger.isBigEndian ? (numPins - 1 - p) : p;
+            prevBusVal |= (bitVal << targetBitPosition);
+          }
 
-            if (digitalTrigger.type == DigitalTriggerType.busValue) {
-               if (digitalTrigger.targetValues.isNotEmpty) {
-                  // Trigger only on the edge when the value changes to the target value
-                  if (busVal == digitalTrigger.targetValues.first && prevBusVal != busVal) {
-                     triggerMet = true;
-                  }
-               }
-            } else if (digitalTrigger.type == DigitalTriggerType.busSequence) {
-               if (digitalTrigger.targetValues.isNotEmpty) {
-                  if (busVal != prevBusVal) {
-                     if (busVal == digitalTrigger.targetValues[_digitalTriggerSequenceStep]) {
-                        _digitalTriggerSequenceStep++;
-                        if (_digitalTriggerSequenceStep >= digitalTrigger.targetValues.length) {
-                           triggerMet = true;
-                           _digitalTriggerSequenceStep = 0;
-                        }
-                     } else {
-                        // Reset sequence if it doesn't match the next step.
-                        // Optionally, we could check if it matches the first step to restart immediately.
-                        if (busVal == digitalTrigger.targetValues.first) {
-                           _digitalTriggerSequenceStep = 1;
-                           if (1 >= digitalTrigger.targetValues.length) {
-                              triggerMet = true;
-                              _digitalTriggerSequenceStep = 0;
-                           }
-                        } else {
-                           _digitalTriggerSequenceStep = 0;
-                        }
-                     }
-                  }
-               }
-            }
-          } catch (_) {
-            // Bus not found
+          if (!digitalTrigger.isBusSequence) {
+             if (digitalTrigger.targetValues.isNotEmpty) {
+                // Trigger only on the edge when the value changes to the target value
+                if (busVal == digitalTrigger.targetValues.first && prevBusVal != busVal) {
+                   triggerMet = true;
+                }
+             }
+          } else {
+             if (digitalTrigger.targetValues.isNotEmpty) {
+                // Handle delay counting
+                if (_digitalTriggerSequenceStep > 0 && digitalTrigger.sequenceDelays.length >= _digitalTriggerSequenceStep) {
+                   int maxDelay = digitalTrigger.sequenceDelays[_digitalTriggerSequenceStep - 1];
+                   if (maxDelay > 0) {
+                      _digitalTriggerDelayCounter++;
+                   }
+                }
+
+                if (busVal != prevBusVal) {
+                   if (busVal == digitalTrigger.targetValues[_digitalTriggerSequenceStep]) {
+                      bool delayValid = true;
+                      if (_digitalTriggerSequenceStep > 0 && digitalTrigger.sequenceDelays.length >= _digitalTriggerSequenceStep) {
+                         int maxDelay = digitalTrigger.sequenceDelays[_digitalTriggerSequenceStep - 1];
+                         if (maxDelay > 0 && _digitalTriggerDelayCounter > maxDelay) {
+                            delayValid = false; // Exceeded delay window
+                         }
+                      }
+                      
+                      if (delayValid) {
+                         _digitalTriggerSequenceStep++;
+                         _digitalTriggerDelayCounter = 0;
+                         if (_digitalTriggerSequenceStep >= digitalTrigger.targetValues.length) {
+                            triggerMet = true;
+                            _digitalTriggerSequenceStep = 0;
+                         }
+                      } else {
+                         _digitalTriggerSequenceStep = 0;
+                         _digitalTriggerDelayCounter = 0;
+                         if (busVal == digitalTrigger.targetValues.first) {
+                            _digitalTriggerSequenceStep = 1;
+                         }
+                      }
+                   } else {
+                      _digitalTriggerSequenceStep = 0;
+                      _digitalTriggerDelayCounter = 0;
+                      if (busVal == digitalTrigger.targetValues.first) {
+                         _digitalTriggerSequenceStep = 1;
+                      }
+                   }
+                }
+             }
           }
         }
+        // Note: advancedBus and protocol triggers are not evaluated dynamically here yet.
         
         _lastDigitalStateForTrigger = curr;
       }
@@ -2616,7 +2659,14 @@ class OscilloscopeState extends ChangeNotifier {
         _isWaitingForTrigger = false;
         _postTriggerCount = 0;
       } else {
-        return; // Discard data
+        bool shouldDiscard = true;
+        if (_triggerSourceType == TriggerSourceType.digital && digitalTrigger.enablePreTrigger) {
+           shouldDiscard = false;
+        }
+        // Note: For analog trigger, if it also had a pre-trigger option, we'd check it here.
+        if (shouldDiscard) {
+           return; // Discard data
+        }
       }
     }
 

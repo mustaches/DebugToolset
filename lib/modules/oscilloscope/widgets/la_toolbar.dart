@@ -207,6 +207,18 @@ class LogicAnalyzerToolbar extends StatelessWidget {
             width: 1,
             color: Colors.grey.shade700,
           ),
+          const SizedBox(width: 4),
+          _buildToolbarButton(
+            icon: Icons.settings_applications,
+            label: 'Trigger Set',
+            tooltip: 'Trigger Settings',
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (context) => const LATriggerMenuDialog(),
+              );
+            },
+          ),
           
           const Spacer(),
 
@@ -223,25 +235,19 @@ class LogicAnalyzerToolbar extends StatelessWidget {
           const Spacer(),
 
           // Right: Status & Settings
-          _buildToolbarButton(
-            icon: Icons.speed,
-            label: _formatSampleRate(state.sampleRate),
-            onTap: () {
-              // Future: allow changing sample rate if supported
-            },
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12.0),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.speed, color: Colors.cyanAccent, size: 16),
+                const SizedBox(width: 4),
+                Text(_formatSampleRate(state.sampleRate), style: const TextStyle(color: Colors.cyanAccent, fontSize: 13)),
+              ],
+            ),
           ),
           const SizedBox(width: 4),
-          _buildToolbarButton(
-            icon: Icons.bolt,
-            label: _getTriggerLabel(state),
-            color: Colors.orangeAccent,
-            onTap: () {
-              showDialog(
-                context: context,
-                builder: (context) => const LATriggerMenuDialog(),
-              );
-            },
-          ),
+          _buildTriggerStatusWidget(state),
         ],
       ),
     );
@@ -257,30 +263,50 @@ class LogicAnalyzerToolbar extends StatelessWidget {
     }
   }
 
-  String _getTriggerLabel(OscilloscopeState state) {
+  Widget _buildTriggerStatusWidget(OscilloscopeState state) {
+    List<Widget> children = [];
+    Color statusColor = state.triggerSourceType == TriggerSourceType.analog ? Colors.orangeAccent : Colors.cyanAccent;
+
+    children.add(Icon(Icons.bolt, color: statusColor, size: 16));
+    children.add(const SizedBox(width: 4));
+
     if (state.triggerSourceType == TriggerSourceType.analog) {
-      return 'Trigger: External (OSC)';
+      children.add(Text('External (OSC)', style: TextStyle(color: statusColor, fontSize: 13)));
+    } else {
+      final config = state.digitalTrigger;
+      if (config.type == DigitalTriggerType.singleChannel) {
+        String alias = state.digitalChannel.pinNames[config.pinIndex] ?? '';
+        String label = alias.isNotEmpty ? '$alias(D${config.pinIndex})' : 'D${config.pinIndex}';
+        children.add(Text('$label ', style: TextStyle(color: statusColor, fontSize: 13)));
+        children.add(
+          SizedBox(
+            width: 24,
+            height: 14,
+            child: CustomPaint(painter: EdgeIconPainter(config.edge, color: statusColor)),
+          )
+        );
+      } else if (config.type == DigitalTriggerType.bus) {
+        String busName = 'D${config.busMsbPin}-D${config.busLsbPin}';
+        if (!config.isBusSequence) {
+           String val = config.targetValues.isNotEmpty ? '0x${config.targetValues.first.toRadixString(16).toUpperCase()}' : '?';
+           children.add(Text('$busName == $val', style: TextStyle(color: statusColor, fontSize: 13)));
+        } else {
+           children.add(Text('$busName Seq', style: TextStyle(color: statusColor, fontSize: 13)));
+        }
+      } else if (config.type == DigitalTriggerType.advancedBus) {
+        children.add(Text(config.advancedProtocolType ?? "Adv. Bus", style: TextStyle(color: statusColor, fontSize: 13)));
+      } else if (config.type == DigitalTriggerType.protocol) {
+        children.add(Text(config.protocolTriggerType ?? "Protocol", style: TextStyle(color: statusColor, fontSize: 13)));
+      }
     }
 
-    final config = state.digitalTrigger;
-    if (config.type == DigitalTriggerType.pinEdge) {
-      String edge = '';
-      switch (config.edge) {
-        case TriggerEdge.rising: edge = '↑'; break;
-        case TriggerEdge.falling: edge = '↓'; break;
-        case TriggerEdge.both: edge = '↕'; break;
-      }
-      return 'Trigger: D${config.pinIndex} $edge';
-    } else if (config.type == DigitalTriggerType.busValue) {
-      String busName = config.busName ?? '?';
-      String val = config.targetValues.isNotEmpty ? '0x${config.targetValues.first.toRadixString(16).toUpperCase()}' : '?';
-      return 'Trigger: $busName == $val';
-    } else if (config.type == DigitalTriggerType.busSequence) {
-      String busName = config.busName ?? '?';
-      return 'Trigger: $busName Seq';
-    }
-    
-    return 'Trigger: Digital';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: children,
+      ),
+    );
   }
 
   Widget _buildToolbarButton({
