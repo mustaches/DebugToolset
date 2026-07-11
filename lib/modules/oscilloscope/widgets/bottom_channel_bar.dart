@@ -87,7 +87,8 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
           // 3. Digital Channels (L1-L4)
           Row(
             children: List.generate(4, (index) {
-              return _buildDigitalBusBox(context, state, index);
+              int busIndex = 3 - index; // L4 on left, L1 on right
+              return _buildDigitalBusBox(context, state, busIndex);
             }),
           ),
           const Spacer(),
@@ -284,8 +285,8 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                           textAlign: TextAlign.center,
                           style: TextStyle(color: boxColor, fontSize: 9, fontWeight: FontWeight.bold),
                         ),
-                        _buildDigitalPinRow(state, startPin, startPin + 3),
-                        _buildDigitalPinRow(state, startPin + 4, endPin),
+                        _buildDigitalPinRow(state, [endPin, endPin - 1, endPin - 2, endPin - 3]),
+                        _buildDigitalPinRow(state, [startPin + 3, startPin + 2, startPin + 1, startPin]),
                       ],
                     ),
                   ),
@@ -298,11 +299,10 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     );
   }
 
-  Widget _buildDigitalPinRow(OscilloscopeState state, int startPin, int endPin) {
+  Widget _buildDigitalPinRow(OscilloscopeState state, List<int> pins) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: List.generate(endPin - startPin + 1, (i) {
-        int pin = startPin + i;
+      children: pins.map((pin) {
         bool isEnabled = state.digitalChannel.enabledPins.contains(pin);
         return Text(
           '$pin',
@@ -312,7 +312,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
             fontWeight: isEnabled ? FontWeight.bold : FontWeight.normal,
           ),
         );
-      }),
+      }).toList(),
     );
   }
 
