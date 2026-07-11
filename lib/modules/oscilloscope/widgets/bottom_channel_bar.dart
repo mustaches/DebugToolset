@@ -354,7 +354,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
               children: [
                 // Left Column: Channels
                 SizedBox(
-                  width: 500,
+                  width: 480,
                   child: SingleChildScrollView(
                     child: Consumer<OscilloscopeState>(
                       builder: (ctx, consumerState, child) {
@@ -395,10 +395,9 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                             const SizedBox(height: 8),
                             const Text('数字逻辑通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
                             const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: List.generate(4, (groupIndex) {
+                            Column(
+                              children: List.generate(4, (index) {
+                                int groupIndex = 3 - index; // D31-D24, D23-D16, D15-D8, D7-D0 from top to bottom
                                 int start = groupIndex * 8;
                                 int end = start + 7;
                                 
@@ -411,14 +410,14 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                 }
                                 
                                 return Container(
-                                  width: 240, // 240 * 2 + 12 (spacing) = 492 (fits inside 500)
-                                  padding: const EdgeInsets.all(8),
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                   decoration: BoxDecoration(
                                     color: [
-                                      const Color(0xFF1A2634), // dark blue tint
-                                      const Color(0xFF1A3426), // dark green tint
-                                      const Color(0xFF341A26), // dark pink tint
-                                      const Color(0xFF34261A), // dark orange tint
+                                      const Color(0xFF1A2634), // D7-D0 (dark blue)
+                                      const Color(0xFF1A3426), // D15-D8 (dark green)
+                                      const Color(0xFF341A26), // D23-D16 (dark pink)
+                                      const Color(0xFF34261A), // D31-D24 (dark orange)
                                     ][groupIndex],
                                     borderRadius: BorderRadius.circular(8),
                                     border: Border.all(color: Colors.grey.shade800),
@@ -429,7 +428,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                       Row(
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
-                                          Text('D$start - D$end', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                          Text('D$end - D$start', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
                                           SizedBox(
                                             height: 28,
                                             child: Switch(
@@ -442,12 +441,11 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                           )
                                         ],
                                       ),
-                                      const SizedBox(height: 4),
-                                      Wrap(
-                                        spacing: 4,
-                                        runSpacing: 4,
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: List.generate(8, (pinOffset) {
-                                          int pin = start + pinOffset;
+                                          int pin = end - pinOffset; // D31 down to D24, D7 down to D0
                                           bool isEnabled = consumerState.digitalChannel.enabledPins.contains(pin);
                                           return FilterChip(
                                             label: SizedBox(
