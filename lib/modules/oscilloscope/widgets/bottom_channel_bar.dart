@@ -452,9 +452,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                     ],
                                   ),
                                 ),
-                                const SizedBox(height: 6),
-                                Divider(color: Colors.grey.shade800, height: 1),
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 12),
                                 // Digital channels
                                 const Text('数字通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
                                 const SizedBox(height: 8),
