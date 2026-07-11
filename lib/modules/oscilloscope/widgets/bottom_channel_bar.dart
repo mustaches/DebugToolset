@@ -362,35 +362,70 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('模拟通道 (Analog)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                Switch(
-                                  value: consumerState.channels.every((ch) => ch.isVisible),
-                                  activeThumbColor: Colors.blueAccent,
-                                  onChanged: (v) {
-                                    consumerState.setAllChannelsVisibility(v);
-                                  },
-                                )
-                              ],
-                            ),
+                            // Analog channels header
+                            const Text('模拟通道 (Analog)', style: TextStyle(color: Colors.grey, fontSize: 12)),
                             const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              children: List.generate(consumerState.channels.length, (i) {
-                                final ch = consumerState.channels[i];
-                                return FilterChip(
-                                  label: Text('CH${i + 1}', style: TextStyle(color: ch.isVisible ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
-                                  selected: ch.isVisible,
-                                  onSelected: (_) => consumerState.toggleChannelVisibility(i),
-                                  selectedColor: ch.color,
-                                  backgroundColor: Colors.grey.shade800,
-                                  checkmarkColor: Colors.black,
-                                );
-                              }),
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E2430),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey.shade800),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text('A4 - A1', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                      SizedBox(
+                                        height: 28,
+                                        child: Switch(
+                                          value: consumerState.channels.every((ch) => ch.isVisible),
+                                          activeThumbColor: Colors.blueAccent,
+                                          activeTrackColor: Colors.blueAccent.withValues(alpha: 0.5),
+                                          inactiveThumbColor: Colors.grey.shade400,
+                                          inactiveTrackColor: Colors.grey.shade700,
+                                          onChanged: (v) => consumerState.setAllChannelsVisibility(v),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: List.generate(4, (i) {
+                                      int chIdx = 3 - i; // A4, A3, A2, A1
+                                      final ch = consumerState.channels[chIdx];
+                                      return FilterChip(
+                                        label: SizedBox(
+                                          width: 22,
+                                          child: Center(
+                                            child: Text(
+                                              'A${chIdx + 1}',
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                color: ch.isVisible ? Colors.white : Colors.grey.shade400,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        selected: ch.isVisible,
+                                        onSelected: (_) => consumerState.toggleChannelVisibility(chIdx),
+                                        showCheckmark: false,
+                                        selectedColor: ch.color.withValues(alpha: 0.7),
+                                        backgroundColor: Colors.grey.shade900,
+                                        padding: EdgeInsets.zero,
+                                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      );
+                                    }),
+                                  ),
+                                ],
+                              ),
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 6),
                             const Divider(color: Colors.grey),
                             const SizedBox(height: 8),
                             const Text('数字逻辑通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
