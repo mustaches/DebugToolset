@@ -374,94 +374,93 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                 // Body
                 Expanded(
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // Left Column: Channels
                       SizedBox(
                         width: 432,
-                        child: SingleChildScrollView(
-                          child: Consumer<OscilloscopeState>(
-                            builder: (ctx, consumerState, child) {
-                              return Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Analog channels
-                                  const Text('模拟通道 (Analog)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                  const SizedBox(height: 8),
-                                  Container(
-                                    margin: const EdgeInsets.only(bottom: 10),
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF1E2430),
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(color: Colors.grey.shade800),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            const Text('A1 - A4', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                            SizedBox(
-                                              height: 14,
-                                              child: Transform.scale(
-                                                scale: 0.55,
-                                                alignment: Alignment.centerRight,
-                                                child: Switch(
-                                                  value: consumerState.channels.every((ch) => ch.isVisible),
-                                                  activeThumbColor: Colors.lightBlueAccent,
-                                                  activeTrackColor: Colors.lightBlueAccent.withValues(alpha: 0.5),
-                                                  inactiveThumbColor: Colors.grey.shade400,
-                                                  inactiveTrackColor: Colors.grey.shade700,
-                                                  onChanged: (v) => consumerState.setAllChannelsVisibility(v),
-                                                ),
+                        child: Consumer<OscilloscopeState>(
+                          builder: (ctx, consumerState, child) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Analog channels
+                                const Text('模拟通道 (Analog)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1E2430),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.grey.shade800),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          const Text('A1 - A4', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                          SizedBox(
+                                            height: 14,
+                                            child: Transform.scale(
+                                              scale: 0.55,
+                                              alignment: Alignment.centerRight,
+                                              child: Switch(
+                                                value: consumerState.channels.every((ch) => ch.isVisible),
+                                                activeThumbColor: Colors.lightBlueAccent,
+                                                activeTrackColor: Colors.lightBlueAccent.withValues(alpha: 0.5),
+                                                inactiveThumbColor: Colors.grey.shade400,
+                                                inactiveTrackColor: Colors.grey.shade700,
+                                                onChanged: (v) => consumerState.setAllChannelsVisibility(v),
                                               ),
                                             ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Wrap(
-                                          spacing: 8,
-                                          runSpacing: 6,
-                                          children: List.generate(4, (i) {
-                                            int chIdx = i; // A1, A2, A3, A4
-                                            final ch = consumerState.channels[chIdx];
-                                            return FilterChip(
-                                              label: SizedBox(
-                                                width: 22,
-                                                child: Center(
-                                                  child: Text(
-                                                    'A${chIdx + 1}',
-                                                    style: TextStyle(
-                                                      fontSize: 11,
-                                                      fontWeight: FontWeight.bold,
-                                                      color: ch.isVisible ? Colors.white : Colors.grey.shade400,
-                                                    ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 6,
+                                        children: List.generate(4, (i) {
+                                          int chIdx = i; // A1, A2, A3, A4
+                                          final ch = consumerState.channels[chIdx];
+                                          return FilterChip(
+                                            label: SizedBox(
+                                              width: 22,
+                                              child: Center(
+                                                child: Text(
+                                                  'A${chIdx + 1}',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: ch.isVisible ? Colors.white : Colors.grey.shade400,
                                                   ),
                                                 ),
                                               ),
-                                              selected: ch.isVisible,
-                                              onSelected: (_) => consumerState.toggleChannelVisibility(chIdx),
-                                              showCheckmark: false,
-                                              selectedColor: ch.color.withValues(alpha: 0.7),
-                                              backgroundColor: Colors.grey.shade900,
-                                              padding: EdgeInsets.zero,
-                                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                            );
-                                          }),
-                                        ),
-                                      ],
-                                    ),
+                                            ),
+                                            selected: ch.isVisible,
+                                            onSelected: (_) => consumerState.toggleChannelVisibility(chIdx),
+                                            showCheckmark: false,
+                                            selectedColor: ch.color.withValues(alpha: 0.7),
+                                            backgroundColor: Colors.grey.shade900,
+                                            padding: EdgeInsets.zero,
+                                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          );
+                                        }),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(height: 6),
-                                  Divider(color: Colors.grey.shade800, height: 1),
-                                  const SizedBox(height: 8),
-                                  // Digital channels
-                                  const Text('数字通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                  const SizedBox(height: 8),
-                                  Column(
+                                ),
+                                const SizedBox(height: 6),
+                                Divider(color: Colors.grey.shade800, height: 1),
+                                const SizedBox(height: 8),
+                                // Digital channels
+                                const Text('数字通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                const SizedBox(height: 8),
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: List.generate(4, (index) {
                                       int groupIndex = 3 - index; // D31-D24 top, D7-D0 bottom
                                       int start = groupIndex * 8;
@@ -476,8 +475,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                       }
 
                                       return Container(
-                                        margin: EdgeInsets.only(bottom: index == 3 ? 0.0 : 16.0),
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15.5),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                                         decoration: BoxDecoration(
                                           color: [
                                             const Color(0xFF1A2634), // D7-D0
@@ -512,7 +510,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                                 ),
                                               ],
                                             ),
-                                            const SizedBox(height: 8),
+                                            const SizedBox(height: 6),
                                             Row(
                                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                               children: List.generate(8, (pinOffset) {
@@ -547,10 +545,10 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                       );
                                     }),
                                   ),
-                                ],
-                              );
-                            },
-                          ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ),
 
