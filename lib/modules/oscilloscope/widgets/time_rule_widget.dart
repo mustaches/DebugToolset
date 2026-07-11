@@ -14,9 +14,11 @@ class TimeRuleWidget extends StatelessWidget {
       color: const Color(0xFF161616),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          return CustomPaint(
-            size: Size(constraints.maxWidth, constraints.maxHeight),
-            painter: TimeRulePainter(state: state),
+          return ClipRect(
+            child: CustomPaint(
+              size: Size(constraints.maxWidth, constraints.maxHeight),
+              painter: TimeRulePainter(state: state),
+            ),
           );
         }
       ),
@@ -114,7 +116,11 @@ class TimeRulePainter extends CustomPainter {
       TextSpan span = TextSpan(style: TextStyle(color: Colors.grey.shade300, fontSize: 10), text: formatTime(t));
       TextPainter tp = TextPainter(text: span, textAlign: TextAlign.center, textDirection: TextDirection.ltr);
       tp.layout();
-      tp.paint(canvas, Offset(px - tp.width / 2, size.height - 22));
+      double textX = px - tp.width / 2;
+      // Clamp text coordinate to avoid drawing outside the left/right boundaries of the widget
+      if (textX < 2.0) textX = 2.0;
+      if (textX + tp.width > size.width - 2.0) textX = size.width - tp.width - 2.0;
+      tp.paint(canvas, Offset(textX, size.height - 22));
     }
     
     // Also draw the bottom border line for the time rule
