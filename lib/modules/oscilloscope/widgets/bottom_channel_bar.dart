@@ -347,14 +347,14 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
           backgroundColor: const Color(0xFF2A2A2A),
           title: const Text('通道快速设置', style: TextStyle(color: Colors.white, fontSize: 16)),
           content: Container(
-            width: 880,
+            width: 1380,
             constraints: const BoxConstraints(maxHeight: 600),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Left Column: Channels
                 SizedBox(
-                  width: 480,
+                  width: 432,
                   child: SingleChildScrollView(
                     child: Consumer<OscilloscopeState>(
                       builder: (ctx, consumerState, child) {
@@ -513,70 +513,61 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                       ),
                       const SizedBox(height: 12),
                       
-                      // Buttons grid
+                      // Buttons row
                       Consumer<OscilloscopeState>(
                         builder: (ctx, consumerState, child) {
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
+                          return Row(
                             children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: () => _showAddBusDialog(context, consumerState),
-                                      icon: const Icon(Icons.add, size: 14),
-                                      label: const Text('添加总线', style: TextStyle(fontSize: 12)),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.grey.shade800,
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                      ),
-                                    ),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _showAddBusDialog(context, consumerState),
+                                  icon: const Icon(Icons.add, size: 14),
+                                  label: const Text('添加总线', style: TextStyle(fontSize: 12)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.grey.shade800,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: () => _saveBusSetup(context, consumerState),
-                                      icon: const Icon(Icons.save, size: 14),
-                                      label: const Text('保存配置', style: TextStyle(fontSize: 12)),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.grey.shade800,
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: () => _importBusSetup(context, consumerState),
-                                      icon: const Icon(Icons.download, size: 14),
-                                      label: const Text('导入配置', style: TextStyle(fontSize: 12)),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.grey.shade800,
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                      ),
-                                    ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _saveBusSetup(context, consumerState),
+                                  icon: const Icon(Icons.save, size: 14),
+                                  label: const Text('保存配置', style: TextStyle(fontSize: 12)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.grey.shade800,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: () => _deleteBusSetup(context),
-                                      icon: const Icon(Icons.delete, size: 14),
-                                      label: const Text('删除配置', style: TextStyle(fontSize: 12)),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.grey.shade800,
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                      ),
-                                    ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _importBusSetup(context, consumerState),
+                                  icon: const Icon(Icons.download, size: 14),
+                                  label: const Text('导入配置', style: TextStyle(fontSize: 12)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.grey.shade800,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
                                   ),
-                                ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _deleteBusSetup(context),
+                                  icon: const Icon(Icons.delete, size: 14),
+                                  label: const Text('删除配置', style: TextStyle(fontSize: 12)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.grey.shade800,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                  ),
+                                ),
                               ),
                             ],
                           );
