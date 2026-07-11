@@ -198,7 +198,6 @@ class _PacketListPanelState extends State<PacketListPanel> {
                   constraints: const BoxConstraints(),
                   onPressed: () {
                     context.read<OscilloscopeState>().toggleEventList(null);
-                    context.read<OscilloscopeState>().setHighlight(null, null, null);
                   },
                 ),
               ],
