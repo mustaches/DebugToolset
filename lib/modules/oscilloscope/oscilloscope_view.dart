@@ -81,7 +81,7 @@ class OscilloscopeView extends StatelessWidget {
                                       Positioned(
                                         bottom: 0,
                                         left: 0,
-                                        right: state.activeEventListBusName != null ? 420.0 : 0.0,
+                                        right: state.activeEventListBusName != null ? 418.0 : 0.0,
                                         height: 240,
                                         child: const RegisterInfoPanel(),
                                       ),
@@ -89,7 +89,7 @@ class OscilloscopeView extends StatelessWidget {
                                       Positioned(
                                         top: 0,
                                         bottom: 0,
-                                        right: 0,
+                                        right: -2.0,
                                         width: 420,
                                         child: PacketListPanel(busName: state.activeEventListBusName!),
                                       ),
