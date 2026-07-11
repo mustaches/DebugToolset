@@ -2880,8 +2880,17 @@ class OscilloscopeState extends ChangeNotifier {
     int totalChannels = activeAnalog.length + digitalChannel.buses.length + activeDigital.length;
     if (totalChannels == 0) return;
 
-    double sliceHeight = chartHeight / totalChannels;
-    double currentY = 0;
+    // When digital channels are active, the time ruler is displayed at the top of the chart
+    // (Positioned top:0, height:25 in oscilloscope_view.dart). Reserve that space so that
+    // the top-most channel (D31) is not hidden behind the ruler.
+    const double timeRulerHeight = 25.0;
+    bool hasDigital = activeDigital.isNotEmpty || digitalChannel.buses.isNotEmpty;
+    double topPadding = hasDigital ? timeRulerHeight : 0.0;
+    double usableHeight = chartHeight - topPadding;
+
+    double sliceHeight = usableHeight / totalChannels;
+    double currentY = topPadding;
+
 
     for (int chIdx in activeAnalog) {
       double center = currentY + sliceHeight / 2;
