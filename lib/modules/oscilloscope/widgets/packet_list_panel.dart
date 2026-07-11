@@ -104,6 +104,7 @@ class _PacketListPanelState extends State<PacketListPanel> {
 
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),

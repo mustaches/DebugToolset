@@ -341,6 +341,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
   void _showGlobalChannelToggleDialog(BuildContext context, OscilloscopeState state) {
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -527,6 +528,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
   void _showChannelConfigDialog(BuildContext context, OscilloscopeState state, int index, ChannelData ch) {
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -570,6 +572,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     int end = start + 7;
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -629,6 +632,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -712,6 +716,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                     ];
                     showDialog(
                       context: context,
+                      useRootNavigator: false,
                       builder: (ctx) => AlertDialog(
                         backgroundColor: const Color(0xFF2A2A2A),
                         title: const Text('选择总线颜色', style: TextStyle(color: Colors.white, fontSize: 14)),
@@ -755,6 +760,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                     TextEditingController controller = TextEditingController(text: bus.name);
                     showDialog(
                       context: context,
+                      useRootNavigator: false,
                       builder: (ctx) => AlertDialog(
                         backgroundColor: const Color(0xFF2A2A2A),
                         title: const Text('重命名总线', style: TextStyle(color: Colors.white, fontSize: 14)),
@@ -948,6 +954,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setState) {
@@ -1543,6 +1550,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setState) {
@@ -2249,6 +2257,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     if (!context.mounted) return;
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF2A2A2A),
         title: const Text('选择要导入的总线设置', style: TextStyle(color: Colors.white, fontSize: 14)),
@@ -2494,6 +2503,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setState) {

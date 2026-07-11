@@ -245,6 +245,7 @@ class _RightControlPanelState extends State<RightControlPanel> {
                       _buildBtn('Menu', isOutline: true, onTap: () {
                         showDialog(
                           context: context.read<OscilloscopeState>().oscNavigatorKey.currentContext ?? context,
+                          useRootNavigator: false,
                           builder: (context) => const TriggerMenuDialog(),
                         );
                       }),

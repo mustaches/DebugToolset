@@ -112,6 +112,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
             onTap: () {
               showDialog(
                 context: context,
+                useRootNavigator: false,
                 builder: (context) => const BusSearchDialog(),
               );
             },
@@ -215,6 +216,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
             onTap: () {
               showDialog(
                 context: context,
+                useRootNavigator: false,
                 builder: (context) => const LATriggerMenuDialog(),
               );
             },

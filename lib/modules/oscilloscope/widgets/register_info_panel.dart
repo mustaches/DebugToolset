@@ -23,6 +23,7 @@ class RegisterInfoPanel extends StatelessWidget {
 
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -737,6 +738,7 @@ class RegisterInfoPanel extends StatelessWidget {
     
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -780,6 +782,7 @@ class RegisterInfoPanel extends StatelessWidget {
   void _selectSpiProtocolFile(BuildContext context, OscilloscopeState state, SpiDecoder decoder) {
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (context) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),

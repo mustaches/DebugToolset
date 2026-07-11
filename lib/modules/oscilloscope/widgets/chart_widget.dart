@@ -1165,6 +1165,7 @@ class _DraggableChannelIndicatorState extends State<DraggableChannelIndicator> w
     TextEditingController controller = TextEditingController(text: currentName);
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -1368,6 +1369,7 @@ class _DraggableDigitalChannelIndicatorState extends State<DraggableDigitalChann
     TextEditingController controller = TextEditingController(text: currentName);
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
@@ -1567,6 +1569,7 @@ class ExpandedBusPinIndicator extends StatelessWidget {
     TextEditingController controller = TextEditingController(text: currentName);
     showDialog(
       context: context,
+      useRootNavigator: false,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
