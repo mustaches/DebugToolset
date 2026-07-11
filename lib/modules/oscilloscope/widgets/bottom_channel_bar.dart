@@ -346,8 +346,9 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
           title: const Text('通道快速设置', style: TextStyle(color: Colors.white, fontSize: 16)),
-          content: SizedBox(
+          content: Container(
             width: 715,
+            constraints: const BoxConstraints(maxHeight: 700),
             child: SingleChildScrollView(
               child: Consumer<OscilloscopeState>(
                 builder: (ctx, consumerState, child) {
@@ -388,72 +389,80 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                       const SizedBox(height: 8),
                       const Text('数字逻辑通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
                       const SizedBox(height: 8),
-                      ...List.generate(4, (groupIndex) {
-                        int start = groupIndex * 8;
-                        int end = start + 7;
-                        
-                        bool allEnabled = true;
-                        for (int i = start; i <= end; i++) {
-                          if (!consumerState.digitalChannel.enabledPins.contains(i)) {
-                            allEnabled = false;
-                            break;
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: List.generate(4, (groupIndex) {
+                          int start = groupIndex * 8;
+                          int end = start + 7;
+                          
+                          bool allEnabled = true;
+                          for (int i = start; i <= end; i++) {
+                            if (!consumerState.digitalChannel.enabledPins.contains(i)) {
+                              allEnabled = false;
+                              break;
+                            }
                           }
-                        }
-                        
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: [
-                              const Color(0xFF1A2634), // dark blue tint
-                              const Color(0xFF1A3426), // dark green tint
-                              const Color(0xFF341A26), // dark pink tint
-                              const Color(0xFF34261A), // dark orange tint
-                            ][groupIndex],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey.shade800),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text('D$start - D$end', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                  Switch(
-                                    value: allEnabled,
-                                    activeThumbColor: Colors.purpleAccent,
-                                    onChanged: (v) {
-                                      consumerState.setDigitalPinGroupVisibility(start, end, v);
-                                    },
-                                  )
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: List.generate(8, (pinOffset) {
-                                  int pin = start + pinOffset;
-                                  bool isEnabled = consumerState.digitalChannel.enabledPins.contains(pin);
-                                  return FilterChip(
-                                    label: SizedBox(
-                                      width: 24,
-                                      child: Center(child: Text('D$pin', style: TextStyle(fontSize: 10, color: isEnabled ? Colors.white : Colors.grey.shade400)))
-                                    ),
-                                    selected: isEnabled,
-                                    onSelected: (_) => consumerState.toggleDigitalPinVisibility(pin),
-                                    showCheckmark: false,
-                                    selectedColor: Colors.purpleAccent.withValues(alpha: 0.6),
-                                    backgroundColor: Colors.grey.shade900,
-                                    padding: EdgeInsets.zero,
-                                  );
-                                }),
-                              )
-                            ],
-                          ),
-                        );
-                      }),
+                          
+                          return Container(
+                            width: 345, // 345 * 2 + 12 (spacing) = 702 (fits inside 715)
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: [
+                                const Color(0xFF1A2634), // dark blue tint
+                                const Color(0xFF1A3426), // dark green tint
+                                const Color(0xFF341A26), // dark pink tint
+                                const Color(0xFF34261A), // dark orange tint
+                              ][groupIndex],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey.shade800),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('D$start - D$end', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                    SizedBox(
+                                      height: 28,
+                                      child: Switch(
+                                        value: allEnabled,
+                                        activeThumbColor: Colors.purpleAccent,
+                                        onChanged: (v) {
+                                          consumerState.setDigitalPinGroupVisibility(start, end, v);
+                                        },
+                                      ),
+                                    )
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  spacing: 4,
+                                  runSpacing: 4,
+                                  children: List.generate(8, (pinOffset) {
+                                    int pin = start + pinOffset;
+                                    bool isEnabled = consumerState.digitalChannel.enabledPins.contains(pin);
+                                    return FilterChip(
+                                      label: SizedBox(
+                                        width: 22,
+                                        child: Center(child: Text('D$pin', style: TextStyle(fontSize: 9, color: isEnabled ? Colors.white : Colors.grey.shade400)))
+                                      ),
+                                      selected: isEnabled,
+                                      onSelected: (_) => consumerState.toggleDigitalPinVisibility(pin),
+                                      showCheckmark: false,
+                                      selectedColor: Colors.purpleAccent.withValues(alpha: 0.6),
+                                      backgroundColor: Colors.grey.shade900,
+                                      padding: EdgeInsets.zero,
+                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    );
+                                  }),
+                                )
+                              ],
+                            ),
+                          );
+                        }),
+                      ),
                       const SizedBox(height: 16),
                       const Divider(color: Colors.grey),
                       const SizedBox(height: 8),
@@ -507,7 +516,6 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                           ],
                         ),
                       ),
-
                     ],
                   );
                 },
