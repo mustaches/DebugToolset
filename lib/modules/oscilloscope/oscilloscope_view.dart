@@ -96,6 +96,7 @@ class OscilloscopeView extends StatelessWidget {
                                   ],
                                 ),
                               ),
+                              const BottomChannelBar(),
                             ],
                           ),
                         ),
@@ -107,9 +108,6 @@ class OscilloscopeView extends StatelessWidget {
               ],
             ),
           ),
-          
-          // Bottom Channel Bar
-          const BottomChannelBar(),
         ],
       ),
     );
