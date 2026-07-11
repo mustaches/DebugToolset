@@ -405,9 +405,9 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                           children: [
                                             const Text('A1 - A4', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
                                             SizedBox(
-                                              height: 19,
+                                              height: 14,
                                               child: Transform.scale(
-                                                scale: 0.67,
+                                                scale: 0.55,
                                                 alignment: Alignment.centerRight,
                                                 child: Switch(
                                                   value: consumerState.channels.every((ch) => ch.isVisible),
@@ -496,9 +496,9 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                               children: [
                                                 Text('D$end - D$start', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
                                                 SizedBox(
-                                                  height: 19,
+                                                  height: 14,
                                                   child: Transform.scale(
-                                                    scale: 0.67,
+                                                    scale: 0.55,
                                                     alignment: Alignment.centerRight,
                                                     child: Switch(
                                                       value: allEnabled,
