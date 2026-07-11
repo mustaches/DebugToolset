@@ -441,6 +441,8 @@ class OscilloscopeState extends ChangeNotifier {
   static const int maxPointsPerChannel = 8388608;
   static const int chunkSize = 4096;
 
+  final GlobalKey<NavigatorState> oscNavigatorKey = GlobalKey<NavigatorState>();
+
   TerminalState? _terminalState;
   StreamSubscription<Uint8List>? _rawDataSubscription;
   bool _wasConnected = false;

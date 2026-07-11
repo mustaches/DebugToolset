@@ -244,7 +244,7 @@ class _RightControlPanelState extends State<RightControlPanel> {
                       const SizedBox(height: 2),
                       _buildBtn('Menu', isOutline: true, onTap: () {
                         showDialog(
-                          context: context,
+                          context: context.read<OscilloscopeState>().oscNavigatorKey.currentContext ?? context,
                           builder: (context) => const TriggerMenuDialog(),
                         );
                       }),

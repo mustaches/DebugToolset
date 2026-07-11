@@ -19,24 +19,21 @@ class OscilloscopeView extends StatelessWidget {
     final state = context.watch<OscilloscopeState>();
     return Container(
       color: Colors.black, // Professional Dark Theme
-      child: Column(
+      child: Row(
         children: [
-          // Top Info Bar
-          const TopInfoBar(),
-          
-          // Main Chart Area & Right Control Panel
           Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  flex: 1,
-                  child: Center(
-                    child: FittedBox(
-                      fit: BoxFit.contain,
-                      child: SizedBox(
-                        width: 1920,
-                        height: 1080,
-                        child: Container(
+            flex: 1,
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.contain,
+                child: SizedBox(
+                  width: 1920,
+                  height: 1080,
+                  child: Navigator(
+                    key: state.oscNavigatorKey,
+                    onGenerateRoute: (settings) {
+                      return MaterialPageRoute(
+                        builder: (context) => Container(
                           decoration: BoxDecoration(
                             color: Colors.black,
                             border: Border.all(
@@ -47,6 +44,7 @@ class OscilloscopeView extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
+                              const TopInfoBar(),
                               const Expanded(
                                 flex: 1,
                                 child: MinimapWidget(),
@@ -100,14 +98,14 @@ class OscilloscopeView extends StatelessWidget {
                             ],
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 ),
-                const RightControlPanel(),
-              ],
+              ),
             ),
           ),
+          const RightControlPanel(),
         ],
       ),
     );
