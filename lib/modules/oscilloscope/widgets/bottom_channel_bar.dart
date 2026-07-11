@@ -350,7 +350,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
             side: BorderSide(color: Colors.grey.shade800, width: 2),
           ),
           child: Container(
-            width: 1420,
+            width: 1240,
             constraints: const BoxConstraints(maxHeight: 640),
             padding: const EdgeInsets.all(20),
             child: Column(
