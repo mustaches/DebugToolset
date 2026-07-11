@@ -391,7 +391,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                   const SizedBox(height: 8),
                                   Container(
                                     margin: const EdgeInsets.only(bottom: 10),
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFF1E2430),
                                       borderRadius: BorderRadius.circular(8),
@@ -421,9 +421,10 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                             ),
                                           ],
                                         ),
-                                        const SizedBox(height: 6),
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        const SizedBox(height: 8),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 6,
                                           children: List.generate(4, (i) {
                                             int chIdx = i; // A1, A2, A3, A4
                                             final ch = consumerState.channels[chIdx];
@@ -475,8 +476,8 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                       }
 
                                       return Container(
-                                        margin: const EdgeInsets.only(bottom: 10),
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        margin: const EdgeInsets.only(bottom: 14),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                                         decoration: BoxDecoration(
                                           color: [
                                             const Color(0xFF1A2634), // D7-D0
