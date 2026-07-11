@@ -712,158 +712,6 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     );
   }
 
-}
-
-class MsoGroupDialog extends StatefulWidget {
-  final OscilloscopeState state;
-  final int busIndex;
-
-  const MsoGroupDialog({
-    super.key,
-    required this.state,
-    required this.busIndex,
-  });
-
-  @override
-  State<MsoGroupDialog> createState() => _MsoGroupDialogState();
-}
-
-class _MsoGroupDialogState extends State<MsoGroupDialog> {
-  final Map<int, TextEditingController> _controllers = {};
-
-  @override
-  void initState() {
-    super.initState();
-    int start = widget.busIndex * 8;
-    int end = start + 7;
-    for (int p = end; p >= start; p--) {
-      _controllers[p] = TextEditingController(text: widget.state.digitalChannel.pinNames[p] ?? '');
-    }
-  }
-
-  @override
-  void dispose() {
-    for (var controller in _controllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    int start = widget.busIndex * 8;
-    int end = start + 7;
-
-    return Dialog(
-      backgroundColor: const Color(0xFF161616),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: Colors.grey.shade800, width: 2),
-      ),
-      child: Container(
-        width: 380,
-        height: 480,
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'L${widget.busIndex + 1} 子通道配置 (D$end - D$start)',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => Navigator.of(context).pop(),
-                  child: Icon(Icons.close, color: Colors.grey.shade400, size: 18),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Divider(color: Colors.grey.shade800, height: 1),
-            const SizedBox(height: 10),
-            Expanded(
-              child: Consumer<OscilloscopeState>(
-                builder: (context, oscState, child) {
-                  return ListView.builder(
-                    itemCount: 8,
-                    itemBuilder: (context, idx) {
-                      int pin = end - idx;
-                      bool isEnabled = oscState.digitalChannel.enabledPins.contains(pin);
-
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6.0),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 36,
-                              child: Text(
-                                'D$pin',
-                                style: TextStyle(
-                                  color: isEnabled ? Colors.greenAccent : Colors.grey,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                              height: 18,
-                              child: Transform.scale(
-                                scale: 0.65,
-                                alignment: Alignment.centerLeft,
-                                child: Switch(
-                                  value: isEnabled,
-                                  activeThumbColor: Colors.lightBlueAccent,
-                                  activeTrackColor: Colors.lightBlueAccent.withValues(alpha: 0.5),
-                                  inactiveThumbColor: Colors.grey.shade400,
-                                  inactiveTrackColor: Colors.grey.shade700,
-                                  onChanged: (v) => oscState.toggleDigitalPinVisibility(pin),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Container(
-                                height: 30,
-                                child: TextField(
-                                  controller: _controllers[pin],
-                                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                                  decoration: InputDecoration(
-                                    hintText: '未命名',
-                                    hintStyle: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderSide: BorderSide(color: Colors.grey.shade800),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderSide: const BorderSide(color: Colors.lightBlueAccent),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                  ),
-                                  onChanged: (text) {
-                                    oscState.setDigitalPinName(pin, text);
-                                  },
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
 
   void _showBatchRenamePinsDialog(BuildContext context, OscilloscopeState state, DigitalBus bus) {
     
@@ -2831,3 +2679,157 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
     );
   }
 }
+
+class MsoGroupDialog extends StatefulWidget {
+  final OscilloscopeState state;
+  final int busIndex;
+
+  const MsoGroupDialog({
+    super.key,
+    required this.state,
+    required this.busIndex,
+  });
+
+  @override
+  State<MsoGroupDialog> createState() => _MsoGroupDialogState();
+}
+
+class _MsoGroupDialogState extends State<MsoGroupDialog> {
+  final Map<int, TextEditingController> _controllers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    int start = widget.busIndex * 8;
+    int end = start + 7;
+    for (int p = end; p >= start; p--) {
+      _controllers[p] = TextEditingController(text: widget.state.digitalChannel.pinNames[p] ?? '');
+    }
+  }
+
+  @override
+  void dispose() {
+    for (var controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    int start = widget.busIndex * 8;
+    int end = start + 7;
+
+    return Dialog(
+      backgroundColor: const Color(0xFF161616),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey.shade800, width: 2),
+      ),
+      child: Container(
+        width: 380,
+        height: 480,
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'L${widget.busIndex + 1} 子通道配置 (D$end - D$start)',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Icon(Icons.close, color: Colors.grey.shade400, size: 18),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(color: Colors.grey.shade800, height: 1),
+            const SizedBox(height: 10),
+            Expanded(
+              child: Consumer<OscilloscopeState>(
+                builder: (context, oscState, child) {
+                  return ListView.builder(
+                    itemCount: 8,
+                    itemBuilder: (context, idx) {
+                      int pin = end - idx;
+                      bool isEnabled = oscState.digitalChannel.enabledPins.contains(pin);
+
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6.0),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 36,
+                              child: Text(
+                                'D$pin',
+                                style: TextStyle(
+                                  color: isEnabled ? Colors.greenAccent : Colors.grey,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              height: 18,
+                              child: Transform.scale(
+                                scale: 0.65,
+                                alignment: Alignment.centerLeft,
+                                child: Switch(
+                                  value: isEnabled,
+                                  activeThumbColor: Colors.lightBlueAccent,
+                                  activeTrackColor: Colors.lightBlueAccent.withValues(alpha: 0.5),
+                                  inactiveThumbColor: Colors.grey.shade400,
+                                  inactiveTrackColor: Colors.grey.shade700,
+                                  onChanged: (v) => oscState.toggleDigitalPinVisibility(pin),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Container(
+                                height: 30,
+                                child: TextField(
+                                  controller: _controllers[pin],
+                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                  decoration: InputDecoration(
+                                    hintText: '未命名',
+                                    hintStyle: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderSide: BorderSide(color: Colors.grey.shade800),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderSide: const BorderSide(color: Colors.lightBlueAccent),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ),
+                                  onChanged: (text) {
+                                    oscState.setDigitalPinName(pin, text);
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
