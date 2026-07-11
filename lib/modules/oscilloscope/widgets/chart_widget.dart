@@ -342,6 +342,9 @@ class _ChartWidgetState extends State<ChartWidget> {
                     bool isX2ClampedLeft = px2Raw < 0;
                     bool isX2ClampedRight = px2Raw > constraints.maxWidth;
 
+                    bool hasDigital = state.digitalChannel.enabledPins.isNotEmpty;
+                    double topOffset = hasDigital ? 25.0 : 0.0;
+
                     void updateX1FromGlobal(Offset globalPos) {
                       RenderBox box = context.findRenderObject() as RenderBox;
                       double chartX = box.globalToLocal(globalPos).dx;
@@ -360,13 +363,13 @@ class _ChartWidgetState extends State<ChartWidget> {
                       // X1
                       Positioned(
                         left: px1,
-                        top: 0, bottom: 0, width: 1,
+                        top: topOffset, bottom: 0, width: 1,
                         child: CustomPaint(painter: DashedLinePainter(color: Colors.yellowAccent)),
                       ),
                       Positioned(
                         key: const ValueKey('x1_hitbox'),
                         left: isX1ClampedLeft ? 0.0 : (isX1ClampedRight ? px1 - 30.0 : px1 - 10.0),
-                        top: 0, bottom: 0, width: (isX1ClampedLeft || isX1ClampedRight) ? 30.0 : 20.0,
+                        top: topOffset, bottom: 0, width: (isX1ClampedLeft || isX1ClampedRight) ? 30.0 : 20.0,
                         child: MouseRegion(
                           cursor: SystemMouseCursors.resizeLeftRight,
                           onEnter: (e) => _hoverPosX1.value = e.localPosition,
@@ -416,7 +419,7 @@ class _ChartWidgetState extends State<ChartWidget> {
                         ),
                       ),
                       Positioned(
-                        left: isX1ClampedRight ? px1 - 20 : px1 + 2, top: 4,
+                        left: isX1ClampedRight ? px1 - 20 : px1 + 2, top: 4 + topOffset,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -433,13 +436,13 @@ class _ChartWidgetState extends State<ChartWidget> {
                       // X2
                       Positioned(
                         left: px2,
-                        top: 0, bottom: 0, width: 1,
+                        top: topOffset, bottom: 0, width: 1,
                         child: CustomPaint(painter: DashedLinePainter(color: Colors.yellowAccent)),
                       ),
                       Positioned(
                         key: const ValueKey('x2_hitbox'),
                         left: isX2ClampedLeft ? 0.0 : (isX2ClampedRight ? px2 - 30.0 : px2 - 10.0),
-                        top: 0, bottom: 0, width: (isX2ClampedLeft || isX2ClampedRight) ? 30.0 : 20.0,
+                        top: topOffset, bottom: 0, width: (isX2ClampedLeft || isX2ClampedRight) ? 30.0 : 20.0,
                         child: MouseRegion(
                           cursor: SystemMouseCursors.resizeLeftRight,
                           onEnter: (e) => _hoverPosX2.value = e.localPosition,
@@ -489,7 +492,7 @@ class _ChartWidgetState extends State<ChartWidget> {
                         ),
                       ),
                       Positioned(
-                        left: isX2ClampedRight ? px2 - 20 : px2 + 2, top: 4,
+                        left: isX2ClampedRight ? px2 - 20 : px2 + 2, top: 4 + topOffset,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -627,7 +630,7 @@ class _ChartWidgetState extends State<ChartWidget> {
 
                 // Info panel
                 Positioned(
-                  top: 10, right: 20,
+                  top: 10 + (state.digitalChannel.enabledPins.isNotEmpty ? 25.0 : 0.0), right: 20,
                   child: IgnorePointer( // Don't block interactions behind the info panel
                     child: Container(
                       padding: const EdgeInsets.all(8),

@@ -158,6 +158,17 @@ class LogicAnalyzerToolbar extends StatelessWidget {
             onTap: () => state.toggleCursors(),
           ),
           if (state.showCursors) ...[
+            const SizedBox(width: 2),
+            _buildToolbarButton(
+              customIcon: CustomPaint(
+                size: const Size(14, 14),
+                painter: CursorResetIconPainter(Colors.grey.shade400),
+              ),
+              label: '',
+              tooltip: 'Reset Cursors (X1 → 1/3, X2 → 2/3)',
+              isActive: false,
+              onTap: () => state.resetCursorsToThirds(),
+            ),
             const SizedBox(width: 4),
             _buildToolbarButton(
               icon: state.linkCursors ? Icons.link : Icons.link_off,
@@ -447,4 +458,53 @@ class TriggerIconPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant TriggerIconPainter oldDelegate) => oldDelegate.color != color;
+}
+
+/// Draws a rectangle divided into thirds by two vertical dashed lines,
+/// with small downward arrowheads at 1/3 and 2/3 to indicate cursor placement.
+class CursorResetIconPainter extends CustomPainter {
+  final Color color;
+  CursorResetIconPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final linePaint = Paint()
+      ..color = color
+      ..strokeWidth = 1.2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    final fillPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    double w = size.width;
+    double h = size.height;
+
+    // Outer bounding rectangle
+    canvas.drawRect(Rect.fromLTRB(0, h * 0.2, w, h * 0.95), linePaint);
+
+    // Left divider at 1/3
+    double x1 = w / 3.0;
+    canvas.drawLine(Offset(x1, h * 0.2), Offset(x1, h * 0.95), linePaint);
+
+    // Right divider at 2/3
+    double x2 = w * 2.0 / 3.0;
+    canvas.drawLine(Offset(x2, h * 0.2), Offset(x2, h * 0.95), linePaint);
+
+    // Downward arrowheads above each divider line
+    void drawArrow(double cx) {
+      Path arrow = Path();
+      arrow.moveTo(cx - h * 0.15, 0);
+      arrow.lineTo(cx + h * 0.15, 0);
+      arrow.lineTo(cx, h * 0.18);
+      arrow.close();
+      canvas.drawPath(arrow, fillPaint);
+    }
+    drawArrow(x1);
+    drawArrow(x2);
+  }
+
+  @override
+  bool shouldRepaint(covariant CursorResetIconPainter oldDelegate) => oldDelegate.color != color;
 }

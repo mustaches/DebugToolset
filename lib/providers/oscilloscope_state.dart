@@ -1280,6 +1280,38 @@ class OscilloscopeState extends ChangeNotifier {
     setXScrollOffset(newScrollOffset);
   }
 
+  /// Places X1 at the 1/3 position and X2 at the 2/3 position of the
+  /// currently visible chart area, expressed as time values in seconds.
+  void resetCursorsToThirds() {
+    if (_sampleRate <= 0) return;
+    double activeScale = _xScale;
+    double minS = chartWidth / maxPointsPerChannel;
+    if (activeScale < minS) activeScale = minS;
+
+    double latestX = 0;
+    if (channels.isNotEmpty && channels[0].count > 0) {
+      latestX = (channels[0].count - 1).toDouble();
+    } else if (digitalChannel.count > 0) {
+      latestX = (digitalChannel.count - 1).toDouble();
+    }
+
+    // translateX: pixel position of t=0 on the canvas
+    double translateX;
+    if (latestX * activeScale <= chartWidth) {
+      translateX = -_xScrollOffset;
+    } else {
+      translateX = chartWidth - latestX * activeScale + _xScrollOffset;
+    }
+
+    // Left 1/3 and right 2/3 of visible width → time in seconds
+    double t1 = (chartWidth / 3.0 - translateX) / (_sampleRate * activeScale);
+    double t2 = (chartWidth * 2.0 / 3.0 - translateX) / (_sampleRate * activeScale);
+
+    _cursorX1 = t1;
+    _cursorX2 = t2;
+    notifyListeners();
+  }
+
   void centerTime(double timeSeconds) {
     if (_sampleRate <= 0) return;
     double activeScale = _xScale;
