@@ -347,179 +347,247 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
           backgroundColor: const Color(0xFF2A2A2A),
           title: const Text('通道快速设置', style: TextStyle(color: Colors.white, fontSize: 16)),
           content: Container(
-            width: 715,
-            constraints: const BoxConstraints(maxHeight: 700),
-            child: SingleChildScrollView(
-              child: Consumer<OscilloscopeState>(
-                builder: (ctx, consumerState, child) {
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('模拟通道 (Analog)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                          Switch(
-                            value: consumerState.channels.every((ch) => ch.isVisible),
-                            activeThumbColor: Colors.blueAccent,
-                            onChanged: (v) {
-                              consumerState.setAllChannelsVisibility(v);
-                            },
-                          )
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        children: List.generate(consumerState.channels.length, (i) {
-                          final ch = consumerState.channels[i];
-                          return FilterChip(
-                            label: Text('CH${i + 1}', style: TextStyle(color: ch.isVisible ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
-                            selected: ch.isVisible,
-                            onSelected: (_) => consumerState.toggleChannelVisibility(i),
-                            selectedColor: ch.color,
-                            backgroundColor: Colors.grey.shade800,
-                            checkmarkColor: Colors.black,
-                          );
-                        }),
-                      ),
-                      const SizedBox(height: 16),
-                      const Divider(color: Colors.grey),
-                      const SizedBox(height: 8),
-                      const Text('数字逻辑通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: List.generate(4, (groupIndex) {
-                          int start = groupIndex * 8;
-                          int end = start + 7;
-                          
-                          bool allEnabled = true;
-                          for (int i = start; i <= end; i++) {
-                            if (!consumerState.digitalChannel.enabledPins.contains(i)) {
-                              allEnabled = false;
-                              break;
-                            }
-                          }
-                          
-                          return Container(
-                            width: 345, // 345 * 2 + 12 (spacing) = 702 (fits inside 715)
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: [
-                                const Color(0xFF1A2634), // dark blue tint
-                                const Color(0xFF1A3426), // dark green tint
-                                const Color(0xFF341A26), // dark pink tint
-                                const Color(0xFF34261A), // dark orange tint
-                              ][groupIndex],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey.shade800),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+            width: 880,
+            constraints: const BoxConstraints(maxHeight: 600),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Left Column: Channels
+                SizedBox(
+                  width: 500,
+                  child: SingleChildScrollView(
+                    child: Consumer<OscilloscopeState>(
+                      builder: (ctx, consumerState, child) {
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text('D$start - D$end', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                    SizedBox(
-                                      height: 28,
-                                      child: Switch(
-                                        value: allEnabled,
-                                        activeThumbColor: Colors.purpleAccent,
-                                        onChanged: (v) {
-                                          consumerState.setDigitalPinGroupVisibility(start, end, v);
-                                        },
-                                      ),
-                                    )
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Wrap(
-                                  spacing: 4,
-                                  runSpacing: 4,
-                                  children: List.generate(8, (pinOffset) {
-                                    int pin = start + pinOffset;
-                                    bool isEnabled = consumerState.digitalChannel.enabledPins.contains(pin);
-                                    return FilterChip(
-                                      label: SizedBox(
-                                        width: 22,
-                                        child: Center(child: Text('D$pin', style: TextStyle(fontSize: 9, color: isEnabled ? Colors.white : Colors.grey.shade400)))
-                                      ),
-                                      selected: isEnabled,
-                                      onSelected: (_) => consumerState.toggleDigitalPinVisibility(pin),
-                                      showCheckmark: false,
-                                      selectedColor: Colors.purpleAccent.withValues(alpha: 0.6),
-                                      backgroundColor: Colors.grey.shade900,
-                                      padding: EdgeInsets.zero,
-                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    );
-                                  }),
+                                const Text('模拟通道 (Analog)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                Switch(
+                                  value: consumerState.channels.every((ch) => ch.isVisible),
+                                  activeThumbColor: Colors.blueAccent,
+                                  onChanged: (v) {
+                                    consumerState.setAllChannelsVisibility(v);
+                                  },
                                 )
                               ],
                             ),
-                          );
-                        }),
-                      ),
-                      const SizedBox(height: 16),
-                      const Divider(color: Colors.grey),
-                      const SizedBox(height: 8),
-                      const Text('总线分组配置 (Buses)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      const SizedBox(height: 8),
-                      ...consumerState.digitalChannel.buses.map((bus) => _buildBusItem(consumerState, bus)),
-                      const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            ElevatedButton.icon(
-                              onPressed: () => _showAddBusDialog(context, consumerState),
-                              icon: const Icon(Icons.add, size: 16),
-                              label: const Text('添加总线'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey.shade800,
-                                foregroundColor: Colors.white,
-                              ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              children: List.generate(consumerState.channels.length, (i) {
+                                final ch = consumerState.channels[i];
+                                return FilterChip(
+                                  label: Text('CH${i + 1}', style: TextStyle(color: ch.isVisible ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+                                  selected: ch.isVisible,
+                                  onSelected: (_) => consumerState.toggleChannelVisibility(i),
+                                  selectedColor: ch.color,
+                                  backgroundColor: Colors.grey.shade800,
+                                  checkmarkColor: Colors.black,
+                                );
+                              }),
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => _saveBusSetup(context, consumerState),
-                              icon: const Icon(Icons.save, size: 16),
-                              label: const Text('保存配置'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey.shade800,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => _importBusSetup(context, consumerState),
-                              icon: const Icon(Icons.download, size: 16),
-                              label: const Text('导入配置'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey.shade800,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => _deleteBusSetup(context),
-                              icon: const Icon(Icons.delete, size: 16),
-                              label: const Text('删除配置'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey.shade800,
-                                foregroundColor: Colors.white,
-                              ),
+                            const SizedBox(height: 16),
+                            const Divider(color: Colors.grey),
+                            const SizedBox(height: 8),
+                            const Text('数字逻辑通道 (Digital)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: List.generate(4, (groupIndex) {
+                                int start = groupIndex * 8;
+                                int end = start + 7;
+                                
+                                bool allEnabled = true;
+                                for (int i = start; i <= end; i++) {
+                                  if (!consumerState.digitalChannel.enabledPins.contains(i)) {
+                                    allEnabled = false;
+                                    break;
+                                  }
+                                }
+                                
+                                return Container(
+                                  width: 240, // 240 * 2 + 12 (spacing) = 492 (fits inside 500)
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: [
+                                      const Color(0xFF1A2634), // dark blue tint
+                                      const Color(0xFF1A3426), // dark green tint
+                                      const Color(0xFF341A26), // dark pink tint
+                                      const Color(0xFF34261A), // dark orange tint
+                                    ][groupIndex],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.grey.shade800),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text('D$start - D$end', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                          SizedBox(
+                                            height: 28,
+                                            child: Switch(
+                                              value: allEnabled,
+                                              activeThumbColor: Colors.purpleAccent,
+                                              onChanged: (v) {
+                                                consumerState.setDigitalPinGroupVisibility(start, end, v);
+                                              },
+                                            ),
+                                          )
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Wrap(
+                                        spacing: 4,
+                                        runSpacing: 4,
+                                        children: List.generate(8, (pinOffset) {
+                                          int pin = start + pinOffset;
+                                          bool isEnabled = consumerState.digitalChannel.enabledPins.contains(pin);
+                                          return FilterChip(
+                                            label: SizedBox(
+                                              width: 22,
+                                              child: Center(child: Text('D$pin', style: TextStyle(fontSize: 9, color: isEnabled ? Colors.white : Colors.grey.shade400)))
+                                            ),
+                                            selected: isEnabled,
+                                            onSelected: (_) => consumerState.toggleDigitalPinVisibility(pin),
+                                            showCheckmark: false,
+                                            selectedColor: Colors.purpleAccent.withValues(alpha: 0.6),
+                                            backgroundColor: Colors.grey.shade900,
+                                            padding: EdgeInsets.zero,
+                                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          );
+                                        }),
+                                      )
+                                    ],
+                                  ),
+                                );
+                              }),
                             ),
                           ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                
+                // Vertical Divider
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Container(
+                    width: 1,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                
+                // Right Column: Buses
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('总线分组配置 (Buses)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      const SizedBox(height: 8),
+                      
+                      // Scrollable Buses list
+                      Expanded(
+                        child: Consumer<OscilloscopeState>(
+                          builder: (ctx, consumerState, child) {
+                            final buses = consumerState.digitalChannel.buses;
+                            if (buses.isEmpty) {
+                              return const Center(
+                                child: Text(
+                                  '暂无总线配置',
+                                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                                ),
+                              );
+                            }
+                            return ListView.builder(
+                              itemCount: buses.length,
+                              itemBuilder: (ctx, idx) => _buildBusItem(consumerState, buses[idx]),
+                            );
+                          }
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      
+                      // Buttons grid
+                      Consumer<OscilloscopeState>(
+                        builder: (ctx, consumerState, child) {
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: () => _showAddBusDialog(context, consumerState),
+                                      icon: const Icon(Icons.add, size: 14),
+                                      label: const Text('添加总线', style: TextStyle(fontSize: 12)),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.grey.shade800,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: () => _saveBusSetup(context, consumerState),
+                                      icon: const Icon(Icons.save, size: 14),
+                                      label: const Text('保存配置', style: TextStyle(fontSize: 12)),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.grey.shade800,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: () => _importBusSetup(context, consumerState),
+                                      icon: const Icon(Icons.download, size: 14),
+                                      label: const Text('导入配置', style: TextStyle(fontSize: 12)),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.grey.shade800,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: () => _deleteBusSetup(context),
+                                      icon: const Icon(Icons.delete, size: 14),
+                                      label: const Text('删除配置', style: TextStyle(fontSize: 12)),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.grey.shade800,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        }
+                      ),
                     ],
-                  );
-                },
-              ),
+                  ),
+                ),
+              ],
             ),
           ),
           actions: [
