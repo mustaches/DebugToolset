@@ -5,8 +5,15 @@ import '../../../providers/oscilloscope_state.dart';
 import '../../../utils/hover_builder.dart';
 import 'trigger_menu_dialog.dart';
 
-class RightControlPanel extends StatelessWidget {
+class RightControlPanel extends StatefulWidget {
   const RightControlPanel({super.key});
+
+  @override
+  State<RightControlPanel> createState() => _RightControlPanelState();
+}
+
+class _RightControlPanelState extends State<RightControlPanel> {
+  bool _isMathActive = false;
 
   @override
   Widget build(BuildContext context) {
@@ -69,13 +76,103 @@ class RightControlPanel extends StatelessWidget {
                         },
                       ),
                       const SizedBox(height: 4),
-                      _buildChannelToggle(state, 0),
-                      _buildChannelToggle(state, 1),
-                      _buildChannelToggle(state, 2),
-                      _buildChannelToggle(state, 3),
-                      _buildBtn('Math'),
-                      _buildBtn('Ref'),
-                      _buildBtn('LA'),
+                      _buildUniformButton(
+                        label: '1',
+                        isActive: state.channels[0].isVisible,
+                        isSelected: state.selectedChannelIndex == 0,
+                        activeColor: state.channels[0].color,
+                        onTap: () {
+                          if (!state.channels[0].isVisible) {
+                            state.toggleChannelVisibility(0);
+                          }
+                          state.selectChannel(0);
+                        },
+                        onLongPress: () {
+                          if (state.channels[0].isVisible) {
+                            state.toggleChannelVisibility(0);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _buildUniformButton(
+                        label: '2',
+                        isActive: state.channels[1].isVisible,
+                        isSelected: state.selectedChannelIndex == 1,
+                        activeColor: state.channels[1].color,
+                        onTap: () {
+                          if (!state.channels[1].isVisible) {
+                            state.toggleChannelVisibility(1);
+                          }
+                          state.selectChannel(1);
+                        },
+                        onLongPress: () {
+                          if (state.channels[1].isVisible) {
+                            state.toggleChannelVisibility(1);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _buildUniformButton(
+                        label: '3',
+                        isActive: state.channels[2].isVisible,
+                        isSelected: state.selectedChannelIndex == 2,
+                        activeColor: state.channels[2].color,
+                        onTap: () {
+                          if (!state.channels[2].isVisible) {
+                            state.toggleChannelVisibility(2);
+                          }
+                          state.selectChannel(2);
+                        },
+                        onLongPress: () {
+                          if (state.channels[2].isVisible) {
+                            state.toggleChannelVisibility(2);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _buildUniformButton(
+                        label: '4',
+                        isActive: state.channels[3].isVisible,
+                        isSelected: state.selectedChannelIndex == 3,
+                        activeColor: state.channels[3].color,
+                        onTap: () {
+                          if (!state.channels[3].isVisible) {
+                            state.toggleChannelVisibility(3);
+                          }
+                          state.selectChannel(3);
+                        },
+                        onLongPress: () {
+                          if (state.channels[3].isVisible) {
+                            state.toggleChannelVisibility(3);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _buildUniformButton(
+                        label: 'MATH',
+                        isActive: _isMathActive,
+                        isSelected: false,
+                        activeColor: Colors.orangeAccent,
+                        onTap: () {
+                          setState(() {
+                            _isMathActive = !_isMathActive;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _buildUniformButton(
+                        label: 'LA',
+                        isActive: state.digitalChannel.enabledPins.isNotEmpty,
+                        isSelected: false,
+                        activeColor: Colors.purpleAccent,
+                        onTap: () {
+                          if (state.digitalChannel.enabledPins.isNotEmpty) {
+                            state.setDigitalPinGroupVisibility(0, 31, false);
+                          } else {
+                            state.setDigitalPinGroupVisibility(0, 7, true);
+                          }
+                        },
+                      ),
                       const SizedBox(height: 4),
                       DualHardwareKnob(
                         key: ValueKey('v_scl_${state.resetCount}'),
@@ -240,42 +337,58 @@ class RightControlPanel extends StatelessWidget {
     );
   }
 
-  Widget _buildChannelToggle(OscilloscopeState state, int index) {
-    bool isSelected = state.selectedChannelIndex == index;
-    bool isActive = state.channels[index].isVisible;
-    Color chColor = state.channels[index].color;
-
+  Widget _buildUniformButton({
+    required String label,
+    required bool isActive,
+    required bool isSelected,
+    required Color activeColor,
+    required VoidCallback onTap,
+    VoidCallback? onLongPress,
+  }) {
     return HoverBuilder(
       builder: (context, isHovered) {
+        Color bgColor;
+        Color textColor;
+        Border border;
+        List<BoxShadow>? shadow;
+
+        if (isSelected) {
+          bgColor = activeColor;
+          textColor = Colors.black;
+          border = Border.all(color: activeColor, width: 1.5);
+          shadow = [BoxShadow(color: activeColor.withValues(alpha: 0.3), blurRadius: 6)];
+        } else if (isActive) {
+          bgColor = const Color(0xFF222222);
+          textColor = activeColor;
+          border = Border.all(color: activeColor, width: 1.5);
+          if (isHovered) {
+            bgColor = const Color(0xFF333333);
+            shadow = [BoxShadow(color: activeColor.withValues(alpha: 0.2), blurRadius: 4)];
+          }
+        } else {
+          bgColor = isHovered ? const Color(0xFF444444) : const Color(0xFF333333);
+          textColor = isHovered ? Colors.white : Colors.grey;
+          border = Border.all(color: isHovered ? Colors.white : Colors.transparent, width: 1.5);
+        }
+
         return GestureDetector(
-          onTap: () {
-            if (!isActive) {
-              state.toggleChannelVisibility(index);
-            }
-            state.selectChannel(index);
-          },
-          onLongPress: () {
-            if (isActive) state.toggleChannelVisibility(index);
-          },
+          onTap: onTap,
+          onLongPress: onLongPress,
           child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 2),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            width: 76,
+            height: 28,
+            alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: isSelected 
-                ? (isHovered ? chColor.withValues(alpha: 0.8) : chColor) 
-                : (isHovered ? const Color(0xFF444444) : const Color(0xFF333333)),
+              color: bgColor,
               borderRadius: BorderRadius.circular(4),
-              border: Border.all(
-                color: isHovered && !isActive ? chColor : (isActive ? chColor : Colors.transparent), 
-                width: 1.5
-              ),
-              boxShadow: isHovered && isActive ? [BoxShadow(color: chColor.withValues(alpha: 0.3), blurRadius: 6)] : null,
+              border: border,
+              boxShadow: shadow,
             ),
             child: Text(
-              '${index + 1}',
+              label,
               style: TextStyle(
-                color: isSelected ? Colors.black : (isActive || isHovered ? chColor : Colors.grey),
-                fontSize: 14,
+                color: textColor,
+                fontSize: 12,
                 fontWeight: FontWeight.w900,
               ),
             ),

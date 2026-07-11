@@ -32,8 +32,65 @@ class DigitalTriggerConfig {
   
   // Advanced Bus & Protocol placeholders
   String? advancedProtocolType; // 'I2C', 'SPI', 'UART'
-  String? protocolTriggerType; // ...
+  String? protocolTriggerType; // 'CAN', 'LIN', 'USB'
   
+  // I2C trigger settings
+  int i2cSclPin;
+  int i2cSdaPin;
+  String i2cCondition; // 'Start', 'Stop', 'Restart', 'Nack', 'Address', 'Data', 'AddrData'
+  int i2cAddress;
+  String i2cAddrMode; // '7bit', '10bit'
+  String i2cDirection; // 'Any', 'Read', 'Write'
+  List<int> i2cData; // Target data bytes
+  int i2cDataIndex; // -1 for Any index, or specific index (0, 1...)
+
+  // SPI trigger settings
+  int spiCsPin;
+  int spiSckPin;
+  int spiMosiPin;
+  int spiMisoPin;
+  bool spiCsActiveLow;
+  String spiClockEdge; // 'Rising', 'Falling'
+  String spiCondition; // 'CsActive', 'CsInactive', 'MosiData', 'MisoData', 'BothData'
+  List<int> spiMosiData;
+  List<int> spiMisoData;
+
+  // UART trigger settings
+  int uartRxPin;
+  int uartTxPin;
+  int uartBaudRate;
+  int uartDataBits;
+  String uartParity; // 'None', 'Odd', 'Even'
+  String uartCondition; // 'StartBit', 'StopBit', 'Data', 'Sequence', 'ParityError'
+  List<int> uartData;
+
+  // CAN trigger settings
+  int canPin;
+  int canBaudRate;
+  String canCondition; // 'SOF', 'ID', 'Data', 'Type', 'EOF', 'Error'
+  int canId;
+  String canIdOperator; // '=', '!=', '>', '<'
+  String canFrameType; // 'Data', 'Remote', 'Error', 'Overload'
+  List<int> canData;
+  int canDataOffset;
+
+  // LIN trigger settings
+  int linPin;
+  int linBaudRate;
+  String linCondition; // 'Sync', 'ID', 'Data', 'ChecksumError'
+  int linId;
+  List<int> linData;
+
+  // USB trigger settings
+  int usbDpPin;
+  int usbDnPin;
+  String usbSpeed; // 'LowSpeed', 'FullSpeed'
+  String usbCondition; // 'SOP', 'EOP', 'Reset', 'PID', 'Token', 'Data'
+  int usbPid; // PID value
+  int usbAddr; // Device address
+  int usbEp; // Endpoint
+  List<int> usbData;
+
   // Global
   bool isBigEndian;
   bool enablePreTrigger;
@@ -48,11 +105,69 @@ class DigitalTriggerConfig {
     this.isBusSequence = false,
     this.targetValues = const [],
     this.sequenceDelays = const [],
-    this.advancedProtocolType,
-    this.protocolTriggerType,
+    this.advancedProtocolType = 'I2C',
+    this.protocolTriggerType = 'CAN',
+    
+    // I2C defaults
+    this.i2cSclPin = 0,
+    this.i2cSdaPin = 1,
+    this.i2cCondition = 'Start',
+    this.i2cAddress = 0x50,
+    this.i2cAddrMode = '7bit',
+    this.i2cDirection = 'Any',
+    this.i2cData = const [],
+    this.i2cDataIndex = -1,
+
+    // SPI defaults
+    this.spiCsPin = 4,
+    this.spiSckPin = 5,
+    this.spiMosiPin = 6,
+    this.spiMisoPin = 7,
+    this.spiCsActiveLow = true,
+    this.spiClockEdge = 'Rising',
+    this.spiCondition = 'CsActive',
+    this.spiMosiData = const [],
+    this.spiMisoData = const [],
+
+    // UART defaults
+    this.uartRxPin = 2,
+    this.uartTxPin = 3,
+    this.uartBaudRate = 115200,
+    this.uartDataBits = 8,
+    this.uartParity = 'None',
+    this.uartCondition = 'StartBit',
+    this.uartData = const [],
+
+    // CAN defaults
+    this.canPin = 8,
+    this.canBaudRate = 250000,
+    this.canCondition = 'SOF',
+    this.canId = 0x100,
+    this.canIdOperator = '=',
+    this.canFrameType = 'Data',
+    this.canData = const [],
+    this.canDataOffset = 0,
+
+    // LIN defaults
+    this.linPin = 9,
+    this.linBaudRate = 19200,
+    this.linCondition = 'Sync',
+    this.linId = 0x3C,
+    this.linData = const [],
+
+    // USB defaults
+    this.usbDpPin = 10,
+    this.usbDnPin = 11,
+    this.usbSpeed = 'FullSpeed',
+    this.usbCondition = 'SOP',
+    this.usbPid = 0x2D, // SETUP PID
+    this.usbAddr = 1,
+    this.usbEp = 0,
+    this.usbData = const [],
+
     this.isBigEndian = false,
     this.enablePreTrigger = false,
-    this.triggerPositionPercentage = 5.0,
+    this.triggerPositionPercentage = 10.0,
   });
 }
 
@@ -328,8 +443,9 @@ class OscilloscopeState extends ChangeNotifier {
 
   TerminalState? _terminalState;
   StreamSubscription<Uint8List>? _rawDataSubscription;
+  bool _wasConnected = false;
 
-  bool _isPaused = false;
+  bool _isPaused = true;
   bool get isPaused => _isPaused;
 
   bool _isDraggingMinimap = false;
@@ -338,7 +454,7 @@ class OscilloscopeState extends ChangeNotifier {
   bool _isSingleShot = false;
   bool get isSingleShot => _isSingleShot;
 
-  bool _isDemoMode = false;
+  bool _isDemoMode = true;
   bool get isDemoMode => _isDemoMode;
   Timer? _demoTimer;
   Timer? _throttleTimer;
@@ -420,6 +536,61 @@ class OscilloscopeState extends ChangeNotifier {
   int _digitalTriggerSequenceStep = 0;
   int _digitalTriggerDelayCounter = 0;
 
+  // I2C trigger state variables
+  int _lastI2cScl = 1;
+  int _lastI2cSda = 1;
+  bool _i2cInFrame = false;
+  int _i2cBitsRead = 0;
+  int _i2cData = 0;
+  int _i2cByteCount = 0;
+  bool _i2cIsAckPhase = false;
+  int _i2cAddr = 0;
+  bool _i2cIsRead = false;
+  bool _i2cMatchPending = false;
+
+  // SPI trigger state variables
+  int _lastSpiSck = 1;
+  int _lastSpiCs = 1;
+  int _spiBitsRead = 0;
+  int _spiMosiAccumulator = 0;
+  int _spiMisoAccumulator = 0;
+  List<int> _spiMosiBytes = [];
+  List<int> _spiMisoBytes = [];
+
+  // UART trigger state variables
+  String _uartRxState = 'Idle'; // 'Idle', 'Start', 'Data', 'Parity', 'Stop'
+  int _uartRxBitsRead = 0;
+  int _uartRxAccumulator = 0;
+  double _uartRxTimer = 0.0;
+  List<int> _uartRxBuffer = [];
+
+  // CAN trigger state variables
+  String _canState = 'Idle'; // 'Idle', 'Parsing'
+  double _canBitTimer = 0.0;
+  int _canConsecutiveBits = 0;
+  int _canLastBitValue = 1;
+  List<int> _canBitSamples = [];
+
+  // LIN trigger state variables
+  String _linState = 'Idle'; // 'Idle', 'SyncBreak', 'SyncByte', 'PID', 'Data'
+  int _linLowSamples = 0;
+  String _linUartRxState = 'Idle';
+  int _linUartRxBitsRead = 0;
+  int _linUartRxAccumulator = 0;
+  double _linUartRxTimer = 0.0;
+  List<int> _linData = [];
+  int _linByteCount = 0;
+
+  // USB trigger state variables
+  String _usbState = 'Idle'; // 'Idle', 'SOP', 'Parsing'
+  String _lastUsbLineState = 'J';
+  double _usbBitTimer = 0.0;
+  int _usbConsecutiveOnes = 0;
+  int _usbBitsRead = 0;
+  int _usbAccumulator = 0;
+  List<int> _usbBytes = [];
+  int _usbSe0Samples = 0;
+
   bool _isWaitingForTrigger = false;
   bool get isWaitingForTrigger => _isWaitingForTrigger;
   
@@ -432,18 +603,25 @@ class OscilloscopeState extends ChangeNotifier {
     _triggerMode = mode;
     if (_triggerMode == TriggerMode.normal || _triggerMode == TriggerMode.single) {
       _armTrigger();
+    } else {
       _isWaitingForTrigger = false;
+      notifyListeners();
     }
   }
 
   void setTriggerSource(TriggerSourceType type, int index) {
     _triggerSourceType = type;
     _triggerSourceIndex = index;
+    _sendTriggerConfigToHardware();
+    if (_triggerSourceType == TriggerSourceType.digital) {
+      _sendDigitalTriggerConfigToHardware(digitalTrigger);
+    }
     notifyListeners();
   }
 
   void setTriggerEdge(TriggerEdge edge) {
     _triggerEdge = edge;
+    _sendTriggerConfigToHardware();
     notifyListeners();
   }
 
@@ -453,6 +631,7 @@ class OscilloscopeState extends ChangeNotifier {
        _digitalTriggerSequenceStep = 0;
        _digitalTriggerDelayCounter = 0;
     }
+    _sendDigitalTriggerConfigToHardware(config);
     notifyListeners();
   }
   
@@ -468,8 +647,397 @@ class OscilloscopeState extends ChangeNotifier {
     _postTriggerCount = 0;
     _digitalTriggerSequenceStep = 0;
     _digitalTriggerDelayCounter = 0;
+    
+    // Reset I2C trigger states
+    _lastI2cScl = 1;
+    _lastI2cSda = 1;
+    _i2cInFrame = false;
+    _i2cBitsRead = 0;
+    _i2cData = 0;
+    _i2cByteCount = 0;
+    _i2cIsAckPhase = false;
+    _i2cAddr = 0;
+    _i2cIsRead = false;
+    _i2cMatchPending = false;
+
+    // Reset SPI trigger states
+    _lastSpiSck = 1;
+    _lastSpiCs = 1;
+    _spiBitsRead = 0;
+    _spiMosiAccumulator = 0;
+    _spiMisoAccumulator = 0;
+    _spiMosiBytes = [];
+    _spiMisoBytes = [];
+
+    // Reset UART trigger states
+    _uartRxState = 'Idle';
+    _uartRxBitsRead = 0;
+    _uartRxAccumulator = 0;
+    _uartRxTimer = 0.0;
+    _uartRxBuffer = [];
+
+    // Reset CAN trigger states
+    _canState = 'Idle';
+    _canBitTimer = 0.0;
+    _canConsecutiveBits = 0;
+    _canLastBitValue = 1;
+    _canBitSamples = [];
+
+    // Reset LIN trigger states
+    _linState = 'Idle';
+    _linLowSamples = 0;
+    _linUartRxState = 'Idle';
+    _linUartRxBitsRead = 0;
+    _linUartRxAccumulator = 0;
+    _linUartRxTimer = 0.0;
+    _linData = [];
+    _linByteCount = 0;
+
+    // Reset USB trigger states
+    _usbState = 'Idle';
+    _lastUsbLineState = 'J';
+    _usbBitTimer = 0.0;
+    _usbConsecutiveOnes = 0;
+    _usbBitsRead = 0;
+    _usbAccumulator = 0;
+    _usbBytes = [];
+    _usbSe0Samples = 0;
+
     _isPaused = false;
     clearData();
+  }
+
+  void _sendControlFrame(int cmdId, List<int> payload) {
+    if (_terminalState == null || !_terminalState!.isConnected) return;
+
+    final payloadLen = payload.length;
+    final header = [
+      0xAA,
+      0x55,
+      0x80,
+      cmdId,
+      payloadLen & 0xFF,
+      (payloadLen >> 8) & 0xFF,
+    ];
+
+    final packet = Uint8List.fromList([...header, ...payload]);
+    _terminalState!.sendData(packet);
+  }
+
+  void _sendSampleRateToHardware(double rate) {
+    final rateInt = rate.toInt();
+    final payload = Uint8List(4);
+    final byteData = ByteData.view(payload.buffer);
+    byteData.setUint32(0, rateInt, Endian.little);
+    _sendControlFrame(0x01, payload);
+  }
+
+  void _sendTriggerConfigToHardware() {
+    int sourceVal = 0;
+    if (_triggerSourceType == TriggerSourceType.analog) {
+      sourceVal = _triggerSourceIndex; // 0=CH1, 1=CH2, 2=CH3, 3=CH4
+    } else {
+      sourceVal = 4; // 4=Digital
+    }
+
+    int edgeVal = 0;
+    switch (_triggerEdge) {
+      case TriggerEdge.rising:
+        edgeVal = 0;
+        break;
+      case TriggerEdge.falling:
+        edgeVal = 1;
+        break;
+      case TriggerEdge.both:
+        edgeVal = 2;
+        break;
+    }
+
+    final payload = Uint8List(4);
+    final byteData = ByteData.view(payload.buffer);
+    byteData.setUint8(0, sourceVal);
+    byteData.setUint8(1, edgeVal);
+    byteData.setUint16(2, _triggerLevel, Endian.little);
+
+    _sendControlFrame(0x03, payload);
+  }
+
+  void _sendDigitalTriggerConfigToHardware(DigitalTriggerConfig config) {
+    final bytes = <int>[];
+    
+    // Header
+    // Byte 0: Digital Trigger Type
+    int typeVal = 0;
+    switch (config.type) {
+      case DigitalTriggerType.singleChannel:
+        typeVal = 0x00;
+        break;
+      case DigitalTriggerType.bus:
+        typeVal = 0x01;
+        break;
+      case DigitalTriggerType.advancedBus:
+        typeVal = 0x02;
+        break;
+      case DigitalTriggerType.protocol:
+        typeVal = 0x03;
+        break;
+    }
+    bytes.add(typeVal);
+    
+    // Byte 1: Pre-trigger enable (Bit 0)
+    bytes.add(config.enablePreTrigger ? 1 : 0);
+    
+    // Byte 2: Trigger position percentage
+    bytes.add(config.triggerPositionPercentage.round().clamp(1, 99));
+
+    // Type Specific Payload
+    switch (config.type) {
+      case DigitalTriggerType.singleChannel:
+        bytes.add(config.pinIndex);
+        int edgeVal = 0;
+        switch (config.edge) {
+          case TriggerEdge.rising: edgeVal = 0; break;
+          case TriggerEdge.falling: edgeVal = 1; break;
+          case TriggerEdge.both: edgeVal = 2; break;
+        }
+        bytes.add(edgeVal);
+        break;
+
+      case DigitalTriggerType.bus:
+        bytes.add(config.busLsbPin);
+        bytes.add(config.busMsbPin);
+        
+        int flags = 0;
+        if (config.isBigEndian) flags |= 1;
+        if (config.isBusSequence) flags |= 2;
+        bytes.add(flags);
+        
+        final targetLen = config.targetValues.length;
+        bytes.add(targetLen);
+        
+        // Target values: uint32 array (Little Endian)
+        final tempBuf32 = Uint8List(targetLen * 4);
+        final bd32 = ByteData.view(tempBuf32.buffer);
+        for (int i = 0; i < targetLen; i++) {
+          bd32.setUint32(i * 4, config.targetValues[i], Endian.little);
+        }
+        bytes.addAll(tempBuf32);
+        
+        // Delays: uint16 array (Little Endian) (if sequence mode)
+        if (config.isBusSequence) {
+          final delaysLen = config.sequenceDelays.length;
+          final tempBuf16 = Uint8List(delaysLen * 2);
+          final bd16 = ByteData.view(tempBuf16.buffer);
+          for (int i = 0; i < delaysLen; i++) {
+            bd16.setUint16(i * 2, config.sequenceDelays[i], Endian.little);
+          }
+          bytes.addAll(tempBuf16);
+        }
+        break;
+
+      case DigitalTriggerType.advancedBus:
+        int advType = 0;
+        if (config.advancedProtocolType == 'SPI') advType = 1;
+        if (config.advancedProtocolType == 'UART') advType = 2;
+        bytes.add(advType);
+        
+        if (config.advancedProtocolType == 'I2C') {
+          bytes.add(config.i2cSclPin);
+          bytes.add(config.i2cSdaPin);
+          
+          int cond = 0;
+          switch (config.i2cCondition) {
+            case 'Start': cond = 0; break;
+            case 'Stop': cond = 1; break;
+            case 'Restart': cond = 2; break;
+            case 'Nack': cond = 3; break;
+            case 'Address': cond = 4; break;
+            case 'Data': cond = 5; break;
+            case 'AddrData': cond = 6; break;
+          }
+          bytes.add(cond);
+          
+          bytes.add(config.i2cAddrMode == '10bit' ? 1 : 0);
+          
+          bytes.add(config.i2cAddress & 0xFF);
+          bytes.add((config.i2cAddress >> 8) & 0xFF);
+          
+          int dir = 0;
+          if (config.i2cDirection == 'Read') dir = 1;
+          if (config.i2cDirection == 'Write') dir = 2;
+          bytes.add(dir);
+          
+          bytes.add(config.i2cDataIndex == -1 ? 0xFF : config.i2cDataIndex);
+          
+          final dataLen = config.i2cData.length;
+          bytes.add(dataLen);
+          bytes.addAll(config.i2cData);
+        } else if (config.advancedProtocolType == 'SPI') {
+          bytes.add(config.spiCsPin);
+          bytes.add(config.spiSckPin);
+          bytes.add(config.spiMosiPin);
+          bytes.add(config.spiMisoPin);
+          
+          bytes.add(config.spiCsActiveLow ? 0 : 1);
+          bytes.add(config.spiClockEdge == 'Falling' ? 1 : 0);
+          
+          int cond = 0;
+          switch (config.spiCondition) {
+            case 'CsActive': cond = 0; break;
+            case 'CsInactive': cond = 1; break;
+            case 'MosiData': cond = 2; break;
+            case 'MisoData': cond = 3; break;
+            case 'BothData': cond = 4; break;
+          }
+          bytes.add(cond);
+          
+          bytes.add(config.spiMosiData.length);
+          bytes.add(config.spiMisoData.length);
+          bytes.addAll(config.spiMosiData);
+          bytes.addAll(config.spiMisoData);
+        } else if (config.advancedProtocolType == 'UART') {
+          bytes.add(config.uartRxPin);
+          bytes.add(config.uartTxPin);
+          
+          final baud = config.uartBaudRate;
+          bytes.add(baud & 0xFF);
+          bytes.add((baud >> 8) & 0xFF);
+          bytes.add((baud >> 16) & 0xFF);
+          bytes.add((baud >> 24) & 0xFF);
+          
+          bytes.add(config.uartDataBits);
+          
+          int parity = 0;
+          if (config.uartParity == 'Odd') parity = 1;
+          if (config.uartParity == 'Even') parity = 2;
+          bytes.add(parity);
+          
+          int cond = 0;
+          switch (config.uartCondition) {
+            case 'StartBit': cond = 0; break;
+            case 'StopBit': cond = 1; break;
+            case 'Data': cond = 2; break;
+            case 'Sequence': cond = 3; break;
+            case 'ParityError': cond = 4; break;
+          }
+          bytes.add(cond);
+          
+          bytes.add(config.uartData.length);
+          bytes.addAll(config.uartData);
+        }
+        break;
+
+      case DigitalTriggerType.protocol:
+        int protoType = 0;
+        if (config.protocolTriggerType == 'LIN') protoType = 1;
+        if (config.protocolTriggerType == 'USB') protoType = 2;
+        bytes.add(protoType);
+        
+        if (config.protocolTriggerType == 'CAN') {
+          bytes.add(config.canPin);
+          
+          final baud = config.canBaudRate;
+          bytes.add(baud & 0xFF);
+          bytes.add((baud >> 8) & 0xFF);
+          bytes.add((baud >> 16) & 0xFF);
+          bytes.add((baud >> 24) & 0xFF);
+          
+          int cond = 0;
+          switch (config.canCondition) {
+            case 'SOF': cond = 0; break;
+            case 'ID': cond = 1; break;
+            case 'Data': cond = 2; break;
+            case 'Type': cond = 3; break;
+            case 'EOF': cond = 4; break;
+            case 'Error': cond = 5; break;
+          }
+          bytes.add(cond);
+          
+          int op = 0;
+          switch (config.canIdOperator) {
+            case '=': op = 0; break;
+            case '!=': op = 1; break;
+            case '>': op = 2; break;
+            case '<': op = 3; break;
+          }
+          bytes.add(op);
+          
+          final id = config.canId;
+          bytes.add(id & 0xFF);
+          bytes.add((id >> 8) & 0xFF);
+          bytes.add((id >> 16) & 0xFF);
+          bytes.add((id >> 24) & 0xFF);
+          
+          int frameType = 0;
+          switch (config.canFrameType) {
+            case 'Data': frameType = 0; break;
+            case 'Remote': frameType = 1; break;
+            case 'Error': frameType = 2; break;
+            case 'Overload': frameType = 3; break;
+          }
+          bytes.add(frameType);
+          
+          bytes.add(config.canDataOffset);
+          
+          bytes.add(config.canData.length);
+          bytes.addAll(config.canData);
+        } else if (config.protocolTriggerType == 'LIN') {
+          bytes.add(config.linPin);
+          
+          final baud = config.linBaudRate;
+          bytes.add(baud & 0xFF);
+          bytes.add((baud >> 8) & 0xFF);
+          bytes.add((baud >> 16) & 0xFF);
+          bytes.add((baud >> 24) & 0xFF);
+          
+          int cond = 0;
+          switch (config.linCondition) {
+            case 'Sync': cond = 0; break;
+            case 'ID': cond = 1; break;
+            case 'Data': cond = 2; break;
+            case 'ChecksumError': cond = 3; break;
+          }
+          bytes.add(cond);
+          
+          bytes.add(config.linId & 0xFF);
+          bytes.add((config.linId >> 8) & 0xFF);
+          
+          bytes.add(config.linData.length);
+          bytes.addAll(config.linData);
+        } else if (config.protocolTriggerType == 'USB') {
+          bytes.add(config.usbDpPin);
+          bytes.add(config.usbDnPin);
+          
+          bytes.add(config.usbSpeed == 'FullSpeed' ? 1 : 0);
+          
+          int cond = 0;
+          switch (config.usbCondition) {
+            case 'SOP': cond = 0; break;
+            case 'EOP': cond = 1; break;
+            case 'Reset': cond = 2; break;
+            case 'PID': cond = 3; break;
+            case 'Token': cond = 4; break;
+            case 'Data': cond = 5; break;
+          }
+          bytes.add(cond);
+          
+          bytes.add(config.usbPid);
+          bytes.add(config.usbAddr);
+          bytes.add(config.usbEp);
+          
+          bytes.add(config.usbData.length);
+          bytes.addAll(config.usbData);
+        }
+        break;
+    }
+    
+    _sendControlFrame(0x04, bytes);
+  }
+
+  void _syncAllToHardware() {
+    _sendSampleRateToHardware(_sampleRate);
+    _sendTriggerConfigToHardware();
+    _sendDigitalTriggerConfigToHardware(digitalTrigger);
   }
 
 
@@ -723,7 +1291,7 @@ class OscilloscopeState extends ChangeNotifier {
       latestX = (digitalChannel.count - 1).toDouble();
     }
 
-    double newScrollOffset = latestX * activeScale - timeSeconds * _sampleRate * activeScale - chartWidth / 2;
+    double newScrollOffset = latestX * activeScale - timeSeconds * _sampleRate * activeScale - chartWidth * 11.0 / 14.0;
     setXScrollOffset(newScrollOffset);
   }
 
@@ -1375,6 +1943,7 @@ class OscilloscopeState extends ChangeNotifier {
   void setSampleRate(double rate) {
     _sampleRate = rate;
     decodeAllProtocols();
+    _sendSampleRateToHardware(rate);
     notifyListeners();
   }
 
@@ -1521,18 +2090,27 @@ class OscilloscopeState extends ChangeNotifier {
   OscilloscopeState(TerminalState terminalState) {
     updateTerminalState(terminalState);
     loadRegfiles();
+    _startDemoStream();
   }
 
   void updateTerminalState(TerminalState terminalState) {
-    if (_terminalState == terminalState) return;
-    
-    _rawDataSubscription?.cancel();
-    _terminalState = terminalState;
-    _rawDataSubscription = _terminalState!.rawDataStreamController.stream.listen((data) {
-      if (!_isDemoMode) {
-        _handleIncomingRawData(data);
+    if (_terminalState != terminalState) {
+      _rawDataSubscription?.cancel();
+      _terminalState = terminalState;
+      _rawDataSubscription = _terminalState!.rawDataStreamController.stream.listen((data) {
+        if (!_isDemoMode) {
+          _handleIncomingRawData(data);
+        }
+      });
+    }
+
+    if (_terminalState != null) {
+      final isConnected = _terminalState!.isConnected;
+      if (isConnected && !_wasConnected) {
+        _syncAllToHardware();
       }
-    });
+      _wasConnected = isConnected;
+    }
   }
 
   @override
@@ -2393,6 +2971,7 @@ class OscilloscopeState extends ChangeNotifier {
 
   void setTriggerLevel(int level) {
     _triggerLevel = level;
+    _sendTriggerConfigToHardware();
     notifyListeners();
   }
 
@@ -2649,8 +3228,600 @@ class OscilloscopeState extends ChangeNotifier {
                 }
              }
           }
+        } else if (digitalTrigger.type == DigitalTriggerType.advancedBus) {
+          if (digitalTrigger.advancedProtocolType == 'I2C') {
+            int scl = (curr >> digitalTrigger.i2cSclPin) & 1;
+            int sda = (curr >> digitalTrigger.i2cSdaPin) & 1;
+            
+            // Start / Repeated Start detection
+            if (_lastI2cScl == 1 && scl == 1 && _lastI2cSda == 1 && sda == 0) {
+              if (digitalTrigger.i2cCondition == 'Start' || (digitalTrigger.i2cCondition == 'Restart' && _i2cInFrame)) {
+                triggerMet = true;
+              }
+              _i2cInFrame = true;
+              _i2cBitsRead = 0;
+              _i2cData = 0;
+              _i2cByteCount = 0;
+              _i2cIsAckPhase = false;
+              _i2cMatchPending = false;
+            }
+            // Stop detection
+            else if (_lastI2cScl == 1 && scl == 1 && _lastI2cSda == 0 && sda == 1) {
+              if (_i2cInFrame && digitalTrigger.i2cCondition == 'Stop') {
+                triggerMet = true;
+              }
+              _i2cInFrame = false;
+            }
+            // Clock edge (rising edge samples data)
+            else if (_i2cInFrame && _lastI2cScl == 0 && scl == 1) {
+              if (!_i2cIsAckPhase) {
+                _i2cData = (_i2cData << 1) | sda;
+                _i2cBitsRead++;
+                if (_i2cBitsRead == 8) {
+                  if (_i2cByteCount == 0) {
+                    _i2cAddr = _i2cData >> 1;
+                    _i2cIsRead = (_i2cData & 1) == 1;
+                  }
+                  _i2cIsAckPhase = true;
+                }
+              } else {
+                // 9th bit: ACK/NACK
+                bool isAck = (sda == 0);
+                _i2cIsAckPhase = false;
+                _i2cBitsRead = 0;
+                
+                if (digitalTrigger.i2cCondition == 'Nack' && !isAck) {
+                  triggerMet = true;
+                }
+                
+                if (_i2cByteCount == 0) {
+                  // Address byte completed
+                  bool addrMatch = (_i2cAddr == digitalTrigger.i2cAddress);
+                  bool dirMatch = (digitalTrigger.i2cDirection == 'Any' ||
+                                  (digitalTrigger.i2cDirection == 'Read' && _i2cIsRead) ||
+                                  (digitalTrigger.i2cDirection == 'Write' && !_i2cIsRead));
+                  if (addrMatch && dirMatch) {
+                    if (digitalTrigger.i2cCondition == 'Address') {
+                      triggerMet = true;
+                    } else if (digitalTrigger.i2cCondition == 'AddrData') {
+                      _i2cMatchPending = true;
+                    }
+                  }
+                } else {
+                  // Data byte completed
+                  bool indexMatch = (digitalTrigger.i2cDataIndex == -1 || digitalTrigger.i2cDataIndex == _i2cByteCount - 1);
+                  bool dataMatch = (digitalTrigger.i2cData.isNotEmpty && _i2cData == digitalTrigger.i2cData.first);
+                  if (indexMatch && dataMatch) {
+                    if (digitalTrigger.i2cCondition == 'Data') {
+                      triggerMet = true;
+                    } else if (digitalTrigger.i2cCondition == 'AddrData' && _i2cMatchPending) {
+                      triggerMet = true;
+                    }
+                  }
+                }
+                _i2cByteCount++;
+                _i2cData = 0;
+              }
+            }
+            
+            _lastI2cScl = scl;
+            _lastI2cSda = sda;
+          } 
+          else if (digitalTrigger.advancedProtocolType == 'SPI') {
+            int cs = (curr >> digitalTrigger.spiCsPin) & 1;
+            int sck = (curr >> digitalTrigger.spiSckPin) & 1;
+            int mosi = (curr >> digitalTrigger.spiMosiPin) & 1;
+            int miso = (curr >> digitalTrigger.spiMisoPin) & 1;
+            
+            bool csActive = digitalTrigger.spiCsActiveLow ? (cs == 0) : (cs == 1);
+            bool lastCsActive = digitalTrigger.spiCsActiveLow ? (_lastSpiCs == 0) : (_lastSpiCs == 1);
+            
+            // CS edge transitions
+            if (csActive && !lastCsActive) {
+              if (digitalTrigger.spiCondition == 'CsActive') {
+                triggerMet = true;
+              }
+              _spiBitsRead = 0;
+              _spiMosiAccumulator = 0;
+              _spiMisoAccumulator = 0;
+              _spiMosiBytes.clear();
+              _spiMisoBytes.clear();
+            } else if (!csActive && lastCsActive) {
+              if (digitalTrigger.spiCondition == 'CsInactive') {
+                triggerMet = true;
+              }
+            }
+            
+            // Clock edge sampling when CS is active
+            if (csActive) {
+              bool clockEdge = false;
+              if (digitalTrigger.spiClockEdge == 'Rising') {
+                clockEdge = (_lastSpiSck == 0 && sck == 1);
+              } else {
+                clockEdge = (_lastSpiSck == 1 && sck == 0);
+              }
+              
+              if (clockEdge) {
+                _spiMosiAccumulator = (_spiMosiAccumulator << 1) | mosi;
+                _spiMisoAccumulator = (_spiMisoAccumulator << 1) | miso;
+                _spiBitsRead++;
+                
+                if (_spiBitsRead == 8) {
+                  _spiBitsRead = 0;
+                  _spiMosiBytes.add(_spiMosiAccumulator);
+                  _spiMisoBytes.add(_spiMisoAccumulator);
+                  
+                  if (digitalTrigger.spiCondition == 'MosiData') {
+                    // Match end of sequence
+                    if (digitalTrigger.spiMosiData.isNotEmpty && _spiMosiBytes.length >= digitalTrigger.spiMosiData.length) {
+                      bool match = true;
+                      int startOffset = _spiMosiBytes.length - digitalTrigger.spiMosiData.length;
+                      for (int offset = 0; offset < digitalTrigger.spiMosiData.length; offset++) {
+                        if (_spiMosiBytes[startOffset + offset] != digitalTrigger.spiMosiData[offset]) {
+                          match = false;
+                          break;
+                        }
+                      }
+                      if (match) triggerMet = true;
+                    }
+                  } else if (digitalTrigger.spiCondition == 'MisoData') {
+                    if (digitalTrigger.spiMisoData.isNotEmpty && _spiMisoBytes.length >= digitalTrigger.spiMisoData.length) {
+                      bool match = true;
+                      int startOffset = _spiMisoBytes.length - digitalTrigger.spiMisoData.length;
+                      for (int offset = 0; offset < digitalTrigger.spiMisoData.length; offset++) {
+                        if (_spiMisoBytes[startOffset + offset] != digitalTrigger.spiMisoData[offset]) {
+                          match = false;
+                          break;
+                        }
+                      }
+                      if (match) triggerMet = true;
+                    }
+                  } else if (digitalTrigger.spiCondition == 'BothData') {
+                    bool mosiMatch = false;
+                    bool misoMatch = false;
+                    if (digitalTrigger.spiMosiData.isNotEmpty && _spiMosiBytes.length >= digitalTrigger.spiMosiData.length) {
+                      bool match = true;
+                      int startOffset = _spiMosiBytes.length - digitalTrigger.spiMosiData.length;
+                      for (int offset = 0; offset < digitalTrigger.spiMosiData.length; offset++) {
+                        if (_spiMosiBytes[startOffset + offset] != digitalTrigger.spiMosiData[offset]) {
+                          match = false;
+                          break;
+                        }
+                      }
+                      mosiMatch = match;
+                    }
+                    if (digitalTrigger.spiMisoData.isNotEmpty && _spiMisoBytes.length >= digitalTrigger.spiMisoData.length) {
+                      bool match = true;
+                      int startOffset = _spiMisoBytes.length - digitalTrigger.spiMisoData.length;
+                      for (int offset = 0; offset < digitalTrigger.spiMisoData.length; offset++) {
+                        if (_spiMisoBytes[startOffset + offset] != digitalTrigger.spiMisoData[offset]) {
+                          match = false;
+                          break;
+                        }
+                      }
+                      misoMatch = match;
+                    }
+                    if (mosiMatch && misoMatch) triggerMet = true;
+                  }
+                  
+                  _spiMosiAccumulator = 0;
+                  _spiMisoAccumulator = 0;
+                }
+              }
+            }
+            
+            _lastSpiCs = cs;
+            _lastSpiSck = sck;
+          } 
+          else if (digitalTrigger.advancedProtocolType == 'UART') {
+            int rx = (curr >> digitalTrigger.uartRxPin) & 1;
+            int lastRx = (prev >> digitalTrigger.uartRxPin) & 1;
+            double samplesPerBit = _sampleRate / digitalTrigger.uartBaudRate;
+            
+            if (_uartRxState == 'Idle') {
+              if (lastRx == 1 && rx == 0) { // Start bit edge (falling)
+                _uartRxState = 'Start';
+                _uartRxTimer = 1.5 * samplesPerBit; // Sample point is middle of start bit + 1 bit time
+                _uartRxBitsRead = 0;
+                _uartRxAccumulator = 0;
+              }
+            } else {
+              _uartRxTimer -= 1.0;
+              if (_uartRxTimer <= 0) {
+                _uartRxTimer += samplesPerBit;
+                
+                if (_uartRxState == 'Start') {
+                  if (rx == 0) { // Verified start bit
+                    if (digitalTrigger.uartCondition == 'StartBit') {
+                      triggerMet = true;
+                    }
+                    _uartRxState = 'Data';
+                  } else {
+                    _uartRxState = 'Idle'; // False start
+                  }
+                } else if (_uartRxState == 'Data') {
+                  _uartRxAccumulator |= (rx << _uartRxBitsRead);
+                  _uartRxBitsRead++;
+                  if (_uartRxBitsRead == digitalTrigger.uartDataBits) {
+                    if (digitalTrigger.uartParity != 'None') {
+                      _uartRxState = 'Parity';
+                    } else {
+                      _uartRxState = 'Stop';
+                    }
+                  }
+                } else if (_uartRxState == 'Parity') {
+                  int expectedParity = 0;
+                  int ones = 0;
+                  for (int b = 0; b < digitalTrigger.uartDataBits; b++) {
+                    if ((_uartRxAccumulator & (1 << b)) != 0) ones++;
+                  }
+                  if (digitalTrigger.uartParity == 'Even') {
+                    expectedParity = ones % 2;
+                  } else if (digitalTrigger.uartParity == 'Odd') {
+                    expectedParity = (ones % 2) ^ 1;
+                  }
+                  if (rx != expectedParity) {
+                    if (digitalTrigger.uartCondition == 'ParityError') {
+                      triggerMet = true;
+                    }
+                  }
+                  _uartRxState = 'Stop';
+                } else if (_uartRxState == 'Stop') {
+                  if (rx == 0) { // Stop bit framing error
+                    if (digitalTrigger.uartCondition == 'ParityError') { // Or handle stop error
+                      triggerMet = true;
+                    }
+                  } else {
+                    if (digitalTrigger.uartCondition == 'StopBit') {
+                      triggerMet = true;
+                    }
+                  }
+                  
+                  _uartRxBuffer.add(_uartRxAccumulator);
+                  if (digitalTrigger.uartCondition == 'Data') {
+                    if (digitalTrigger.uartData.isNotEmpty && _uartRxAccumulator == digitalTrigger.uartData.first) {
+                      triggerMet = true;
+                    }
+                  } else if (digitalTrigger.uartCondition == 'Sequence') {
+                    if (digitalTrigger.uartData.isNotEmpty && _uartRxBuffer.length >= digitalTrigger.uartData.length) {
+                      bool match = true;
+                      int startOffset = _uartRxBuffer.length - digitalTrigger.uartData.length;
+                      for (int offset = 0; offset < digitalTrigger.uartData.length; offset++) {
+                        if (_uartRxBuffer[startOffset + offset] != digitalTrigger.uartData[offset]) {
+                          match = false;
+                          break;
+                        }
+                      }
+                      if (match) triggerMet = true;
+                    }
+                  }
+                  
+                  _uartRxState = 'Idle';
+                }
+              }
+            }
+          }
+        } else if (digitalTrigger.type == DigitalTriggerType.protocol) {
+          if (digitalTrigger.protocolTriggerType == 'CAN') {
+            int can = (curr >> digitalTrigger.canPin) & 1;
+            int lastCan = (prev >> digitalTrigger.canPin) & 1;
+            double bitTimeSamples = _sampleRate / digitalTrigger.canBaudRate;
+            
+            if (_canState == 'Idle') {
+              if (lastCan == 1 && can == 0) { // SOF dominant edge
+                _canState = 'Parsing';
+                _canBitTimer = 0.5 * bitTimeSamples; // Align to sample point
+                _canConsecutiveBits = 1;
+                _canLastBitValue = 0;
+                _canBitSamples.clear();
+                
+                if (digitalTrigger.canCondition == 'SOF') {
+                  triggerMet = true;
+                }
+              }
+            } else {
+              _canBitTimer -= 1.0;
+              if (_canBitTimer <= 0) {
+                _canBitTimer += bitTimeSamples;
+                
+                if (_canConsecutiveBits == 5) {
+                  // Destuff bit (ignore bit value, but stuff bit should be opposite level)
+                  if (can == _canLastBitValue) {
+                    if (digitalTrigger.canCondition == 'Error') {
+                      triggerMet = true;
+                    }
+                    _canState = 'Idle'; // Framing/Stuff error
+                  } else {
+                    _canConsecutiveBits = 1;
+                    _canLastBitValue = can;
+                  }
+                } else {
+                  if (can == _canLastBitValue) {
+                    _canConsecutiveBits++;
+                  } else {
+                    _canConsecutiveBits = 1;
+                    _canLastBitValue = can;
+                  }
+                  _canBitSamples.add(can);
+                  
+                  // Parse frame fields
+                  // CAN Standard Frame bits de-stuffed count:
+                  // ID (11 bits), RTR (1 bit), IDE (1 bit, should be 0), r0 (1 bit), DLC (4 bits)
+                  // Data (DLC * 8 bits)
+                  if (_canBitSamples.length >= 18) {
+                    int ide = _canBitSamples[12];
+                    if (ide == 0) { // Standard Frame
+                      int idVal = 0;
+                      for (int b = 0; b < 11; b++) {
+                        idVal = (idVal << 1) | _canBitSamples[b];
+                      }
+                      int rtr = _canBitSamples[11];
+                      int dlcVal = (_canBitSamples[14] << 3) | (_canBitSamples[15] << 2) | (_canBitSamples[16] << 1) | _canBitSamples[17];
+                      int expectedBits = 18 + dlcVal * 8;
+                      
+                      if (_canBitSamples.length == expectedBits) {
+                        // All data bytes are read
+                        List<int> dataBytes = [];
+                        for (int i = 0; i < dlcVal; i++) {
+                          int byteVal = 0;
+                          for (int b = 0; b < 8; b++) {
+                            byteVal = (byteVal << 1) | _canBitSamples[18 + i * 8 + b];
+                          }
+                          dataBytes.add(byteVal);
+                        }
+                        
+                        // Check trigger conditions
+                        if (digitalTrigger.canCondition == 'ID') {
+                          bool match = false;
+                          int targetId = digitalTrigger.canId;
+                          if (digitalTrigger.canIdOperator == '=') { match = (idVal == targetId); }
+                          else if (digitalTrigger.canIdOperator == '!=') { match = (idVal != targetId); }
+                          else if (digitalTrigger.canIdOperator == '>') { match = (idVal > targetId); }
+                          else if (digitalTrigger.canIdOperator == '<') { match = (idVal < targetId); }
+                          if (match) { triggerMet = true; }
+                        } else if (digitalTrigger.canCondition == 'Type') {
+                          bool match = false;
+                          if (digitalTrigger.canFrameType == 'Data') { match = (rtr == 0); }
+                          else if (digitalTrigger.canFrameType == 'Remote') { match = (rtr == 1); }
+                          if (match) { triggerMet = true; }
+                        } else if (digitalTrigger.canCondition == 'Data') {
+                          // Check data offset and payload match
+                          int offset = digitalTrigger.canDataOffset;
+                          if (digitalTrigger.canData.isNotEmpty && dataBytes.length >= offset + digitalTrigger.canData.length) {
+                            bool match = true;
+                            for (int idx = 0; idx < digitalTrigger.canData.length; idx++) {
+                              if (dataBytes[offset + idx] != digitalTrigger.canData[idx]) {
+                                match = false;
+                                break;
+                              }
+                            }
+                            if (match) triggerMet = true;
+                          }
+                        }
+                      } else if (_canBitSamples.length == expectedBits + 15 + 1 + 1 + 1 + 7) {
+                        // EOF parsed (expectedBits + CRC + CRC Delim + ACK + ACK Delim + EOF)
+                        if (digitalTrigger.canCondition == 'EOF') {
+                          triggerMet = true;
+                        }
+                        _canState = 'Idle';
+                      }
+                    } else {
+                      // Extended Frame ID (29 bits) - simplified trigger
+                      if (_canBitSamples.length >= 32) {
+                        int extId = 0;
+                        for (int b = 0; b < 29; b++) {
+                          // ID Base (11) + ID Ext (18)
+                          extId = (extId << 1) | _canBitSamples[b < 11 ? b : b + 2]; // skip RTR and IDE
+                        }
+                        if (digitalTrigger.canCondition == 'ID') {
+                          bool match = false;
+                          int targetId = digitalTrigger.canId;
+                          if (digitalTrigger.canIdOperator == '=') { match = (extId == targetId); }
+                          else if (digitalTrigger.canIdOperator == '!=') { match = (extId != targetId); }
+                          else if (digitalTrigger.canIdOperator == '>') { match = (extId > targetId); }
+                          else if (digitalTrigger.canIdOperator == '<') { match = (extId < targetId); }
+                          if (match) { triggerMet = true; }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } 
+          else if (digitalTrigger.protocolTriggerType == 'LIN') {
+            int lin = (curr >> digitalTrigger.linPin) & 1;
+            double bitTimeSamples = _sampleRate / digitalTrigger.linBaudRate;
+            
+            if (_linState == 'Idle') {
+              if (lin == 0) {
+                _linLowSamples++;
+              } else {
+                if (_linLowSamples >= 13 * bitTimeSamples) { // Sync Break
+                  if (digitalTrigger.linCondition == 'Sync') {
+                    triggerMet = true;
+                  }
+                  _linState = 'SyncByte';
+                  _linUartRxState = 'Idle';
+                  _linData.clear();
+                  _linByteCount = 0;
+                }
+                _linLowSamples = 0;
+              }
+            } else {
+              // Run nested UART-like bit parser for LIN bytes
+              bool byteReceived = false;
+              int rxByte = 0;
+              
+              if (_linUartRxState == 'Idle') {
+                if (lin == 0) { // falling start edge
+                  _linUartRxState = 'Start';
+                  _linUartRxTimer = 1.5 * bitTimeSamples;
+                  _linUartRxBitsRead = 0;
+                  _linUartRxAccumulator = 0;
+                }
+              } else {
+                _linUartRxTimer -= 1.0;
+                if (_linUartRxTimer <= 0) {
+                  _linUartRxTimer += bitTimeSamples;
+                  
+                  if (_linUartRxState == 'Start') {
+                    if (lin == 0) {
+                      _linUartRxState = 'Data';
+                    } else {
+                      _linUartRxState = 'Idle';
+                    }
+                  } else if (_linUartRxState == 'Data') {
+                    _linUartRxAccumulator |= (lin << _linUartRxBitsRead);
+                    _linUartRxBitsRead++;
+                    if (_linUartRxBitsRead == 8) {
+                      _linUartRxState = 'Stop';
+                    }
+                  } else if (_linUartRxState == 'Stop') {
+                    rxByte = _linUartRxAccumulator;
+                    byteReceived = true;
+                    _linUartRxState = 'Idle';
+                  }
+                }
+              }
+              
+              if (byteReceived) {
+                if (_linState == 'SyncByte') {
+                  if (rxByte == 0x55) {
+                    _linState = 'PID';
+                  } else {
+                    _linState = 'Idle';
+                  }
+                } else if (_linState == 'PID') {
+                  int pidId = rxByte & 0x3F;
+                  if (digitalTrigger.linCondition == 'ID' && pidId == digitalTrigger.linId) {
+                    triggerMet = true;
+                  }
+                  _linState = 'Data';
+                } else if (_linState == 'Data') {
+                  _linData.add(rxByte);
+                  _linByteCount++;
+                  
+                  if (digitalTrigger.linCondition == 'Data') {
+                    if (digitalTrigger.linData.isNotEmpty && _linData.length >= digitalTrigger.linData.length) {
+                      bool match = true;
+                      int startOffset = _linData.length - digitalTrigger.linData.length;
+                      for (int idx = 0; idx < digitalTrigger.linData.length; idx++) {
+                        if (_linData[startOffset + idx] != digitalTrigger.linData[idx]) {
+                          match = false;
+                          break;
+                        }
+                      }
+                      if (match) triggerMet = true;
+                    }
+                  }
+                  
+                  if (_linByteCount == 9) {
+                    _linState = 'Idle';
+                  }
+                }
+              }
+            }
+          } 
+          else if (digitalTrigger.protocolTriggerType == 'USB') {
+            int dp = (curr >> digitalTrigger.usbDpPin) & 1;
+            int dn = (curr >> digitalTrigger.usbDnPin) & 1;
+            String lineState = (dp == 1 && dn == 0) ? 'J' : ((dp == 0 && dn == 1) ? 'K' : ((dp == 0 && dn == 0) ? 'SE0' : 'J'));
+            double bitTimeSamples = _sampleRate / (digitalTrigger.usbSpeed == 'FullSpeed' ? 12e6 : 1.5e6);
+            
+            if (lineState == 'SE0') {
+              _usbSe0Samples++;
+              if (_usbSe0Samples >= 2.5 * (_sampleRate / 1e6)) { // Reset detected
+                if (digitalTrigger.usbCondition == 'Reset') {
+                  triggerMet = true;
+                }
+              }
+            } else {
+              _usbSe0Samples = 0;
+            }
+            
+            if (_usbState == 'Idle') {
+              if (_lastUsbLineState == 'J' && lineState == 'K') { // SOP J to K edge transition
+                _usbState = 'Parsing';
+                _usbBitTimer = 0.5 * bitTimeSamples;
+                _usbConsecutiveOnes = 0;
+                _usbBitsRead = 0;
+                _usbAccumulator = 0;
+                _usbBytes.clear();
+                
+                if (digitalTrigger.usbCondition == 'SOP') {
+                  triggerMet = true;
+                }
+              }
+            } else {
+              _usbBitTimer -= 1.0;
+              if (_usbBitTimer <= 0) {
+                _usbBitTimer += bitTimeSamples;
+                
+                if (_lastUsbLineState == 'SE0' && lineState == 'J') { // EOP
+                  if (digitalTrigger.usbCondition == 'EOP') {
+                    triggerMet = true;
+                  }
+                  _usbState = 'Idle';
+                } else {
+                  int bitVal = (lineState != _lastUsbLineState) ? 0 : 1;
+                  
+                  if (bitVal == 1) {
+                    _usbConsecutiveOnes++;
+                    _usbAccumulator |= (1 << _usbBitsRead);
+                    _usbBitsRead++;
+                  } else {
+                    if (_usbConsecutiveOnes == 6) { // Destuff
+                      _usbConsecutiveOnes = 0;
+                    } else {
+                      _usbConsecutiveOnes = 0;
+                      _usbAccumulator |= (0 << _usbBitsRead);
+                      _usbBitsRead++;
+                    }
+                  }
+                  
+                  if (_usbBitsRead == 8) {
+                    _usbBitsRead = 0;
+                    _usbBytes.add(_usbAccumulator);
+                    
+                    if (_usbBytes.length == 1) {
+                      if (digitalTrigger.usbCondition == 'PID' && _usbBytes.first == digitalTrigger.usbPid) {
+                        triggerMet = true;
+                      }
+                    } else if (_usbBytes.length == 3) {
+                      int pid = _usbBytes.first & 0x0F;
+                      if (pid == 0x1 || pid == 0x9 || pid == 0xD) {
+                        int tokenAddr = _usbBytes[1] & 0x7F;
+                        int tokenEp = ((_usbBytes[1] >> 7) & 1) | ((_usbBytes[2] & 0x7) << 1);
+                        if (digitalTrigger.usbCondition == 'Token' && tokenAddr == digitalTrigger.usbAddr && tokenEp == digitalTrigger.usbEp) {
+                          triggerMet = true;
+                        }
+                      }
+                    } else if (_usbBytes.length > 1) {
+                      int pid = _usbBytes.first & 0x0F;
+                      if (pid == 0x3 || pid == 0xB) {
+                        List<int> payload = _usbBytes.sublist(1);
+                        if (digitalTrigger.usbCondition == 'Data' && digitalTrigger.usbData.isNotEmpty && payload.length >= digitalTrigger.usbData.length) {
+                          bool match = true;
+                          int startOffset = payload.length - digitalTrigger.usbData.length;
+                          for (int idx = 0; idx < digitalTrigger.usbData.length; idx++) {
+                            if (payload[startOffset + idx] != digitalTrigger.usbData[idx]) {
+                              match = false;
+                              break;
+                            }
+                          }
+                          if (match) triggerMet = true;
+                        }
+                      }
+                    }
+                    _usbAccumulator = 0;
+                  }
+                }
+              }
+            }
+            _lastUsbLineState = lineState;
+          }
         }
-        // Note: advancedBus and protocol triggers are not evaluated dynamically here yet.
         
         _lastDigitalStateForTrigger = curr;
       }

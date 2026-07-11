@@ -75,22 +75,21 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
             }
           ),
           
-          // 2. Analog Channels container
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.red, width: 1.5), // The active selection outline shown in the screenshot
-            ),
-            child: Row(
-              children: List.generate(state.channels.length, (index) {
-                final ch = state.channels[index];
-                return _buildAnalogChannelBox(context, state, index, ch);
-              }),
-            ),
+          // 2. Analog Channels (A1-A4)
+          Row(
+            children: List.generate(state.channels.length, (index) {
+              final ch = state.channels[index];
+              return _buildAnalogChannelBox(context, state, index, ch);
+            }),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 24),
 
-          // 3. Digital LA Channel Box
-          _buildDigitalChannelBox(context, state),
+          // 3. Digital Channels (L1-L4)
+          Row(
+            children: List.generate(4, (index) {
+              return _buildDigitalBusBox(context, state, index);
+            }),
+          ),
           const Spacer(),
 
           if (state.showCursors)
@@ -114,7 +113,6 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
             ),
           
           // 4. Time/Date and Connection Status Box
-          _buildDemoButton(state),
           _buildSystemStatusBox(terminal),
         ],
       ),
@@ -150,113 +148,148 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
 
     return HoverBuilder(
       builder: (context, isHovered) {
-        return GestureDetector(
-          onTap: () {
-            if (!isActive) {
-              state.toggleChannelVisibility(index);
-            } else {
-              _showChannelConfigDialog(context, state, index, ch);
-            }
-          },
-          onLongPress: () {
-            if (isActive) state.toggleChannelVisibility(index);
-          },
-          child: Container(
-            width: 85,
-            margin: const EdgeInsets.only(right: 2.0),
-            decoration: BoxDecoration(
-              color: isHovered ? const Color(0xFF2A2A2A) : const Color(0xFF202020),
-              border: Border.all(
-                color: isHovered ? (isActive ? ch.color : Colors.white) : (isActive ? boxColor : Colors.grey.shade800), 
-                width: isActive || isHovered ? 1.5 : 1.0
-              ),
-              boxShadow: isHovered && isActive ? [BoxShadow(color: boxColor.withValues(alpha: 0.3), blurRadius: 4)] : null,
+        return Container(
+          width: 85,
+          margin: const EdgeInsets.only(right: 6.0),
+          decoration: BoxDecoration(
+            color: isHovered ? const Color(0xFF2A2A2A) : const Color(0xFF202020),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isHovered ? (isActive ? ch.color : Colors.white) : (isActive ? boxColor : Colors.grey.shade800), 
+              width: isActive || isHovered ? 3.0 : 2.0
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Channel Number Tab
-                Container(
-                  width: 18,
+            boxShadow: isHovered && isActive ? [BoxShadow(color: boxColor.withValues(alpha: 0.3), blurRadius: 4)] : null,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Channel Number Tab
+              GestureDetector(
+                onTap: () => state.toggleChannelVisibility(index),
+                child: Container(
+                  width: 24,
                   color: isActive ? boxColor : Colors.grey.shade800,
                   alignment: Alignment.center,
                   child: Text(
-                    '${index + 1}',
+                    'A${index + 1}',
                     style: TextStyle(
                       color: isActive ? Colors.black : Colors.grey.shade400, 
                       fontWeight: FontWeight.w900, 
-                      fontSize: 14
+                      fontSize: 12
                     ),
                   ),
                 ),
-                // Channel Info
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(isActive ? '${ch.yScale.toStringAsFixed(2)}V/' : '', style: TextStyle(color: boxColor, fontSize: 10, fontWeight: FontWeight.bold)),
-                            Text(isActive ? '' : 'OFF', style: TextStyle(color: Colors.grey.shade600, fontSize: 10)),
-                          ],
-                        ),
-                        Text(isActive ? '${ch.yOffset.toStringAsFixed(2)}V' : '', style: const TextStyle(color: Colors.grey, fontSize: 10)),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(isActive ? '1X' : '', style: const TextStyle(color: Colors.grey, fontSize: 9)),
-                            Text(isActive ? '----' : '', style: const TextStyle(color: Colors.grey, fontSize: 9)),
-                          ],
-                        )
-                      ],
-                    ),
+              ),
+              // Channel Info
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(isActive ? '${ch.yScale.toStringAsFixed(2)}V/' : '', style: TextStyle(color: boxColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                          Text(isActive ? '' : 'OFF', style: TextStyle(color: Colors.grey.shade600, fontSize: 10)),
+                        ],
+                      ),
+                      Text(isActive ? '${ch.yOffset.toStringAsFixed(2)}V' : '', style: const TextStyle(color: Colors.grey, fontSize: 10)),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(isActive ? '1X' : '', style: const TextStyle(color: Colors.grey, fontSize: 9)),
+                          Text(isActive ? '----' : '', style: const TextStyle(color: Colors.grey, fontSize: 9)),
+                        ],
+                      )
+                    ],
                   ),
-                )
-              ],
-            ),
+                ),
+              )
+            ],
           ),
         );
       }
     );
   }
 
-  Widget _buildDigitalChannelBox(BuildContext context, OscilloscopeState state) {
-    bool isActive = state.digitalChannel.enabledPins.isNotEmpty;
-    Color boxColor = isActive ? Colors.white : Colors.grey.shade700;
+  Widget _buildDigitalBusBox(BuildContext context, OscilloscopeState state, int busIndex) {
+    int startPin = busIndex * 8;
+    int endPin = startPin + 7;
+    bool isActive = state.digitalChannel.enabledPins.any((p) => p >= startPin && p <= endPin);
+    Color boxColor = isActive ? Colors.purpleAccent : Colors.grey.shade600;
+    
+    String rangeLabel = '';
+    if (busIndex == 0) rangeLabel = 'D[7:0]';
+    else if (busIndex == 1) rangeLabel = 'D[15:8]';
+    else if (busIndex == 2) rangeLabel = 'D[23:16]';
+    else if (busIndex == 3) rangeLabel = 'D[31:24]';
 
     return HoverBuilder(
       builder: (context, isHovered) {
         return GestureDetector(
-          onTap: () => _showMsoDialog(context, state),
+          onTap: () {
+            bool anyEnabled = false;
+            for (int p = startPin; p <= endPin; p++) {
+              if (state.digitalChannel.enabledPins.contains(p)) {
+                anyEnabled = true;
+                break;
+              }
+            }
+            state.setDigitalPinGroupVisibility(startPin, endPin, !anyEnabled);
+          },
+          onLongPress: () {
+            _showMsoGroupDialog(context, state, busIndex);
+          },
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            width: 85,
+            margin: const EdgeInsets.only(right: 6.0),
             decoration: BoxDecoration(
               color: isHovered ? const Color(0xFF2A2A2A) : const Color(0xFF202020),
+              borderRadius: BorderRadius.circular(6),
               border: Border.all(
-                color: isHovered ? Colors.white : boxColor, 
-                width: isActive || isHovered ? 1.5 : 1.0
+                color: isHovered ? (isActive ? Colors.purpleAccent : Colors.white) : (isActive ? boxColor : Colors.grey.shade800), 
+                width: isActive || isHovered ? 3.0 : 2.0
               ),
-              boxShadow: isHovered && isActive ? [BoxShadow(color: Colors.white.withValues(alpha: 0.2), blurRadius: 4)] : null,
+              boxShadow: isHovered && isActive ? [BoxShadow(color: boxColor.withValues(alpha: 0.3), blurRadius: 4)] : null,
             ),
+            clipBehavior: Clip.antiAlias,
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('L', style: TextStyle(color: boxColor, fontWeight: FontWeight.w900, fontSize: 18)),
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 80,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Draw 2 rows of tiny numbers for D0-D15 (since 32 is too wide, we show 0-15 as representative)
-                      _buildDigitalPinRow(state, 0, 7),
-                      _buildDigitalPinRow(state, 8, 15),
-                    ],
+                Container(
+                  width: 24,
+                  color: isActive ? boxColor : Colors.grey.shade800,
+                  alignment: Alignment.center,
+                  child: Text(
+                    'L${busIndex + 1}',
+                    style: TextStyle(
+                      color: isActive ? Colors.black : Colors.grey.shade400, 
+                      fontWeight: FontWeight.w900, 
+                      fontSize: 12
+                    ),
                   ),
-                )
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 2.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          rangeLabel,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: boxColor, fontSize: 9, fontWeight: FontWeight.bold),
+                        ),
+                        _buildDigitalPinRow(state, startPin, startPin + 3),
+                        _buildDigitalPinRow(state, startPin + 4, endPin),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -280,41 +313,6 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
           ),
         );
       }),
-    );
-  }
-
-  Widget _buildDemoButton(OscilloscopeState state) {
-    bool isDemo = state.isDemoMode;
-    Color color = isDemo ? Colors.purpleAccent : Colors.grey.shade400;
-    String label = isDemo ? 'DEMO' : 'START DEMO';
-    
-    return HoverBuilder(
-      builder: (context, isHovered) {
-        return InkWell(
-          onTap: () => state.toggleDemoMode(),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-            padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 4.0),
-            decoration: BoxDecoration(
-              color: isHovered ? const Color(0xFF333333) : const Color(0xFF252525),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: isHovered ? color : color.withValues(alpha: 0.5), 
-                width: 1.5
-              ),
-              boxShadow: isHovered ? [BoxShadow(color: color.withValues(alpha: 0.2), blurRadius: 4)] : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.auto_awesome, color: color, size: 16),
-                const SizedBox(width: 4),
-                Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
-              ],
-            ),
-          ),
-        );
-      }
     );
   }
 
@@ -567,21 +565,24 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     );
   }
 
-  void _showMsoDialog(BuildContext context, OscilloscopeState state) {
+  void _showMsoGroupDialog(BuildContext context, OscilloscopeState state, int busIndex) {
+    int start = busIndex * 8;
+    int end = start + 7;
     showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF2A2A2A),
-          title: const Text('MSO 数字逻辑引脚配置', style: TextStyle(color: Colors.white, fontSize: 14)),
+          title: Text('MSO L${busIndex + 1} (D$start - D$end) 数字逻辑引脚配置', style: const TextStyle(color: Colors.white, fontSize: 14)),
           content: SizedBox(
-            width: 400,
+            width: 320,
             child: Consumer<OscilloscopeState>(
               builder: (ctx, consumerState, child) {
                 return Wrap(
-                  spacing: 4,
-                  runSpacing: 4,
-                  children: List.generate(32, (index) {
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: List.generate(8, (i) {
+                    int index = start + i;
                     final isEnabled = consumerState.digitalChannel.enabledPins.contains(index);
                     return FilterChip(
                       label: Text('D$index', style: const TextStyle(fontSize: 10, color: Colors.white)),

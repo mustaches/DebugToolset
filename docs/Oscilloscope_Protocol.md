@@ -167,6 +167,97 @@ AA 55 11 00 08 EF BE AD DE
   - `Byte 1`：触发边沿 (0=Rising, 1=Falling, 2=Dual)
   - `Byte 2-3`：`level_adc` (`uint16`) 触发电平对应的 ADC 原始值
 
+#### `0x04`：数字逻辑触发前端配置 (Digital Trigger Config)
+当 `0x03` 触发指令中的触发源选择为 `4` (Digital 逻辑分析仪通道) 时，上位机将通过此命令下发具体的数字逻辑与特定协议触发配置参数。
+- **下发/上报**：负载长度为变长（根据触发类型）。
+
+##### 1. 公共首部 (Header)
+  - `Byte 0`：数字触发类型 (Digital Trigger Type)
+    - `0x00`: 单通道边沿触发 (Single Channel)
+    - `0x01`: 总线数值/序列触发 (Bus Value)
+    - `0x02`: 高级总线触发 (Advanced Bus - I2C/SPI/UART)
+    - `0x03`: 特定协议触发 (Protocol - CAN/LIN/USB)
+  - `Byte 1`：预触发使能 (Bit 0: Enable Pre-trigger)
+  - `Byte 2`：触发位置百分比 (`uint8`, 5 ~ 95)
+
+##### 2. 各触发类型参数定义 (Type Specific Payloads)
+
+###### 触发类型 `0x00` (单通道边沿)
+  - `Byte 3`：通道索引 (0 ~ 31，对应 D0 ~ D31)
+  - `Byte 4`：触发边沿 (0=Rising, 1=Falling, 2=Both)
+
+###### 触发类型 `0x01` (总线数值/序列)
+  - `Byte 3`：低位通道 LSB (0 ~ 31)
+  - `Byte 4`：高位通道 MSB (0 ~ 31)
+  - `Byte 5`：配置标志位 (Bit 0: 大小端 0=Little/1=Big, Bit 1: 是否为序列匹配 0=Single Value/1=Sequence)
+  - `Byte 6`：目标值个数 (N, 序列模式下可能为 1~8)
+  - `Byte 7 ~ 7+N*4`：目标值数组 (`uint32` 数组，小端序)
+  - `Byte 7+N*4 ~ 7+N*4+D*2`：（仅在序列模式下存在）延时上限数组 (`uint16` 数组，单位为采样点数，小端序)
+
+###### 触发类型 `0x02` (高级总线 - I2C/SPI/UART)
+  - `Byte 3`：总线协议类型 (0=I2C, 1=SPI, 2=UART)
+  - **I2C 协议特定载荷**:
+    - `Byte 4`：SCL 引脚索引 (0 ~ 31)
+    - `Byte 5`：SDA 引脚索引 (0 ~ 31)
+    - `Byte 6`：触发条件 (0=Start, 1=Stop, 2=Restart, 3=Nack, 4=Address, 5=Data, 6=AddrData)
+    - `Byte 7`：地址位数 (0=7-bit, 1=10-bit)
+    - `Byte 8-9`：设备地址 (`uint16`, 小端序)
+    - `Byte 10`：读写方向 (0=Any, 1=Read, 2=Write)
+    - `Byte 11`：数据字节索引 (0xFF 表示任意字节, 0~7 表示特定字节索引)
+    - `Byte 12`：数据字节数 (M)
+    - `Byte 13 ~ 13+M`：数据匹配字节数组
+  - **SPI 协议特定载荷**:
+    - `Byte 4`：CS 引脚索引 (0 ~ 31)
+    - `Byte 5`：SCK 引脚索引 (0 ~ 31)
+    - `Byte 6`：MOSI 引脚索引 (0 ~ 31)
+    - `Byte 7`：MISO 引脚索引 (0 ~ 31)
+    - `Byte 8`：CS 极性 (0=低有效/Active Low, 1=高有效/Active High)
+    - `Byte 9`：SCK 采样边沿 (0=上升沿/Rising, 1=下降沿/Falling)
+    - `Byte 10`：触发条件 (0=CsActive, 1=CsInactive, 2=MosiData, 3=MisoData, 4=BothData)
+    - `Byte 11`：MOSI 匹配长度 (K)
+    - `Byte 12`：MISO 匹配长度 (L)
+    - `Byte 13 ~ 13+K`：MOSI 匹配数组
+    - `Byte 13+K ~ 13+K+L`：MISO 匹配数组
+  - **UART 协议特定载荷**:
+    - `Byte 4`：RX 引脚索引 (0 ~ 31)
+    - `Byte 5`：TX 引脚索引 (0 ~ 31)
+    - `Byte 6-9`：波特率值 (`uint32`, 小端序)
+    - `Byte 10`：数据位数 (5 ~ 9)
+    - `Byte 11`：奇偶校验 (0=None, 1=Odd, 2=Even)
+    - `Byte 12`：触发条件 (0=StartBit, 1=StopBit, 2=Data, 3=Sequence, 4=ParityError)
+    - `Byte 13`：匹配长度 (K)
+    - `Byte 14 ~ 14+K`：匹配数据数组
+
+###### 触发类型 `0x03` (特定协议 - CAN/LIN/USB)
+  - `Byte 3`：特定协议类型 (0=CAN, 1=LIN, 2=USB)
+  - **CAN 协议特定载荷**:
+    - `Byte 4`：CAN 引脚索引 (0 ~ 31)
+    - `Byte 5-8`：波特率值 (`uint32`, 小端序)
+    - `Byte 9`：触发条件 (0=SOF, 1=ID, 2=Data, 3=Type, 4=EOF, 5=Error)
+    - `Byte 10`：ID 比较操作符 (0: '=', 1: '!=', 2: '>', 3: '<')
+    - `Byte 11-14`：帧 ID 值 (`uint32`, 小端序)
+    - `Byte 15`：帧类型 (0=Data, 1=Remote, 2=Error, 3=Overload)
+    - `Byte 16`：数据字节偏移量 (`uint8`)
+    - `Byte 17`：匹配数据长度 (K)
+    - `Byte 18 ~ 18+K`：数据匹配字节数组
+  - **LIN 协议特定载荷**:
+    - `Byte 4`：LIN 引脚索引 (0 ~ 31)
+    - `Byte 5-8`：波特率值 (`uint32`, 小端序)
+    - `Byte 9`：触发条件 (0=Sync, 1=ID, 2=Data, 3=ChecksumError)
+    - `Byte 10-11`：帧 ID 值 (`uint16`, 小端序)
+    - `Byte 12`：匹配数据长度 (K)
+    - `Byte 13 ~ 13+K`：匹配数据数组
+  - **USB 协议特定载荷**:
+    - `Byte 4`：D+ 引脚索引 (0 ~ 31)
+    - `Byte 5`：D- 引脚索引 (0 ~ 31)
+    - `Byte 6`：传输速率 (0=LowSpeed 1.5Mbps, 1=FullSpeed 12Mbps)
+    - `Byte 7`：触发条件 (0=SOP, 1=EOP, 2=Reset, 3=PID, 4=Token, 5=Data)
+    - `Byte 8`：PID 匹配值 (`uint8`)
+    - `Byte 9`：设备地址 (`uint8`)
+    - `Byte 10`：端点索引 (`uint8`)
+    - `Byte 11`：匹配数据长度 (K)
+    - `Byte 12 ~ 12+K`：匹配数据数组
+
 #### `0x10`：获取硬件基础参数 (Get Hardware Info)
 为了让上位机能完美换算电压，上位机上电时会发送无负载的查询指令。
 - **上位机查询**：`AA 55 80 10 00 00`

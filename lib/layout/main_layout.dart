@@ -38,14 +38,14 @@ class MainLayout extends StatelessWidget {
         children: [
           const SizedBox(height: 16),
           _SidebarIcon(
-            icon: Icons.terminal,
-            tooltip: '终端',
+            icon: Icons.show_chart,
+            tooltip: '示波器',
             isSelected: appState.selectedModuleIndex == 0,
             onTap: () => appState.setModuleIndex(0),
           ),
           _SidebarIcon(
-            icon: Icons.show_chart,
-            tooltip: '示波器',
+            icon: Icons.terminal,
+            tooltip: '终端',
             isSelected: appState.selectedModuleIndex == 1,
             onTap: () => appState.setModuleIndex(1),
           ),
@@ -87,10 +87,10 @@ class MainLayout extends StatelessWidget {
     Widget activeModule;
     switch (selectedIndex) {
       case 0:
-        activeModule = const TerminalView();
+        activeModule = const OscilloscopeView();
         break;
       case 1:
-        activeModule = const OscilloscopeView();
+        activeModule = const TerminalView();
         break;
       case 2:
         activeModule = const Center(child: Text('Hex 编辑器 (开发中...)', textAlign: TextAlign.center));

@@ -10,7 +10,6 @@ import 'widgets/packet_list_panel.dart';
 import 'widgets/register_info_panel.dart';
 import 'widgets/time_rule_widget.dart';
 import 'widgets/la_toolbar.dart';
-import 'widgets/resizable_split_view.dart';
 
 class OscilloscopeView extends StatelessWidget {
   const OscilloscopeView({super.key});
@@ -30,51 +29,80 @@ class OscilloscopeView extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  flex: 1, // Let ChartWidget take remaining space
-                  child: Container(
-                    margin: const EdgeInsets.all(4.0),
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      border: Border.all(
-                        color: Colors.grey.shade800,
-                        width: 2.0,
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Expanded(
-                          flex: 1,
-                          child: MinimapWidget(),
-                        ),
-                        if (state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty)
-                          const LogicAnalyzerToolbar(),
-                        if (state.digitalChannel.enabledPins.isNotEmpty)
-                          const SizedBox(
-                            height: 24,
-                            child: TimeRuleWidget(),
+                  flex: 1,
+                  child: Center(
+                    child: FittedBox(
+                      fit: BoxFit.contain,
+                      child: SizedBox(
+                        width: 1920,
+                        height: 1080,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black,
+                            border: Border.all(
+                              color: Colors.grey.shade800,
+                              width: 2.0,
+                            ),
                           ),
-                        Divider(height: 1, thickness: 1, color: Colors.grey.shade800),
-                        Expanded(
-                          flex: 10,
-                          child: state.highlightedBusName != null && state.showRegisterInfoPanel
-                            ? const ResizableSplitView(
-                                topWidget: ClipRect(child: ChartWidget()),
-                                bottomWidget: RegisterInfoPanel(),
-                                initialRatio: 0.75,
-                              )
-                            : const ClipRect(child: ChartWidget()),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Expanded(
+                                flex: 1,
+                                child: MinimapWidget(),
+                              ),
+                              if (state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty)
+                                const LogicAnalyzerToolbar(),
+                              Divider(height: 1, thickness: 1, color: Colors.grey.shade800),
+                              Expanded(
+                                flex: 10,
+                                child: Stack(
+                                  children: [
+                                    const Positioned.fill(
+                                      child: ClipRect(
+                                        child: ChartWidget(),
+                                      ),
+                                    ),
+                                    if (state.digitalChannel.enabledPins.isNotEmpty)
+                                      Positioned(
+                                        top: 0,
+                                        left: 0,
+                                        right: 0,
+                                        height: 25,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF161616),
+                                            border: Border(bottom: BorderSide(color: Colors.grey.shade800, width: 1.0)),
+                                          ),
+                                          child: const TimeRuleWidget(),
+                                        ),
+                                      ),
+                                    if (state.highlightedBusName != null && state.showRegisterInfoPanel)
+                                      Positioned(
+                                        bottom: 0,
+                                        left: 0,
+                                        right: state.activeEventListBusName != null ? 420.0 : 0.0,
+                                        height: 240,
+                                        child: const RegisterInfoPanel(),
+                                      ),
+                                    if (state.activeEventListBusName != null)
+                                      Positioned(
+                                        top: 0,
+                                        bottom: 0,
+                                        right: 0,
+                                        width: 420,
+                                        child: PacketListPanel(busName: state.activeEventListBusName!),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
-                if (state.activeEventListBusName != null)
-                  Container(
-                    width: 400,
-                    margin: const EdgeInsets.only(top: 4.0, bottom: 4.0, right: 4.0),
-                    child: PacketListPanel(busName: state.activeEventListBusName!),
-                  ),
                 const RightControlPanel(),
               ],
             ),

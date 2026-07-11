@@ -22,6 +22,8 @@ class _PacketListPanelState extends State<PacketListPanel> {
     int? _lastProcessedHighlightSequence;
   final Set<int> _expandedFrames = {};
   bool _preventNextAutoExpand = false;
+  DateTime? _lastTapTime;
+  int? _lastTapFrameIndex;
 
   // Debounced search logic
   Timer? _debounce;
@@ -510,14 +512,7 @@ class _PacketListPanelState extends State<PacketListPanel> {
                                margin: const EdgeInsets.only(bottom: 2.0, left: 4, right: 4),
                                child: InkWell(
                                  onTap: () {
-                                   setState(() {
-                                     if (isExpanded) {
-                                       _expandedFrames.remove(frameIndex);
-                                     } else {
-                                       _expandedFrames.add(frameIndex);
-                                     }
-                                   });
-                                   
+                                   // 1. Perform waveform positioning immediately (Zero delay!)
                                    int currentAbsoluteOffset = state.digitalChannel.totalPointsAdded - state.digitalChannel.count;
                                    int offsetDiff = bus.decoder!.lastDecodeAbsoluteOffset - currentAbsoluteOffset;
                                    int startLogical = frame.startIndex + offsetDiff;
@@ -528,12 +523,31 @@ class _PacketListPanelState extends State<PacketListPanel> {
                                    double minScale = state.chartWidth / OscilloscopeState.maxPointsPerChannel;
                                    if (activeScale < minScale) activeScale = minScale;
                                    
-                                   double targetOffset = (latestX - startLogical) * activeScale - state.chartWidth / 2.0;
+                                   double targetOffset = (latestX - startLogical) * activeScale - state.chartWidth * 11.0 / 14.0;
                                    if (targetOffset < 0) targetOffset = 0;
                                    state.setXScrollOffset(targetOffset);
                                    
                                    _preventNextAutoExpand = true;
                                    state.setHighlight(bus.name, frame.startIndex, frame.endIndex);
+
+                                   // 2. Detect double tap manually to expand/collapse
+                                   final now = DateTime.now();
+                                   if (_lastTapTime != null && 
+                                       _lastTapFrameIndex == frameIndex && 
+                                       now.difference(_lastTapTime!) < const Duration(milliseconds: 300)) {
+                                     setState(() {
+                                       if (isExpanded) {
+                                         _expandedFrames.remove(frameIndex);
+                                       } else {
+                                         _expandedFrames.add(frameIndex);
+                                       }
+                                     });
+                                     _lastTapTime = null;
+                                     _lastTapFrameIndex = null;
+                                   } else {
+                                     _lastTapTime = now;
+                                     _lastTapFrameIndex = frameIndex;
+                                   }
                                  },
                                  child: Padding(
                                    padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),

@@ -141,15 +141,17 @@ class TopInfoBar extends StatelessWidget {
           const Spacer(),
 
           _buildActionButton(
-            label: state.isPaused ? 'STOP' : 'RUN',
-            color: state.isPaused ? Colors.red : Colors.green,
-            onTap: () => state.togglePause(),
-            isDoubleLine: true,
-            topText: 'RUN',
-            bottomText: 'STOP',
-            activeBottom: state.isPaused,
+            label: state.isDemoMode ? 'DEMO' : 'START DEMO',
+            color: state.isDemoMode ? Colors.purpleAccent : Colors.grey.shade400,
+            onTap: () => state.toggleDemoMode(),
+            icon: Icons.auto_awesome,
           ),
-
+          Container(
+            height: 24,
+            width: 1,
+            color: Colors.grey.shade800,
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+          ),
           _buildActionButton(
             label: 'SAVE',
             color: Colors.blueAccent,

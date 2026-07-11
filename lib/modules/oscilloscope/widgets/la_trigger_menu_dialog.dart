@@ -12,11 +12,47 @@ class LATriggerMenuDialog extends StatefulWidget {
 class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
   final TextEditingController _targetValueController = TextEditingController();
   final TextEditingController _delaysController = TextEditingController();
+  
+  // Protocol controllers
+  final TextEditingController _i2cAddressController = TextEditingController();
+  final TextEditingController _i2cDataController = TextEditingController();
+  final TextEditingController _spiMosiDataController = TextEditingController();
+  final TextEditingController _spiMisoDataController = TextEditingController();
+  final TextEditingController _uartBaudController = TextEditingController();
+  final TextEditingController _uartDataController = TextEditingController();
+  final TextEditingController _canBaudController = TextEditingController();
+  final TextEditingController _canIdController = TextEditingController();
+  final TextEditingController _canDataController = TextEditingController();
+  final TextEditingController _canDataOffsetController = TextEditingController();
+  final TextEditingController _linBaudController = TextEditingController();
+  final TextEditingController _linIdController = TextEditingController();
+  final TextEditingController _linDataController = TextEditingController();
+  final TextEditingController _usbPidController = TextEditingController();
+  final TextEditingController _usbAddrController = TextEditingController();
+  final TextEditingController _usbEpController = TextEditingController();
+  final TextEditingController _usbDataController = TextEditingController();
 
   @override
   void dispose() {
     _targetValueController.dispose();
     _delaysController.dispose();
+    _i2cAddressController.dispose();
+    _i2cDataController.dispose();
+    _spiMosiDataController.dispose();
+    _spiMisoDataController.dispose();
+    _uartBaudController.dispose();
+    _uartDataController.dispose();
+    _canBaudController.dispose();
+    _canIdController.dispose();
+    _canDataController.dispose();
+    _canDataOffsetController.dispose();
+    _linBaudController.dispose();
+    _linIdController.dispose();
+    _linDataController.dispose();
+    _usbPidController.dispose();
+    _usbAddrController.dispose();
+    _usbEpController.dispose();
+    _usbDataController.dispose();
     super.dispose();
   }
 
@@ -37,6 +73,59 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
     
     if (isDigital && _delaysController.text.isEmpty && config.sequenceDelays.isNotEmpty) {
       _delaysController.text = config.sequenceDelays.join(' ');
+    }
+
+    // Protocol initializations
+    if (isDigital && _i2cAddressController.text.isEmpty) {
+      _i2cAddressController.text = '0x${config.i2cAddress.toRadixString(16).toUpperCase()}';
+    }
+    if (isDigital && _i2cDataController.text.isEmpty && config.i2cData.isNotEmpty) {
+      _i2cDataController.text = config.i2cData.map((v) => '0x${v.toRadixString(16).toUpperCase()}').join(' ');
+    }
+    if (isDigital && _spiMosiDataController.text.isEmpty && config.spiMosiData.isNotEmpty) {
+      _spiMosiDataController.text = config.spiMosiData.map((v) => '0x${v.toRadixString(16).toUpperCase()}').join(' ');
+    }
+    if (isDigital && _spiMisoDataController.text.isEmpty && config.spiMisoData.isNotEmpty) {
+      _spiMisoDataController.text = config.spiMisoData.map((v) => '0x${v.toRadixString(16).toUpperCase()}').join(' ');
+    }
+    if (isDigital && _uartBaudController.text.isEmpty) {
+      _uartBaudController.text = config.uartBaudRate.toString();
+    }
+    if (isDigital && _uartDataController.text.isEmpty && config.uartData.isNotEmpty) {
+      _uartDataController.text = config.uartData.map((v) => '0x${v.toRadixString(16).toUpperCase()}').join(' ');
+    }
+    if (isDigital && _canBaudController.text.isEmpty) {
+      _canBaudController.text = config.canBaudRate.toString();
+    }
+    if (isDigital && _canIdController.text.isEmpty) {
+      _canIdController.text = '0x${config.canId.toRadixString(16).toUpperCase()}';
+    }
+    if (isDigital && _canDataController.text.isEmpty && config.canData.isNotEmpty) {
+      _canDataController.text = config.canData.map((v) => '0x${v.toRadixString(16).toUpperCase()}').join(' ');
+    }
+    if (isDigital && _canDataOffsetController.text.isEmpty) {
+      _canDataOffsetController.text = config.canDataOffset.toString();
+    }
+    if (isDigital && _linBaudController.text.isEmpty) {
+      _linBaudController.text = config.linBaudRate.toString();
+    }
+    if (isDigital && _linIdController.text.isEmpty) {
+      _linIdController.text = '0x${config.linId.toRadixString(16).toUpperCase()}';
+    }
+    if (isDigital && _linDataController.text.isEmpty && config.linData.isNotEmpty) {
+      _linDataController.text = config.linData.map((v) => '0x${v.toRadixString(16).toUpperCase()}').join(' ');
+    }
+    if (isDigital && _usbPidController.text.isEmpty) {
+      _usbPidController.text = '0x${config.usbPid.toRadixString(16).toUpperCase()}';
+    }
+    if (isDigital && _usbAddrController.text.isEmpty) {
+      _usbAddrController.text = config.usbAddr.toString();
+    }
+    if (isDigital && _usbEpController.text.isEmpty) {
+      _usbEpController.text = config.usbEp.toString();
+    }
+    if (isDigital && _usbDataController.text.isEmpty && config.usbData.isNotEmpty) {
+      _usbDataController.text = config.usbData.map((v) => '0x${v.toRadixString(16).toUpperCase()}').join(' ');
     }
 
     return Dialog(
@@ -154,9 +243,9 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
                       icon: const Icon(Icons.remove, color: Colors.white70, size: 16),
                       onPressed: () {
                           double val = config.triggerPositionPercentage - 1.0;
-                          if (val < 5) val = 5;
+                          if (val < 1) val = 1;
                           config.triggerPositionPercentage = val;
-                         state.setDigitalTrigger(config);
+                          state.setDigitalTrigger(config);
                       }
                     ),
                     Expanded(
@@ -167,10 +256,10 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
                           overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
                         ),
                         child: Slider(
-                          value: config.triggerPositionPercentage,
-                          min: 5,
-                          max: 95,
-                          divisions: 90,
+                          value: config.triggerPositionPercentage.clamp(1.0, 99.0),
+                          min: 1,
+                          max: 99,
+                          divisions: 98,
                           activeColor: Colors.cyanAccent,
                           inactiveColor: Colors.grey.shade700,
                           onChanged: (val) {
@@ -184,9 +273,9 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
                       icon: const Icon(Icons.add, color: Colors.white70, size: 16),
                       onPressed: () {
                           double val = config.triggerPositionPercentage + 1.0;
-                          if (val > 95) val = 95;
+                          if (val > 99) val = 99;
                           config.triggerPositionPercentage = val;
-                         state.setDigitalTrigger(config);
+                          state.setDigitalTrigger(config);
                       }
                     ),
                   ],
@@ -210,29 +299,94 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
                     const Spacer(),
                     const Text('采样率:', style: TextStyle(color: Colors.white70, fontSize: 13)),
                     const SizedBox(width: 4),
-                    Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2A2A),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.grey.shade700),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<double>(
-                          value: state.sampleRate,
-                          dropdownColor: const Color(0xFF2A2A2A),
-                          icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
-                          onChanged: (val) {
-                            if (val != null) state.setSampleRate(val);
-                          },
-                          items: const [1000.0, 10000.0, 100000.0, 500000.0, 1000000.0, 2000000.0, 5000000.0, 10000000.0, 20000000.0, 50000000.0, 100000000.0, 200000000.0, 500000000.0]
-                              .map((e) => DropdownMenuItem(value: e, child: Text(_formatSampleRate(e))))
-                              .toList(),
-                        ),
-                      ),
-                    ),
+                    () {
+                      final double rate = state.sampleRate;
+                      double curValue;
+                      String curUnit;
+                      if (rate >= 1000000) {
+                        curValue = double.parse((rate / 1000000).toStringAsFixed(1));
+                        if (curValue == curValue.toInt().toDouble()) {
+                          curValue = curValue.toInt().toDouble();
+                        }
+                        curUnit = 'MHz';
+                      } else {
+                        curValue = double.parse((rate / 1000).toStringAsFixed(1));
+                        if (curValue == curValue.toInt().toDouble()) {
+                          curValue = curValue.toInt().toDouble();
+                        }
+                        curUnit = 'KHz';
+                      }
+                      
+                      final List<double> allowedValues = [1.0, 2.0, 2.5, 4.0, 5.0, 10.0, 20.0, 25.0, 40.0, 50.0, 100.0, 200.0, 250.0, 400.0, 500.0];
+                      final List<double> dropdownValues = List<double>.from(allowedValues);
+                      if (!dropdownValues.contains(curValue)) {
+                        dropdownValues.add(curValue);
+                        dropdownValues.sort();
+                      }
+                      
+                      String formatDouble(double v) {
+                        if (v == v.toInt().toDouble()) {
+                          return '${v.toInt()}';
+                        } else {
+                          return '$v';
+                        }
+                      }
+                      
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            height: 32,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2A2A2A),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.grey.shade700),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<double>(
+                                value: curValue,
+                                dropdownColor: const Color(0xFF2A2A2A),
+                                icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    double multiplier = curUnit == 'MHz' ? 1000000.0 : 1000.0;
+                                    state.setSampleRate(val * multiplier);
+                                  }
+                                },
+                                items: dropdownValues.map((v) => DropdownMenuItem(value: v, child: Text(formatDouble(v)))).toList(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Container(
+                            height: 32,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2A2A2A),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.grey.shade700),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: curUnit,
+                                dropdownColor: const Color(0xFF2A2A2A),
+                                icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                                style: const TextStyle(color: Colors.white, fontSize: 13),
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    double multiplier = val == 'MHz' ? 1000000.0 : 1000.0;
+                                    state.setSampleRate(curValue * multiplier);
+                                  }
+                                },
+                                items: const ['KHz', 'MHz'].map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }(),
                     const SizedBox(width: 12),
                     const Text('深度:', style: TextStyle(color: Colors.white70, fontSize: 13)),
                     const SizedBox(width: 4),
@@ -244,20 +398,30 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: Colors.grey.shade700),
                       ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<int>(
-                          value: state.memoryDepth,
-                          dropdownColor: const Color(0xFF2A2A2A),
-                          icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
-                          onChanged: (val) {
-                            if (val != null) state.setMemoryDepth(val);
-                          },
-                          items: const [1024, 4096, 16384, 65536, 262144, 1048576, 8388608, 16777216]
-                              .map((e) => DropdownMenuItem(value: e, child: Text(_formatMemoryDepth(e))))
-                              .toList(),
-                        ),
-                      ),
+                      child: () {
+                        final List<int> allowedDepths = [32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216, 33554432, 67108864, 134217728, 268435456];
+                        int curDepth = state.memoryDepth;
+                        if (!allowedDepths.contains(curDepth)) {
+                          curDepth = allowedDepths.contains(OscilloscopeState.maxPointsPerChannel) ? OscilloscopeState.maxPointsPerChannel : allowedDepths.first;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            state.setMemoryDepth(curDepth);
+                          });
+                        }
+                        return DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: curDepth,
+                            dropdownColor: const Color(0xFF2A2A2A),
+                            icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            onChanged: (val) {
+                              if (val != null) state.setMemoryDepth(val);
+                            },
+                            items: allowedDepths
+                                .map((e) => DropdownMenuItem(value: e, child: Text(_formatMemoryDepth(e))))
+                                .toList(),
+                          ),
+                        );
+                      }(),
                     ),
                   ],
                 ),
@@ -390,8 +554,27 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
   }
 
   Widget _buildBusTab(OscilloscopeState state, DigitalTriggerConfig config) {
+    final availableBuses = state.digitalChannel.buses;
     return Column(
       children: [
+        if (availableBuses.isNotEmpty) ...[
+          _buildDropdownRow<DigitalBus?>(
+            cnLabel: '快速配置总线',
+            enLabel: 'Quick Bus Config',
+            value: null,
+            items: [null, ...availableBuses],
+            onChanged: (bus) {
+              if (bus != null) {
+                config.busLsbPin = bus.startPin;
+                config.busMsbPin = bus.endPin;
+                state.setDigitalTrigger(config);
+              }
+            },
+            itemBuilder: (bus) => bus == null ? '选择已存在的总线...' : '${bus.name} (D${bus.startPin}-D${bus.endPin})',
+            compact: false,
+          ),
+          const SizedBox(height: 12),
+        ],
         Row(
           children: [
             Expanded(
@@ -492,36 +675,443 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
     );
   }
 
+  int _parseHexDec(String text, int defaultValue) {
+    String t = text.trim();
+    if (t.isEmpty) return defaultValue;
+    try {
+      if (t.toLowerCase().startsWith('0x')) {
+        return int.parse(t.substring(2), radix: 16);
+      } else if (t.toLowerCase().startsWith('0b')) {
+        return int.parse(t.substring(2), radix: 2);
+      } else {
+        return int.parse(t);
+      }
+    } catch (_) {
+      return defaultValue;
+    }
+  }
+
+  List<int> _parseBytes(String text) {
+    List<int> bytes = [];
+    List<String> parts = text.trim().split(RegExp(r'[\s,]+'));
+    for (String part in parts) {
+      if (part.isEmpty) continue;
+      try {
+        if (part.toLowerCase().startsWith('0x')) {
+          bytes.add(int.parse(part.substring(2), radix: 16));
+        } else if (part.toLowerCase().startsWith('0b')) {
+          bytes.add(int.parse(part.substring(2), radix: 2));
+        } else {
+          bytes.add(int.parse(part));
+        }
+      } catch (_) {}
+    }
+    return bytes;
+  }
+
+  Widget _buildTextInputRow({
+    required String cnLabel,
+    required String enLabel,
+    required TextEditingController controller,
+    required String hintText,
+    required void Function(String) onSubmitted,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: cnLabel),
+              TextSpan(text: ' ($enLabel)', style: const TextStyle(fontSize: 11, color: Colors.white54)),
+            ],
+          ),
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        const SizedBox(width: 16),
+        Container(
+          width: 200,
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2A2A2A),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.grey.shade700),
+          ),
+          child: TextField(
+            controller: controller,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              hintText: hintText,
+              hintStyle: const TextStyle(color: Colors.white30),
+              contentPadding: const EdgeInsets.only(bottom: 14),
+            ),
+            onSubmitted: onSubmitted,
+            onTapOutside: (_) => onSubmitted(controller.text),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAdvancedBusTab(OscilloscopeState state, DigitalTriggerConfig config) {
     List<String> advBusTypes = ['I2C', 'SPI', 'UART'];
     if (config.advancedProtocolType == null || !advBusTypes.contains(config.advancedProtocolType)) {
       config.advancedProtocolType = advBusTypes.first;
     }
     
-    return Column(
-      children: [
-        _buildDropdownRow<String>(
-          cnLabel: '总线协议',
-          enLabel: 'Protocol',
-          value: config.advancedProtocolType!,
-          items: advBusTypes,
-          onChanged: (val) {
-            if (val != null) {
-              config.advancedProtocolType = val;
-              state.setDigitalTrigger(config);
-            }
-          },
-          itemBuilder: (item) => item,
+    return SizedBox(
+      height: 220,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            _buildDropdownRow<String>(
+              cnLabel: '总线协议',
+              enLabel: 'Protocol',
+              value: config.advancedProtocolType!,
+              items: advBusTypes,
+              onChanged: (val) {
+                if (val != null) {
+                  config.advancedProtocolType = val;
+                  state.setDigitalTrigger(config);
+                }
+              },
+              itemBuilder: (item) => item,
+            ),
+            const SizedBox(height: 12),
+            if (config.advancedProtocolType == 'I2C') ...[
+              _buildDropdownRow<int>(
+                cnLabel: 'SCL引脚',
+                enLabel: 'SCL Pin',
+                value: config.i2cSclPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.i2cSclPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<int>(
+                cnLabel: 'SDA引脚',
+                enLabel: 'SDA Pin',
+                value: config.i2cSdaPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.i2cSdaPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '触发条件',
+                enLabel: 'Condition',
+                value: config.i2cCondition,
+                items: const ['Start', 'Stop', 'Restart', 'Nack', 'Address', 'Data', 'AddrData'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.i2cCondition = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              if (['Address', 'AddrData'].contains(config.i2cCondition)) ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '设备地址',
+                  enLabel: 'Address',
+                  controller: _i2cAddressController,
+                  hintText: '如: 0x50',
+                  onSubmitted: (v) {
+                    config.i2cAddress = _parseHexDec(v, 0x50);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildDropdownRow<String>(
+                  cnLabel: '地址位数',
+                  enLabel: 'Addr Mode',
+                  value: config.i2cAddrMode,
+                  items: const ['7bit', '10bit'],
+                  onChanged: (v) {
+                    if (v != null) {
+                      config.i2cAddrMode = v;
+                      state.setDigitalTrigger(config);
+                    }
+                  },
+                  itemBuilder: (item) => item,
+                ),
+                const SizedBox(height: 8),
+                _buildDropdownRow<String>(
+                  cnLabel: '读写方向',
+                  enLabel: 'Direction',
+                  value: config.i2cDirection,
+                  items: const ['Any', 'Read', 'Write'],
+                  onChanged: (v) {
+                    if (v != null) {
+                      config.i2cDirection = v;
+                      state.setDigitalTrigger(config);
+                    }
+                  },
+                  itemBuilder: (item) => item,
+                ),
+              ],
+              if (['Data', 'AddrData'].contains(config.i2cCondition)) ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '匹配数据',
+                  enLabel: 'Data',
+                  controller: _i2cDataController,
+                  hintText: '如: 0xAA',
+                  onSubmitted: (v) {
+                    config.i2cData = _parseBytes(v);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildDropdownRow<int>(
+                  cnLabel: '数据索引',
+                  enLabel: 'Index',
+                  value: config.i2cDataIndex,
+                  items: const [-1, 0, 1, 2, 3, 4, 5, 6, 7],
+                  onChanged: (v) {
+                    if (v != null) {
+                      config.i2cDataIndex = v;
+                      state.setDigitalTrigger(config);
+                    }
+                  },
+                  itemBuilder: (item) => item == -1 ? '任意 (Any)' : '字节 $item',
+                ),
+              ],
+            ] else if (config.advancedProtocolType == 'SPI') ...[
+              _buildDropdownRow<int>(
+                cnLabel: 'CS引脚',
+                enLabel: 'CS Pin',
+                value: config.spiCsPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.spiCsPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<int>(
+                cnLabel: 'SCK引脚',
+                enLabel: 'SCK Pin',
+                value: config.spiSckPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.spiSckPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<int>(
+                cnLabel: 'MOSI引脚',
+                enLabel: 'MOSI Pin',
+                value: config.spiMosiPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.spiMosiPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<int>(
+                cnLabel: 'MISO引脚',
+                enLabel: 'MISO Pin',
+                value: config.spiMisoPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.spiMisoPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<bool>(
+                cnLabel: 'CS极性',
+                enLabel: 'CS Polar',
+                value: config.spiCsActiveLow,
+                items: const [true, false],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.spiCsActiveLow = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item ? '低有效 (Low)' : '高有效 (High)',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '时钟采样边沿',
+                enLabel: 'SCK Edge',
+                value: config.spiClockEdge,
+                items: const ['Rising', 'Falling'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.spiClockEdge = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item == 'Rising' ? '上升沿 (Rising)' : '下降沿 (Falling)',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '触发条件',
+                enLabel: 'Condition',
+                value: config.spiCondition,
+                items: const ['CsActive', 'CsInactive', 'MosiData', 'MisoData', 'BothData'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.spiCondition = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              if (['MosiData', 'BothData'].contains(config.spiCondition)) ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: 'MOSI匹配值',
+                  enLabel: 'MOSI Data',
+                  controller: _spiMosiDataController,
+                  hintText: '如: 0x9F 0x00',
+                  onSubmitted: (v) {
+                    config.spiMosiData = _parseBytes(v);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+              if (['MisoData', 'BothData'].contains(config.spiCondition)) ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: 'MISO匹配值',
+                  enLabel: 'MISO Data',
+                  controller: _spiMisoDataController,
+                  hintText: '如: 0x00 0xAA',
+                  onSubmitted: (v) {
+                    config.spiMisoData = _parseBytes(v);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+            ] else if (config.advancedProtocolType == 'UART') ...[
+              _buildDropdownRow<int>(
+                cnLabel: 'RX引脚',
+                enLabel: 'RX Pin',
+                value: config.uartRxPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.uartRxPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<int>(
+                cnLabel: 'TX引脚',
+                enLabel: 'TX Pin',
+                value: config.uartTxPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.uartTxPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildTextInputRow(
+                cnLabel: '波特率',
+                enLabel: 'Baud Rate',
+                controller: _uartBaudController,
+                hintText: '115200',
+                onSubmitted: (v) {
+                  config.uartBaudRate = _parseHexDec(v, 115200);
+                  state.setDigitalTrigger(config);
+                },
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<int>(
+                cnLabel: '数据位数',
+                enLabel: 'Data Bits',
+                value: config.uartDataBits,
+                items: const [5, 6, 7, 8, 9],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.uartDataBits = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => '$item bit',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '奇偶校验',
+                enLabel: 'Parity',
+                value: config.uartParity,
+                items: const ['None', 'Odd', 'Even'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.uartParity = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '触发条件',
+                enLabel: 'Condition',
+                value: config.uartCondition,
+                items: const ['StartBit', 'StopBit', 'Data', 'Sequence', 'ParityError'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.uartCondition = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              if (['Data', 'Sequence'].contains(config.uartCondition)) ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '匹配数据',
+                  enLabel: 'UART Data',
+                  controller: _uartDataController,
+                  hintText: '如: 0x55 0xAA',
+                  onSubmitted: (v) {
+                    config.uartData = _parseBytes(v);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+            ],
+          ],
         ),
-        const SizedBox(height: 16),
-        const Center(
-          child: Text(
-            '高级总线触发解析逻辑尚未实装，敬请期待。\n(Advanced Bus logic placeholder)',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white30, fontSize: 13),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -531,33 +1121,308 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
       config.protocolTriggerType = protocolTypes.first;
     }
 
-    return Column(
-      children: [
-        _buildDropdownRow<String>(
-          cnLabel: '特定协议',
-          enLabel: 'Target Protocol',
-          value: config.protocolTriggerType!,
-          items: protocolTypes,
-          onChanged: (val) {
-            if (val != null) {
-              config.protocolTriggerType = val;
-              state.setDigitalTrigger(config);
-            }
-          },
-          itemBuilder: (item) => item,
+    return SizedBox(
+      height: 220,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            _buildDropdownRow<String>(
+              cnLabel: '特定协议',
+              enLabel: 'Target Protocol',
+              value: config.protocolTriggerType!,
+              items: protocolTypes,
+              onChanged: (val) {
+                if (val != null) {
+                  config.protocolTriggerType = val;
+                  state.setDigitalTrigger(config);
+                }
+              },
+              itemBuilder: (item) => item,
+            ),
+            const SizedBox(height: 12),
+            if (config.protocolTriggerType == 'CAN') ...[
+              _buildDropdownRow<int>(
+                cnLabel: 'CAN信号引脚',
+                enLabel: 'CAN Pin',
+                value: config.canPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.canPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildTextInputRow(
+                cnLabel: '波特率',
+                enLabel: 'Baud Rate',
+                controller: _canBaudController,
+                hintText: '250000',
+                onSubmitted: (v) {
+                  config.canBaudRate = _parseHexDec(v, 250000);
+                  state.setDigitalTrigger(config);
+                },
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '触发条件',
+                enLabel: 'Condition',
+                value: config.canCondition,
+                items: const ['SOF', 'ID', 'Data', 'Type', 'EOF', 'Error'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.canCondition = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              if (config.canCondition == 'ID') ...[
+                const SizedBox(height: 8),
+                _buildDropdownRow<String>(
+                  cnLabel: '运算符',
+                  enLabel: 'Operator',
+                  value: config.canIdOperator,
+                  items: const ['=', '!=', '>', '<'],
+                  onChanged: (v) {
+                    if (v != null) {
+                      config.canIdOperator = v;
+                      state.setDigitalTrigger(config);
+                    }
+                  },
+                  itemBuilder: (item) => item,
+                ),
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '匹配帧ID',
+                  enLabel: 'Frame ID',
+                  controller: _canIdController,
+                  hintText: '如: 0x100',
+                  onSubmitted: (v) {
+                    config.canId = _parseHexDec(v, 0x100);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+              if (config.canCondition == 'Type') ...[
+                const SizedBox(height: 8),
+                _buildDropdownRow<String>(
+                  cnLabel: '帧类型',
+                  enLabel: 'Frame Type',
+                  value: config.canFrameType,
+                  items: const ['Data', 'Remote', 'Error', 'Overload'],
+                  onChanged: (v) {
+                    if (v != null) {
+                      config.canFrameType = v;
+                      state.setDigitalTrigger(config);
+                    }
+                  },
+                  itemBuilder: (item) => item,
+                ),
+              ],
+              if (config.canCondition == 'Data') ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '匹配数据',
+                  enLabel: 'CAN Data',
+                  controller: _canDataController,
+                  hintText: '如: 0x11 0x22',
+                  onSubmitted: (v) {
+                    config.canData = _parseBytes(v);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '数据偏移',
+                  enLabel: 'Offset',
+                  controller: _canDataOffsetController,
+                  hintText: '0',
+                  onSubmitted: (v) {
+                    config.canDataOffset = _parseHexDec(v, 0);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+            ] else if (config.protocolTriggerType == 'LIN') ...[
+              _buildDropdownRow<int>(
+                cnLabel: 'LIN信号引脚',
+                enLabel: 'LIN Pin',
+                value: config.linPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.linPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildTextInputRow(
+                cnLabel: '波特率',
+                enLabel: 'Baud Rate',
+                controller: _linBaudController,
+                hintText: '19200',
+                onSubmitted: (v) {
+                  config.linBaudRate = _parseHexDec(v, 19200);
+                  state.setDigitalTrigger(config);
+                },
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '触发条件',
+                enLabel: 'Condition',
+                value: config.linCondition,
+                items: const ['Sync', 'ID', 'Data', 'ChecksumError'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.linCondition = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              if (config.linCondition == 'ID') ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '帧ID',
+                  enLabel: 'Frame ID',
+                  controller: _linIdController,
+                  hintText: '如: 0x3C',
+                  onSubmitted: (v) {
+                    config.linId = _parseHexDec(v, 0x3C);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+              if (config.linCondition == 'Data') ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '匹配数据',
+                  enLabel: 'LIN Data',
+                  controller: _linDataController,
+                  hintText: '如: 0x01 0x02',
+                  onSubmitted: (v) {
+                    config.linData = _parseBytes(v);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+            ] else if (config.protocolTriggerType == 'USB') ...[
+              _buildDropdownRow<int>(
+                cnLabel: 'D+引脚',
+                enLabel: 'D+ Pin',
+                value: config.usbDpPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.usbDpPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<int>(
+                cnLabel: 'D-引脚',
+                enLabel: 'D- Pin',
+                value: config.usbDnPin,
+                items: List.generate(32, (i) => i),
+                onChanged: (v) {
+                  if (v != null) {
+                    config.usbDnPin = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => 'D$item',
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '传输速度',
+                enLabel: 'USB Speed',
+                value: config.usbSpeed,
+                items: const ['LowSpeed', 'FullSpeed'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.usbSpeed = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              const SizedBox(height: 8),
+              _buildDropdownRow<String>(
+                cnLabel: '触发条件',
+                enLabel: 'Condition',
+                value: config.usbCondition,
+                items: const ['SOP', 'EOP', 'Reset', 'PID', 'Token', 'Data'],
+                onChanged: (v) {
+                  if (v != null) {
+                    config.usbCondition = v;
+                    state.setDigitalTrigger(config);
+                  }
+                },
+                itemBuilder: (item) => item,
+              ),
+              if (config.usbCondition == 'PID') ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: 'PID值',
+                  enLabel: 'PID Value',
+                  controller: _usbPidController,
+                  hintText: '如: 0x2D',
+                  onSubmitted: (v) {
+                    config.usbPid = _parseHexDec(v, 0x2D);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+              if (config.usbCondition == 'Token') ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '设备地址',
+                  enLabel: 'USB Addr',
+                  controller: _usbAddrController,
+                  hintText: '1',
+                  onSubmitted: (v) {
+                    config.usbAddr = _parseHexDec(v, 1);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '端点',
+                  enLabel: 'Endpoint',
+                  controller: _usbEpController,
+                  hintText: '0',
+                  onSubmitted: (v) {
+                    config.usbEp = _parseHexDec(v, 0);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+              if (config.usbCondition == 'Data') ...[
+                const SizedBox(height: 8),
+                _buildTextInputRow(
+                  cnLabel: '匹配数据',
+                  enLabel: 'USB Data',
+                  controller: _usbDataController,
+                  hintText: '如: 0xAA 0xBB',
+                  onSubmitted: (v) {
+                    config.usbData = _parseBytes(v);
+                    state.setDigitalTrigger(config);
+                  },
+                ),
+              ],
+            ],
+          ],
         ),
-        const SizedBox(height: 16),
-        const Center(
-          child: Text(
-            '协议触发解析逻辑尚未实装，敬请期待。\n(Protocol logic placeholder)',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white30, fontSize: 13),
-          ),
-        ),
-      ],
+      ),
     );
   }
-
   Widget _buildDropdownRow<T>({
     required String cnLabel,
     required String enLabel,

@@ -151,7 +151,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
           const SizedBox(width: 4),
           _buildToolbarButton(
             icon: Icons.compare_arrows,
-            label: 'Cursors',
+            label: 'Xcursors',
             tooltip: state.showCursors ? 'X Cursor Off' : 'X Cursor On',
             isActive: state.showCursors,
             onTap: () => state.toggleCursors(),
