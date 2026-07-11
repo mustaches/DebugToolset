@@ -230,37 +230,35 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
 
     return HoverBuilder(
       builder: (context, isHovered) {
-        return GestureDetector(
-          onTap: () {
-            bool anyEnabled = false;
-            for (int p = startPin; p <= endPin; p++) {
-              if (state.digitalChannel.enabledPins.contains(p)) {
-                anyEnabled = true;
-                break;
-              }
-            }
-            state.setDigitalPinGroupVisibility(startPin, endPin, !anyEnabled);
-          },
-          onLongPress: () {
-            _showMsoGroupDialog(context, state, busIndex);
-          },
-          child: Container(
-            width: 85,
-            margin: const EdgeInsets.only(right: 6.0),
-            decoration: BoxDecoration(
-              color: isHovered ? const Color(0xFF2A2A2A) : const Color(0xFF202020),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: isHovered ? (isActive ? Colors.purpleAccent : Colors.white) : (isActive ? boxColor : Colors.grey.shade800), 
-                width: isActive || isHovered ? 3.0 : 2.0
-              ),
-              boxShadow: isHovered && isActive ? [BoxShadow(color: boxColor.withValues(alpha: 0.3), blurRadius: 4)] : null,
+        return Container(
+          width: 85,
+          margin: const EdgeInsets.only(right: 6.0),
+          decoration: BoxDecoration(
+            color: isHovered ? const Color(0xFF2A2A2A) : const Color(0xFF202020),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isHovered ? (isActive ? Colors.purpleAccent : Colors.white) : (isActive ? boxColor : Colors.grey.shade800), 
+              width: isActive || isHovered ? 3.0 : 2.0
             ),
-            clipBehavior: Clip.antiAlias,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
+            boxShadow: isHovered && isActive ? [BoxShadow(color: boxColor.withValues(alpha: 0.3), blurRadius: 4)] : null,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  bool anyEnabled = false;
+                  for (int p = startPin; p <= endPin; p++) {
+                    if (state.digitalChannel.enabledPins.contains(p)) {
+                      anyEnabled = true;
+                      break;
+                    }
+                  }
+                  state.setDigitalPinGroupVisibility(startPin, endPin, !anyEnabled);
+                },
+                child: Container(
                   width: 24,
                   color: isActive ? boxColor : Colors.grey.shade800,
                   alignment: Alignment.center,
@@ -273,7 +271,17 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                     ),
                   ),
                 ),
-                Expanded(
+              ),
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    showDialog(
+                      context: context,
+                      useRootNavigator: false,
+                      builder: (ctx) => MsoGroupDialog(state: state, busIndex: busIndex),
+                    );
+                  },
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 2.0),
                     child: Column(
@@ -291,8 +299,8 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       }
@@ -704,50 +712,158 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     );
   }
 
-  void _showMsoGroupDialog(BuildContext context, OscilloscopeState state, int busIndex) {
-    int start = busIndex * 8;
+}
+
+class MsoGroupDialog extends StatefulWidget {
+  final OscilloscopeState state;
+  final int busIndex;
+
+  const MsoGroupDialog({
+    super.key,
+    required this.state,
+    required this.busIndex,
+  });
+
+  @override
+  State<MsoGroupDialog> createState() => _MsoGroupDialogState();
+}
+
+class _MsoGroupDialogState extends State<MsoGroupDialog> {
+  final Map<int, TextEditingController> _controllers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    int start = widget.busIndex * 8;
     int end = start + 7;
-    showDialog(
-      context: context,
-      useRootNavigator: false,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF2A2A2A),
-          title: Text('MSO L${busIndex + 1} (D$start - D$end) 数字逻辑引脚配置', style: const TextStyle(color: Colors.white, fontSize: 14)),
-          content: SizedBox(
-            width: 320,
-            child: Consumer<OscilloscopeState>(
-              builder: (ctx, consumerState, child) {
-                return Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: List.generate(8, (i) {
-                    int index = start + i;
-                    final isEnabled = consumerState.digitalChannel.enabledPins.contains(index);
-                    return FilterChip(
-                      label: Text('D$index', style: const TextStyle(fontSize: 10, color: Colors.white)),
-                      selected: isEnabled,
-                      onSelected: (_) => consumerState.toggleDigitalPinVisibility(index),
-                      showCheckmark: false,
-                      selectedColor: Colors.purpleAccent,
-                      backgroundColor: Colors.grey.shade800,
-                      padding: EdgeInsets.zero,
-                    );
-                  }),
-                );
-              },
+    for (int p = end; p >= start; p--) {
+      _controllers[p] = TextEditingController(text: widget.state.digitalChannel.pinNames[p] ?? '');
+    }
+  }
+
+  @override
+  void dispose() {
+    for (var controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    int start = widget.busIndex * 8;
+    int end = start + 7;
+
+    return Dialog(
+      backgroundColor: const Color(0xFF161616),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey.shade800, width: 2),
+      ),
+      child: Container(
+        width: 380,
+        height: 480,
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'L${widget.busIndex + 1} 子通道配置 (D$end - D$start)',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Icon(Icons.close, color: Colors.grey.shade400, size: 18),
+                ),
+              ],
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('关闭', style: TextStyle(color: Colors.white)),
+            const SizedBox(height: 10),
+            Divider(color: Colors.grey.shade800, height: 1),
+            const SizedBox(height: 10),
+            Expanded(
+              child: Consumer<OscilloscopeState>(
+                builder: (context, oscState, child) {
+                  return ListView.builder(
+                    itemCount: 8,
+                    itemBuilder: (context, idx) {
+                      int pin = end - idx;
+                      bool isEnabled = oscState.digitalChannel.enabledPins.contains(pin);
+
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6.0),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 36,
+                              child: Text(
+                                'D$pin',
+                                style: TextStyle(
+                                  color: isEnabled ? Colors.greenAccent : Colors.grey,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              height: 18,
+                              child: Transform.scale(
+                                scale: 0.65,
+                                alignment: Alignment.centerLeft,
+                                child: Switch(
+                                  value: isEnabled,
+                                  activeThumbColor: Colors.lightBlueAccent,
+                                  activeTrackColor: Colors.lightBlueAccent.withValues(alpha: 0.5),
+                                  inactiveThumbColor: Colors.grey.shade400,
+                                  inactiveTrackColor: Colors.grey.shade700,
+                                  onChanged: (v) => oscState.toggleDigitalPinVisibility(pin),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Container(
+                                height: 30,
+                                child: TextField(
+                                  controller: _controllers[pin],
+                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                  decoration: InputDecoration(
+                                    hintText: '未命名',
+                                    hintStyle: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderSide: BorderSide(color: Colors.grey.shade800),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderSide: const BorderSide(color: Colors.lightBlueAccent),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ),
+                                  onChanged: (text) {
+                                    oscState.setDigitalPinName(pin, text);
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ],
-        );
-      },
+        ),
+      ),
     );
-  }
 
   void _showBatchRenamePinsDialog(BuildContext context, OscilloscopeState state, DigitalBus bus) {
     
