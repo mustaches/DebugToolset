@@ -476,8 +476,8 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                       }
 
                                       return Container(
-                                        margin: const EdgeInsets.only(bottom: 14),
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                        margin: EdgeInsets.only(bottom: index == 3 ? 0.0 : 16.0),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15.5),
                                         decoration: BoxDecoration(
                                           color: [
                                             const Color(0xFF1A2634), // D7-D0
@@ -512,7 +512,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                                                 ),
                                               ],
                                             ),
-                                            const SizedBox(height: 6),
+                                            const SizedBox(height: 8),
                                             Row(
                                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                               children: List.generate(8, (pinOffset) {
