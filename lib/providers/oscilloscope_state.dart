@@ -651,19 +651,266 @@ class OscilloscopeState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void sendScpiCommand(String command) {
-    if (_lxiSocket == null) {
-      _addScpiConsoleLog('System Error: Not connected');
-      return;
+  void _sendLxiScpi(String command) {
+    if (_connectionSource == 'LXI' && _isLxiConnected) {
+      sendScpiCommand(command);
     }
-    final cleanCmd = command.endsWith('\n') ? command : '$command\n';
-    _lxiSocket!.write(cleanCmd);
-    _addScpiConsoleLog('-> $command');
-    
-    // Check if it's trigger/waveform command to simulate data
-    final upperCmd = command.trim().toUpperCase();
-    if (upperCmd == ':WAV:DATA?' || upperCmd == ':WAVeform:DATA?' || upperCmd == ':CURV?') {
-      _injectMockLxiWaveform();
+  }
+
+  void _sendTriggerConfigToLxi() {
+    if (_connectionSource == 'LXI' && _isLxiConnected) {
+      final sourceStr = _triggerSourceType == TriggerSourceType.analog
+          ? 'CHANnel${_triggerSourceIndex + 1}'
+          : 'D$_triggerSourceIndex';
+      sendScpiCommand(':TRIGger:EDGE:SOURce $sourceStr');
+      
+      final slopeStr = _triggerEdge == TriggerEdge.rising
+          ? 'POSitive'
+          : (_triggerEdge == TriggerEdge.falling ? 'NEGative' : 'RFIFth');
+      sendScpiCommand(':TRIGger:EDGE:SLOPe $slopeStr');
+      
+      final volts = (_triggerLevel - 2048) * (channels[selectedChannelIndex].yScale / 256.0);
+      sendScpiCommand(':TRIGger:EDGE:LEVel $volts');
+    }
+  }
+
+  String _scpiWavSource = 'CHANnel1';
+
+  void sendScpiCommand(String command) {
+    final cleanCmd = command.trim();
+    if (cleanCmd.isEmpty) return;
+
+    if (_connectionSource == 'LXI' && _isLxiConnected && _lxiSocket != null) {
+      final writeCmd = cleanCmd.endsWith('\n') ? cleanCmd : '$cleanCmd\n';
+      _lxiSocket!.write(writeCmd);
+      _addScpiConsoleLog('-> $cleanCmd');
+      _executeLocalScpiInternal(cleanCmd, logQueryResponse: false);
+    } else {
+      _executeLocalScpiInternal(cleanCmd, logQueryResponse: true);
+    }
+  }
+
+  String _executeLocalScpiInternal(String command, {bool logQueryResponse = true}) {
+    final cmd = command.trim();
+    if (cmd.isEmpty) return '';
+
+    final parts = cmd.split(RegExp(r'\s+'));
+    final cmdName = parts[0].toUpperCase();
+    final args = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+
+    if (_connectionSource != 'LXI' || !_isLxiConnected) {
+      _addScpiConsoleLog('-> $cmd');
+    }
+
+    try {
+      if (cmdName == '*IDN?') {
+        final res = 'RIGOL TECHNOLOGIES,MSO8000A,MSO8A234500123,01.04.00.01';
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+      if (cmdName == '*RST') {
+        resetToDefault();
+        _addScpiConsoleLog('<- OK (Reset to Default)');
+        return 'OK';
+      }
+      if (cmdName == '*CLS') {
+        clearData();
+        _addScpiConsoleLog('<- OK (Cleared)');
+        return 'OK';
+      }
+      if (cmdName == '*OPC?') {
+        if (logQueryResponse) _addScpiConsoleLog('<- 1');
+        return '1';
+      }
+      if (cmdName == '*OPC') {
+        return '';
+      }
+
+      if (cmdName == ':RUN') {
+        if (_isPaused) togglePause();
+        return 'OK';
+      }
+      if (cmdName == ':STOP') {
+        if (!_isPaused) togglePause();
+        return 'OK';
+      }
+      if (cmdName == ':SINGLE' || cmdName == ':SING') {
+        singleShot();
+        return 'OK';
+      }
+      if (cmdName == ':TFORCE' || cmdName == ':TFOR') {
+        forceTrigger();
+        return 'OK';
+      }
+      if (cmdName == ':AUTOSCALE' || cmdName == ':AUT') {
+        autoSetup();
+        return 'OK';
+      }
+      if (cmdName == ':CLEAR' || cmdName == ':CLE') {
+        clearData();
+        return 'OK';
+      }
+
+      final chanDisplayReg = RegExp(r'^:CHANNEL([1-4]):DISPLAY$');
+      final chanDisplayQueryReg = RegExp(r'^:CHANNEL([1-4]):DISPLAY\?$');
+      
+      var match = chanDisplayReg.firstMatch(cmdName);
+      if (match != null) {
+        final chIdx = int.parse(match.group(1)!) - 1;
+        final val = args.toUpperCase();
+        final visible = val == 'ON' || val == '1';
+        if (channels[chIdx].isVisible != visible) {
+          toggleChannelVisibility(chIdx);
+        }
+        return 'OK';
+      }
+      
+      match = chanDisplayQueryReg.firstMatch(cmdName);
+      if (match != null) {
+        final chIdx = int.parse(match.group(1)!) - 1;
+        final res = channels[chIdx].isVisible ? '1' : '0';
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      final chanScaleReg = RegExp(r'^:CHANNEL([1-4]):SCALE$');
+      final chanScaleQueryReg = RegExp(r'^:CHANNEL([1-4]):SCALE\?$');
+      
+      match = chanScaleReg.firstMatch(cmdName);
+      if (match != null) {
+        final chIdx = int.parse(match.group(1)!) - 1;
+        final val = double.tryParse(args);
+        if (val != null) {
+          setChannelScale(chIdx, val);
+          return 'OK';
+        }
+      }
+      
+      match = chanScaleQueryReg.firstMatch(cmdName);
+      if (match != null) {
+        final chIdx = int.parse(match.group(1)!) - 1;
+        final res = channels[chIdx].yScale.toStringAsExponential(6);
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      final chanOffsetReg = RegExp(r'^:CHANNEL([1-4]):OFFSET$');
+      final chanOffsetQueryReg = RegExp(r'^:CHANNEL([1-4]):OFFSET\?$');
+      
+      match = chanOffsetReg.firstMatch(cmdName);
+      if (match != null) {
+        final chIdx = int.parse(match.group(1)!) - 1;
+        final val = double.tryParse(args);
+        if (val != null) {
+          setChannelOffset(chIdx, val);
+          return 'OK';
+        }
+      }
+      
+      match = chanOffsetQueryReg.firstMatch(cmdName);
+      if (match != null) {
+        final chIdx = int.parse(match.group(1)!) - 1;
+        final res = channels[chIdx].yOffset.toStringAsExponential(6);
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      if (cmdName == ':TIMEBASE:MAIN:SCALE' || cmdName == ':TIMEBASE:SCALE') {
+        final val = double.tryParse(args);
+        if (val != null) {
+          setTimebase(val);
+          return 'OK';
+        }
+      }
+      if (cmdName == ':TIMEBASE:MAIN:SCALE?' || cmdName == ':TIMEBASE:SCALE?') {
+        final res = xScale.toStringAsExponential(6);
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      if (cmdName == ':TRIGGER:SWEEP' || cmdName == ':TRIG:SWE' || cmdName == ':TRIG:SWEEP' || cmdName == ':TRIGGER:SWE') {
+        final val = args.toUpperCase();
+        if (val == 'AUTO') setTriggerMode(TriggerMode.auto);
+        if (val == 'NORMAL' || val == 'NORM') setTriggerMode(TriggerMode.normal);
+        if (val == 'SINGLE' || val == 'SING') setTriggerMode(TriggerMode.single);
+        return 'OK';
+      }
+      if (cmdName == ':TRIGGER:SWEEP?' || cmdName == ':TRIG:SWE?' || cmdName == ':TRIG:SWEEP?' || cmdName == ':TRIGGER:SWE?') {
+        final res = triggerMode.name.toUpperCase();
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      if (cmdName == ':TRIGGER:EDGE:SOURCE' || cmdName == ':TRIG:EDGE:SOUR' || cmdName == ':TRIG:EDGE:SOURCE' || cmdName == ':TRIGGER:EDGE:SOUR') {
+        final val = args.toUpperCase();
+        if (val.startsWith('CHAN')) {
+          final ch = int.tryParse(val.replaceAll(RegExp(r'\D'), '')) ?? 1;
+          setTriggerSource(TriggerSourceType.analog, ch - 1);
+        } else if (val.startsWith('D')) {
+          final pin = int.tryParse(val.replaceAll(RegExp(r'\D'), '')) ?? 0;
+          setTriggerSource(TriggerSourceType.digital, pin);
+        }
+        return 'OK';
+      }
+      if (cmdName == ':TRIGGER:EDGE:SOURCE?' || cmdName == ':TRIG:EDGE:SOUR?' || cmdName == ':TRIG:EDGE:SOURCE?' || cmdName == ':TRIGGER:EDGE:SOUR?') {
+        final res = triggerSourceType == TriggerSourceType.analog
+            ? 'CHANnel${triggerSourceIndex + 1}'
+            : 'D$triggerSourceIndex';
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      if (cmdName == ':TRIGGER:EDGE:SLOPE' || cmdName == ':TRIG:EDGE:SLOP' || cmdName == ':TRIG:EDGE:SLOPE' || cmdName == ':TRIGGER:EDGE:SLOP') {
+        final val = args.toUpperCase();
+        if (val == 'POSITIVE' || val == 'POS') setTriggerEdge(TriggerEdge.rising);
+        if (val == 'NEGATIVE' || val == 'NEG') setTriggerEdge(TriggerEdge.falling);
+        if (val == 'RFIFTH' || val == 'BOTH') setTriggerEdge(TriggerEdge.both);
+        return 'OK';
+      }
+      if (cmdName == ':TRIGGER:EDGE:SLOPE?' || cmdName == ':TRIG:EDGE:SLOP?' || cmdName == ':TRIG:EDGE:SLOPE?' || cmdName == ':TRIGGER:EDGE:SLOP?') {
+        final res = triggerEdge == TriggerEdge.rising
+            ? 'POS'
+            : (triggerEdge == TriggerEdge.falling ? 'NEG' : 'BOTH');
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      if (cmdName == ':TRIGGER:EDGE:LEVEL' || cmdName == ':TRIG:EDGE:LEV' || cmdName == ':TRIG:EDGE:LEVEL' || cmdName == ':TRIGGER:EDGE:LEV') {
+        final val = double.tryParse(args);
+        if (val != null) {
+          final chScale = channels[selectedChannelIndex].yScale;
+          final int lvl = (2048 + (val * 256.0 / (chScale != 0 ? chScale : 1))).round().clamp(0, 4095);
+          setTriggerLevel(lvl);
+          return 'OK';
+        }
+      }
+      if (cmdName == ':TRIGGER:EDGE:LEVEL?' || cmdName == ':TRIG:EDGE:LEV?' || cmdName == ':TRIG:EDGE:LEVEL?' || cmdName == ':TRIGGER:EDGE:LEV?') {
+        final volts = (triggerLevel - 2048) * (channels[selectedChannelIndex].yScale / 256.0);
+        final res = volts.toStringAsFixed(4);
+        if (logQueryResponse) _addScpiConsoleLog('<- $res');
+        return res;
+      }
+
+      if (cmdName == ':WAVEFORM:SOURCE' || cmdName == ':WAV:SOUR') {
+        _scpiWavSource = args;
+        return 'OK';
+      }
+      if (cmdName == ':WAVEFORM:SOURCE?' || cmdName == ':WAV:SOUR?') {
+        if (logQueryResponse) _addScpiConsoleLog('<- $_scpiWavSource');
+        return _scpiWavSource;
+      }
+
+      if (cmdName == ':WAVEFORM:DATA?' || cmdName == ':WAV:DATA?' || cmdName == ':CURV?') {
+        _injectMockLxiWaveform();
+        final res = '[Binary Waveform Injected]';
+        return res;
+      }
+
+      _addScpiConsoleLog('System Error: Unknown command "$cmdName"');
+      return 'Error: Unknown command';
+    } catch (e) {
+      _addScpiConsoleLog('System Error: $e');
+      return 'Error: $e';
     }
   }
 
@@ -1051,6 +1298,7 @@ class OscilloscopeState extends ChangeNotifier {
     byteData.setUint16(2, _triggerLevel, Endian.little);
 
     _sendControlFrame(0x03, payload);
+    _sendTriggerConfigToLxi();
   }
 
   void _sendDigitalTriggerConfigToHardware(DigitalTriggerConfig config) {
@@ -2485,6 +2733,7 @@ class OscilloscopeState extends ChangeNotifier {
     if (_isPaused) {
       _isSingleShot = false;
       decodeAllProtocols();
+      _sendLxiScpi(':STOP');
     } else {
       if (_triggerMode == TriggerMode.single) {
         _triggerMode = TriggerMode.auto;
@@ -2494,6 +2743,7 @@ class OscilloscopeState extends ChangeNotifier {
       } else {
         _isWaitingForTrigger = false;
       }
+      _sendLxiScpi(':RUN');
     }
     notifyListeners();
   }
@@ -2501,6 +2751,7 @@ class OscilloscopeState extends ChangeNotifier {
   void singleShot() {
     _isSingleShot = true;
     setTriggerMode(TriggerMode.single);
+    _sendLxiScpi(':SINGle');
   }
 
   void toggleDemoMode() {
@@ -2869,6 +3120,7 @@ class OscilloscopeState extends ChangeNotifier {
   void toggleChannelVisibility(int index) {
     if (index >= 0 && index < channels.length) {
       channels[index].isVisible = !channels[index].isVisible;
+      _sendLxiScpi(':CHANnel${index + 1}:DISPlay ${channels[index].isVisible ? 'ON' : 'OFF'}');
       notifyListeners();
     }
   }
@@ -2932,6 +3184,7 @@ class OscilloscopeState extends ChangeNotifier {
 
   void setTimebase(double x) {
     _xScale = x;
+    _sendLxiScpi(':TIMebase:MAIN:SCALe $x');
     notifyListeners();
   }
 
@@ -2976,6 +3229,7 @@ class OscilloscopeState extends ChangeNotifier {
   void setChannelScale(int index, double y) {
     if (index >= 0 && index < channels.length) {
       channels[index].yScale = y;
+      _sendLxiScpi(':CHANnel${index + 1}:SCALe $y');
       notifyListeners();
     }
   }
@@ -2983,6 +3237,7 @@ class OscilloscopeState extends ChangeNotifier {
   void setChannelOffset(int index, double offset) {
     if (index >= 0 && index < channels.length) {
       channels[index].yOffset = offset;
+      _sendLxiScpi(':CHANnel${index + 1}:OFFSet $offset');
       notifyListeners();
     }
   }
