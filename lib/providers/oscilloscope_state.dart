@@ -1052,7 +1052,7 @@ class OscilloscopeState extends ChangeNotifier {
       notifyListeners();
 
       if (!isAutoResolution) {
-        final double width = displayWidth + 320.0 + 76.0;
+        final double width = displayWidth + 320.0 + 86.0;
         final double height = displayHeight + 75.0;
         try {
           if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
