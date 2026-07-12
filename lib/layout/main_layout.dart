@@ -250,7 +250,7 @@ class WindowSizeText extends StatefulWidget {
 }
 
 class _WindowSizeTextState extends State<WindowSizeText> with WindowListener {
-  Size _size = const Size(1682, 873);
+  Size _size = const Size(1662, 873);
 
   @override
   void initState() {
