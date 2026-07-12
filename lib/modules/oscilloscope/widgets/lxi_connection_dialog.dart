@@ -160,6 +160,8 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
                           DropdownMenuItem(value: 'MSO2000A', child: Text('RIGOL MSO2000A/DS2000A')),
                           DropdownMenuItem(value: 'DHO900', child: Text('RIGOL DHO900')),
                           DropdownMenuItem(value: 'DHO800', child: Text('RIGOL DHO800')),
+                          DropdownMenuItem(value: 'DS1000Z', child: Text('RIGOL DS1000Z')),
+                          DropdownMenuItem(value: 'MSO1000', child: Text('RIGOL MSO1000')),
                         ],
                         onChanged: (val) {
                           if (val != null) {
