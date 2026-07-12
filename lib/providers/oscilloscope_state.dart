@@ -564,7 +564,7 @@ class OscilloscopeState extends ChangeNotifier {
   final List<DiscoveredLxiDevice> discoveredLxiDevices = [];
   bool isSearchingLxi = false;
 
-  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000'
+  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO8000', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000'
   String get lxiDeviceModel => _lxiDeviceModel;
 
   bool _bodePlotEnabled = false;
@@ -728,7 +728,9 @@ class OscilloscopeState extends ChangeNotifier {
     try {
       if (cmdName == '*IDN?') {
         String res = 'RIGOL TECHNOLOGIES,MSO8000A,MSO8A234500123,01.04.00.01';
-        if (_lxiDeviceModel == 'MSO9000') {
+        if (_lxiDeviceModel == 'MSO8000') {
+          res = 'RIGOL TECHNOLOGIES,MSO8000,MSO8A234500123,01.04.00.01';
+        } else if (_lxiDeviceModel == 'MSO9000') {
           res = 'RIGOL TECHNOLOGIES,MSO9000,MSO9A123456789,01.02.00.01';
         } else if (_lxiDeviceModel == 'DS9000') {
           res = 'RIGOL TECHNOLOGIES,DS9000,DS9A987654321,01.02.00.01';
@@ -950,7 +952,7 @@ class OscilloscopeState extends ChangeNotifier {
 
       // Bode plot subsystem (MSO9000/DS9000 only)
       if (cmdName.startsWith(':BODEPLOT')) {
-        if (_lxiDeviceModel == 'MSO8000A' || _lxiDeviceModel == 'DS80000' || _lxiDeviceModel == 'DS70000') {
+        if (_lxiDeviceModel == 'MSO8000A' || _lxiDeviceModel == 'MSO8000' || _lxiDeviceModel == 'DS80000' || _lxiDeviceModel == 'DS70000') {
           final err = 'Error: Bode plot not supported on $_lxiDeviceModel';
           _addScpiConsoleLog('System Error: $err');
           return err;
