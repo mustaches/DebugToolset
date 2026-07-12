@@ -564,7 +564,7 @@ class OscilloscopeState extends ChangeNotifier {
   final List<DiscoveredLxiDevice> discoveredLxiDevices = [];
   bool isSearchingLxi = false;
 
-  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO8000', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000', 'DHO1000', 'DHO4000', 'DS1000ZE', 'DS8000R', 'MSO7000', 'DS6000', 'MSO5000', 'MSO5000E'
+  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO8000', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000', 'DHO1000', 'DHO4000', 'DS1000ZE', 'DS8000R', 'MSO7000', 'DS6000', 'MSO5000', 'MSO5000E', 'DS4000E'
   String get lxiDeviceModel => _lxiDeviceModel;
 
   bool _bodePlotEnabled = false;
@@ -764,6 +764,8 @@ class OscilloscopeState extends ChangeNotifier {
           res = 'RIGOL TECHNOLOGIES,MSO5104,MSO5A123456789,01.03.00.01';
         } else if (_lxiDeviceModel == 'MSO5000E') {
           res = 'RIGOL TECHNOLOGIES,MSO5104-E,MSO5A123456789,01.03.00.01';
+        } else if (_lxiDeviceModel == 'DS4000E') {
+          res = 'RIGOL TECHNOLOGIES,DS4024E,DS4A123456789,01.00.00.01';
         }
         if (logQueryResponse) _addScpiConsoleLog('<- $res');
         return res;
@@ -968,7 +970,7 @@ class OscilloscopeState extends ChangeNotifier {
 
       // Bode plot subsystem (MSO9000/DS9000 only)
       if (cmdName.startsWith(':BODEPLOT')) {
-        if (_lxiDeviceModel == 'MSO8000A' || _lxiDeviceModel == 'MSO8000' || _lxiDeviceModel == 'DS80000' || _lxiDeviceModel == 'DS70000' || _lxiDeviceModel == 'DHO1000' || _lxiDeviceModel == 'DHO4000' || _lxiDeviceModel == 'DS1000ZE' || _lxiDeviceModel == 'DS8000R' || _lxiDeviceModel == 'MSO7000' || _lxiDeviceModel == 'DS6000') {
+        if (_lxiDeviceModel == 'MSO8000A' || _lxiDeviceModel == 'MSO8000' || _lxiDeviceModel == 'DS80000' || _lxiDeviceModel == 'DS70000' || _lxiDeviceModel == 'DHO1000' || _lxiDeviceModel == 'DHO4000' || _lxiDeviceModel == 'DS1000ZE' || _lxiDeviceModel == 'DS8000R' || _lxiDeviceModel == 'MSO7000' || _lxiDeviceModel == 'DS6000' || _lxiDeviceModel == 'DS4000E') {
           final err = 'Error: Bode plot not supported on $_lxiDeviceModel';
           _addScpiConsoleLog('System Error: $err');
           return err;
