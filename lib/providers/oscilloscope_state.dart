@@ -966,33 +966,76 @@ class OscilloscopeState extends ChangeNotifier {
           if (logQueryResponse) _addScpiConsoleLog('<- $res');
           return res;
         }
-        if (cmdName == ':BODEPLOT:FREQUENCY:START' || cmdName == ':BODEPLOT:FREQ:STAR') {
-          final val = double.tryParse(args);
-          if (val != null) {
-            _bodeStartFreq = val;
-            _addScpiConsoleLog('<- OK (Start Freq: $_bodeStartFreq Hz)');
-            notifyListeners();
-            return 'OK';
+        final isModernPlatform = _lxiDeviceModel == 'MHO5000' || _lxiDeviceModel == 'DHO5000';
+        
+        if (isModernPlatform) {
+          if (cmdName == ':BODEPLOT:START' || cmdName == ':BODEPLOT:STAR') {
+            final val = double.tryParse(args);
+            if (val != null) {
+              _bodeStartFreq = val;
+              _addScpiConsoleLog('<- OK (Start Freq: $_bodeStartFreq Hz)');
+              notifyListeners();
+              return 'OK';
+            }
           }
-        }
-        if (cmdName == ':BODEPLOT:FREQUENCY:START?' || cmdName == ':BODEPLOT:FREQ:STAR?') {
-          final res = _bodeStartFreq.toString();
-          if (logQueryResponse) _addScpiConsoleLog('<- $res');
-          return res;
-        }
-        if (cmdName == ':BODEPLOT:FREQUENCY:STOP' || cmdName == ':BODEPLOT:FREQ:STOP') {
-          final val = double.tryParse(args);
-          if (val != null) {
-            _bodeStopFreq = val;
-            _addScpiConsoleLog('<- OK (Stop Freq: $_bodeStopFreq Hz)');
-            notifyListeners();
-            return 'OK';
+          if (cmdName == ':BODEPLOT:START?' || cmdName == ':BODEPLOT:STAR?') {
+            final res = _bodeStartFreq.toString();
+            if (logQueryResponse) _addScpiConsoleLog('<- $res');
+            return res;
           }
-        }
-        if (cmdName == ':BODEPLOT:FREQUENCY:STOP?' || cmdName == ':BODEPLOT:FREQ:STOP?') {
-          final res = _bodeStopFreq.toString();
-          if (logQueryResponse) _addScpiConsoleLog('<- $res');
-          return res;
+          if (cmdName == ':BODEPLOT:STOP') {
+            final val = double.tryParse(args);
+            if (val != null) {
+              _bodeStopFreq = val;
+              _addScpiConsoleLog('<- OK (Stop Freq: $_bodeStopFreq Hz)');
+              notifyListeners();
+              return 'OK';
+            }
+          }
+          if (cmdName == ':BODEPLOT:STOP?') {
+            final res = _bodeStopFreq.toString();
+            if (logQueryResponse) _addScpiConsoleLog('<- $res');
+            return res;
+          }
+          if (cmdName.contains('FREQUENCY')) {
+            final err = 'Error: :BODeplot:FREQuency:STARt/STOP is not supported on $_lxiDeviceModel. Use :BODeplot:STARt/STOP instead.';
+            _addScpiConsoleLog('System Error: $err');
+            return err;
+          }
+        } else {
+          if (cmdName == ':BODEPLOT:FREQUENCY:START' || cmdName == ':BODEPLOT:FREQ:STAR') {
+            final val = double.tryParse(args);
+            if (val != null) {
+              _bodeStartFreq = val;
+              _addScpiConsoleLog('<- OK (Start Freq: $_bodeStartFreq Hz)');
+              notifyListeners();
+              return 'OK';
+            }
+          }
+          if (cmdName == ':BODEPLOT:FREQUENCY:START?' || cmdName == ':BODEPLOT:FREQ:STAR?') {
+            final res = _bodeStartFreq.toString();
+            if (logQueryResponse) _addScpiConsoleLog('<- $res');
+            return res;
+          }
+          if (cmdName == ':BODEPLOT:FREQUENCY:STOP' || cmdName == ':BODEPLOT:FREQ:STOP') {
+            final val = double.tryParse(args);
+            if (val != null) {
+              _bodeStopFreq = val;
+              _addScpiConsoleLog('<- OK (Stop Freq: $_bodeStopFreq Hz)');
+              notifyListeners();
+              return 'OK';
+            }
+          }
+          if (cmdName == ':BODEPLOT:FREQUENCY:STOP?' || cmdName == ':BODEPLOT:FREQ:STOP?') {
+            final res = _bodeStopFreq.toString();
+            if (logQueryResponse) _addScpiConsoleLog('<- $res');
+            return res;
+          }
+          if (cmdName == ':BODEPLOT:START' || cmdName == ':BODEPLOT:STOP' || cmdName == ':BODEPLOT:STAR') {
+            final err = 'Error: :BODeplot:STARt/STOP is not supported on $_lxiDeviceModel. Use :BODeplot:FREQuency:STARt/STOP instead.';
+            _addScpiConsoleLog('System Error: $err');
+            return err;
+          }
         }
       }
 
