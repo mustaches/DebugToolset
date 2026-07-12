@@ -33,11 +33,11 @@ class MainLayout extends StatelessWidget {
   Widget _buildSidebar(BuildContext context) {
     final appState = context.watch<AppState>();
     return Container(
-      width: 60, // Compact sidebar
+      width: 40, // Compact sidebar (2/3 of original)
       color: Theme.of(context).colorScheme.surface,
       child: Column(
         children: [
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           _SidebarIcon(
             icon: Icons.show_chart,
             tooltip: '示波器',
@@ -75,7 +75,7 @@ class MainLayout extends StatelessWidget {
             isSelected: appState.selectedModuleIndex == 5,
             onTap: () => appState.setModuleIndex(5),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
         ],
       ),
     );
@@ -140,7 +140,7 @@ class MainLayout extends StatelessWidget {
   }
 }
 
-class _SidebarIcon extends StatelessWidget {
+class _SidebarIcon extends StatefulWidget {
   final IconData icon;
   final String tooltip;
   final bool isSelected;
@@ -154,25 +154,87 @@ class _SidebarIcon extends StatelessWidget {
   });
 
   @override
+  State<_SidebarIcon> createState() => _SidebarIconState();
+}
+
+class _SidebarIconState extends State<_SidebarIcon> {
+  OverlayEntry? _overlayEntry;
+  Offset _mousePosition = Offset.zero;
+
+  void _showTooltip() {
+    _removeTooltip();
+    _overlayEntry = OverlayEntry(
+      builder: (context) => Positioned(
+        left: _mousePosition.dx + 14,
+        top: _mousePosition.dy + 14,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: const Color(0xFF424242),
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 6,
+                  offset: const Offset(1, 2),
+                ),
+              ],
+            ),
+            child: Text(
+              widget.tooltip,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+
+  void _removeTooltip() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  @override
+  void dispose() {
+    _removeTooltip();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message: tooltip,
-      preferBelow: false,
+    return MouseRegion(
+      onEnter: (event) {
+        _mousePosition = event.position;
+        _showTooltip();
+      },
+      onHover: (event) {
+        _mousePosition = event.position;
+        _overlayEntry?.markNeedsBuild();
+      },
+      onExit: (_) => _removeTooltip(),
       child: InkWell(
-        onTap: onTap,
+        onTap: widget.onTap,
         child: Container(
-          width: 60,
-          height: 60,
+          width: 40,
+          height: 44,
           decoration: BoxDecoration(
-            border: isSelected
+            border: widget.isSelected
                 ? Border(left: BorderSide(color: colorScheme.primary, width: 3))
                 : const Border(left: BorderSide(color: Colors.transparent, width: 3)),
           ),
           child: Icon(
-            icon,
-            color: isSelected ? colorScheme.primary : Colors.grey,
-            size: 26,
+            widget.icon,
+            color: widget.isSelected ? colorScheme.primary : Colors.grey,
+            size: 22,
           ),
         ),
       ),
