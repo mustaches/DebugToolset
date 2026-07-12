@@ -119,6 +119,36 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
                 children: [
                   const Text('手动连接设备', style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
+
+                  const Text('目标仪器型号 (LXI Device Model)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.grey.shade700),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: state.lxiDeviceModel,
+                        dropdownColor: const Color(0xFF222222),
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        isExpanded: true,
+                        items: const [
+                          DropdownMenuItem(value: 'MSO8000A', child: Text('RIGOL MSO8000A')),
+                          DropdownMenuItem(value: 'MSO9000', child: Text('RIGOL MSO9000')),
+                          DropdownMenuItem(value: 'DS9000', child: Text('RIGOL DS9000')),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) {
+                            state.setLxiDeviceModel(val);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   
                   // IP Input
                   const Text('仪器 IP 地址 (Host IP)', style: TextStyle(color: Colors.grey, fontSize: 12)),

@@ -564,6 +564,29 @@ class OscilloscopeState extends ChangeNotifier {
   final List<DiscoveredLxiDevice> discoveredLxiDevices = [];
   bool isSearchingLxi = false;
 
+  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO9000', 'DS9000'
+  String get lxiDeviceModel => _lxiDeviceModel;
+
+  bool _bodePlotEnabled = false;
+  bool get bodePlotEnabled => _bodePlotEnabled;
+
+  bool _bodePlotRunning = false;
+  bool get bodePlotRunning => _bodePlotRunning;
+
+  double _bodeStartFreq = 10.0;
+  double get bodeStartFreq => _bodeStartFreq;
+
+  double _bodeStopFreq = 1000000.0;
+  double get bodeStopFreq => _bodeStopFreq;
+
+  void setLxiDeviceModel(String model) {
+    if (_lxiDeviceModel != model) {
+      _lxiDeviceModel = model;
+      _addScpiConsoleLog('System: Target device profile changed to $model');
+      notifyListeners();
+    }
+  }
+
   void setConnectionSource(String source) {
     if (_connectionSource != source) {
       _connectionSource = source;
@@ -704,7 +727,12 @@ class OscilloscopeState extends ChangeNotifier {
 
     try {
       if (cmdName == '*IDN?') {
-        final res = 'RIGOL TECHNOLOGIES,MSO8000A,MSO8A234500123,01.04.00.01';
+        String res = 'RIGOL TECHNOLOGIES,MSO8000A,MSO8A234500123,01.04.00.01';
+        if (_lxiDeviceModel == 'MSO9000') {
+          res = 'RIGOL TECHNOLOGIES,MSO9000,MSO9A123456789,01.02.00.01';
+        } else if (_lxiDeviceModel == 'DS9000') {
+          res = 'RIGOL TECHNOLOGIES,DS9000,DS9A987654321,01.02.00.01';
+        }
         if (logQueryResponse) _addScpiConsoleLog('<- $res');
         return res;
       }
@@ -904,6 +932,68 @@ class OscilloscopeState extends ChangeNotifier {
         _injectMockLxiWaveform();
         final res = '[Binary Waveform Injected]';
         return res;
+      }
+
+      // Bode plot subsystem (MSO9000/DS9000 only)
+      if (cmdName.startsWith(':BODEPLOT')) {
+        if (_lxiDeviceModel == 'MSO8000A') {
+          final err = 'Error: Bode plot not supported on MSO8000A';
+          _addScpiConsoleLog('System Error: $err');
+          return err;
+        }
+        
+        if (cmdName == ':BODEPLOT:ENABLE' || cmdName == ':BODEPLOT:ENAB') {
+          final val = args.toUpperCase();
+          _bodePlotEnabled = val == 'ON' || val == '1';
+          _addScpiConsoleLog('<- OK (Bode plot enabled: $_bodePlotEnabled)');
+          notifyListeners();
+          return 'OK';
+        }
+        if (cmdName == ':BODEPLOT:ENABLE?' || cmdName == ':BODEPLOT:ENAB?') {
+          final res = _bodePlotEnabled ? '1' : '0';
+          if (logQueryResponse) _addScpiConsoleLog('<- $res');
+          return res;
+        }
+        if (cmdName == ':BODEPLOT:RUNSTOP' || cmdName == ':BODEPLOT:RUNS') {
+          final val = args.toUpperCase();
+          _bodePlotRunning = val == 'RUN';
+          _addScpiConsoleLog('<- OK (Bode plot running: $_bodePlotRunning)');
+          notifyListeners();
+          return 'OK';
+        }
+        if (cmdName == ':BODEPLOT:RUNSTOP?' || cmdName == ':BODEPLOT:RUNS?') {
+          final res = _bodePlotRunning ? 'RUN' : 'STOP';
+          if (logQueryResponse) _addScpiConsoleLog('<- $res');
+          return res;
+        }
+        if (cmdName == ':BODEPLOT:FREQUENCY:START' || cmdName == ':BODEPLOT:FREQ:STAR') {
+          final val = double.tryParse(args);
+          if (val != null) {
+            _bodeStartFreq = val;
+            _addScpiConsoleLog('<- OK (Start Freq: $_bodeStartFreq Hz)');
+            notifyListeners();
+            return 'OK';
+          }
+        }
+        if (cmdName == ':BODEPLOT:FREQUENCY:START?' || cmdName == ':BODEPLOT:FREQ:STAR?') {
+          final res = _bodeStartFreq.toString();
+          if (logQueryResponse) _addScpiConsoleLog('<- $res');
+          return res;
+        }
+        if (cmdName == ':BODEPLOT:FREQUENCY:STOP' || cmdName == ':BODEPLOT:FREQ:STOP') {
+          final val = double.tryParse(args);
+          if (val != null) {
+            _bodeStopFreq = val;
+            _addScpiConsoleLog('<- OK (Stop Freq: $_bodeStopFreq Hz)');
+            notifyListeners();
+            return 'OK';
+          }
+        }
+        if (cmdName == ':BODEPLOT:FREQUENCY:STOP?' || cmdName == ':BODEPLOT:FREQ:STOP?') {
+          final res = _bodeStopFreq.toString();
+          if (logQueryResponse) _addScpiConsoleLog('<- $res');
+          return res;
+        }
       }
 
       _addScpiConsoleLog('System Error: Unknown command "$cmdName"');
