@@ -10,6 +10,7 @@ import '../modules/oscilloscope/models/uart_protocol_file.dart';
 import '../utils/waveform_storage.dart';
 import '../utils/demo_spi_generator.dart';
 import 'dart:io';
+import 'dart:convert';
 import 'package:path/path.dart' as p;
 
 enum TriggerMode { auto, normal, single }
@@ -536,6 +537,293 @@ class OscilloscopeState extends ChangeNotifier {
   TriggerEdge get triggerEdge => _triggerEdge;
 
   DigitalTriggerConfig digitalTrigger = DigitalTriggerConfig();
+
+  // LXI CORE 2011 Device state variables
+  String _connectionSource = 'Demo'; // 'Demo', 'Serial', 'LXI'
+  String get connectionSource => _connectionSource;
+
+  String _lxiIp = '192.168.1.100';
+  String get lxiIp => _lxiIp;
+
+  int _lxiPort = 5025;
+  int get lxiPort => _lxiPort;
+
+  bool _isLxiConnected = false;
+  bool get isLxiConnected => _isLxiConnected;
+
+  String _lxiInstrumentInfo = '未连接';
+  String get lxiInstrumentInfo => _lxiInstrumentInfo;
+
+  bool _lxiContinuousStreaming = false;
+  bool get lxiContinuousStreaming => _lxiContinuousStreaming;
+
+  Socket? _lxiSocket;
+  StreamSubscription? _lxiSocketSubscription;
+
+  final List<String> scpiConsoleLogs = [];
+  final List<DiscoveredLxiDevice> discoveredLxiDevices = [];
+  bool isSearchingLxi = false;
+
+  void setConnectionSource(String source) {
+    if (_connectionSource != source) {
+      _connectionSource = source;
+      if (source == 'Demo') {
+        _isDemoMode = true;
+        _startDemoStream();
+        disconnectLxi();
+      } else if (source == 'Serial') {
+        _isDemoMode = false;
+        _demoTimer?.cancel();
+        disconnectLxi();
+      } else if (source == 'LXI') {
+        _isDemoMode = false;
+        _demoTimer?.cancel();
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<void> connectLxi(String ip, int port, {bool streaming = false}) async {
+    await disconnectLxi();
+    _lxiIp = ip;
+    _lxiPort = port;
+    _lxiContinuousStreaming = streaming;
+    _lxiInstrumentInfo = '正在连接...';
+    notifyListeners();
+
+    try {
+      _lxiSocket = await Socket.connect(ip, port, timeout: const Duration(seconds: 3));
+      _isLxiConnected = true;
+      _isDemoMode = false;
+      _connectionSource = 'LXI';
+      _demoTimer?.cancel();
+      scpiConsoleLogs.clear();
+      _addScpiConsoleLog('System: Connected to $ip:$port');
+      
+      // Query identification via HTTP LXI Standard
+      _queryLxiXmlIdentification(ip);
+      
+      if (_lxiContinuousStreaming) {
+        _lxiSocketSubscription = _lxiSocket!.listen((data) {
+          if (!_isPaused) {
+            _handleIncomingRawData(Uint8List.fromList(data));
+          }
+        }, onError: (e) {
+          _addScpiConsoleLog('System Error: $e');
+          disconnectLxi();
+        }, onDone: () {
+          _addScpiConsoleLog('System: Connection closed by device');
+          disconnectLxi();
+        });
+      } else {
+        _lxiSocketSubscription = _lxiSocket!.listen((data) {
+          final text = String.fromCharCodes(data).trim();
+          _addScpiResponse(text);
+        }, onError: (e) {
+          _addScpiConsoleLog('System Error: $e');
+          disconnectLxi();
+        }, onDone: () {
+          _addScpiConsoleLog('System: Connection closed by device');
+          disconnectLxi();
+        });
+        
+        // Query identity via SCPI
+        sendScpiCommand('*IDN?');
+      }
+      notifyListeners();
+    } catch (e) {
+      _lxiInstrumentInfo = '连接失败: $e';
+      _isLxiConnected = false;
+      _addScpiConsoleLog('System Error: Failed to connect: $e');
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> disconnectLxi() async {
+    if (_isLxiConnected) {
+      _addScpiConsoleLog('System: Disconnected');
+    }
+    await _lxiSocketSubscription?.cancel();
+    await _lxiSocket?.close();
+    _lxiSocket = null;
+    _isLxiConnected = false;
+    notifyListeners();
+  }
+
+  void sendScpiCommand(String command) {
+    if (_lxiSocket == null) {
+      _addScpiConsoleLog('System Error: Not connected');
+      return;
+    }
+    final cleanCmd = command.endsWith('\n') ? command : '$command\n';
+    _lxiSocket!.write(cleanCmd);
+    _addScpiConsoleLog('-> $command');
+    
+    // Check if it's trigger/waveform command to simulate data
+    final upperCmd = command.trim().toUpperCase();
+    if (upperCmd == ':WAV:DATA?' || upperCmd == ':WAVeform:DATA?' || upperCmd == ':CURV?') {
+      _injectMockLxiWaveform();
+    }
+  }
+
+  void _addScpiConsoleLog(String msg) {
+    scpiConsoleLogs.add('[${DateTime.now().toString().substring(11, 19)}] $msg');
+    if (scpiConsoleLogs.length > 100) scpiConsoleLogs.removeAt(0);
+    notifyListeners();
+  }
+
+  void _addScpiResponse(String msg) {
+    _addScpiConsoleLog('<- $msg');
+    if (_lxiInstrumentInfo == '正在连接...' || _lxiInstrumentInfo == '未连接') {
+      _lxiInstrumentInfo = msg;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _queryLxiXmlIdentification(String ip) async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 2);
+      final request = await client.getUrl(Uri.parse('http://$ip/lxi/identification'));
+      final response = await request.close();
+      if (response.statusCode == 200) {
+        final xml = await response.transform(utf8.decoder).join();
+        _parseLxiXml(xml);
+      }
+    } catch (e) {
+      debugPrint('LXI Identification XML fetch failed: $e');
+    }
+  }
+
+  void _parseLxiXml(String xml) {
+    final manufacturerMatch = RegExp(r'<Manufacturer>(.*?)</Manufacturer>', caseSensitive: false).firstMatch(xml);
+    final modelMatch = RegExp(r'<Model>(.*?)</Model>', caseSensitive: false).firstMatch(xml);
+    final serialMatch = RegExp(r'<SerialNumber>(.*?)</SerialNumber>', caseSensitive: false).firstMatch(xml);
+    final versionMatch = RegExp(r'<LxiVersion>(.*?)</LxiVersion>', caseSensitive: false).firstMatch(xml);
+    
+    if (manufacturerMatch != null && modelMatch != null) {
+      final man = manufacturerMatch.group(1) ?? '';
+      final mod = modelMatch.group(1) ?? '';
+      final ser = serialMatch?.group(1) ?? 'Unknown';
+      final lxiVer = versionMatch?.group(1) ?? '1.4';
+      _lxiInstrumentInfo = '$man, $mod (S/N: $ser, LXI: $lxiVer)';
+      _addScpiConsoleLog('LXI: Identification XML loaded successfully');
+      notifyListeners();
+    }
+  }
+
+  Future<void> startLxiDiscovery() async {
+    if (isSearchingLxi) return;
+    isSearchingLxi = true;
+    discoveredLxiDevices.clear();
+    notifyListeners();
+    
+    RawDatagramSocket? socket;
+    try {
+      socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      socket.multicastLoopback = false;
+      
+      final queryBytes = Uint8List.fromList([
+        0x00, 0x00, // Transaction ID
+        0x00, 0x00, // Flags (Standard query)
+        0x00, 0x01, // Questions: 1
+        0x00, 0x00, // Answer RRs: 0
+        0x00, 0x00, // Authority RRs: 0
+        0x00, 0x00, // Additional RRs: 0
+        // Query Name: _lxi._tcp.local
+        0x04, 0x5f, 0x6c, 0x78, 0x69, // _lxi
+        0x04, 0x5f, 0x74, 0x63, 0x70, // _tcp
+        0x05, 0x6c, 0x6f, 0x63, 0x61, 0x6c, // local
+        0x00, // terminator
+        0x00, 0x0c, // Type: PTR
+        0x00, 0x01, // Class: IN
+      ]);
+      
+      final mDNSAddress = InternetAddress('224.0.0.251');
+      socket.send(queryBytes, mDNSAddress, 5353);
+      
+      socket.listen((event) {
+        if (event == RawSocketEvent.read) {
+          final datagram = socket!.receive();
+          if (datagram != null) {
+            _parseMDnsResponse(datagram.data, datagram.address.address);
+          }
+        }
+      });
+      
+      await Future.delayed(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('LXI mDNS error: $e');
+    } finally {
+      socket?.close();
+      isSearchingLxi = false;
+      notifyListeners();
+    }
+  }
+
+  void _parseMDnsResponse(Uint8List bytes, String sourceIp) {
+    final text = String.fromCharCodes(bytes);
+    if (text.contains('_lxi')) {
+      if (!discoveredLxiDevices.any((d) => d.ip == sourceIp)) {
+        discoveredLxiDevices.add(DiscoveredLxiDevice(
+          ip: sourceIp,
+          name: 'LXI Device @ $sourceIp',
+        ));
+        notifyListeners();
+      }
+    }
+  }
+
+  void _injectMockLxiWaveform() {
+    _addScpiConsoleLog('System: Simulating waveform data retrieval via SCPI');
+    final double start = totalPointsAdded.toDouble();
+    final List<int> analogBuffer = [];
+    final List<int> digitalBuffer = [];
+    
+    for (int i = 0; i < 400; i++) {
+      final ch1 = (2048 + 1000 * math.sin((start + i) * 0.05)).round();
+      final ch2 = (2048 + 800 * math.cos((start + i) * 0.08)).round();
+      final ch3 = (2048 + 1200 * math.sin((start + i) * 0.02)).round();
+      final ch4 = (2048 + 500 * math.sin((start + i) * 0.15)).round();
+      
+      int dig = 0;
+      if (((start + i) % 100) < 50) dig |= 0x01; // D0
+      if (((start + i) % 200) < 100) dig |= 0x02; // D1
+      if (((start + i) % 40) < 20) dig |= 0x04; // D2
+      
+      analogBuffer.add(ch1);
+      analogBuffer.add(ch2);
+      analogBuffer.add(ch3);
+      analogBuffer.add(ch4);
+      digitalBuffer.add(dig);
+    }
+    
+    final List<int> rawProtocolBytes = [];
+    for (int i = 0; i < 400; i++) {
+      rawProtocolBytes.add(0xAA);
+      rawProtocolBytes.add(0x55);
+      rawProtocolBytes.add(0x1F); // Mask (0x1F: CH1-4 + Dig)
+      
+      rawProtocolBytes.add((analogBuffer[i * 4] >> 8) & 0xFF);
+      rawProtocolBytes.add(analogBuffer[i * 4] & 0xFF);
+      rawProtocolBytes.add((analogBuffer[i * 4 + 1] >> 8) & 0xFF);
+      rawProtocolBytes.add(analogBuffer[i * 4 + 1] & 0xFF);
+      rawProtocolBytes.add((analogBuffer[i * 4 + 2] >> 8) & 0xFF);
+      rawProtocolBytes.add(analogBuffer[i * 4 + 2] & 0xFF);
+      rawProtocolBytes.add((analogBuffer[i * 4 + 3] >> 8) & 0xFF);
+      rawProtocolBytes.add(analogBuffer[i * 4 + 3] & 0xFF);
+      
+      int dig = digitalBuffer[i];
+      rawProtocolBytes.add((dig >> 24) & 0xFF);
+      rawProtocolBytes.add((dig >> 16) & 0xFF);
+      rawProtocolBytes.add((dig >> 8) & 0xFF);
+      rawProtocolBytes.add(dig & 0xFF);
+    }
+    
+    _handleIncomingRawData(Uint8List.fromList(rawProtocolBytes));
+    _addScpiConsoleLog('<- [Raw Waveform Data: 400 pts injected]');
+  }
   int _digitalTriggerSequenceStep = 0;
   int _digitalTriggerDelayCounter = 0;
 
@@ -3988,4 +4276,10 @@ class OscilloscopeState extends ChangeNotifier {
       rethrow;
     }
   }
+}
+
+class DiscoveredLxiDevice {
+  final String ip;
+  final String name;
+  DiscoveredLxiDevice({required this.ip, required this.name});
 }

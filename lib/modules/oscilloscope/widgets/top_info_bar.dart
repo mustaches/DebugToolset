@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/oscilloscope_state.dart';
 import '../../../utils/hover_builder.dart';
+import 'lxi_connection_dialog.dart';
 
 class TopInfoBar extends StatelessWidget {
   const TopInfoBar({super.key});
@@ -98,6 +99,27 @@ class TopInfoBar extends StatelessWidget {
                 ),
                 onPressed: () {},
                 child: const Text('系统设置'),
+              ),
+              MenuItemButton(
+                style: ButtonStyle(
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.hovered)) {
+                      return const Color(0xFF333333);
+                    }
+                    return Colors.transparent;
+                  }),
+                  foregroundColor: WidgetStateProperty.all(Colors.white70),
+                  textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+                  padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+                ),
+                onPressed: () {
+                  showDialog(
+                    context: state.oscNavigatorKey.currentContext ?? context,
+                    useRootNavigator: false,
+                    builder: (context) => const LxiConnectionDialog(),
+                  );
+                },
+                child: const Text('LXI 仪器设置'),
               ),
               MenuItemButton(
                 style: ButtonStyle(
@@ -226,6 +248,38 @@ class TopInfoBar extends StatelessWidget {
                   ],
                 ),
               ],
+            ),
+          ),
+          // Connection Link Status Block
+          InkWell(
+            onTap: () {
+              showDialog(
+                context: state.oscNavigatorKey.currentContext ?? context,
+                useRootNavigator: false,
+                builder: (context) => const LxiConnectionDialog(),
+              );
+            },
+            child: _buildInfoBlock(
+              child: Row(
+                children: [
+                  Icon(
+                    state.connectionSource == 'LXI'
+                        ? Icons.network_check
+                        : (state.connectionSource == 'Serial' ? Icons.cable : Icons.auto_awesome),
+                    color: state.connectionSource == 'LXI' && state.isLxiConnected
+                        ? Colors.greenAccent
+                        : (state.connectionSource == 'Serial' ? Colors.cyanAccent : Colors.grey),
+                    size: 14,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    state.connectionSource == 'LXI'
+                        ? 'LXI: ${state.lxiIp}'
+                        : (state.connectionSource == 'Serial' ? 'Serial' : 'Demo Mode'),
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
             ),
           ),
           const Spacer(),
