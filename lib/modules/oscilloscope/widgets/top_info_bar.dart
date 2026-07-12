@@ -263,9 +263,9 @@ class TopInfoBar extends StatelessWidget {
               child: Row(
                 children: [
                   Icon(
-                    state.connectionSource == 'LXI'
-                        ? Icons.network_check
-                        : (state.connectionSource == 'Serial' ? Icons.cable : Icons.auto_awesome),
+                    state.connectionSource == 'Serial'
+                        ? Icons.cable
+                        : Icons.settings_ethernet, // LXI network ethernet logo
                     color: state.connectionSource == 'LXI' && state.isLxiConnected
                         ? Colors.greenAccent
                         : (state.connectionSource == 'Serial' ? Colors.cyanAccent : Colors.grey),
@@ -274,8 +274,8 @@ class TopInfoBar extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     state.connectionSource == 'LXI'
-                        ? 'LXI: ${state.lxiIp}'
-                        : (state.connectionSource == 'Serial' ? 'Serial' : 'Demo Mode'),
+                        ? (state.isLxiConnected ? 'LXI: ${state.lxiIp}' : 'LXI (未连接)')
+                        : (state.connectionSource == 'Serial' ? 'Serial' : 'LXI'), // LXI labeled button
                     style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
                   ),
                 ],
