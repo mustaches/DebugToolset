@@ -223,10 +223,15 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     Color boxColor = isActive ? Colors.purpleAccent : Colors.grey.shade600;
     
     String rangeLabel = '';
-    if (busIndex == 0) rangeLabel = 'D[7:0]';
-    else if (busIndex == 1) rangeLabel = 'D[15:8]';
-    else if (busIndex == 2) rangeLabel = 'D[23:16]';
-    else if (busIndex == 3) rangeLabel = 'D[31:24]';
+    if (busIndex == 0) {
+      rangeLabel = 'D[7:0]';
+    } else if (busIndex == 1) {
+      rangeLabel = 'D[15:8]';
+    } else if (busIndex == 2) {
+      rangeLabel = 'D[23:16]';
+    } else if (busIndex == 3) {
+      rangeLabel = 'D[31:24]';
+    }
 
     return HoverBuilder(
       builder: (context, isHovered) {
@@ -669,48 +674,6 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     );
   }
 
-
-  void _showChannelConfigDialog(BuildContext context, OscilloscopeState state, int index, ChannelData ch) {
-    showDialog(
-      context: context,
-      useRootNavigator: false,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF2A2A2A),
-          title: Text('CH${index + 1} 设置', style: TextStyle(color: ch.color, fontSize: 14)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Vertical Scale: ${ch.yScale.toStringAsFixed(2)} V/div', style: const TextStyle(color: Colors.white, fontSize: 12)),
-              Slider(
-                value: ch.yScale,
-                min: 0.1,
-                max: 10.0,
-                onChanged: (v) => state.setChannelScale(index, v),
-              ),
-              const SizedBox(height: 16),
-              Text('Vertical Offset: ${ch.yOffset.toStringAsFixed(0)} px', style: const TextStyle(color: Colors.white, fontSize: 12)),
-              Slider(
-                value: ch.yOffset,
-                min: -400.0,
-                max: 400.0,
-                onChanged: (v) => state.setChannelOffset(index, v),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () {
-                  state.toggleChannelVisibility(index);
-                  Navigator.of(ctx).pop();
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text('关闭通道', style: TextStyle(color: Colors.white)),
-              )
-            ],
-          ),
-        );
-      }
-    );
-  }
 
 
   void _showBatchRenamePinsDialog(BuildContext context, OscilloscopeState state, DigitalBus bus) {
@@ -2794,7 +2757,7 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
                             ),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: Container(
+                              child: SizedBox(
                                 height: 30,
                                 child: TextField(
                                   controller: _controllers[pin],

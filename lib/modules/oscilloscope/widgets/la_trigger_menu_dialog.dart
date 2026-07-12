@@ -1651,16 +1651,6 @@ class _LATriggerMenuDialogState extends State<LATriggerMenuDialog> {
     state.setDigitalTrigger(config);
   }
 
-  String _formatSampleRate(double rate) {
-    if (rate >= 1e6) {
-      return '${(rate / 1e6).toStringAsFixed(1)} MSa/s';
-    } else if (rate >= 1e3) {
-      return '${(rate / 1e3).toStringAsFixed(1)} kSa/s';
-    } else {
-      return '${rate.toStringAsFixed(0)} Sa/s';
-    }
-  }
-
   String _formatMemoryDepth(int depth) {
     if (depth >= 1048576) {
       return '${(depth / 1048576).toStringAsFixed(1)} Mpts';
