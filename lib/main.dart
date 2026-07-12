@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-// import 'package:window_manager/window_manager.dart'; // Uncomment after enabling dev mode & pub get
+import 'package:window_manager/window_manager.dart'; // Uncomment after enabling dev mode & pub get
 
 import 'layout/main_layout.dart';
 import 'providers/app_state.dart';
@@ -13,7 +13,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // Initialize window_manager
-  // await windowManager.ensureInitialized();
+  await windowManager.ensureInitialized();
   // WindowOptions windowOptions = const WindowOptions(
   //   size: Size(1200, 800),
   //   center: true,

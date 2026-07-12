@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 import 'terminal_state.dart';
 import '../modules/oscilloscope/models/protocol_decoder.dart';
 import '../modules/oscilloscope/models/i2c_regfile.dart';
@@ -1049,6 +1050,19 @@ class OscilloscopeState extends ChangeNotifier {
     if (_displayResolution != resolution) {
       _displayResolution = resolution;
       notifyListeners();
+
+      if (!isAutoResolution) {
+        final double width = displayWidth + 320.0 + 16.0;
+        final double height = displayHeight + 40.0;
+        try {
+          if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+            windowManager.setSize(Size(width, height));
+            windowManager.center();
+          }
+        } catch (e) {
+          debugPrint('Failed to resize window: $e');
+        }
+      }
     }
   }
 
