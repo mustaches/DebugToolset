@@ -564,7 +564,7 @@ class OscilloscopeState extends ChangeNotifier {
   final List<DiscoveredLxiDevice> discoveredLxiDevices = [];
   bool isSearchingLxi = false;
 
-  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO8000', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000', 'DHO1000', 'DHO4000', 'DS1000ZE', 'DS8000R', 'MSO7000', 'DS6000'
+  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO8000', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000', 'DHO1000', 'DHO4000', 'DS1000ZE', 'DS8000R', 'MSO7000', 'DS6000', 'MSO5000'
   String get lxiDeviceModel => _lxiDeviceModel;
 
   bool _bodePlotEnabled = false;
@@ -760,6 +760,8 @@ class OscilloscopeState extends ChangeNotifier {
           res = 'RIGOL TECHNOLOGIES,MSO7044,MSO7A123456789,01.00.00.01';
         } else if (_lxiDeviceModel == 'DS6000') {
           res = 'RIGOL TECHNOLOGIES,DS6104,DS6A123456789,01.00.00.01';
+        } else if (_lxiDeviceModel == 'MSO5000') {
+          res = 'RIGOL TECHNOLOGIES,MSO5104,MSO5A123456789,01.03.00.01';
         }
         if (logQueryResponse) _addScpiConsoleLog('<- $res');
         return res;
@@ -994,7 +996,7 @@ class OscilloscopeState extends ChangeNotifier {
           if (logQueryResponse) _addScpiConsoleLog('<- $res');
           return res;
         }
-        final isModernPlatform = _lxiDeviceModel == 'MHO5000' || _lxiDeviceModel == 'DHO5000' || _lxiDeviceModel == 'MHO900' || _lxiDeviceModel == 'MHO98' || _lxiDeviceModel == 'MHO2000';
+        final isModernPlatform = _lxiDeviceModel == 'MHO5000' || _lxiDeviceModel == 'DHO5000' || _lxiDeviceModel == 'MHO900' || _lxiDeviceModel == 'MHO98' || _lxiDeviceModel == 'MHO2000' || _lxiDeviceModel == 'MSO5000';
         
         if (isModernPlatform) {
           if (cmdName == ':BODEPLOT:START' || cmdName == ':BODEPLOT:STAR') {
