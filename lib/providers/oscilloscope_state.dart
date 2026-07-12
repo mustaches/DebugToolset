@@ -564,7 +564,7 @@ class OscilloscopeState extends ChangeNotifier {
   final List<DiscoveredLxiDevice> discoveredLxiDevices = [];
   bool isSearchingLxi = false;
 
-  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO8000', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000', 'DHO1000', 'DHO4000', 'DS1000ZE', 'DS8000R', 'MSO7000', 'DS6000', 'MSO5000', 'MSO5000E', 'DS4000E', 'MSO4000', 'MSO2000A', 'DHO900'
+  String _lxiDeviceModel = 'MSO8000A'; // 'MSO8000A', 'MSO8000', 'MSO9000', 'DS9000', 'MHO5000', 'DHO5000', 'MHO900', 'MHO98', 'MHO2000', 'DS80000', 'DS70000', 'DHO1000', 'DHO4000', 'DS1000ZE', 'DS8000R', 'MSO7000', 'DS6000', 'MSO5000', 'MSO5000E', 'DS4000E', 'MSO4000', 'MSO2000A', 'DHO900', 'DHO800'
   String get lxiDeviceModel => _lxiDeviceModel;
 
   bool _bodePlotEnabled = false;
@@ -772,6 +772,8 @@ class OscilloscopeState extends ChangeNotifier {
           res = 'RIGOL TECHNOLOGIES,MSO2072A,MSO2A123456789,01.00.00.01';
         } else if (_lxiDeviceModel == 'DHO900') {
           res = 'RIGOL TECHNOLOGIES,DHO914,DHO9A123456789,01.00.00.01';
+        } else if (_lxiDeviceModel == 'DHO800') {
+          res = 'RIGOL TECHNOLOGIES,DHO814,DHO8A123456789,01.00.00.01';
         }
         if (logQueryResponse) _addScpiConsoleLog('<- $res');
         return res;
@@ -1006,7 +1008,7 @@ class OscilloscopeState extends ChangeNotifier {
           if (logQueryResponse) _addScpiConsoleLog('<- $res');
           return res;
         }
-        final isModernPlatform = _lxiDeviceModel == 'MHO5000' || _lxiDeviceModel == 'DHO5000' || _lxiDeviceModel == 'MHO900' || _lxiDeviceModel == 'MHO98' || _lxiDeviceModel == 'MHO2000' || _lxiDeviceModel == 'MSO5000' || _lxiDeviceModel == 'MSO5000E' || _lxiDeviceModel == 'DHO900';
+        final isModernPlatform = _lxiDeviceModel == 'MHO5000' || _lxiDeviceModel == 'DHO5000' || _lxiDeviceModel == 'MHO900' || _lxiDeviceModel == 'MHO98' || _lxiDeviceModel == 'MHO2000' || _lxiDeviceModel == 'MSO5000' || _lxiDeviceModel == 'MSO5000E' || _lxiDeviceModel == 'DHO900' || _lxiDeviceModel == 'DHO800';
         
         if (isModernPlatform) {
           if (cmdName == ':BODEPLOT:START' || cmdName == ':BODEPLOT:STAR') {
