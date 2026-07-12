@@ -14,18 +14,18 @@ void main() async {
   
   // Initialize window_manager
   await windowManager.ensureInitialized();
-  // WindowOptions windowOptions = const WindowOptions(
-  //   size: Size(1200, 800),
-  //   center: true,
-  //   backgroundColor: Colors.transparent,
-  //   skipTaskbar: false,
-  //   titleBarStyle: TitleBarStyle.normal,
-  //   title: 'DebugToolSet',
-  // );
-  // windowManager.waitUntilReadyToShow(windowOptions, () async {
-  //   await windowManager.show();
-  //   await windowManager.focus();
-  // });
+  WindowOptions windowOptions = const WindowOptions(
+    size: Size(1666, 834),
+    center: true,
+    backgroundColor: Colors.transparent,
+    skipTaskbar: false,
+    titleBarStyle: TitleBarStyle.normal,
+    title: 'DebugToolSet',
+  );
+  windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+  });
 
   runApp(
     MultiProvider(
