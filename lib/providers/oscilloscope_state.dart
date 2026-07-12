@@ -1042,6 +1042,29 @@ class OscilloscopeState extends ChangeNotifier {
     _sendDigitalTriggerConfigToHardware(digitalTrigger);
   }
 
+  String _displayResolution = 'Auto';
+  String get displayResolution => _displayResolution;
+
+  void setDisplayResolution(String resolution) {
+    if (_displayResolution != resolution) {
+      _displayResolution = resolution;
+      notifyListeners();
+    }
+  }
+
+  bool get isAutoResolution => _displayResolution == 'Auto';
+
+  double get displayWidth {
+    if (isAutoResolution) return double.infinity;
+    final parts = _displayResolution.split('x');
+    return double.parse(parts[0]);
+  }
+
+  double get displayHeight {
+    if (isAutoResolution) return double.infinity;
+    final parts = _displayResolution.split('x');
+    return double.parse(parts[1]);
+  }
 
   double chartHeight = 600.0;
   double chartWidth = 800.0;

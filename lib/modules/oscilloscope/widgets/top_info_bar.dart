@@ -20,11 +20,101 @@ class TopInfoBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
+         children: [
           // 1. Rigol style Navigation Button
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: const Icon(Icons.menu, color: Colors.grey, size: 20),
+          MenuAnchor(
+            style: MenuStyle(
+              backgroundColor: WidgetStateProperty.all(const Color(0xFF252525)),
+              surfaceTintColor: WidgetStateProperty.all(Colors.transparent),
+              elevation: WidgetStateProperty.all(8.0),
+              padding: WidgetStateProperty.all(EdgeInsets.zero),
+              shape: WidgetStateProperty.all(
+                RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  side: BorderSide(color: Colors.grey.shade800, width: 1.5),
+                ),
+              ),
+            ),
+            builder: (BuildContext context, MenuController controller, Widget? child) {
+              return HoverBuilder(
+                builder: (context, isHovered) {
+                  return InkWell(
+                    onTap: () {
+                      if (controller.isOpen) {
+                        controller.close();
+                      } else {
+                        controller.open();
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(8.0),
+                      margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                      decoration: BoxDecoration(
+                        color: isHovered || controller.isOpen ? const Color(0xFF333333) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Icon(
+                        Icons.menu,
+                        color: isHovered || controller.isOpen ? Colors.white : Colors.grey,
+                        size: 20,
+                      ),
+                    ),
+                  );
+                }
+              );
+            },
+            menuChildren: [
+              SubmenuButton(
+                style: ButtonStyle(
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.hovered)) {
+                      return const Color(0xFF333333);
+                    }
+                    return Colors.transparent;
+                  }),
+                  foregroundColor: WidgetStateProperty.all(Colors.white),
+                  textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+                  padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+                ),
+                menuChildren: [
+                  _buildSubmenuItem(context, state, 'Auto', 'Auto'),
+                  _buildSubmenuItem(context, state, '1280x800', '1280*800'),
+                  _buildSubmenuItem(context, state, '1366x768', '1366*768'),
+                  _buildSubmenuItem(context, state, '1920x1080', '1920*1080'),
+                ],
+                child: const Text('分辨率设置'),
+              ),
+              MenuItemButton(
+                style: ButtonStyle(
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.hovered)) {
+                      return const Color(0xFF333333);
+                    }
+                    return Colors.transparent;
+                  }),
+                  foregroundColor: WidgetStateProperty.all(Colors.white70),
+                  textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+                  padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+                ),
+                onPressed: () {},
+                child: const Text('系统设置'),
+              ),
+              MenuItemButton(
+                style: ButtonStyle(
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.hovered)) {
+                      return const Color(0xFF333333);
+                    }
+                    return Colors.transparent;
+                  }),
+                  foregroundColor: WidgetStateProperty.all(Colors.white70),
+                  textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+                  padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+                ),
+                onPressed: () {},
+                child: const Text('关于'),
+              ),
+            ],
           ),
           
           // 2. Trigger Status (T'D / STOP)
@@ -363,5 +453,34 @@ class TopInfoBar extends StatelessWidget {
         }
       }
     }
+  }
+
+  Widget _buildSubmenuItem(BuildContext context, OscilloscopeState state, String resolutionValue, String displayLabel) {
+    bool isSelected = state.displayResolution == resolutionValue;
+    return MenuItemButton(
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.hovered)) {
+            return const Color(0xFF333333);
+          }
+          return Colors.transparent;
+        }),
+        foregroundColor: WidgetStateProperty.all(Colors.white),
+        textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+        padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+      ),
+      onPressed: () => state.setDisplayResolution(resolutionValue),
+      child: SizedBox(
+        width: 110,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(displayLabel, style: const TextStyle(color: Colors.white)),
+            if (isSelected)
+              const Icon(Icons.check, color: Colors.greenAccent, size: 14),
+          ],
+        ),
+      ),
+    );
   }
 }
