@@ -123,6 +123,9 @@ class MainLayout extends StatelessWidget {
         ? '${terminalState.serialPort} - ${terminalState.baudRate}' 
         : '未连接';
 
+    final size = MediaQuery.sizeOf(context);
+    final String windowSizeStr = '${size.width.toInt()}*${size.height.toInt()}';
+
     return Container(
       height: 28,
       color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
@@ -131,6 +134,7 @@ class MainLayout extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text('DebugToolSet $statusLeft', style: const TextStyle(fontSize: 12, color: Colors.white)),
+          Text('窗口尺寸: $windowSizeStr', style: const TextStyle(fontSize: 12, color: Colors.white)),
           Text(statusRight, style: const TextStyle(fontSize: 12, color: Colors.white)),
         ],
       ),
