@@ -1,0 +1,201 @@
+<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns="http://www.w3.org/TR/REC-html40">
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<link rel="File-List" href="Matlab.files/filelist.xml">
+<title>Matlab编程实例</title>
+<style>
+<!--
+h1
+	{margin-top:17.0pt;
+	margin-right:0cm;
+	margin-bottom:16.5pt;
+	margin-left:0cm;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	line-height:240%;
+	page-break-after:avoid;
+	font-size:22.0pt;
+	font-family:"Calibri","sans-serif";
+	}
+ p.MsoNormal
+	{mso-style-parent:"";
+	margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Calibri","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+p.MsoListParagraph
+	{margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	text-indent:21.0pt;
+	font-size:10.5pt;
+	font-family:"Calibri","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+-->
+</style>
+<!--[if !mso]>
+<style>
+v\:*         { behavior: url(#default#VML) }
+o\:*         { behavior: url(#default#VML) }
+.shape       { behavior: url(#default#VML) }
+</style>
+<![endif]--><!--[if gte mso 9]>
+<xml><o:shapedefaults v:ext="edit" spidmax="1027"/>
+</xml><![endif]-->
+</head>
+
+<body>
+
+<p class="MsoNormal"><b><span lang="EN-US" style="line-height: 240%; font-family: Tahoma">
+<font size="4">Matlab</font></span><span style="line-height: 240%; font-family: 黑体"><font size="4">编程实
+例</font></span></b></p>
+<p class="MsoNormal"><br>
+　</p>
+<p class="MsoNormal"><span style="font-family: 宋体"><font size="2">程序的功能：对波形数据进行</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma">FFT</span><span style="font-family: 宋体">计算，并绘制波形。本实例需要安装</span><span style="font-family: Tahoma">Matlab</span></font><span style="font-family: 宋体"><font size="2">工具。</font></span></p>
+<p class="MsoNormal"><span lang="EN-US">&nbsp;</span></p>
+<p class="MsoNormal"><font size="2"><span style="font-family: Tahoma">1.&nbsp;</span></font><span style="font-family: 宋体"><font size="2">在自定义目录下创建</font></span><font size="2"><span style="font-family: Tahoma">WaveData.m</span></font><span style="font-family: 宋体"><font size="2">文件。</font></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 0pt; margin-bottom:0pt">
+<font size="2"><span style="font-family: Tahoma">2.&nbsp;</span></font><span style="font-family: 宋体"><font size="2">创建设备。第一个参数为销售商参数，可以为</font></span><font size="2"><span style="font-family: Tahoma">agilent、NI</span><span style="font-family: 宋体">或</span><span style="font-family: Tahoma">tek</span><span style="font-family: 宋体">，第二个参数为资源描述符。创建后需要设置设备的属性，本例中设置输入缓存的长度为</span><span style="font-family: Tahoma">2048</span></font><span style="font-family: 宋体">。</span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="en-us"><font size="2"><span style="font-family: Tahoma,sans-serif">
+mso</span></font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black"><font size="2">4000 = visa( </font></span><font size="2">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: #A020F0">'ni'</span><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">,</span><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: #A020F0">'USB0::0x1AB1::0x04B1::DS4C0000000001::INSTR'</span></font><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black"><font size="2"> 
+);</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="en-us"><font size="2"><span style="font-family: Tahoma,sans-serif">
+mso</span></font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black"><font size="2">4000.InputBufferSize = 2048;</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-size: 10.0pt; font-family: Courier New; color: black">
+&nbsp;</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: -18.0pt; text-autospace: none; margin-left: 18.0pt">
+<font size="2"><span style="font-family: Tahoma">3.&nbsp;</span><font face="宋体">打开设备。</font></font></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-size: 12.0pt; font-family: Courier New">&nbsp;</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">fopen( mso4000 );</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-size: 10.0pt; font-family: Courier New; color: black">
+&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<font size="2"><span style="font-family: Tahoma">4.&nbsp;</span><font face="宋体">请求数据。</font></font></p>
+<font FACE="Tahoma" LANG="ZH-CN" SIZE="2">
+<p style="margin-left: 18pt; margin-top: 18pt; margin-bottom: 0">&nbsp;fprintf(mso4000,
+</font><font FACE="Tahoma" LANG="ZH-CN" SIZE="2" COLOR="#8100ff">':wav:data?'</font><font FACE="Tahoma" LANG="ZH-CN" SIZE="2"> 
+);</p>
+</font>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">[data,len]= fread( mso4000, 2048 );</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-size: 10.0pt; font-family: Courier New; color: black">
+&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<font size="2"><span style="font-family: Tahoma">5.&nbsp;</span><font face="宋体">关闭设备。</font></font></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">fclose( mso4000 );</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">delete(mso4000);</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">clear mso4000;</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">　</p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 0pt; margin-bottom:0pt; ">
+<font size="2"><span style="font-family: Tahoma">6.</span><font face="宋体">&nbsp;数据处理。读取的波形数据含有</font><font face="Tahoma">TMC</font><font face="宋体">头，对于</font><font face="Tahoma">MSO4000/DS4000/DS6000</font><font face="宋体">其长度为</font><font face="Tahoma">11</font><font face="宋体">个字节，其中前</font><font face="Tahoma">2</font><font face="宋体">个字节分别为</font><font face="Tahoma">TMC</font><font face="宋体">头标志符#和宽度描述符</font><font face="Tahoma">9</font><font face="宋体">，接着的</font><font face="Tahoma">9</font><font face="宋体">个字节为数据长度，然后是波形数
+据，最后一个字节为结束符</font><font face="Tahoma">0x0A</font><font face="宋体">。所以，读取的有效波形数据点为</font><font face="Tahoma">12</font><font face="宋体">到倒数第</font><font face="Tahoma">2</font><font face="宋体">个点。</font></font></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">wave = data(12:len-1);</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">wave = wave';</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">&nbsp;</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">subplot(211);</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">plot( wave );</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">&nbsp;</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">fftSpec = fft( wave', 2048 );</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">fftRms = abs( fftSpec' );</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">fftLg = 20*log(fftRms ); </font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">subplot(212);</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; text-autospace: none; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">
+<font size="2">plot(fftLg);</font></span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 0pt; margin-bottom:0pt">
+<font size="2"><span style="font-family: Tahoma">7.&nbsp;</span><font face="宋体">运行程序。确定当前的目录设置能够搜索到</font><span style="font-family: Tahoma">WaveData.m</span><font face="宋体">文件，</font><span style="font-family: Tahoma">在Command 
+Window</span><font face="宋体">窗口输入</font><span style="font-family: Tahoma">WaveData</span><font face="宋体">，按</font><span style="font-family: Tahoma">Enter</span></font><font face="宋体" size="2">键即可
+。如下列图所示：</font></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US"><!--[if gte vml 1]><v:shapetype id="_x0000_t75"
+ coordsize="21600,21600" o:spt="75" o:preferrelative="t" path="m@4@5l@4@11@9@11@9@5xe"
+ filled="f" stroked="f">
+ <v:stroke joinstyle="miter"/>
+ <v:formulas>
+  <v:f eqn="if lineDrawn pixelLineWidth 0"/>
+  <v:f eqn="sum @0 1 0"/>
+  <v:f eqn="sum 0 0 @1"/>
+  <v:f eqn="prod @2 1 2"/>
+  <v:f eqn="prod @3 21600 pixelWidth"/>
+  <v:f eqn="prod @3 21600 pixelHeight"/>
+  <v:f eqn="sum @0 0 1"/>
+  <v:f eqn="prod @6 1 2"/>
+  <v:f eqn="prod @7 21600 pixelWidth"/>
+  <v:f eqn="sum @8 21600 0"/>
+  <v:f eqn="prod @7 21600 pixelHeight"/>
+  <v:f eqn="sum @10 21600 0"/>
+ </v:formulas>
+ <v:path o:extrusionok="f" gradientshapeok="t" o:connecttype="rect"/>
+ <o:lock v:ext="edit" aspectratio="t"/>
+</v:shapetype><v:shape id="图片_x0020_1" o:spid="_x0000_s1026" type="#_x0000_t75"
+ style='width:392.25pt;height:36pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Matlab.files/image001.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=523 height=48
+src="Matlab.files/image002.jpg" v:shapes="图片_x0020_1"><![endif]></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US"><font size="2">&nbsp;</font></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span style="font-family: 宋体"><font size="2">波形图</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<font face="宋体" size="2"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_4" o:spid="_x0000_s1025" type="#_x0000_t75" style='width:358.5pt;
+ height:315.75pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Matlab.files/image003.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=478 height=421
+src="Matlab.files/image004.jpg" v:shapes="图片_x0020_4"><![endif]></font></p>
+<p class="MsoNormal"><span lang="EN-US">&nbsp;</span></p>
+
+</body>
+
+</html>

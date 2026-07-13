@@ -1,0 +1,1929 @@
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<HTML>
+<HEAD>
+<meta name="GENERATOR" content="Microsoft&reg; HTML Help Workshop 4.1">
+<!-- Sitemap 1.0 -->
+</HEAD>
+<BODY>
+<OBJECT type="text/site properties">
+</OBJECT>
+<UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*CLS">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/CLS.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*ESE">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/ESE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*ESR">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/ESR.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*IDN">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/IDN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*OPC">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/OPC.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*OPC?">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/OPC-.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*RST">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/RST.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*SRE">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/SRE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*STB?">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/STB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*TST?">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/TST.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="*WAI">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/WAI.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":ACQuire:AVERages">
+		<param name="Local" value="命令系统/ACQuire命令子系统/ACQuireAVERages.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":ACQuire:MDEPth">
+		<param name="Local" value="命令系统/ACQuire命令子系统/ACQuireMDEPth.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":ACQuire:MODE">
+		<param name="Local" value="命令系统/ACQuire命令子系统/ACQuireMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":ACQuire:SRATe?">
+		<param name="Local" value="命令系统/ACQuire命令子系统/ACQuireSRATe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":ACQuire:TYPE">
+		<param name="Local" value="命令系统/ACQuire命令子系统/ACQuireTYPE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":AUToscale">
+		<param name="Local" value="命令系统/AUToscale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:DISPlay">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnDISPlay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:FORMat">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnFORMat.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:IIC:OFFSet">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnIIC/BUSnIICOFFSet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:IIC:SCLK:SOURce">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnIIC/BUSnIICSCLKSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:IIC:SCLK:THReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnIIC/BUSnIICSCLKTHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:IIC:SDA:SOURce">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnIIC/BUSnIICSDASOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:IIC:SDA:THReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnIIC/BUSnIICSDATHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:MODE">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:PARAllel:BSET">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnPARAllel/BUSnPARAllelBSET.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:PARAllel:CLK">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnPARAllel/BUSnPARAllelCLK.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:PARAllel:OFFSet">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnPARAllel/BUSnPARAllelOFFSet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:PARAllel:SLOPe">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnPARAllel/BUSnPARAllelSLOPe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:PARAllel:THReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnPARAllel/BUSnPARAllelTHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:BAUD">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232BAUD.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:DBITs">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232DBITs.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:ENDian">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232ENDian.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:OFFSet">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232OFFSet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:PACKet">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232PACKet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:PARity">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232PARity.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:PEND">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232PEND.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:POLarity">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232POLarity.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:RTHReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232RTHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:RX">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232RX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:SBITs">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232SBITs.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:TTHReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232TTHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232:TX">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232TX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:DBITs">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIDBITs.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:ENDian">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIENDian.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:MISO:POLarity">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIMISOPOLarity.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:MISO:SOURce">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIMISOSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:MISO:THReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIMISOTHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:MOSI:POLarity">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIMOSIPOLarity.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:MOSI:SOURce">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIMOSISOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:MOSI:THReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIMOSITHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:OFFSet">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPIOFFSet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:SCLK:SLOPe">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPISCLKSLOPe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:SCLK:SOURce">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPISCLKSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:SCLK:THReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPISCLKTHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:SS:POLarity">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPISSPOLarity.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:SS:SOURce">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPISSSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI:SS:THReshold">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPISSTHReshold.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADD:INVert">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADD/CALCulateADDINVert.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADD:SA">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADD/CALCulateADDSA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADD:SB">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADD/CALCulateADDSB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADD:VOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADD/CALCulateADDVOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADD:VSCale">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADD/CALCulateADDVSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADVance:EXPRession">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADVance/CALCulateADVanceEXPRession.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADVance:INVert">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADVance/CALCulateADVanceINVert.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADVance:VARiable1">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADVance/CALCulateADVanceVARiable1.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADVance:VARiable2">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADVance/CALCulateADVanceVARiable2.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADVance:VOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADVance/CALCulateADVanceVOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:ADVance:VSCale">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateADVance/CALCulateADVanceVSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:DIVision:INVert">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateDIVision/CALCulateDIVisionINVert.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:DIVision:SA">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateDIVision/CALCulateDIVisionSA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:DIVision:SB">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateDIVision/CALCulateDIVisionSB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:DIVision:VOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateDIVision/CALCulateDIVisionVOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:DIVision:VSCale">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateDIVision/CALCulateDIVisionVSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:HCENter">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTHCENter.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:HOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTHOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:HSCaLe">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTHSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:HSPan">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTHSPan.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:SOURce">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:SPLit">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTSPLit.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:VOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTVOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:VSCale">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTVSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:VSMode">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTVSMode.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:FFT:WINDow">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateFFT/CALCulateFFTWINDow.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:LOGic:INVert">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateLOGic/CALCulateLOGicINVert.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:LOGic:OPERator">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateLOGic/CALCulateLOGicOPERator.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:LOGic:SA">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateLOGic/CALCulateLOGicSA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:LOGic:SB">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateLOGic/CALCulateLOGicSB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:LOGic:VOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateLOGic/CALCulateLOGicVOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:LOGic:VSCale">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateLOGic/CALCulate-LOGic-VSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:MODE">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:MULTiply:INVert">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateMULTiply/CALCulateMULTiplyINVert.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:MULTiply:SA">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateMULTiply/CALCulateMULTiplySA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:MULTiply:SB">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateMULTiply/CALCulateMULTiplySB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:MULTiply:VOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateMULTiply/CALCulateMULTiplyVOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:MULTiply:VSCale">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateMULTiply/CALCulateMULTiplyVSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:SUB:INVert">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateSUB/CALCulateSUBINVert.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:SUB:SA">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateSUB/CALCulateSUBSA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:SUB:SB">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateSUB/CALCulateSUBSB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:SUB:VOFFset">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateSUB/CALCulateSUBVOFFset.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate:SUB:VSCale">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulateSUB/CALCulateSUBVSCale.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALibrate:DATE?">
+		<param name="Local" value="命令系统/CALibrate命令子系统/CALibrate-DATE-.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALibrate:QUIT">
+		<param name="Local" value="命令系统/CALibrate命令子系统/CALibrate-QUIT.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALibrate:STARt">
+		<param name="Local" value="命令系统/CALibrate命令子系统/CALibrate-STARt.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALibrate:TIME?">
+		<param name="Local" value="命令系统/CALibrate命令子系统/CALibrate-TIME-.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:BWLimit">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnBWLimit.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:COUPling">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnCOUPling.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:DISPlay">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnDISPlay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:FILTer:ENABle">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnFILTerENABle.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:FILTer:LLIMit">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnFILTerLLIMit.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:FILTer:TYPe">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnFILTerTYPe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:FILTer:ULIMit">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnFILTerULIMit.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:IMPedance">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnIMPedance.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:INVert">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnINVert.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:OFFSet">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnOFFSet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:PROBe">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnPROBe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:SCALe">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnSCALe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:TYPE?">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnTYPE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:UNITs">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnUNITs.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;:VERNier">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANnelnVERNier.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:AXValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualAXValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:AYValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualAYValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:BXValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualBXValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:BYValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualBYValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:CAX">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualCAX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:CAY">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualCAY.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:CBX">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualCBX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:CBY">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualCBY.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:IXDelta?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualIXDelta.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:SOURce">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:TUNit">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualTUNit.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:TYPE">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualTYPE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:VUNit">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualVUNit.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:XDELta?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualXDELta.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MANual:YDELta?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMANual/CURSorMANualYDELta.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:MODE">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:AXValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkAXValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:AYValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkAYValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:BXValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkBXValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:BYValue?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkBYValue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:CAX">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkCAX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:CAY?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkCAY.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:CBX">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkCBX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:CBY?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkCBY.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:IXDelta?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkIXDelta.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:SOURce1">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkSOURce1.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:SOURce2">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkSOURce2.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:XDELta?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkXDELta.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor:TRACk:YDELta?">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSorTRACk/CURSorTRACkYDELta.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:CLEar">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayCLEar.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:DATA?">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayDATA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:GBRightness">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayGBRightness.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:GRADing:TIME">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayGRADingTIME.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:GRID">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayGRID.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:MPERsistence">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayMPERsistence.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:TYPE">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayTYPE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay:WBRightness">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlayWBRightness.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WRECord:FEND">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWRECord/FUNCtionWRECordFEND.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WRECord:FMAX?">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWRECord/FUNCtionWRECordFMAX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WRECord:INTerval">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWRECord/FUNCtionWRECordINTerval.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WRECord:OPERate">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWRECord/FUNCtionWRECordOPERate.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WREPlay:FCURrent">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWREPlay/FUNCtionWREPlayFCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WREPlay:FEND">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWREPlay/FUNCtionWREPlayFEND.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WREPlay:FMAX?">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWREPlay/FUNCtionWREPlayFMAX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WREPlay:FSTart">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWREPlay/FUNCtionWREPlayFSTart.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WREPlay:INTerval">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWREPlay/FUNCtionWREPlayINTerval.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WREPlay:MODE">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWRECord/FUNCtionWREPlayMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WREPlay:OPERate">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWRECord/FUNCtionWREPlayOPERate.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion:WRMode">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtionWRMode.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:AUToip">
+		<param name="Local" value="命令系统/LAN命令子系统/LANAUToip.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:DHCP">
+		<param name="Local" value="命令系统/LAN命令子系统/LANDHCP.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:DNS">
+		<param name="Local" value="命令系统/LAN命令子系统/LANDNS.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:GATeway">
+		<param name="Local" value="命令系统/LAN命令子系统/LANGATeway.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:INITiate">
+		<param name="Local" value="命令系统/LAN命令子系统/LANINITiate.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:IPADdress">
+		<param name="Local" value="命令系统/LAN命令子系统/LANIPADdress.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:MAC?">
+		<param name="Local" value="命令系统/LAN命令子系统/LANMAC.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:MANual">
+		<param name="Local" value="命令系统/LAN命令子系统/LANMANual.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:SMASk">
+		<param name="Local" value="命令系统/LAN命令子系统/LANSMASk.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:STATus?">
+		<param name="Local" value="命令系统/LAN命令子系统/LANSTATus.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN:VISA?">
+		<param name="Local" value="命令系统/LAN命令子系统/LANVISA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:CREate">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKCREate.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:DATA">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKDATA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:ENABle">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKENABle.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:FAILed?">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKFAILed.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:MDISplay">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKMDISplay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:OPERate">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKOPERate.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:OUTPut">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKOUTPut.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:PASSed?">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKPASSed.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:RESet">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKRESet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:SOOutput">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKSOOutput.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:SOURce">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:TOTal?">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKTOTal.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:X">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK:Y">
+		<param name="Local" value="命令系统/MASK命令子系统/MASKY.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:ADISplay">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureADISplay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:AREA">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureAREA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:CLEar">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureCLEar.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:COUNter:SOURce">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureCOUNter/MEASureCOUNterSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:COUNter:VALue?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureCOUNter/MEASureCOUNterVALue.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:CREGion:CAX">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureCREGion/MEASureCREGionCAX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:CREGion:CBX">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureCREGion/MEASureCREGionCBX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FDELay:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFDELay/MEASureFDELaySAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FDELay:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFDELay/MEASureFDELaySCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FDELay:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFDELay/MEASureFDELaySMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FDELay:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFDELay/MEASureFDELaySMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FPHase:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFPHase/MEASureFPHaseSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FPHase:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFPHase/MEASureFPHaseSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FPHase:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFPHase/MEASureFPHaseSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FPHase:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFPHase/MEASureFPHaseSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FREQuency:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFREQuency/MEASureFREQuencySAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FREQuency:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFREQuency/MEASureFREQuencySCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FREQuency:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFREQuency/MEASureFREQuencySMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FREQuency:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFREQuency/MEASureFREQuencySMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FTIMe:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFTIMe/MEASureFTIMeSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FTIMe:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFTIMe/MEASureFTIMeSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FTIMe:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFTIMe/MEASureFTIMeSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FTIMe:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFTIMe/MEASureFTIMeSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:HISTory:DISPlay">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureHISTory/MEASureHISToryDISPlay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:HISTory:DMODe">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureHISTory/MEASureHISToryDMODe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NDUTy:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNDUTy/MEASureNDUTySAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NDUTy:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNDUTy/MEASureNDUTySCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NDUTy:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNDUTy/MEASureNDUTySMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NDUTy:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNDUTy/MEASureNDUTySMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NWIDth:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNWIDth/MEASureNWIDthSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NWIDth:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNWIDth/MEASureNWIDthSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NWIDth:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNWIDth/MEASureNWIDthSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NWIDth:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNWIDth/MEASureNWIDthSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:OVERshoot:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureOVERshoot/MEASureOVERshootSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:OVERshoot:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureOVERshoot/MEASureOVERshootSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:OVERshoot:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureOVERshoot/MEASureOVERshootSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:OVERshoot:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureOVERshoot/MEASureOVERshootSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PDUTy:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePDUTy/MEASurePDUTySAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PDUTy:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePDUTy/MEASurePDUTySCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PDUTy:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePDUTy/MEASurePDUTySMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PDUTy:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePDUTy/MEASurePDUTySMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PERiod:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePERiod/MEASurePERiodSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PERiod:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePERiod/MEASurePERiodSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PERiod:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePERiod/MEASurePERiodSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PERiod:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePERiod/MEASurePERiodSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PREShoot:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePREShoot/MEASurePREShootSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PREShoot:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePREShoot/MEASurePREShootSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PREShoot:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePREShoot/MEASurePREShootSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PREShoot:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePREShoot/MEASurePREShootSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PWIDth:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePWIDth/MEASurePWIDthSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PWIDth:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePWIDth/MEASurePWIDthSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PWIDth:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePWIDth/MEASurePWIDthSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PWIDth:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePWIDth/MEASurePWIDthSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RDELay:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRDELay/MEASureRDELaySAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RDELay:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRDELay/MEASureRDELaySCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RDELay:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRDELay/MEASureRDELaySMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RDELay:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRDELay/MEASureRDELaySMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RECover">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRECover.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RPHase:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRPHase/MEASureRPHaseSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RPHase:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRPHase/MEASureRPHaseSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RPHase:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRPHase/MEASureRPHaseSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RPHase:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRPHase/MEASureRPHaseSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RTIMe:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRTIMe/MEASureRTIMeSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RTIMe:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRTIMe/MEASureRTIMeSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RTIMe:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRTIMe/MEASureRTIMeSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RTIMe:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRTIMe/MEASureRTIMeSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:DSA">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupDSA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:DSB">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupDSB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:MAX">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupMAX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:MID">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupMID.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:MIN">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupMIN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:PSA">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupPSA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:PSB">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupPSB.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SETup:TYPE">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSETup/MEASureSETupTYPE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:SOURce">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:STATistic:DISPlay">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSTATistic/MEASureSTATisticDISPlay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:STATistic:RESet">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureSTATistic/MEASureSTATisticRESet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAMP:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAMP/MEASureVAMPSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAMP:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAMP/MEASureVAMPSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAMP:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAMP/MEASureVAMPSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAMP:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAMP/MEASureVAMPSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAVG:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAVG/MEASureVAVGSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAVG:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAVG/MEASureVAVGSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAVG:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAVG/MEASureVAVGSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAVG:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAVG/MEASureVAVGSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VBASe:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVBASe/MEASureVBASeSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VBASe:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVBASe/MEASureVBASeSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VBASe:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVBASe/MEASureVBASeSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VBASe:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVBASe/MEASureVBASeSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMAX:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMAX/MEASureVMAXSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMAX:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMAX/MEASureVMAXSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMAX:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMAX/MEASureVMAXSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMAX:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMAX/MEASureVMAXSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMIN:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMIN/MEASureVMINSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMIN:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMIN/MEASureVMINSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMIN:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMIN/MEASureVMINSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMIN:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMIN/MEASureVMINSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VPP:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVPP/MEASureVPPSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VPP:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVPP/MEASureVPPSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VPP:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVPP/MEASureVPPSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VPP:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVPP/MEASureVPPSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VRMS:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVRMS/MEASureVRMSSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VRMS:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVRMS/MEASureVRMSSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VRMS:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVRMS/MEASureVRMSSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VRMS:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVRMS/MEASureVRMSSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VTOP:SAVerage?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVTOP/MEASureVTOPSAVerage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VTOP:SCURrent?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVTOP/MEASureVTOPSCURrent.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VTOP:SMAXimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVTOP/MEASureVTOPSMAXimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VTOP:SMINimum?">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVTOP/MEASureVTOPSMINimum.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":RUN">
+		<param name="Local" value="命令系统/RUN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SINGle">
+		<param name="Local" value="命令系统/SINGle.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":STOP">
+		<param name="Local" value="命令系统/STOP.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:AOUTput">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemAOUTput.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:BEEPer">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemBEEPer.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:DATE">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemDATE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:ERRor[:NEXT]?">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemERRor[NEXT].htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:ETIMpedence">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemETIMpedence.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:EXPand">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemEXPand.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:LANGuage">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemLANGuage.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:PON">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemPON.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:PSTatus">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemPSTatus.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:SETup">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemSETup.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:SSAVer:TIME">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemSSAVerTIME.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:TIME">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemTIME.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem:VERSion?">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTemVERSion.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TFORce">
+		<param name="Local" value="命令系统/TFORce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:DELay:ENABle">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseDELayENABle.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:DELay:OFFSet">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseDELayOFFSet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:DELay:SCALe">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseDELaySCALe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:HREF:MODE">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseHREFMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:HREF:POSition">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseHREFPOSition.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:MODE">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:VERNier">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseVERNier.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:XY1:DISPlay">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseXY1DISPlay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase:XY2:DISPlay">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebaseXY2DISPlay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase[:MAIN]:OFFSet">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebase[MAIN]OFFSet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase[:MAIN]:SCALe">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebase[MAIN]SCALe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TLHAlf">
+		<param name="Local" value="命令系统/TLHAlf.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:BAUD">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANBAUD.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:BUSer">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANBUSer.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:FTYPe">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANFTYPe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:LEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:SOURce">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:SPOint">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANSPOint.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:STYPe">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANSTYPe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:CAN:TRIGger">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCAN/TRIGgerCANTRIGger.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:COUPling">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerCOUPling.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:EDGe:LEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerEDGe/TRIGgerEDGeLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:EDGe:SLOPe">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerEDGe/TRIGgerEDGeSLOPe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:EDGe:SOURce">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerEDGe/TRIGgerEDGeSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:HOLDoff">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerHOLDoff.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:ABITs">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICABITs.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:ADDRess">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICADDRess.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:CLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICCLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:DATA">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICDATA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:DIRection">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICDIRection.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:DLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICDLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:QUALifier">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICQUALifier.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:SCL">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICSCL.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:SDA">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICSDA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:IIC:WHEN">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerIIC/TRIGgerIICWHEN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:MODE">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:PATTern:LEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerPATTern/TRIGgerPATTernLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:PATTern:PATTern">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerPATTern/TRIGgerPATTernPATTern.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:PULSe:LEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerPULSe/TRIGgerPULSeLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:PULSe:SOURce">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerPULSe/TRIGgerPULSeSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:PULSe:UWIDth">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerPULSe/TRIGgerPULSeUWIDth.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:PULSe:WHEN">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerPULSe/TRIGgerPULSeWHEN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:PULSe:WIDTh">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerPULSe/TRIGgerPULSeLWIDTh.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:BAUD">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232BAUD.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:BUSer">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232BUSer.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:DATA">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232DATA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:LEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232LEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:PARity">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232PARity.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:SOURce">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232SOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:STOP">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232STOP.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:WHEN">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232WHEN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:RS232:WIDTh">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerRS232/TRIGgerRS232WIDTh.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SLOPe:ALEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSLOPe/TRIGgerSLOPeALEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SLOPe:BLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSLOPe/TRIGgerSLOPeBLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SLOPe:SOURce">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSLOPe/TRIGgerSLOPeSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SLOPe:TLOWer">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSLOPe/TRIGgerSLOPeTLOWer.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SLOPe:TUPPer">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSLOPe/TRIGgerSLOPeTUPPer.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SLOPe:WHEN">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSLOPe/TRIGgerSLOPeWHEN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SLOPe:WINDow">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSLOPe/TRIGgerSLOPeWINDow.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:CLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPICLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:DATA">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPIDATA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:DLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPIDLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:MODE">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPIMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:SCL">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPISCL.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:SDA">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPISDA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:SLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPISLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:SLOPe">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPISLOPe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:TIMeout">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPITIMeout.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:WHEN">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPIWHEN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SPI:WIDTh">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSPI/TRIGgerSPIWIDTh.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:STATus?">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSTATus.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:SWEep">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerSWEep.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:USB:DMINus">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerUSB/TRIGgerUSBDMINus.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:USB:DPLus">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerUSB/TRIGgerUSBDPLus.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:USB:MLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerUSB/TRIGgerUSBMLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:USB:PLEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerUSB/TRIGgerUSBPLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:USB:SPEed">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerUSB/TRIGgerUSBSPEed.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:USB:TRIGger">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerUSB/TRIGgerUSBTRIGger.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:VIDeo:LEVel">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerVIDeo/TRIGgerVIDeoLEVel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:VIDeo:LINE">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerVIDeo/TRIGgerVIDeoLINE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:VIDeo:MODE">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerVIDeo/TRIGgerVIDeoMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:VIDeo:POLarity">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerVIDeo/TRIGgerVIDeoPOLarity.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:VIDeo:SOURce">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerVIDeo/TRIGgerVIDeoSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger:VIDeo:STANdard">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGgerVIDeo/TRIGgerVIDeoSTANdard.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:BEGin">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformBEGin.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:DATA?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformDATA.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:END">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformEND.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:FORMat">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformFORMat.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:MODE">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformMODE.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:POINts">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformPOINts.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:PREamble?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformPREamble.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:RESet">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformRESet.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:SOURce">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformSOURce.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:STARt">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformSTARt.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:STATus?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformSTATus.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:STOP">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformSTOP.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:XINCrement?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformXINCrement.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:XORigin?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformXORigin.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:XREFerence?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformXREFerence.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:YINCrement?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformYINCrement.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:YORigin?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformYORigin.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform:YREFerence?">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeformYREFerence.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":ACQuire命令子系统">
+		<param name="Local" value="命令系统/ACQuire命令子系统/ACQuire命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:IIC">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnIIC/BUSnIIC.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:PARAllel">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnPARAllel/BUSnPARAllel.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:RS232">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnRS232/BUSnRS232.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:SPI">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSnSPI/BUSnSPI.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":BUS&lt;n&gt;:命令子系统">
+		<param name="Local" value="命令系统/BUSn命令子系统/BUSn命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALCulate命令子系统">
+		<param name="Local" value="命令系统/CALCulate命令子系统/CALCulate命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CALibrate命令子系统">
+		<param name="Local" value="命令系统/CALibrate命令子系统/CALibrate命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CHANnel&lt;n&gt;命令子系统">
+		<param name="Local" value="命令系统/CHANneln命令子系统/CHANneln命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":CURSor命令子系统">
+		<param name="Local" value="命令系统/CURSor命令子系统/CURSor命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":DISPlay命令子系统">
+		<param name="Local" value="命令系统/DISPlay命令子系统/DISPlay命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="DS6000系列数字示波器编程手册">
+		<param name="Local" value="Index.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":FUNCtion命令子系统">
+		<param name="Local" value="命令系统/FUNCtion命令子系统/FUNCtion命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="IEEE 488.2公用命令">
+		<param name="Local" value="命令系统/IEEE%20488.2公用命令/IEEE%20488.2公用命令.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":LAN命令子系统">
+		<param name="Local" value="命令系统/LAN命令子系统/LAN命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MASK命令子系统">
+		<param name="Local" value="命令系统/MASK命令子系统/MASK命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FDELay">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFDELay/MEASureFDELay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FPHase">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFPHase/MEASureFPHase.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FREQuency">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFREQuency/MEASureFREQuency.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:FTIMe">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureFTIMe/MEASureFTIMe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NDUTy">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNDUTy/MEASureNDUTy.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:NWIDth">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureNWIDth/MEASureNWIDth.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:OVERshoot">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureOVERshoot/MEASureOVERshoot.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PDUTy">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePDUTy/MEASurePDUTy.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PERiod">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePERiod/MEASurePERiod.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PREShoot">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePREShoot/MEASurePREShoot.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:PWIDth">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASurePWIDth/MEASurePWIDth.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RDELay">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRDELay/MEASureRDELay.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RPHase">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRPHase/MEASureRPHase.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:RTIMe">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureRTIMe/MEASureRTIMe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAMP">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAMP/MEASureVAMP.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VAVG">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVAVG/MEASureVAVG.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VBASe">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVBASe/MEASureVBASe.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMAX">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMAX/MEASureVMAX.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VMIN">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVMIN/MEASureVMIN.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VPP">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVPP/MEASureVPP.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VRMS">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVRMS/MEASureVRMS.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure:VTOP">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASureVTOP/MEASureVTOP.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":MEASure命令子系统">
+		<param name="Local" value="命令系统/MEASure命令子系统/MEASure命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":RECall命令子系统">
+		<param name="Local" value="命令系统/RECall命令子系统/RECall命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="SCPI简介">
+		<param name="Local" value="SCPI%20简介/SCPI简介.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":SYSTem命令子系统">
+		<param name="Local" value="命令系统/SYSTem命令子系统/SYSTem命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TIMebase命令子系统">
+		<param name="Local" value="命令系统/TIMebase命令子系统/TIMebase命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":TRIGger命令子系统">
+		<param name="Local" value="命令系统/TRIGger命令子系统/TRIGger命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value=":WAVeform命令子系统">
+		<param name="Local" value="命令系统/WAVeform命令子系统/WAVeform命令子系统.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="LabVIEW 8.6 编程实例">
+		<param name="Local" value="编程实例/LabVIEW%208.6%20编程实例.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Visual Basic 6.0 编程实例">
+		<param name="Local" value="编程实例/Visual%20Basic%206.0%20编程实例.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Visual C++ 6.0 编程实例">
+		<param name="Local" value="编程实例/Visual%20C++%206.0%20编程实例.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="编程实例">
+		<param name="Local" value="编程实例/编程实例.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="编程准备">
+		<param name="Local" value="编程实例/编程准备.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="参数类型">
+		<param name="Local" value="SCPI%20简介/参数类型.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="符号说明">
+		<param name="Local" value="SCPI%20简介/符号说明.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="联系我们">
+		<param name="Local" value="联系我们/联系我们.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="命令格式">
+		<param name="Local" value="SCPI%20简介/命令格式.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="命令速查A-Z">
+		<param name="Local" value="命令速查A-Z/命令速查A-Z.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="命令缩写">
+		<param name="Local" value="SCPI%20简介/命令缩写.htm">
+		</OBJECT>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="命令系统">
+		<param name="Local" value="命令系统/命令系统.htm">
+		</OBJECT>
+</UL>
+</BODY>
+</HTML>

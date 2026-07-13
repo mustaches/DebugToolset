@@ -119,7 +119,18 @@ class TopInfoBar extends StatelessWidget {
                     builder: (context) => const LxiConnectionDialog(),
                   );
                 },
-                child: const Text('LXI 仪器设置'),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset(
+                      'LXI_Logo/LXI_Logo_2.png',
+                      height: 12,
+                      color: Colors.white70,
+                      colorBlendMode: BlendMode.srcIn,
+                    ),
+                    const Text(' 仪器设置'),
+                  ],
+                ),
               ),
               MenuItemButton(
                 style: ButtonStyle(
@@ -250,45 +261,16 @@ class TopInfoBar extends StatelessWidget {
               ],
             ),
           ),
-          // Connection Link Status Block
-          InkWell(
-            onTap: () {
-              showDialog(
-                context: state.oscNavigatorKey.currentContext ?? context,
-                useRootNavigator: false,
-                builder: (context) => const LxiConnectionDialog(),
-              );
-            },
-            child: _buildInfoBlock(
-              child: Row(
-                children: [
-                  Icon(
-                    state.connectionSource == 'Serial'
-                        ? Icons.cable
-                        : Icons.settings_ethernet, // LXI network ethernet logo
-                    color: state.connectionSource == 'LXI' && state.isLxiConnected
-                        ? Colors.greenAccent
-                        : (state.connectionSource == 'Serial' ? Colors.cyanAccent : Colors.grey),
-                    size: 14,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    state.connectionSource == 'LXI'
-                        ? (state.isLxiConnected ? 'LXI: ${state.lxiIp}' : 'LXI (未连接)')
-                        : (state.connectionSource == 'Serial' ? 'Serial' : 'LXI'), // LXI labeled button
-                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-            ),
-          ),
+
           const Spacer(),
 
           _buildActionButton(
-            label: state.isDemoMode ? 'DEMO' : 'START DEMO',
+            label: '',
             color: state.isDemoMode ? Colors.purpleAccent : Colors.grey.shade400,
             onTap: () => state.toggleDemoMode(),
             icon: Icons.auto_awesome,
+            iconSize: 18.0,
+            width: 48.0,
           ),
           Container(
             height: 24,
@@ -297,16 +279,44 @@ class TopInfoBar extends StatelessWidget {
             margin: const EdgeInsets.symmetric(horizontal: 8),
           ),
           _buildActionButton(
-            label: 'SAVE',
+            label: '',
+            color: Colors.greenAccent,
+            onTap: () {
+              showDialog(
+                context: state.oscNavigatorKey.currentContext ?? context,
+                useRootNavigator: false,
+                builder: (context) => const LxiConnectionDialog(),
+              );
+            },
+            customIcon: Image.asset(
+              'LXI_Logo/LXI_Logo_2.png',
+              height: 16,
+              color: Colors.greenAccent,
+              colorBlendMode: BlendMode.srcIn,
+            ),
+            width: 48.0,
+          ),
+          Container(
+            height: 24,
+            width: 1,
+            color: Colors.grey.shade800,
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+          _buildActionButton(
+            label: '',
             color: Colors.blueAccent,
             onTap: () => _handleSave(context, state),
             icon: Icons.save,
+            iconSize: 18.0,
+            width: 48.0,
           ),
           _buildActionButton(
-            label: 'LOAD',
+            label: '',
             color: Colors.orangeAccent,
             onTap: () => _handleLoad(context, state),
             icon: Icons.folder_open,
+            iconSize: 18.0,
+            width: 48.0,
           ),
         ],
       ),
@@ -332,6 +342,9 @@ class TopInfoBar extends StatelessWidget {
     required Color color, 
     required VoidCallback onTap, 
     IconData? icon,
+    Widget? customIcon,
+    double? width,
+    double? iconSize,
     bool isDoubleLine = false,
     String? topText,
     String? bottomText,
@@ -342,6 +355,7 @@ class TopInfoBar extends StatelessWidget {
         return InkWell(
           onTap: onTap,
           child: Container(
+            width: width,
             margin: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
             padding: const EdgeInsets.symmetric(horizontal: 10.0),
             decoration: BoxDecoration(
@@ -365,8 +379,9 @@ class TopInfoBar extends StatelessWidget {
               : Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    if (icon != null) Icon(icon, color: color, size: 14),
-                    Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+                    ?customIcon,
+                    if (customIcon == null && icon != null) Icon(icon, color: color, size: iconSize ?? 14),
+                    if (label.isNotEmpty) Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
                   ],
                 ),
           ),

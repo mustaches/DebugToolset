@@ -1,0 +1,260 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>:WAVeform:DATA?</title>
+<style>
+<!--
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+-->
+</style>
+</head>
+
+<body>
+
+<p style="margin-top: 0px; margin-bottom: 0px"><span style="font-weight: 700">
+<font face="Tahoma" size="4">:WAVeform:DATA?</font></span></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>命令格式</b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2"><span lang="PT-BR" style="font-family: Tahoma; color: black">
+:WAVeform:DATA?</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font face="宋体" size="2"><br>
+　</font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2" face="宋体"><b>功能描述</b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2" face="宋体">读取波形数据。</font><font size="2" face="Tahoma"><br>
+</font><font size="2" face="宋体">该命令受</font><font size="2" face="Tahoma"><a href="WAVeformFORMat.htm">:WAVeform:FORMat</a>，<a href="WAVeformMODE.htm">:WAVeform:MODE</a>，<a href="WAVeformPOINts.htm">:WAVeform:POINts</a>，<a href="WAVeformSOURce.htm">:WAVeform:SOURce</a></font><font size="2" face="宋体">等命令设置的影响。</font><font size="2" face="Tahoma"><br>
+<br>
+<br>
+</font>
+<b><font size="2" face="宋体">说明</font></b><font size="2" face="Tahoma"><br>
+<br>
+</font><font size="2" face="宋体">屏幕波形数据读取流程：</font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2" face="Tahoma"><br>
+S1. :WAV:SOURce CHAN1&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </font>
+<font size="2" face="宋体">设置读取的源</font><font size="2" face="Tahoma"><br>
+S2. :WAV:MODE NORM&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">波形模式为</font><font size="2" face="Tahoma">NORM<br>
+S3. :WAV:DATA?&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </font>
+<font size="2" face="宋体">获取缓存中的数据</font><font size="2" face="Tahoma"><br>
+　</font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2" face="Tahoma"><br>
+</font><font size="2" face="宋体">内存波形数据读取：</font><font size="2" face="Tahoma"><br>
+<br>
+S1. :STOP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">内存波形只能在停止状态下进行读取</font><font size="2" face="Tahoma"><br>
+S2. :WAV:SOURce CHAN1&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </font>
+<font size="2" face="宋体">设置读取的源</font><font size="2" face="Tahoma"><br>
+S3. :WAV:MODE RAW&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">波形模式为</font><font size="2" face="Tahoma">RAW<br>
+S4. :WAV:RESet&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">复位波形读取</font><font size="2" face="Tahoma"><br>
+S5. :WAV:BEGin&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">开始波形读取</font><font size="2" face="Tahoma"><br>
+S6. :WAV:STATus?&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</font><font size="2" face="宋体"> 
+获取状态</font><font size="2" face="Tahoma"><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1)&nbsp; IDLE&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">波形读取线程结束</font><font size="2" face="Tahoma"><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; :WAV:DATA?&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">获取缓存中的数据</font><font size="2" face="Tahoma"><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; :WAV: END&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">波形读取完成</font><font size="2" face="Tahoma"><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 2)&nbsp; READ&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">波形读取线程正在运行</font><font size="2" face="Tahoma"><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; :WAV:DATA?&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+</font><font size="2" face="宋体">获取缓存中的数据</font><font size="2" face="Tahoma"><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; S6&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </font>
+<font size="2" face="宋体">&nbsp;继续读取波形数据</font><font size="2" face="Tahoma"><br>
+<br>
+<br>
+</font>
+<b><font size="2" face="宋体">返回格式</font></b><font size="2" face="Tahoma"><br>
+<br>
+</font><font size="2" face="宋体">读取到的数据由</font><font size="2" face="Tahoma">2</font><font size="2" face="宋体">个部分组成，分别是</font><font size="2" face="Tahoma">TMC</font><font size="2" face="宋体">数据描述头和波形数据。</font><font size="2" face="Tahoma"><br>
+#90000dddddXXXX...q\n<br>
+</font><font size="2" face="宋体">其中的</font><font size="2" face="Tahoma">ddddd</font><font size="2" face="宋体">表示数据流中有效的波形点数。</font><font size="2" face="Tahoma"><br>
+<br>
+</font><font size="2" face="宋体">读取内存数据时，每次读回的数据可能只是内存中一块区域的数据。分块读回的数据，每块开头都含有类似</font><font size="2" face="Tahoma"> #9XXXXXXXXX</font><font size="2" face="宋体">的描述符，其中</font><font size="2" face="Tahoma">XXXXXXXXX</font><font size="2" face="宋体">表示本次传输块中的波形点数
+。相邻两块间的波形数据连续。</font><font size="2" face="Tahoma"><br>
+<br>
+<br>
+</font>
+<b><font size="2" face="Tahoma">C#</font><font size="2" face="宋体">测试程序</font></b><font size="2" face="Tahoma"><br>
+<br>
+<font color="#0000FF">using</font> System;<br>
+<font color="#0000FF">using</font> System.Collections.Generic;<br>
+<font color="#0000FF">using</font> System.Linq;<br>
+<font color="#0000FF">using</font> System.Text;</font></p>
+<pre><font size="2" face="Tahoma"><font color="#0000FF">using</font> System.Diagnostics;
+<font color="#0000FF">using</font> System.Threading;
+<font color="#0000FF">using</font> System.IO;</font></pre>
+<pre><font size="2" face="Tahoma"><font color="#0000FF">namespace</font> FalconWavQuery
+{
+    <font color="#0000FF">class</font> <font color="#009999">Program</font>
+    {
+       <font color="#0000FF"> static void</font> Main(<font color="#0000FF">string</font>[] args)
+        {
+           <font color="#009999"> Int32</font> viDef = 0;
+            <font color="#009999">Int32</font> viSession = 0;
+            <font color="#009999">Int32</font> s32ReadByte;</font></pre>
+<pre><font size="2" face="Tahoma">           <font color="#0000FF"> if</font> (args.Length &lt; 2)
+            {
+                <font color="#009999">Console</font>.WriteLine( <font color="#993300">&quot;Invalid Input! FalconWavQuery CHAN1 fileName&quot; </font>);
+                <font color="#0000FF">return</font>;
+            }
+            
+
+</font></pre>
+<pre><font size="2" face="Tahoma">            Stopwatch stpWatch = <font color="#0000FF">new</font> Stopwatch();</font></pre>
+<pre><font size="2" face="Tahoma">            InitVisa( <font color="#0000FF">out</font> viDef );</font></pre>
+<pre><font size="2" face="Tahoma">           <font color="#0000FF"> if </font>(ConnectDevice(viDef, <font color="#0000FF">out</font> viSession) == <font color="#0000FF">true</font>)
+            {
+            }
+            <font color="#0000FF">else</font>
+            {
+                <font color="#009999">Console</font>.WriteLine( <font color="#993300">&quot;Connect fail!&quot; </font>);
+                <font color="#0000FF">return</font>;
+            }</font></pre>
+<pre><font size="2" face="Tahoma">            stpWatch.Start();</font></pre>
+<pre><font size="2" face="Tahoma">            s32ReadByte = TestReadWfm(viSession, args[0], args[1] );</font></pre>
+<pre><font size="2" face="Tahoma">            stpWatch.Stop();</font></pre>
+<pre><font size="2" face="Tahoma">           <font color="#009999"> Console</font>.WriteLine( <font color="#993300">&quot;Speed is {0} KB/s&quot;</font>, s32ReadByte/stpWatch.ElapsedMilliseconds );</font></pre>
+<pre><font size="2" face="Tahoma">            DeInitVisa(viDef, viSession);</font></pre>
+<pre><font size="2" face="Tahoma">            <font color="#009999">Console</font>.WriteLine( <font color="#993300">&quot;Press any key to continue.&quot;</font>);
+            <font color="#009999">Console</font>.ReadKey();
+</font></pre>
+<pre><font size="2" face="Tahoma">        }</font></pre>
+<pre><font size="2" face="Tahoma">        <font color="#0000FF">static</font> <font color="#009999">Int32</font> TestReadWfm(<font color="#009999">Int32</font> viSession, <font color="#0000FF">string</font> strChan, <font color="#0000FF">string</font> strFile )
+        {
+           <font color="#0000FF"> byte</font> []wfmBuf;</font></pre>
+<pre><font size="2" face="Tahoma">            <font color="#009999">Int32</font> readCnt = 0;
+            <font color="#009999">Int32</font> readSum = 0;
+            <font color="#009999">Int32</font> readTim = 0;
+            <font color="#009999">Int32</font> maxPacket=0;</font></pre>
+<pre><font size="2" face="Tahoma">            <font color="#009999">StringBuilder</font> strBuild;
+            <font color="#009999">Stream</font> streamOut;
+            <font color="#009999">BinaryWriter</font> wfmStream;</font></pre>
+<pre><font size="2" face="Tahoma">            wfmBuf = <font color="#0000FF">new byte</font>[1024*1024*10];
+            strBuild = <font color="#0000FF">new</font> <font color="#009999">StringBuilder</font>(256);</font></pre>
+<pre><font size="2" face="Tahoma">            
+            visa32.viPrintf(viSession, <font color="#993300">&quot;:STOP\n&quot;</font>);
+            visa32.viPrintf(viSession, <font color="#993300">&quot;:WAV:MODE RAW\n&quot;</font>);
+            visa32.viPrintf(viSession, <font color="#993300">&quot;:WAV:SOURce %s\n&quot;</font>, strChan );</font></pre>
+<pre><font size="2" face="Tahoma">            visa32.viPrintf(viSession, <font color="#993300">&quot;:WAV:RESet\n&quot;</font>);
+            visa32.viPrintf(viSession, <font color="#993300">&quot;:WAV:BEGin\n&quot;</font>);</font></pre>
+<pre><font size="2" face="Tahoma">                                            <font color="#008000">//缓存读取到的WFM</font>
+            streamOut = <font color="#009999">File</font>.Create( strFile , 10000000);
+            wfmStream = <font color="#0000FF">new</font> <font color="#009999">BinaryWriter</font>(streamOut);
+            </font></pre>
+<pre><font size="2" face="Tahoma">            <font color="#0000FF">while</font> (<font color="#0000FF">true</font>)
+            {
+               <font color="#008000"> //Thread.Sleep( 10000 );</font></font></pre>
+<pre><font size="2" face="Tahoma">                visa32.viPrintf(viSession, <font color="#993300">&quot;:WAV:STATus?\n&quot;</font>);
+                visa32.viScanf(viSession, <font color="#993300">&quot;%s&quot;</font>, strBuild);</font></pre>
+<pre><font size="2" face="Tahoma">               <font color="#0000FF"> if</font> (strBuild[0] == 'I')   <font color="#008000">  //IDLE</font>
+                {
+                    visa32.viPrintf(viSession, <font color="#993300">&quot;:WAV:DATA?\n&quot;</font>);
+                    visa32.viRead(viSession, wfmBuf, wfmBuf.Length, <font color="#0000FF">out</font> readCnt);
+                                           <font color="#008000"> //数据头 #9XXXX... 加结束符  \n</font>
+                    readCnt -=12;
+                    readSum += (readCnt);
+                    <font color="#0000FF">if</font> (readCnt &gt; maxPacket)
+                    {
+                        maxPacket = readCnt;
+                    }</font></pre>
+<pre><font size="2" face="Tahoma">                  <font color="#008000">  //readTim++;</font></font></pre>
+<pre><font size="2" face="Tahoma">                                         <font color="#008000">   //跳过文件头 #9XXXX...</font>
+                    <font color="#0000FF">if</font> (readCnt &gt; 0)
+                    {
+                        wfmStream.Write( wfmBuf, 11, readCnt);
+                    }
+                    wfmStream.Close();</font></pre>
+<pre><font size="2" face="Tahoma">                    <font color="#009999" face="Tahoma" size="2">Console</font>.WriteLine(<font color="#993300">&quot;{0}: Read {1} Sum {2} Max {3}&quot;</font>, readTim, readCnt, readSum, maxPacket );
+</font></pre>
+<pre><font size="2" face="Tahoma">                   <font color="#0000FF"> return</font> readSum;
+                }
+                <font color="#0000FF">else</font>
+                {
+                                          <font color="#008000">  //READ</font>
+                    visa32.viPrintf(viSession, <font color="#993300">&quot;:WAV:DATA?\n&quot;</font>);
+                    visa32.viRead(viSession, wfmBuf, wfmBuf.Length, <font color="#0000FF">out</font> readCnt);</font></pre>
+<pre><font size="2" face="Tahoma">                                          <font color="#008000">  //数据头 #9XXXX... 加结束符  \n</font>
+                    readCnt -= 12;
+                    readSum += (readCnt);
+                   <font color="#0000FF"> if</font> (readCnt &gt; maxPacket)
+                    {
+                        maxPacket = readCnt;
+                    }</font></pre>
+<pre><font size="2" face="Tahoma">                    <font color="#009999">Console</font>.WriteLine(<font color="#993300">&quot;{0}: Read {1} &quot;</font>, readTim, readCnt );
+                    readTim++;
+                                        <font color="#008000">    //跳过文件头 #9XXXX...</font>
+                    <font color="#0000FF">if</font> (readCnt &gt; 0)
+                    {
+                        wfmStream.Write( wfmBuf ,11, readCnt);
+                    }
+                }</font></pre>
+<pre><font size="2" face="Tahoma">            }</font></pre>
+<pre><font size="2" face="Tahoma">            <font color="#0000FF">return</font> readSum;</font></pre>
+<pre><font size="2" face="Tahoma">        }
+</font></pre>
+<pre><font size="2" face="Tahoma">      <font color="#008000">  //初始化VISA</font>
+        <font color="#0000FF">static bool</font> InitVisa( <font color="#0000FF">out</font> <font color="#009999">Int32</font> viDef )
+        {
+            <font color="#009999">Int32</font> viError;</font></pre>
+<pre><font size="2" face="Tahoma">            viError = visa32.viOpenDefaultRM( <font color="#0000FF">out</font> viDef );
+            if( viError!=visa32.VI_SUCCESS )
+            {
+                <font color="#0000FF">return false</font>;
+            }
+            <font color="#0000FF">else</font>
+            {
+               <font color="#0000FF"> return true</font>;
+            }
+        }</font></pre>
+<pre><font size="2" face="Tahoma">       <font color="#008000"> //去初始化VISA</font>
+       <font color="#0000FF"> static void</font> DeInitVisa(<font color="#009999">Int32</font> viDef, <font color="#009999">Int32</font> viSession )
+        {
+            visa32.viClose(viSession);
+            visa32.viClose(viDef );</font></pre>
+<pre><font size="2" face="Tahoma">        }</font></pre>
+<pre><font size="2" face="Tahoma">      <font color="#008000">  //连接设备</font>
+        <font color="#0000FF">static bool</font> ConnectDevice(<font color="#009999">Int32</font> viDef, <font color="#0000FF">out</font> <font color="#009999">Int32</font> viSession)
+        {
+           <font color="#009999"> Int32</font> viError;
+           <font color="#009999"> Int32</font> viFindList;
+           <font color="#009999"> Int32</font> viRetCount;</font></pre>
+<pre><font size="2" face="Tahoma">           <font color="#009999"> StringBuilder</font> strRsrc = <font color="#0000FF">new</font> <font color="#009999">StringBuilder</font>(256);</font></pre>
+<pre><font size="2" face="Tahoma">            viError = visa32.viFindRsrc(viDef, <font color="#993300">&quot;USB?*&quot;</font>, <font color="#0000FF">out</font> viFindList, <font color="#0000FF">out</font> viRetCount, strRsrc<font color="#993300">);</font></font></pre>
+<pre><font size="2" face="Tahoma">            <font color="#0000FF">if </font>(viRetCount &gt; 0)
+            {
+                viError = visa32.viOpen(viDef, strRsrc.ToString(), 0, 0, <font color="#0000FF">out</font> viSession);
+               <font color="#0000FF"> if</font> (viError != visa32.VI_SUCCESS)
+                {
+                    visa32.viClose(viDef);
+                    <font color="#0000FF">return false;</font>
+                }</font></pre>
+<pre><font size="2" face="Tahoma">               <font color="#0000FF"> return true;</font>
+            }
+            <font color="#0000FF">else</font>
+            {
+                viSession = 0;
+                <font color="#0000FF">return false;</font>
+            }
+        }
+    }
+}</font></pre>
+
+</body>
+
+</html>

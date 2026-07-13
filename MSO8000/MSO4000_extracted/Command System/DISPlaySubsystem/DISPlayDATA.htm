@@ -1,0 +1,134 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>:DISPlay:DATA?</title>
+<style>
+<!--
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+-->
+</style>
+</head>
+
+<body>
+
+<p style="margin-top: 0px; margin-bottom: 0px"><span style="font-weight: 700">
+<font face="Tahoma" size="4">:DISPlay:DATA?</font></span></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">命令格式</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2">
+<span lang="PT-BR" style="font-family: Tahoma; color: black; background-color:#FFFFFF">
+:DISPlay:DATA?</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font face="宋体" size="2">
+<span style="background-color: #FFFFFF"><br>
+　</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">功能描述</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2">
+<span style="font-family: 宋体; background-color: #FFFFFF">读取当前显示图像的位图数据流。</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">说明</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2">
+<span style="font-family: Tahoma; background-color: #FFFFFF; color:black">PC</span><span style="font-family: 宋体; background-color: #FFFFFF">端通过</span><span style="font-family: Tahoma; background-color: #FFFFFF; color:black">VISA</span><span style="font-family: 宋体; background-color: #FFFFFF">接口发送命令，仪器响应命令后直接将当前显示图像的位图数据流返回至</span><span style="font-family: Tahoma; background-color: #FFFFFF; color:black">PC</span><span style="font-family: 宋体; background-color: #FFFFFF">端缓存区。</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">返回格式</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font face="宋体" size="2">
+<span style="background-color: #FFFFFF">位图数据流格式：</span></font></p>
+<table class="MsoNormalTable" border="1" cellspacing="0" cellpadding="0" style="border: medium none" width="790">
+	<tr>
+		<td valign="top" style="width: 12%; border: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm; background: #D9D9D9">
+		<p class="MsoNormal"><b><span style="font-family: 宋体">组</span><span style="font-family: 宋体; color: black">分 </span>
+		</b></td>
+		<td valign="top" style="width: 20%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: 1.0pt solid windowtext; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm; background: #D9D9D9">
+		<b><font face="宋体">大小（长度）</font></b></td>
+		<td valign="top" style="width: 11%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: 1.0pt solid windowtext; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm; background: #D9D9D9">
+		<b><font face="宋体">示例</font></b></td>
+		<td valign="top" style="width: 47%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: 1.0pt solid windowtext; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm; background: #D9D9D9">
+		<b><font face="宋体">说明</font></b></td>
+	</tr>
+	<tr>
+		<td style="width: 12%; border-left: 1.0pt solid windowtext; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<font face="Tahoma">TMC Blockheader</font></td>
+		<td style="width: 20%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<font face="Tahoma">N<b><sup>1</sup></b> +2</font></td>
+		<td style="width: 11%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<font face="Tahoma">#9001152054</font></td>
+		<td style="width: 47%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<font face="Tahoma">TMC Blockheader ::= #NXXXXXX</font>，用于描述数据流的长度。其中<font face="Tahoma">#</font>作为数据流起始标志符。<font face="Tahoma">N</font><font face="宋体">小于等于</font><font face="Tahoma">9</font><font face="宋体">，其后跟随的</font><font face="Tahoma">N</font><font face="宋体">个数据表示数据流的长度（字节数）。如</font><font face="Tahoma">#9001152054</font><font face="宋体">，其中</font><font face="Tahoma">N</font><font face="宋体">为</font><font face="Tahoma">9</font><font face="宋体">，</font>其后<font face="Tahoma">的001152054</font><font face="宋体"> 表示后面紧跟的数据流中包含 </font>
+		<font face="Tahoma">1152054 Byte</font><font face="宋体">的有效数据。</font></td>
+	</tr>
+	<tr>
+		<td style="width: 12%; border-left: 1.0pt solid windowtext; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p style="margin-top: 0px; margin-bottom: 0px"><font face="Tahoma">BMP 
+		Data</font></td>
+		<td style="width: 20%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<font face="Tahoma">800*480*3+54=1152054<b><sup>2</sup></b></font></td>
+		<td style="width: 11%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p style="margin-top: 0px; margin-bottom: 0px">
+		<font face="Tahoma">BM...</font></td>
+		<td style="width: 47%; border-left: medium none; border-right: 1.0pt solid windowtext; border-top: medium none; border-bottom: 1.0pt solid windowtext; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		具体的位图数据。</td>
+	</tr>
+</table>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<span style="background-color: #FFFFFF"><font face="宋体" size="2">注</font></span><font face="Tahoma" size="2"><b><sup>1</sup></b></font><font face="宋体" size="2"><span style="background-color: #FFFFFF">：</span></font><font face="Tahoma" size="2">N</font><span style="background-color: #FFFFFF"><font face="宋体" size="2">是</font></span><font face="Tahoma" size="2">TMC</font><span style="background-color: #FFFFFF"><font face="宋体" size="2">头中描述数据长度的宽度，如</font></span><font face="Tahoma" size="2">#90000</font><span style="background-color: #FFFFFF"><font face="宋体" size="2">。</font></span></p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<span style="background-color: #FFFFFF"><font face="宋体" size="2">注</font></span><font face="Tahoma" size="2"><b><sup>2</sup></b></font><span style="background-color: #FFFFFF"><font face="宋体" size="2">：宽度为</font></span><font face="Tahoma" size="2">800</font><font face="宋体" size="2"><span style="background-color: #FFFFFF">，高度为</span></font><font face="Tahoma" size="2">480</font><font face="宋体" size="2"><span style="background-color: #FFFFFF">，位深度为</span></font><font face="Tahoma" size="2">24 Bit 
+= 3 Byte</font><span style="background-color: #FFFFFF"><font face="宋体" size="2">，</font></span><font face="Tahoma" size="2">54</font><span style="background-color: #FFFFFF"><font face="宋体" size="2">为位图文件头的大小。</font></span></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">举例</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font face="Tahoma" size="2">1.
+</font><font face="宋体" size="2"><span style="background-color: #FFFFFF">
+确保有足够的缓存接收数据流，否则在读取时程序可能异常；<br>
+</span></font><font face="Tahoma" size="2">2. </font><font face="宋体" size="2">
+<span style="background-color: #FFFFFF">返回的数据流中含有</span></font><font face="Tahoma" size="2">TMC</font><font face="宋体" size="2"><span style="background-color: #FFFFFF">数据头，需要去掉才是符合标准的位图数据流；<br>
+</span></font><font face="Tahoma" size="2">3. </font>
+<span style="background-color: #FFFFFF"><font face="宋体" size="2">数据量大于</font></span><font face="Tahoma" size="2">1 M</font><span style="background-color: #FFFFFF"><font face="宋体" size="2">，如果接口通讯速度不足，需要设定适当的超时时间；<br>
+</font></span><font face="Tahoma" size="2">4. </font>
+<span style="background-color: #FFFFFF"><font face="宋体" size="2">数据结束位置的结束符</font></span><font face="Tahoma" size="2">'\n'(0X0A)</font><span style="background-color: #FFFFFF"><font face="宋体" size="2">需要去掉。</font></span></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0; margin-bottom: 0" align="left">
+<font size="2">
+<span style="font-family: 宋体; background-color:#FFFFFF">
+--------------------------------发送：------------------------------------------</span></font></p>
+<p style="margin-top: 0; margin-bottom: 0">
+　</p>
+<p style="margin-top: 0; margin-bottom: 0">
+<img border="0" src="DISPla1.jpg"></p>
+<p style="margin-top: 0; margin-bottom: 0">
+　</p>
+<p style="margin-top: 0; margin-bottom: 0">
+　</p>
+<p style="margin-top: 0; margin-bottom: 0">
+<font size="2">
+<span style="font-family: 宋体; background-color:#FFFFFF">
+--------------------------------读取：------------------------------------------</span></font></p>
+<p style="margin-top: 0; margin-bottom: 0">
+　</p>
+<p style="margin-top: 0; margin-bottom: 0">
+<img border="0" src="DISPla2.jpg"></p>
+
+</body>
+
+</html>

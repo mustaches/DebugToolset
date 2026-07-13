@@ -1,0 +1,150 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>Visual Basic 6.0 编程实例</title>
+<style>
+<!--
+span.1Char
+	{font-family:"Tahoma","sans-serif";
+	color:blue;
+	font-weight:bold}
+ p.MsoNormal
+	{mso-style-parent:"";
+	margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Tahoma","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+p.MsoBodyText
+	{margin-top:0cm;
+	margin-right:0cm;
+	margin-bottom:6.0pt;
+	margin-left:0cm;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Tahoma","sans-serif";
+	}
+-->
+</style>
+<!--[if !mso]>
+<style>
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+div.WordSection1
+	{page:WordSection1;}
+</style>
+<![endif]-->
+</head>
+
+<body>
+
+<p class="2" style="text-align: justify; text-justify: inter-ideograph; margin-top:0; margin-bottom:0">
+<b>
+<a name="_Toc267903220">
+<span lang="EN-US" style="font-family: Tahoma; color: black">
+<font size="4">Visual Basic 6.0</font></span></a><span style="font-family: 黑体; color: black"><font size="4"> 编程实例</font></span></b></p>
+<p class="MsoNormal" style="margin:0; ">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoNormal" style="margin:0; ">
+　</p>
+<p class="MsoNormal" style="margin:0; "><span style="font-family: 宋体">
+<font size="2">进入</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">Visual Basic 
+6.0</span></font><span style="font-family: 宋体"><font size="2">编程环境，按照下列步骤操作：</font></span></p>
+<p class="MsoNormal" style="margin:0; ">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<font size="2" face="Tahoma">1.&nbsp;</font><span style="font-family: 宋体"><font size="2">建立一个标准应用程序工程（</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">Standard 
+EXE</span></font><span style="font-family: 宋体"><font size="2">）。</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt; margin-right: 0cm; margin-top: 0cm; margin-bottom: 6.0pt">
+<font size="2" face="Tahoma">2. </font><font size="2"><span style="font-family: 宋体">打开</span><span style="font-family: Tahoma,sans-serif">Project</span><span style="font-family: 宋体">→</span><span style="font-family: Tahoma,sans-serif">Add 
+Module</span><span style="font-family: 宋体">的</span><span style="font-family: Tahoma,sans-serif">Existing</span><span style="font-family: 宋体">选项卡，找到之前</span><span style="font-family: Tahoma,sans-serif">NI-VISA</span><span style="font-family: 宋体">安装路径下的</span><span style="font-family: Tahoma,sans-serif">include</span><span style="font-family: 宋体">文件夹中的</span><span style="font-family: Tahoma,sans-serif">visa32.bas</span><span style="font-family: 宋体">文件并添加。</span></font></p>
+<p class="MsoNormal" style="text-indent: 15.75pt">
+<img border="0" src="2010-09-25_154538.png" width="409" height="312"></p>
+<p class="MsoNormal" style="margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="margin-left: 21.0pt"><span lang="EN-US">
+<font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<font size="2" face="Tahoma">3.&nbsp;</font><font size="2"><span style="font-family: 宋体">在</span><span style="font-family: Tahoma,sans-serif">Demo</span><span style="font-family: 宋体">中添加如下四个按钮，分别代表</span><span style="font-family: Tahoma,sans-serif">CH1～CH4</span><span style="font-family: 宋体">。添加四个</span><span style="font-family: Tahoma,sans-serif">Label：Label1(0)，Label1(1)，Label1(2)，Label1(3)，</span><span style="font-family: 宋体">分别显示</span><span style="font-family: Tahoma,sans-serif">CH1～CH4</span><span style="font-family: 宋体">的状态（打开时显示通道的颜色，关闭时显示成灰色）。如下图所示：</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<img border="0" src="2010-09-25_154611.png" width="408" height="133"></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<font size="2" face="Tahoma">4.&nbsp;</font><font size="2"><span style="font-family: 宋体">打开</span><span style="font-family: Tahoma,sans-serif">Project→Project1 
+Properties</span><span style="font-family: 宋体">中的</span><span style="font-family: Tahoma,sans-serif">General</span><span style="font-family: 宋体">选项卡，在</span><span style="font-family: Tahoma,sans-serif">Startup 
+Object</span><span style="font-family: 宋体">下拉框中选择</span><span style="font-family: Tahoma,sans-serif">Form1</span><span style="font-family: 宋体">。</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<font size="2" face="Tahoma">5.&nbsp;</font><span style="font-family: 宋体"><font size="2">双击</font></span><b><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">CH1</font></span></b><span style="font-family: 宋体"><font size="2">按钮进入编程环境，添加如下代码，即可实现对</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">CH1</font></span><span style="font-family: 宋体"><font size="2">～</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">CH4</font></span><span style="font-family: 宋体"><font size="2">的控制。以下为</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">CH1</font></span><span style="font-family: 宋体"><font size="2">的代码，其他通道代码类似。<br>
+　</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Dim defrm As Long</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Dim vi As Long</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Dim strRes As String * 200</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Dim list As Long</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Dim nmatches As Long</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Dim matches As String * 200 '<span style="font-family: 宋体">保留获取设备号</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Dim s32Disp As Integer</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">' <span style="font-family: 宋体">获得</span>visa<span style="font-family: 宋体">的</span>usb<span style="font-family: 宋体">资源</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viOpenDefaultRM(defrm)</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viFindRsrc(defrm, &quot;USB?*&quot;, list, nmatches, matches)</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">' <span style="font-family: 宋体">打开设备</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viOpen(defrm, matches, 0, 0, vi) </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">' 发送询问CH1状态命令</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viVPrintf(vi, &quot;:CHAN1:DISP?&quot; + Chr$(10), 0) </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">' <span style="font-family: 宋体">获取</span>CH1<span style="font-family: 宋体">状态</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viVScanf(vi, &quot;%t&quot;, strRes) </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">s32Disp = CInt(strRes)</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">If (s32Disp = 1) Then </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">' <span style="font-family: 宋体">发送设置命令</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viVPrintf(vi, &quot;:CHAN1:DISP 0&quot; + Chr$(10), 0)</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Label1(0).ForeColor = &amp;H808080 '<span style="font-family: 宋体">灰色</span> </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Else </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viVPrintf(vi, &quot;:CHAN1:DISP 1&quot; + Chr$(10), 0)</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Label1(0).ForeColor = &amp;HFFFF&amp; '<span style="font-family: 宋体">黄色</span> </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">End If </font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">' <span style="font-family: 宋体">关闭资源</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viClose(vi)</font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 42.0pt">
+<font size="2">Call viClose(defrm)</font></p>
+<p class="MsoNormal" style="margin-left: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<font size="2" face="Tahoma">6.&nbsp;</font><font size="2"><span style="font-family: 宋体">保存、运行整个工程，可得到</span>demo<span style="font-family: 宋体">的单个可执行程序。当示波器与</span>PC<span style="font-family: 宋体">成功相连时，可实现对任意一个通道的开/关控制。</span></font></p>
+
+</body>
+
+</html>

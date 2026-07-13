@@ -1,0 +1,2766 @@
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<HTML>
+<HEAD>
+<meta name="GENERATOR" content="Microsoft&reg; HTML Help Workshop 4.1">
+<!-- Sitemap 1.0 -->
+</HEAD>
+<BODY>
+   <OBJECT type="text/site properties">
+     <param name="Window Styles" value="0x800025">
+     <param name="comment" value="title:联机帮助">
+     <param name="comment" value="base:index.htm">
+   </OBJECT>
+   <UL>
+      <LI><OBJECT type="text/sitemap">
+            <param name="Name" value="MSO4000/DS4000系列数字示波器编程手册">
+            <param name="Local" value="homepage.htm">
+          </OBJECT>
+      <LI><OBJECT type="text/sitemap">
+            <param name="Name" value="SCPI简介">
+            <param name="Local" value="SCPI%20Overview/SCPI%20Overview.htm">
+          </OBJECT>
+      <UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="命令格式">
+               <param name="Local" value="SCPI%20Overview/Syntax.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="符号说明">
+               <param name="Local" value="SCPI%20Overview/Symbol%20Description.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="参数类型">
+               <param name="Local" value="SCPI%20Overview/Parameter%20Type.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="命令缩写">
+               <param name="Local" value="SCPI%20Overview/Command%20Abbreviation.htm">
+             </OBJECT>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+            <param name="Name" value="命令系统">
+            <param name="Local" value="Command%20System/CommandSystem.htm">
+          </OBJECT>
+      <UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":AUToscale">
+               <param name="Local" value="Command%20System/AUToscale.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":CLEar">
+               <param name="Local" value="Command%20System/CLEar.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":RUN">
+               <param name="Local" value="Command%20System/RUN.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":SINGle">
+               <param name="Local" value="Command%20System/SINGle.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":STOP">
+               <param name="Local" value="Command%20System/STOP.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":TFORce">
+               <param name="Local" value="Command%20System/TFORce.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":TLHAlf">
+               <param name="Local" value="Command%20System/TLHAlf.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":ACQuire命令子系统">
+               <param name="Local" value="Command%20System/ACQuireSubsystem/ACQuireSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":ACQuire:AVERages">
+                  <param name="Local" value="Command%20System/ACQuireSubsystem/ACQuireAVERages.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":ACQuire:MDEPth">
+                  <param name="Local" value="Command%20System/ACQuireSubsystem/ACQuireMDEPth.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":ACQuire:SRATe?">
+                  <param name="Local" value="Command%20System/ACQuireSubsystem/ACQuireSRATe.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":ACQuire:TYPE">
+                  <param name="Local" value="Command%20System/ACQuireSubsystem/ACQuireTYPE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":ACQuire:AALias">
+                  <param name="Local" value="Command%20System/ACQuireSubsystem/AALias.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":BUS&lt;n&gt;命令子系统">
+               <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:DISPlay">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:FORMat">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFORMat.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:MODE">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:EVENt">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnEVENt.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:EEXPort">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnEEXPort.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:CAN">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/BUSnCAN.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:CAN:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/cansource.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:CAN:STYPe">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/canstype.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:CAN:BAUD">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/BUSnCANBAUD.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:CAN:BUSer">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/BUSnCANBUSer.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:CAN:SPoint">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/BUSnCANSPoint.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:CAN:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/BUSnCANTHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:CAN:OFFSet">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnCAN/BUSnCANOFFSet.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:IIC">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnIIC/BUSnIIC.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:IIC:OFFSet">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnIIC/BUSnIICOFFSet.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:IIC:SCLK:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnIIC/BUSnIICSCLKSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:IIC:SCLK:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnIIC/BUSnIICSCLKTHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:IIC:SDA:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnIIC/BUSnIICSDASOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:IIC:SDA:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnIIC/BUSnIICSDATHReshold.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:PARallel">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnPARAllel/BUSnPARAllel.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:PARallel:BSET">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnPARAllel/BUSnPARAllelBSET.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:PARallel:CLK">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnPARAllel/BUSnPARAllelCLK.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:PARallel:OFFSet">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnPARAllel/BUSnPARAllelOFFSet.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:PARallel:SLOPe">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnPARAllel/BUSnPARAllelSLOPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:PARallel:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnPARAllel/BUSnPARAllelTHReshold.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:RS232">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:BAUD">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232BAUD.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:BUSer">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232BUSer.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:DBITs">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232DBITs.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:ENDian">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232ENDian.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:OFFSet">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232OFFSet.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:PACKet">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232PACKet.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:PARity">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232PARity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:PEND">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232PEND.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:POLarity">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232POLarity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:RTHReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232RTHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:RX">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232RX.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:SBITs">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232SBITs.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:TTHReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232TTHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:RS232:TX">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnRS232/BUSnRS232TX.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:SPI">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPI.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:MODE">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIMODE%20%20.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:TIMeout:TIME">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPITIMeoutTIME.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:DBITs">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIDBITs.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:ENDian">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIENDian.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:MISO:POLarity">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIMISOPOLarity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:MISO:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIMISOSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:MISO:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIMISOTHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:MOSI:POLarity">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIMOSIPOLarity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:MOSI:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIMOSISOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:MOSI:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIMOSITHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:OFFSet">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPIOFFSet.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:SCLK:SLOPe">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPISCLKSLOPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:SCLK:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPISCLKSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:SCLK:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPISCLKTHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:SS:POLarity">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPISSPOLarity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:SS:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPISSSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:SPI:SS:THReshold">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnSPI/BUSnSPISSTHReshold.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":BUS&lt;n&gt;:FLEXray">
+                  <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFlexRay/BUSnFlexRay.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:FLEXray:SOURce">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFlexRay/BUSnFLEXraySOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:FLEXray:STYPe">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFlexRay/BUSnFLEXraySTYPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:FLEXray:BAUD">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFlexRay/BUSnFLEXrayBAUD.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:FLEXray:SPoint">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFlexRay/BUSnFLEXraySPoint.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:FLEXray:OFFSet">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFlexRay/BUSnFLEXrayOFFSet.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":BUS&lt;n&gt;:FLEXray:THReshold　">
+                     <param name="Local" value="Command%20System/BUSnSubsystem/BUSnFlexRay/BUSnFLEXrayTHReshold.htm">
+                   </OBJECT>
+            </UL>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":CALCulate命令子系统">
+               <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:MODE">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:ADD">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADD/CALCulateADD.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADD:INVert">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADD/CALCulateADDINVert.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADD:SA">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADD/CALCulateADDSA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADD:SB">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADD/CALCulateADDSB.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADD:VOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADD/CALCulateADDVOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADD:VSCale">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADD/CALCulateADDVSCale.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:ADVanced">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADVance/CALCulateADVance.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADVanced:EXPRession">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADVance/CALCulateADVanceEXPRession.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADVanced:INVert">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADVance/CALCulateADVanceINVert.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADVanced:VARiable1">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADVance/CALCulateADVanceVARiable1.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADVanced:VARiable2">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADVance/CALCulateADVanceVARiable2.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADVanced:VOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADVance/CALCulateADVanceVOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:ADVanced:VSCale">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateADVance/CALCulateADVanceVSCale.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:DIVision">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateDIVision/CALCulateDIVision.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:DIVision:INVert">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateDIVision/CALCulateDIVisionINVert.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:DIVision:SA">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateDIVision/CALCulateDIVisionSA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:DIVision:SB">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateDIVision/CALCulateDIVisionSB.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:DIVision:VOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateDIVision/CALCulateDIVisionVOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:DIVision:VSCale">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateDIVision/CALCulateDIVisionVSCale.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:FFT">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFT.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:HCENter">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTHCENter.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:HOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTHOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:HSCaLe">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTHSCale.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:HSPan">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTHSPan.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:SOURce">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:SPLit">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTSPLit.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:VOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTVOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:VSCale">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTVSCale.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:VSMode">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTVSMode.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:FFT:WINDow">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateFFT/CALCulateFFTWINDow.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:LOGic">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGic.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:INVert">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGicINVert.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:OPERator">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGicOPERator.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:SA">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGicSA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:SB">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGicSB.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:VOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGicVOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:VSCale">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulate-LOGic-VSCale.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:ATHReshold">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGicATHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:LOGic:BTHReshold">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateLOGic/CALCulateLOGicBTHReshold.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:MULTiply">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateMULTiply/CALCulateMULTiply.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:MULTiply:INVert">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateMULTiply/CALCulateMULTiplyINVert.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:MULTiply:SA">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateMULTiply/CALCulateMULTiplySA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:MULTiply:SB">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateMULTiply/CALCulateMULTiplySB.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:MULTiply:VOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateMULTiply/CALCulateMULTiplyVOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:MULTiply:VSCale">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateMULTiply/CALCulateMULTiplyVSCale.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALCulate:SUB">
+                  <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateSUB/CALCulateSUB.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:SUB:INVert">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateSUB/CALCulateSUBINVert.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:SUB:SA">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateSUB/CALCulateSUBSA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:SUB:SB">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateSUB/CALCulateSUBSB.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:SUB:VOFFset">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateSUB/CALCulateSUBVOFFset.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CALCulate:SUB:VSCale">
+                     <param name="Local" value="Command%20System/CALCulateSubsystem/CALCulateSUB/CALCulateSUBVSCale.htm">
+                   </OBJECT>
+            </UL>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":CALibrate命令子系统">
+               <param name="Local" value="Command%20System/CALibrateSubsystem/CALibrateSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALibrate:DATE?">
+                  <param name="Local" value="Command%20System/CALibrateSubsystem/CALibrate-DATE-.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALibrate:QUIT">
+                  <param name="Local" value="Command%20System/CALibrateSubsystem/CALibrate-QUIT.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALibrate:STARt">
+                  <param name="Local" value="Command%20System/CALibrateSubsystem/CALibrate-STARt.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CALibrate:TIME?">
+                  <param name="Local" value="Command%20System/CALibrateSubsystem/CALibrate-TIME-.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":CHANnel&lt;n&gt;命令子系统">
+               <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:BWLimit">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnBWLimit.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:COUPling">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnCOUPling.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:DISPlay">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:IMPedance">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnIMPedance.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:INVert">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnINVert.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:OFFSet">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnOFFSet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:PROBe">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnPROBe.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:SCALe">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnSCALe.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:TYPE?">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnTYPE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:UNITs">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnUNITs.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:VERNier">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnVERNier.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:BVOLtage">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnBVOLtage.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:CSTart">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnCSTart.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:TCALibrate">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnTCALibrate.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CHANnel&lt;n&gt;:PEND">
+                  <param name="Local" value="Command%20System/CHANnelnSubsystem/CHANnelnPEND.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":CURSor命令子系统">
+               <param name="Local" value="Command%20System/CURSorSubsystem/CURSorSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CURSor:MODE">
+                  <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CURSor:MANual">
+                  <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANual.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:AXValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualAXValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:AYValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualAYValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:BXValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualBXValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:BYValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualBYValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:CAX">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualCAX.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:CAY">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualCAY.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:CBX">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualCBX.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:CBY">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualCBY.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:IXDelta?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualIXDelta.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:SOURce">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:TUNit">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualTUNit.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:TYPE">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualTYPE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:VUNit">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualVUNit.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:XDELta?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualXDELta.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:MANual:YDELta?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorMANual/CURSorMANualYDELta.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":CURSor:TRACk">
+                  <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACk.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:AXValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkAXValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:AYValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkAYValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:BXValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkBXValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:BYValue?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkBYValue.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:CAX">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkCAX.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:CAY?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkCAY.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:CBX">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkCBX.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:CBY?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkCBY.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:IXDelta?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkIXDelta.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:SOURce1">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkSOURce1.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:SOURce2">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkSOURce2.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:XDELta?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkXDELta.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":CURSor:TRACk:YDELta?">
+                     <param name="Local" value="Command%20System/CURSorSubsystem/CURSorTRACk/CURSorTRACkYDELta.htm">
+                   </OBJECT>
+            </UL>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":DISPlay命令子系统">
+               <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlaySubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:CLEar">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayCLEar.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:DATA?">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayDATA.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:GBRightness">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayGBRightness.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:GRADing:TIME">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayGRADingTIME.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:GRID">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayGRID.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:MPERsistence">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayMPERsistence.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:TYPE">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayTYPE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":DISPlay:WBRightness">
+                  <param name="Local" value="Command%20System/DISPlaySubsystem/DISPlayWBRightness.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":EXT命令子系统">
+               <param name="Local" value="Command%20System/ExtSubSystem/EXT.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":EXT:PEND">
+                  <param name="Local" value="Command%20System/ExtSubSystem/EXTPEND.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":EXT:CSTart">
+                  <param name="Local" value="Command%20System/ExtSubSystem/EXTCSTart.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":FUNCtion命令子系统">
+               <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":FUNCtion:WRMode">
+                  <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWRMode.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":FUNCtion:WRECord">
+                  <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWRECord/FUNCtionWRECord.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WRECord:FEND">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWRECord/FUNCtionWRECordFEND.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WRECord:FMAX?">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWRECord/FUNCtionWRECordFMAX.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WRECord:INTerval">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWRECord/FUNCtionWRECordINTerval.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WRECord:OPERate">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWRECord/FUNCtionWRECordOPERate.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":FUNCtion:WREPlay">
+                  <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlay.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:FCURrent">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayFCURrent.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:FEND">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayFEND.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:FMAX?">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayFMAX.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:FSTart">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayFSTart.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:INTerval">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayINTerval.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:MODE">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayMODE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:OPERate">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayOPERate.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:TTAG">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayTTAG.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WREPlay:CTAG?">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWREPlay/FUNCtionWREPlayCTAG.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":FUNCtion:WANalyze">
+                  <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyze.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:CANCel">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeCANCel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:MODE">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeMODE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SOURce">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:FCURrent">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeFCURrent.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:TDISp">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeTDISp.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:STEMplate">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSTEMplate.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:CMASk">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeCMASk.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:STARt">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSTARt.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:PREVious">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzePREVious.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:NEXT">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeNEXT.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:EFCount?">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeEFCount.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:ECURrent">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeECURrent.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:ECDiff?">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeECDiff？.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SETup:SSTart">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSETupSSTart.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SETup:SSENd">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSETupSSENd.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SETup:SFRame">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSETupSFRame.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SETup:EFRame">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSETupEFRame.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SETup:THReshold">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSETupTHReshold.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SETup:XMASk">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSETupXMASk.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":FUNCtion:WANalyze:SETup:YMASk">
+                     <param name="Local" value="Command%20System/FUNCtionSubsystem/FUNCtionWANalyze/FUNCtionWANalyzeSETupYMASk.htm">
+                   </OBJECT>
+            </UL>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="IEEE 488.2公用命令">
+               <param name="Local" value="Command%20System/IEEE%20488.2/IEEE%20488.2.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*CLS">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/CLS.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*ESE">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/ESE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*ESR?">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/ESR.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*IDN?">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/IDN.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*OPC">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/OPC.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*OPC?">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/OPC-.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*RST">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/RST.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*SRE">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/SRE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*STB?">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/STB.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value="*TST?">
+                  <param name="Local" value="Command%20System/IEEE%20488.2/TST.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":LA命令子系统">
+               <param name="Local" value="Command%20System/LASubsystem/LA%20命令子系统.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:STATe">
+                  <param name="Local" value="Command%20System/LASubsystem/LASTATe.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:ACTive">
+                  <param name="Local" value="Command%20System/LASubsystem/LAACTive.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:DISPlay">
+                  <param name="Local" value="Command%20System/LASubsystem/LADISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:AUTosort">
+                  <param name="Local" value="Command%20System/LASubsystem/LAAUTosort.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:DELete">
+                  <param name="Local" value="Command%20System/LASubsystem/LADELete.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:SIZE">
+                  <param name="Local" value="Command%20System/LASubsystem/LASIZE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:TCALibrate">
+                  <param name="Local" value="Command%20System/LASubsystem/LATCALibrate.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:DIGital&lt;n&gt;:DISPlay">
+                  <param name="Local" value="Command%20System/LASubsystem/LADIGitalnDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:DIGital&lt;n&gt;:POSition">
+                  <param name="Local" value="Command%20System/LASubsystem/LADIgitalnPOSition.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:DIGital&lt;n&gt;:LABel">
+                  <param name="Local" value="Command%20System/LASubsystem/LADIGitalnLABel.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:POD&lt;n&gt;:DISPlay">
+                  <param name="Local" value="Command%20System/LASubsystem/LAPODnDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:POD&lt;n&gt;:THReshold">
+                  <param name="Local" value="Command%20System/LASubsystem/LAPODnTHReshold.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:GROup&lt;n&gt;:APPend">
+                  <param name="Local" value="Command%20System/LASubsystem/LAGROupnAPPend.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:BUS&lt;n&gt;:CURRent">
+                  <param name="Local" value="Command%20System/LASubsystem/LABUSnCURRent%20.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:BUS&lt;n&gt;:DISPlay">
+                  <param name="Local" value="Command%20System/LASubsystem/LABUSnDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:BUS&lt;n&gt;:CHANnel">
+                  <param name="Local" value="Command%20System/LASubsystem/LABUSnCHANnel.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LA:BUS&lt;n&gt;:FORMat">
+                  <param name="Local" value="Command%20System/LASubsystem/LABUSnFORMat.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":LAN命令子系统">
+               <param name="Local" value="Command%20System/LANSubsystem/LANSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:AUToip">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANAUToip.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:DHCP">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANDHCP.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:DNS">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANDNS.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:GATeway">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANGATeway.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:INITiate">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANINITiate.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:IPADdress">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANIPADdress.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:MAC?">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANMAC.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:MANual">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANMANual.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:SMASk">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANSMASk.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:STATus?">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANSTATus.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:VISA?">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANVISA.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":LAN:APPLy">
+                  <param name="Local" value="Command%20System/LANSubsystem/LANAPPLy.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":MASK命令子系统">
+               <param name="Local" value="Command%20System/MASKSubsystem/MASKSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:CREate">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKCREate.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:DATA">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKDATA.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:ENABle">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKENABle.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:FAILed?">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKFAILed.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:MDISplay">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKMDISplay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:OPERate">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKOPERate.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:OUTPut">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKOUTPut.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:PASSed?">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKPASSed.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:RESet">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKRESet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:SOOutput">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKSOOutput.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:SOURce">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKSOURce.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:TOTal?">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKTOTal.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:X">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKX.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MASK:Y">
+                  <param name="Local" value="Command%20System/MASKSubsystem/MASKY.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":MEASure命令系统">
+               <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:ADISplay">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureADISplay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:AREA">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureAREA.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:CLEar">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureCLEar.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:RECover">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRECover.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SOURce">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSOURce.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:AMSource">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureAMSOURce.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:COUNter:SOURce">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureCOUNterSOURce.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:COUNter:VALue?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureCOUNterVALue.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:CREGion:CAX">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureCREGionCAX.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:CREGion:CBX">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureCREGionCBX.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:HISTory:DISPlay">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureHISToryDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:HISTory:DMODe">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureHISToryDMODe.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:DSA">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupDSADSB.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:DSB">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupDSADSB.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:MAX">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupMAX.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:MID">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupMID.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:MIN">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupMIN.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:PSA">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupPSAPSB.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:PSB">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupPSAPSB.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:SETup:TYPE">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSETupTYPE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:STATistic:DISPlay">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSTATisticDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:STATistic:RESet">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSTATisticRESet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:STATistic:MODE">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureSTATisticMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:FDELay?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFDELay/MEASureFDELay.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FDELay:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFDELay/MEASureFDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FDELay:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFDELay/MEASureFDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FDELay:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFDELay/MEASureFDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FDELay:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFDELay/MEASureFDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FDELay:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFDELay/MEASureFDELaySAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:FPHase?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFPHase/MEASureFPHase.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FPHase:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFPHase/MEASureFPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FPHase:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFPHase/MEASureFPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FPHase:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFPHase/MEASureFPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FPHase:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFPHase/MEASureFPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FPHase:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFPHase/MEASureFPHaseSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:FREQuency?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFREQuency/MEASureFREQuency.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FREQuency:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFREQuency/MEASureFREQuencySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FREQuency:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFREQuency/MEASureFREQuencySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FREQuency:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFREQuency/MEASureFREQuencySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FREQuency:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFREQuency/MEASureFREQuencySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FREQuency:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFREQuency/MEASureFREQuencySAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:FTIMe?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFTIMe/MEASureFTIMe.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FTIMe:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFTIMe/MEASureFTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FTIMe:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFTIMe/MEASureFTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FTIMe:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFTIMe/MEASureFTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FTIMe:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFTIMe/MEASureFTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:FTIMe:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureFTIMe/MEASureFTIMeSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:MARea?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMARea/MEASureMARea.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MARea:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMARea/MEASureMAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MARea:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMARea/MEASureMAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MARea:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMARea/MEASureMAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MARea:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMARea/MEASureMAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MARea:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMARea/MEASureMAReaSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:MPARea?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMPARea/MEASureMPARea.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MPARea:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMPARea/MEASureMPAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MPARea:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMPARea/MEASureMPAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MPARea:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMPARea/MEASureMPAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MPARea:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMPARea/MEASureMPAReaSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:MPARea:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureMPARea/MEASureMPAReaSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:NDUTy?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNDUTy/MEASureNDUTy.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NDUTy:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNDUTy/MEASureNDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NDUTy:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNDUTy/MEASureNDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NDUTy:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNDUTy/MEASureNDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NDUTy:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNDUTy/MEASureNDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NDUTy:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNDUTy/MEASureNDUTySAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:NWIDth?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNWIDth/MEASureNWIDth.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NWIDth:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNWIDth/MEASureNWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NWIDth:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNWIDth/MEASureNWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NWIDth:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNWIDth/MEASureNWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NWIDth:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNWIDth/MEASureNWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:NWIDth:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureNWIDth/MEASureNWIDthSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:OVERshoot?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureOVERshoot/MEASureOVERshoot.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:OVERshoot:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureOVERshoot/MEASureOVERshootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:OVERshoot:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureOVERshoot/MEASureOVERshootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:OVERshoot:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureOVERshoot/MEASureOVERshootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:OVERshoot:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureOVERshoot/MEASureOVERshootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:OVERshoot:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureOVERshoot/MEASureOVERshootSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:PDUTy?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePDUTy/MEASurePDUTy.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PDUTy:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePDUTy/MEASurePDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PDUTy:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePDUTy/MEASurePDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PDUTy:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePDUTy/MEASurePDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PDUTy:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePDUTy/MEASurePDUTySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PDUTy:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePDUTy/MEASurePDUTySAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:PERiod?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePERiod/MEASurePERiod.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PERiod:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePERiod/MEASurePERiodSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PERiod:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePERiod/MEASurePERiodSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PERiod:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePERiod/MEASurePERiodSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PERiod:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePERiod/MEASurePERiodSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PERiod:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePERiod/MEASurePERiodSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:PREShoot?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePREShoot/MEASurePREShoot.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PREShoot:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePREShoot/MEASurePREShootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PREShoot:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePREShoot/MEASurePREShootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PREShoot:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePREShoot/MEASurePREShootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PREShoot:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePREShoot/MEASurePREShootSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PREShoot:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePREShoot/MEASurePREShootSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:PWIDth?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePWIDth/MEASurePWIDth.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PWIDth:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePWIDth/MEASurePWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PWIDth:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePWIDth/MEASurePWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PWIDth:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePWIDth/MEASurePWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PWIDth:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePWIDth/MEASurePWIDthSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:PWIDth:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASurePWIDth/MEASurePWIDthSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:RDELay?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRDELay/MEASureRDELay.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RDELay:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRDELay/MEASureRDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RDELay:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRDELay/MEASureRDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RDELay:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRDELay/MEASureRDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RDELay:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRDELay/MEASureRDELaySAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RDELay:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRDELay/MEASureRDELaySAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:RPHase?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRPHase/MEASureRPHase.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RPHase:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRPHase/MEASureRPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RPHase:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRPHase/MEASureRPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RPHase:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRPHase/MEASureRPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RPHase:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRPHase/MEASureRPHaseSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RPHase:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRPHase/MEASureRPHaseSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:RTIMe?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRTIMe/MEASureRTIMe.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RTIMe:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRTIMe/MEASureRTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RTIMe:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRTIMe/MEASureRTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RTIMe:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRTIMe/MEASureRTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RTIMe:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRTIMe/MEASureRTIMeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:RTIMe:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureRTIMe/MEASureRTIMeSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VAMP?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAMP/MEASureVAMP.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAMP:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAMP/MEASureVAMPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAMP:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAMP/MEASureVAMPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAMP:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAMP/MEASureVAMPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAMP:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAMP/MEASureVAMPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAMP:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAMP/MEASureVAMPSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VAVG?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAVG/MEASureVAVG.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAVG:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAVG/MEASureVAVGSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAVG:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAVG/MEASureVAVGSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAVG:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAVG/MEASureVAVGSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAVG:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAVG/MEASureVAVGSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VAVG:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVAVG/MEASureVAVGSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VBASe?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASe.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VBASe:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VBASe:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VBASe:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VBASe:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VBASe:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VMAX?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMAX/MEASureVMAX.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMAX:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMAX/MEASureVMAXSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMAX:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMAX:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMAX:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMAX:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVBASe/MEASureVBASeSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VMIN?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMIN/MEASureVMIN.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMIN:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMIN/MEASureVMINSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMIN:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMIN/MEASureVMINSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMIN:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMIN/MEASureVMINSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMIN:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMIN/MEASureVMINSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VMIN:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVMIN/MEASureVMINSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VPP?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVPP/MEASureVPP.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VPP:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVPP/MEASureVPPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VPP:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVPP/MEASureVPPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VPP:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVPP/MEASureVPPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VPP:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVPP/MEASureVPPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VPP:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVPP/MEASureVPPSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VRMS?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVRMS/MEASureVRMS.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VRMS:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVRMS/MEASureVRMSSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VRMS:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVRMS/MEASureVRMSSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VRMS:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVRMS/MEASureVRMSSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VRMS:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVRMS/MEASureVRMSSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VRMS:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVRMS/MEASureVRMSSAVerage.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":MEASure:VTOP?">
+                  <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVTOP/MEASureVTOP.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VTOP:SAVerage?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVTOP/MEASureVTOPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VTOP:SCURrent?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVTOP/MEASureVTOPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VTOP:SDEViation?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVTOP/MEASureVTOPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VTOP:SMAXimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVTOP/MEASureVTOPSAVerage.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":MEASure:VTOP:SMINimum?">
+                     <param name="Local" value="Command%20System/MEASureSubsystem/MEASureVTOP/MEASureVTOPSAVerage.htm">
+                   </OBJECT>
+            </UL>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":REFerence命令子系统">
+               <param name="Local" value="Command%20System/REFSubsystem/REF.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:DISPlay">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFerenceDISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence&lt;n&gt;:ENABle">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFnENABle.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence&lt;n&gt;:CURRent">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFerencenCURRent.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:CURRent?">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFerenceCURRent？.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:COLor">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFerencenCOLor.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:SOURce">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFnSOURce.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:VSCale">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFnVSCale.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:VOFFset">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFnVOFFset.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:SAVe">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFerenceSAVe.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":REFerence:RESet">
+                  <param name="Local" value="Command%20System/REFSubsystem/REFnRESet.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":SYSTem命令子系统">
+               <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:AOUTput">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemAOUTput.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:BEEPer">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemBEEPer.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:DATE">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemDATE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:ERRor[:NEXT]?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemERRor.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:ETIMpedence">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemETIMpedence.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:EXPand">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemEXPand.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:GAMount?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemGAMount.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:LANGuage">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemLANGuage.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:PON">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemPON.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:PSTatus">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemPSTatus.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:RAMount?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemRAMount.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:RESet">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemRESet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SETup">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSETup.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SSAVer:TIME">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSSAVerTIME.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:TIME">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemTIME.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:VERSion?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemVERSion.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:UDEVice">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemUDEVice.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SCINfo:TOUTlet?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSCINfoTOUTlet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:OPTion:INSTall">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemOPTionINSTall.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:OPTion:UNINSTall">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemOPTionUNINSTall.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:GPIB">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemGPIB.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SCINfo:SV09?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSCINfoSV09.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SCINfo:SV18?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSCINfoSV18.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SCINfo:SV33?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSCINfoSV33.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SCINfo:SV50?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSCINfoSV50.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:SCINfo:SV55?">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemSCINfoSV55.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:AUToscale">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemAUToscale.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":SYSTem:RCLOck">
+                  <param name="Local" value="Command%20System/SYSTemSubsystem/SYSTemRCLOck.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":TIMebase命令子系统">
+               <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:DELay:ENABle">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseDELayENABle.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:DELay:OFFSet">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseDELayOFFSet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:DELay:SCALe">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseDELaySCALe.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:HREF:MODE">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseHREFMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:HREF:POSition">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseHREFPOSition.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:MODE">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:VERNier">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseVERNier.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:XY1:DISPlay">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseXY1DISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase:XY2:DISPlay">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebaseXY2DISPlay.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase[:MAIN]:OFFSet">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebase[MAIN]OFFSet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TIMebase[:MAIN]:SCALe">
+                  <param name="Local" value="Command%20System/TIMebaseSubsystem/TIMebase[MAIN]SCALe.htm">
+                </OBJECT>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":TRIGger命令子系统">
+               <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:COUPling">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCOUPling.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:HOLDoff">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerHOLDoff.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:MODE">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:STATus?">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSTATus.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:SWEep">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSWEep.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:NREJect">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerNREJect.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:CAN">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCAN.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:BAUD">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANBAUD.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:BUSer">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANBUSer.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:FTYPe">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANFTYPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:SPOint">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANSPOint.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:STYPe">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANSTYPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:CAN:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerCAN/TRIGgerCANWHEN.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:EDGe">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerEDGe/TRIGgerEDGe.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:EDGe:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerEDGe/TRIGgerEDGeLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:EDGe:SLOPe">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerEDGe/TRIGgerEDGeSLOPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:EDGe:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerEDGe/TRIGgerEDGeSOURce.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:IIC">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIIC.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:AWIDth">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICAWIDth.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:ADDRess">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICADDRess.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:CLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICCLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:DATA">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICDATA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:DIRection">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICDIRection.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:DLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICDLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:SCL">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICSCL.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:SDA">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICSDA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:IIC:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerIIC/TRIGgerIICWHEN.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:PATTern">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPATTern/TRIGgerPATTern.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PATTern:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPATTern/TRIGgerPATTernLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PATTern:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPATTern/TRIGgerPATTernSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PATTern:PATTern">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPATTern/TRIGgerPATTernPATTern.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:PULSe">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPULSe/TRIGgerPULSe.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PULSe:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPULSe/TRIGgerPULSeLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PULSe:LWIDth">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPULSe/TRIGgerPULSeLWIDTh.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PULSe:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPULSe/TRIGgerPULSeSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PULSe:UWIDth">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPULSe/TRIGgerPULSeUWIDth.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PULSe:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPULSe/TRIGgerPULSeWHEN.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:PULSe:WIDTh">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerPULSe/TRIGgerPULSeWIDth.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:RUNT">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRUNT/TRIGgerRUNT.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RUNT:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRUNT/TRIGgerRUNTSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RUNT:POLarity">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRUNT/TRIGgerRUNTPOLarity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RUNT:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRUNT/TRIGgerRUNTWHEN.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RUNT:ALEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRUNT/TRIGgerRUNTALEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RUNT:BLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRUNT/TRIGgerRUNTBLEVel.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:NEDGe">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerNEDGe/TRIGgerNEDGe.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:NEDGe:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerNEDGe/TRIGgerNEDGeSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:NEDGe:SLOPe">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerNEDGe/TRIGgerNEDGeSLOPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:NEDGe:IDLE">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerNEDGe/TRIGgerNEDGeIDLE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:NEDGe:EDGE">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerNEDGe/TRIGgerNEDGeEDGE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:NEDGe:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerNEDGe/TRIGgerNEDGeLEVel.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:RS232">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:BAUD">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232BAUD.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:BUSer">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232BUSer.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:DATA">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232DATA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232LEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:PARity">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232PARity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232SOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:STOP">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232STOP.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232WHEN.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:RS232:WIDTh">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerRS232/TRIGgerRS232WIDTh.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:SLOPe">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPe.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SLOPe:ALEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPeALEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SLOPe:BLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPeBLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SLOPe:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPeSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SLOPe:TLOWer">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPeTLOWer.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SLOPe:TUPPer">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPeTUPPer.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SLOPe:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPeWHEN.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SLOPe:WINDow">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSLOPe/TRIGgerSLOPeWINDow.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:SPI">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPI.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:SLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPISLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:DATA">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPIDATA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:DLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPIDLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:MODE">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPIMODE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:SCL">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPISCL.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:SDA">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPISDA.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:CLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPICLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:SLOPe">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPISLOPe.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:TIMeout">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPITIMeout.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPIWHEN.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:SPI:WIDTh">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerSPI/TRIGgerSPIWIDTh.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:USB">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerUSB/TRIGgerUSB.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:USB:DMINus">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerUSB/TRIGgerUSBDMINus.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:USB:DPLus">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerUSB/TRIGgerUSBDPLus.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:USB:MLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerUSB/TRIGgerUSBMLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:USB:PLEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerUSB/TRIGgerUSBPLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:USB:SPEed">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerUSB/TRIGgerUSBSPEed.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:USB:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerUSB/TRIGgerUSBWHEN.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:VIDeo">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerVIDeo/TRIGgerVIDeo.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:VIDeo:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerVIDeo/TRIGgerVIDeoLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:VIDeo:LINE">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerVIDeo/TRIGgerVIDeoLINE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:VIDeo:MODE">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerVIDeo/TRIGgerVIDeoMODE.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:VIDeo:POLarity">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerVIDeo/TRIGgerVIDeoPOLarity.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:VIDeo:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerVIDeo/TRIGgerVIDeoSOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:VIDeo:STANdard">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerVIDeo/TRIGgerVIDeoSTANdard.htm">
+                   </OBJECT>
+            </UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":TRIGger:FLEXray">
+                  <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerFLEXray/TRIGgerFLEXray.htm">
+                </OBJECT>
+            <UL>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:FLEXray:BAUD">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerFLEXray/TRIGgerFLEXrayBAUD.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:FLEXray:LEVel">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerFLEXray/TRIGgerFLEXrayLEVel.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:FLEXray:SOURce">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerFLEXray/TRIGgerFLEXraySOURce.htm">
+                   </OBJECT>
+               <LI><OBJECT type="text/sitemap">
+                     <param name="Name" value=":TRIGger:FLEXray:WHEN">
+                     <param name="Local" value="Command%20System/TRIGgerSubsystem/TRIGgerFLEXray/TRIGgerFLEXrayWHEN.htm">
+                   </OBJECT>
+            </UL>
+         </UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value=":WAVeform命令子系统">
+               <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformSubsystem.htm">
+             </OBJECT>
+         <UL>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:BEGin">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformBEGin.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:DATA?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformDATA.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:END">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformEND.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:FORMat">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformFORMat.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:MODE">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformMODE.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:POINts">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformPOINts.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:PREamble?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformPREamble.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:RESet">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformRESet.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:SOURce">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformSOURce.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:STARt">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformSTARt.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:STATus?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformSTATus.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:STOP">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformSTOP.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:XINCrement?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformXINCrement.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:XORigin?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformXORigin.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:XREFerence?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformXREFerence.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:YINCrement?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformYINCrement.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:YORigin?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformYORigin.htm">
+                </OBJECT>
+            <LI><OBJECT type="text/sitemap">
+                  <param name="Name" value=":WAVeform:YREFerence?">
+                  <param name="Local" value="Command%20System/WAVeformSubsystem/WAVeformYREFerence.htm">
+                </OBJECT>
+         </UL>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+            <param name="Name" value="编程实例">
+            <param name="Local" value="Programming%20Demos/Programming%20Demos.htm">
+          </OBJECT>
+      <UL>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="编程准备">
+               <param name="Local" value="Programming%20Demos/Preparations%20for%20Programming.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="C#编程实例">
+               <param name="Local" value="Programming%20Demos/C.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="Excel编程实例">
+               <param name="Local" value="Programming%20Demos/Excel.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="Labview 编程实例">
+               <param name="Local" value="Programming%20Demos/Labview.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="Matlab编程实例">
+               <param name="Local" value="Programming%20Demos/Matlab.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="Visual Basic 6.0 编程实例">
+               <param name="Local" value="Programming%20Demos/Visual%20Basic%206.0%20Programming%20Demos.htm">
+             </OBJECT>
+         <LI><OBJECT type="text/sitemap">
+               <param name="Name" value="Visual C++ 6.0 编程实例">
+               <param name="Local" value="Programming%20Demos/Visual%20C++%206.0%20Programming%20Demos.htm">
+             </OBJECT>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+            <param name="Name" value="命令速查A-Z">
+            <param name="Local" value="Command%20Quick%20Reference%20A_Z/Command%20Quick%20Reference%20A_Z.htm">
+          </OBJECT>
+   </UL>
+</BODY>
+</HTML>

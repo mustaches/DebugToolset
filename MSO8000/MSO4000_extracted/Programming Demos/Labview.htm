@@ -1,0 +1,258 @@
+<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns="http://www.w3.org/TR/REC-html40">
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<link rel="File-List" href="Labview.files/filelist.xml">
+<title>Labview 编程实例</title>
+<style>
+<!--
+ p.MsoNormal
+	{mso-style-parent:"";
+	margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Calibri","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+p.MsoListParagraph
+	{margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	text-indent:21.0pt;
+	font-size:10.5pt;
+	font-family:"Calibri","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+table.MsoTableGrid
+	{border:1.0pt solid black;
+	font-size:10.5pt;
+	font-family:"Calibri","sans-serif";
+	}
+-->
+</style>
+<!--[if !mso]>
+<style>
+v\:*         { behavior: url(#default#VML) }
+o\:*         { behavior: url(#default#VML) }
+.shape       { behavior: url(#default#VML) }
+</style>
+<![endif]--><!--[if gte mso 9]>
+<xml><o:shapedefaults v:ext="edit" spidmax="1027"/>
+</xml><![endif]-->
+</head>
+
+<body>
+
+<p class="MsoNormal"><b><span lang="EN-US" style="font-family: Tahoma">
+<font size="4">Labview </font></span><span style="font-family: 黑体">
+<font size="4">编程实例</font></span></b></p>
+<p class="MsoNormal"><b>
+<span lang="EN-US" style="font-size: 16.0pt; font-family: Tahoma,sans-serif">&nbsp;</span></b></p>
+<p class="MsoNormal"><span style="font-family: 宋体"><font size="2">程序的功能：读取通道</font></span><font size="2"><span style="font-family: Tahoma">1</span></font><span style="font-family: 宋体"><font size="2">的屏幕波形数据。</font></span></p>
+<p class="MsoNormal"><span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoNormal"><span style="font-family: 宋体"><font size="2">进入</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma">Labview</span></font><span style="font-family: 宋体"><font size="2">编程环境，按下列步骤操作：</font></span></p>
+<p class="MsoNormal">　</p>
+<p class="MsoNormal"><span lang="EN-US" style="font-family: Tahoma,sans-serif">
+1.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;&nbsp;</span></span><font size="2"><span style="font-family: 宋体">添加程序控件“</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">资源名称”和“波形图”，如下图所示：</span></font></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<table class="MsoTableGrid" border="1" cellspacing="0" cellpadding="0" style="border-collapse: collapse; border: medium none; margin-left: 18.0pt">
+	<tr>
+		<td width="274" valign="top" style="width: 205.4pt; border: medium none; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoNormal"><span style="font-family: 宋体"><font size="2"><!--[if gte vml 1]><v:shapetype id="_x0000_t75"
+ coordsize="21600,21600" o:spt="75" o:preferrelative="t" path="m@4@5l@4@11@9@11@9@5xe"
+ filled="f" stroked="f">
+ <v:stroke joinstyle="miter"/>
+ <v:formulas>
+  <v:f eqn="if lineDrawn pixelLineWidth 0"/>
+  <v:f eqn="sum @0 1 0"/>
+  <v:f eqn="sum 0 0 @1"/>
+  <v:f eqn="prod @2 1 2"/>
+  <v:f eqn="prod @3 21600 pixelWidth"/>
+  <v:f eqn="prod @3 21600 pixelHeight"/>
+  <v:f eqn="sum @0 0 1"/>
+  <v:f eqn="prod @6 1 2"/>
+  <v:f eqn="prod @7 21600 pixelWidth"/>
+  <v:f eqn="sum @8 21600 0"/>
+  <v:f eqn="prod @7 21600 pixelHeight"/>
+  <v:f eqn="sum @10 21600 0"/>
+ </v:formulas>
+ <v:path o:extrusionok="f" gradientshapeok="t" o:connecttype="rect"/>
+ <o:lock v:ext="edit" aspectratio="t"/>
+</v:shapetype><v:shape id="_x0000_s1040" type="#_x0000_t75" style='width:159.75pt;
+ height:180pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image001.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=213 height=240
+src="Labview.files/image002.jpg" v:shapes="_x0000_s1040"><![endif]></font></span></p>
+		<p class="MsoNormal"><font size="2"><span style="font-family: Tahoma">
+		VISA</span><span style="font-family: 宋体">资源名称</span></font></td>
+		<td width="270" valign="top" style="width: 202.7pt; border: medium none; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoNormal"><span style="font-family: 宋体"><font size="2"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_4" o:spid="_x0000_s1039" type="#_x0000_t75" style='width:146.25pt;
+ height:186.75pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image003.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=195 height=249
+src="Labview.files/image004.jpg" v:shapes="图片_x0020_4"><![endif]></font></span></p>
+		<p class="MsoNormal"><span style="font-family: 宋体"><font size="2">波形图</font></span></td>
+	</tr>
+</table>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">　</p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<span style="font-family: 宋体"><font size="2">前面板显示</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_7" o:spid="_x0000_s1038" type="#_x0000_t75" style='width:354pt;
+ height:240.75pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image005.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=472 height=321
+src="Labview.files/image006.jpg" v:shapes="图片_x0020_7"><![endif]></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">2.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;&nbsp;</span></span><span style="font-family: 宋体"><font size="2">打开程序框图面板，选择仪器</font></span><font size="2"><span style="font-family: Tahoma">I/O→VISA</span><span style="font-family: 宋体">分别添加以下函数，</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">写入、</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">读取、</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">打开、</span><span style="font-family: Tahoma">VISA</span></font><span style="font-family: 宋体"><font size="2">关闭函数。</font></span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<table class="MsoTableGrid" border="1" cellspacing="0" cellpadding="0" style="border-collapse: collapse; border: medium none; margin-left: 18.0pt">
+	<tr>
+		<td width="284" valign="top" style="width: 213.05pt; border: medium none; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm">
+		<span lang="EN-US" style="font-family: Tahoma,sans-serif"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_10" o:spid="_x0000_s1037" type="#_x0000_t75" style='width:186.75pt;
+ height:154.5pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image007.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=249 height=206
+src="Labview.files/image008.jpg" v:shapes="图片_x0020_10"><![endif]></span></td>
+		<td width="284" valign="top" style="width: 213.05pt; border: medium none; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm">
+		<span lang="EN-US" style="font-family: Tahoma,sans-serif"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_13" o:spid="_x0000_s1036" type="#_x0000_t75" style='width:165pt;
+ height:214.5pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image009.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=220 height=286
+src="Labview.files/image010.jpg" v:shapes="图片_x0020_13"><![endif]></span></td>
+	</tr>
+</table>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoListParagraph" align="center" style="text-align: center; text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">3.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;&nbsp;</span></span><span style="font-family: 宋体"><font size="2">将</font></span><font size="2"><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">资源名和</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">打开相连，将所有函数的</span><span style="font-family: Tahoma">VISA</span></font><span style="font-size: 10.0pt; font-family: 宋体">资源名称输出和</span><font size="2"><span style="font-family: Tahoma">VISA</span></font><span style="font-size: 10.0pt; font-family: 宋体">资源名称连接，错误输出和错误输入连接，如下图示：</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-size: 10.0pt; font-family: 宋体"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_16" o:spid="_x0000_s1035" type="#_x0000_t75" style='width:333pt;
+ height:84pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image011.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=444 height=112
+src="Labview.files/image012.jpg" v:shapes="图片_x0020_16"><![endif]></span></p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 0pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">4.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;</span></span><span style="font-family: 宋体"><font size="2">在</font></span><font size="2"><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">写入控件的写入缓冲区添加文本框，分别写入：“</span><span style="font-family: Tahoma">:WAV:FORM 
+BYTE</span><span style="font-family: 宋体">”和“</span><span style="font-family: Tahoma">:WAV:DATA 
+CHAN1</span><span style="font-family: 宋体">”。前者是设置波形以</span><span style="font-family: Tahoma">BYTE</span><span style="font-family: 宋体">格式读取，后者用来读取屏幕波形数据。读取波形数据通过</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">读取函数完成，</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">读取函数要求输入读取的字节总数，本例中读取的波形数据长度总字节数小于</span><span style="font-family: Tahoma">2048</span><span style="font-family: 宋体">，</span><span style="font-family: Tahoma">VISA</span><span style="font-family: 宋体">操作完成后关闭</span><span style="font-family: Tahoma">VISA</span></font><span style="font-family: 宋体"><font size="2">资源。</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<img border="0" src="4.gif"><br>
+　</p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 0pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">5.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;</span></span><font size="2"><span style="font-family: 宋体">读取的数据格式为</span><span style="font-family: Tahoma">TMC</span><span style="font-family: 宋体">头+波形数据点+结束符。</span><span style="font-family: Tahoma">TMC</span><span style="font-family: 宋体">头为</span><span style="font-family: Tahoma">#NXXXXXX</span><span style="font-family: 宋体">的形式，</span><span style="font-family: Tahoma">#</span><span style="font-family: 宋体">为</span><span style="font-family: Tahoma">TMC</span><span style="font-family: 宋体">规定的头标志符，</span><span style="font-family: Tahoma">N</span><span style="font-family: 宋体">表示后面含有</span><span style="font-family: Tahoma">N</span><span style="font-family: 宋体">个字节，
+以</span><span style="font-family: Tahoma">ASCII</span><span style="font-family: 宋体">字符的形式描述波形数据点的长度，结束符用于表示通讯的终止。例如，一次读取的数据为：</span><span style="font-family: Tahoma">#9000001400XXXX</span><span style="font-family: 宋体">表示</span><span style="font-family: Tahoma">9</span><span style="font-family: 宋体">个字节描述数据的长度，</span><span style="font-family: Tahoma">000001400</span><span style="font-family: 宋体">表示波形数据的长度，即</span><span style="font-family: Tahoma">1400</span><span style="font-family: 宋体">字节。提取出N的数值，通过使用“部分字符串”和“十进制数字字符</span></font><span style="font-family: 宋体"><font size="2">串至数值转换”两个函数完成。</font></span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US"><!--[if gte vml 1]><v:shape
+ id="_x0000_s1033" type="#_x0000_t75" style='width:135.75pt;height:111pt;
+ visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image013.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=181 height=148
+src="Labview.files/image014.jpg" v:shapes="_x0000_s1033"><![endif]></span></p>
+<table class="MsoTableGrid" border="1" cellspacing="0" cellpadding="0" style="border-collapse: collapse; border: medium none; margin-left: 18.0pt">
+	<tr>
+		<td width="284" valign="top" style="width: 213.05pt; border: medium none; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm">
+		<span lang="EN-US"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_25" o:spid="_x0000_s1032" type="#_x0000_t75" style='width:208.5pt;
+ height:80.25pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image015.png" o:title="" croptop="6991f"
+  cropbottom="29327f" cropleft="1268f" cropright="5497f"/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=278 height=107
+src="Labview.files/image016.jpg" v:shapes="图片_x0020_25"><![endif]></span></td>
+		<td width="284" valign="top" style="width: 213.05pt; border: medium none; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm">
+		<span lang="EN-US"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_28" o:spid="_x0000_s1031" type="#_x0000_t75" style='width:153pt;
+ height:1in;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image017.png" o:title="" croptop="7233f"
+  cropbottom="32039f" cropleft="2700f" cropright="12764f"/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=204 height=96
+src="Labview.files/image018.jpg" v:shapes="图片_x0020_28"><![endif]></span></td>
+	</tr>
+</table>
+<p class="MsoNormal">　</p>
+<p class="MsoNormal"><span style="font-family: 宋体"><font size="2">&nbsp;&nbsp; 提取出有效的波形数据长度：</font></span></p>
+<p class="MsoNormal" align="center" style="text-align: left"><span lang="EN-US">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <!--[if gte vml 1]><v:shape
+ id="图片_x0020_31" o:spid="_x0000_s1030" type="#_x0000_t75" style='width:147.75pt;
+ height:109.5pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image019.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=197 height=146
+src="Labview.files/image020.jpg" v:shapes="图片_x0020_31"><![endif]></span></p>
+<p class="MsoNormal"><span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoNormal">　</p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<span lang="EN-US"><font face="Tahoma" size="2">6.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Tahoma"><font size="2">&nbsp;</font></span></span><font size="2"><span style="font-family: 宋体">通过“字符串至字节数组转换”将字符数据转换为数组形式，即可在波形图控件上显示波形数据，然后通过“数组子集”函数去掉头部的</span></font><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">TMC</span></font><span style="font-family: 宋体"><font size="2">数据头。</font></span></p>
+<p class="MsoNormal" style="margin-left: 21.0pt"><span lang="EN-US">&nbsp;</span></p>
+<table class="MsoTableGrid" border="0" cellspacing="0" cellpadding="0" style="border-collapse: collapse; border: medium none; margin-left: 21.0pt">
+	<tr>
+		<td width="540" colspan="2" valign="top" style="width: 405.1pt; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoNormal" align="left" style="text-align: left">
+		<span lang="EN-US"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_43" o:spid="_x0000_s1029" type="#_x0000_t75" style='width:175.5pt;
+ height:63.75pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image021.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=234 height=85
+src="Labview.files/image022.jpg" v:shapes="图片_x0020_43"><![endif]></span></td>
+	</tr>
+	<tr style="height: 97.1pt">
+		<td width="270" valign="top" style="width: 202.55pt; height: 97.1pt; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoNormal" align="left" style="text-align: left">
+		<span lang="EN-US"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_40" o:spid="_x0000_s1028" type="#_x0000_t75" style='width:176.25pt;
+ height:55.5pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image023.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=235 height=74
+src="Labview.files/image024.jpg" v:shapes="图片_x0020_40"><![endif]></span></td>
+		<td width="270" valign="top" style="width: 202.55pt; height: 97.1pt; padding-left: 5.4pt; padding-right: 5.4pt; padding-top: 0cm; padding-bottom: 0cm">
+		<p class="MsoNormal" align="left" style="text-align: left">
+		<span lang="EN-US"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_37" o:spid="_x0000_s1027" type="#_x0000_t75" style='width:185.25pt;
+ height:96pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image025.png" o:title=""/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=247 height=128
+src="Labview.files/image026.jpg" v:shapes="图片_x0020_37"><![endif]></span></td>
+	</tr>
+</table>
+<p class="MsoNormal"><span lang="EN-US">&nbsp;</span></p>
+<p class="MsoNormal">　</p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">7.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;&nbsp;</span></span><span style="font-family: 宋体"><font size="2">完整的程序框图如下所示</font>：</span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><!--[if gte vml 1]><v:shape
+ id="图片_x0020_22" o:spid="_x0000_s1026" type="#_x0000_t75" alt="2011-11-30_155527.bmp"
+ style='width:414.75pt;height:54.75pt;visibility:visible;mso-wrap-style:square'>
+ <v:imagedata src="Labview.files/image027.png" o:title="2011-11-30_155527"/>
+</v:shape><![endif]--><![if !vml]><img border=0 width=553 height=73
+src="Labview.files/image028.jpg" alt="2011-11-30_155527.bmp" v:shapes="图片_x0020_22"><![endif]></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<span style="font-family: Tahoma,sans-serif">8.&nbsp;</span><span style="font-family: 宋体"><font size="2">在</font></span><font size="2"><span style="font-family: Tahoma,sans-serif">VISA</span></font><span style="font-family: 宋体"><font size="2">资源名称列表框中选择设备资源，启动运行。</font></span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoListParagraph" align="left" style="text-align: left; text-indent: 0cm; margin-left: 18.0pt">
+<img border="0" src="Lab.jpg"></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+
+</body>
+
+</html>

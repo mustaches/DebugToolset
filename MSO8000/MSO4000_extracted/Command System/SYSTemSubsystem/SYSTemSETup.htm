@@ -1,0 +1,74 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>:SYSTem:SETup </title>
+<style>
+<!--
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+-->
+</style>
+</head>
+
+<body>
+
+<p style="margin-top: 0px; margin-bottom: 0px"><span style="font-weight: 700">
+<font face="Tahoma" size="4">:SYSTem:SETup</font></span></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">命令格式</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2">
+<span lang="PT-BR" style="font-family: Tahoma; color: black; background-color:#FFFFFF">
+:SYSTem:SETup &lt;setup_data&gt;<br>
+:SYSTem:SETup?<br>
+　</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">功能描述</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2">
+<span style="font-family: 宋体; background-color: #FFFFFF">下载或上传系统设置文件。</span><span lang="PT-BR" style="font-family: Tahoma; color: black; background-color: #FFFFFF">&lt;setup_data&gt;</span><span style="font-family: 宋体; background-color: #FFFFFF">为二进制数据块。</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">说明</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<span style="background-color: #FFFFFF"><font face="宋体" size="2">上传</font></span><font face="宋体" size="2"><span style="background-color: #FFFFFF">（</span></font><font size="2"><span lang="PT-BR" style="font-family: Tahoma; background-color: #FFFFFF">:SYSTem:SETup?</span></font><font face="宋体" size="2"><span style="background-color: #FFFFFF">）时，数据流格式：</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="Tahoma">
+Stream Block Header ::= #NXXXXXX</font><font size="2">，用于描述数据流的长度。其中<font face="Tahoma">#</font>作为数据流起始标志符，<font face="Tahoma">N</font>小于等于<font face="Tahoma">9</font>，
+其后跟随的<font face="Tahoma">N</font>个数字表示数据流的长度（字节数）。如 
+<font face="Tahoma">#9000002506</font>，其中<font face="Tahoma">N</font>为<font face="Tahoma">9</font>，后面
+的<font face="Tahoma">000002506
+</font>表示后面紧跟的数据流中包含<font face="Tahoma"> 1992 Byte</font>的有效数据。</font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<font size="2"><span style="font-family: 宋体; background-color: #FFFFFF">下载时，直接在命令字符串后跟数据流，一次性完成发送。</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">&nbsp;&nbsp;</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>
+<span style="background-color: #FFFFFF">举例</span></b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">
+<span style="background-color: #FFFFFF"><font size="2">
+<span style="font-family: 宋体">注意：确保有足够的</span></font><font face="宋体" size="2">缓存接收数据流，否则在读取时程序可能异常。</font></span>&nbsp;</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0; margin-bottom: 0" align="left"><font size="2">
+<span style="font-family: 宋体; background-color:#FFFFFF">
+--------------------------------发送：------------------------------------------</span></font></p>
+<p style="margin-top: 0; margin-bottom: 0" align="left">
+<img border="0" src="SYSTem3.jpg"></p>
+<p style="margin-top: 0; margin-bottom: 0" align="left">　</p>
+<p style="margin-top: 0; margin-bottom: 0" align="left"><font size="2">
+<span style="font-family: 宋体; background-color:#FFFFFF">
+--------------------------------读取：------------------------------------------</span></font></p>
+<p style="margin-top: 0; margin-bottom: 0" align="left">
+<img border="0" src="SYSTem2.jpg"></p>
+
+</body>
+
+</html>

@@ -48,7 +48,7 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
       ),
       child: Container(
         width: 800,
-        height: 600,
+        height: 680,
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
@@ -56,12 +56,18 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.settings_ethernet, color: Colors.greenAccent, size: 22),
-                    SizedBox(width: 8),
-                    Text(
-                      'LXI CORE 2011 DEVICE 连接与控制',
+                    const Icon(Icons.settings_ethernet, color: Colors.greenAccent, size: 22),
+                    const SizedBox(width: 8),
+                    Image.asset(
+                      'LXI_Logo/LXI_Logo_2.png',
+                      height: 16,
+                      color: Colors.white,
+                      colorBlendMode: BlendMode.srcIn,
+                    ),
+                    const Text(
+                      ' CORE 2011 DEVICE 连接与控制',
                       style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -81,9 +87,24 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
               indicatorColor: Colors.greenAccent,
               labelColor: Colors.greenAccent,
               unselectedLabelColor: Colors.grey,
-              tabs: const [
-                Tab(icon: Icon(Icons.settings), text: '连接与配置 (LXI Connect)'),
-                Tab(icon: Icon(Icons.terminal), text: 'SCPI 指令终端 (SCPI Console)'),
+              tabs: [
+                Tab(
+                  icon: const Icon(Icons.settings),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('连接与配置 ('),
+                      Image.asset(
+                        'LXI_Logo/LXI_Logo_2.png',
+                        height: 12,
+                        color: Colors.white70,
+                        colorBlendMode: BlendMode.srcIn,
+                      ),
+                      const Text(' Connect)'),
+                    ],
+                  ),
+                ),
+                const Tab(icon: Icon(Icons.terminal), text: 'SCPI 指令终端 (SCPI Console)'),
               ],
             ),
             const SizedBox(height: 12),
@@ -120,7 +141,18 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
                   const Text('手动连接设备', style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
 
-                  const Text('目标仪器型号 (LXI Device Model)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  Row(
+                    children: [
+                      const Text('目标仪器型号 (', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      Image.asset(
+                        'LXI_Logo/LXI_Logo_2.png',
+                        height: 12,
+                        color: Colors.grey,
+                        colorBlendMode: BlendMode.srcIn,
+                      ),
+                      const Text(' Device Model)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    ],
+                  ),
                   const SizedBox(height: 6),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -249,13 +281,37 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
                                     await state.connectLxi(ip, port, streaming: _isStreaming);
                                     if (mounted) {
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('LXI 仪器连接成功！')),
+                                        SnackBar(
+                                          content: Row(
+                                            children: [
+                                              Image.asset(
+                                                'LXI_Logo/LXI_Logo_2.png',
+                                                height: 12,
+                                                color: Colors.white,
+                                                colorBlendMode: BlendMode.srcIn,
+                                              ),
+                                              const Text(' 仪器连接成功！'),
+                                            ],
+                                          ),
+                                        ),
                                       );
                                     }
                                   } catch (e) {
                                     if (mounted) {
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text('LXI 连接失败: $e')),
+                                        SnackBar(
+                                          content: Row(
+                                            children: [
+                                              Image.asset(
+                                                'LXI_Logo/LXI_Logo_2.png',
+                                                height: 12,
+                                                color: Colors.white,
+                                                colorBlendMode: BlendMode.srcIn,
+                                              ),
+                                              Text(' 连接失败: $e'),
+                                            ],
+                                          ),
+                                        ),
                                       );
                                     }
                                   }
@@ -279,7 +335,19 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
                                   await state.disconnectLxi();
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('LXI 仪器已断开连接')),
+                                      SnackBar(
+                                        content: Row(
+                                          children: [
+                                            Image.asset(
+                                              'LXI_Logo/LXI_Logo_2.png',
+                                              height: 12,
+                                              color: Colors.white,
+                                              colorBlendMode: BlendMode.srcIn,
+                                            ),
+                                            const Text(' 仪器已断开连接'),
+                                          ],
+                                        ),
+                                      ),
                                     );
                                   }
                                 },
@@ -301,7 +369,18 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
                   const SizedBox(height: 12),
 
                   // Connection info details
-                  const Text('仪器 LXI 识别状态', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                  Row(
+                    children: [
+                      const Text('仪器 ', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                      Image.asset(
+                        'LXI_Logo/LXI_Logo_2.png',
+                        height: 13,
+                        color: Colors.white70,
+                        colorBlendMode: BlendMode.srcIn,
+                      ),
+                      const Text(' 识别状态', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
@@ -339,7 +418,17 @@ class _LxiConnectionDialogState extends State<LxiConnectionDialog> with SingleTi
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('LXI 自动搜索 (mDNS)', style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        Image.asset(
+                          'LXI_Logo/LXI_Logo_2.png',
+                          height: 14,
+                          color: Colors.white70,
+                          colorBlendMode: BlendMode.srcIn,
+                        ),
+                        const Text(' 自动搜索 (mDNS)', style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
                     IconButton(
                       icon: state.isSearchingLxi
                           ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.greenAccent))

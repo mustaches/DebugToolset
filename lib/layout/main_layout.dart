@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:window_manager/window_manager.dart';
 import '../providers/app_state.dart';
 import '../providers/terminal_state.dart';
 import '../modules/terminal/terminal_view.dart';
@@ -132,7 +131,6 @@ class MainLayout extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text('DebugToolSet $statusLeft', style: const TextStyle(fontSize: 12, color: Colors.white)),
-          const WindowSizeText(),
           Text(statusRight, style: const TextStyle(fontSize: 12, color: Colors.white)),
         ],
       ),
@@ -242,70 +240,3 @@ class _SidebarIconState extends State<_SidebarIcon> {
   }
 }
 
-class WindowSizeText extends StatefulWidget {
-  const WindowSizeText({super.key});
-
-  @override
-  State<WindowSizeText> createState() => _WindowSizeTextState();
-}
-
-class _WindowSizeTextState extends State<WindowSizeText> with WindowListener {
-  Size _size = const Size(1662, 873);
-
-  @override
-  void initState() {
-    super.initState();
-    windowManager.addListener(this);
-    _updateSize();
-  }
-
-  @override
-  void dispose() {
-    windowManager.removeListener(this);
-    super.dispose();
-  }
-
-  Future<void> _updateSize() async {
-    try {
-      final size = await windowManager.getSize();
-      if (mounted) {
-        setState(() {
-          _size = size;
-        });
-      }
-    } catch (_) {}
-  }
-
-  @override
-  void onWindowResize() {
-    _updateSize();
-  }
-
-  @override
-  void onWindowResized() {
-    _updateSize();
-  }
-
-  @override
-  void onWindowMaximize() {
-    _updateSize();
-  }
-
-  @override
-  void onWindowUnmaximize() {
-    _updateSize();
-  }
-
-  @override
-  void onWindowRestore() {
-    _updateSize();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      '窗口尺寸: ${_size.width.toInt()}*${_size.height.toInt()}',
-      style: const TextStyle(fontSize: 12, color: Colors.white),
-    );
-  }
-}

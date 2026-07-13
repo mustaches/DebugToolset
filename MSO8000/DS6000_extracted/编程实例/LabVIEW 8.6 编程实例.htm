@@ -1,0 +1,228 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>LabVIEW 8.6 编程实例</title>
+<style>
+<!--
+span.1Char
+	{font-family:"Tahoma","sans-serif";
+	color:blue;
+	font-weight:bold}
+ p.MsoNormal
+	{mso-style-parent:"";
+	margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Tahoma","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+p.MsoBodyText
+	{margin-top:0cm;
+	margin-right:0cm;
+	margin-bottom:6.0pt;
+	margin-left:0cm;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Tahoma","sans-serif";
+	}
+-->
+</style>
+<!--[if !mso]>
+<style>
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+div.WordSection1
+	{page:WordSection1;}
+</style>
+<![endif]-->
+</head>
+
+<body>
+
+<p class="2" style="text-align: justify; text-justify: inter-ideograph; margin-top:0; margin-bottom:0">
+<b>
+<a name="_Toc267903221">
+<span lang="EN-US" style="font-family: Tahoma; color: black">
+<font size="4">LabVIEW 8.6</font></span></a><span style="font-family: 黑体; color: black"><font size="4"> 编程实例</font></span></b></p>
+<p class="MsoNormal" style="margin: 0"><span lang="EN-US"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="margin: 0">　</p>
+<p class="MsoNormal" style="margin:0; "><span style="font-family: 宋体">
+<font size="2">进入</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">Labview 8.6</span></font><span style="font-family: 宋体"><font size="2">编程环境，按照下列步骤操作：</font></span></p>
+<p class="MsoNormal" style="margin:0; ">　</p>
+<p class="MsoNormal" style="text-indent: -17.85pt; margin-left: 17.85pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">1.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">打开程序框图面板</span><span style="font-family: Tahoma,sans-serif">Block 
+Diagram</span><span style="font-family: 宋体">；选择</span><span style="font-family: Tahoma,sans-serif">Instrument 
+I/O→VISA</span><span style="font-family: 宋体">；分别添加以下函数：</span><span style="font-family: Tahoma,sans-serif">VISA 
+Open，VISA Read，VISA Write和 VISA Close：</span></font></p>
+<p class="MsoNormal" style="text-indent: -17.85pt; margin-left: 17.85pt">　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155540.png" width="576" height="458"></font></p>
+<p class="MsoNormal"><span lang="EN-US"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal">　</p>
+<p class="MsoNormal" style="text-indent: -17.85pt; margin-left: 17.85pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">2.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">将鼠标移动至</span><span style="font-family: Tahoma,sans-serif">VISA 
+Open</span><span style="font-family: 宋体">控件的</span><span style="font-family: Tahoma,sans-serif">VISA 
+resource name</span><span style="font-family: 宋体">；右键选择</span><span style="font-family: Tahoma,sans-serif">Create→Control</span><span style="font-family: 宋体">：</span></font></p>
+<p class="MsoNormal" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155557.png" width="553" height="199"></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: -18.0pt; margin-left: 18.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">3.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">将所有函数的</span><span style="font-family: Tahoma,sans-serif">VISA 
+resource name</span><span style="font-family: 宋体">和</span><span style="font-family: Tahoma,sans-serif">VISA 
+resource name out</span><span style="font-family: 宋体">连接，</span><span style="font-family: Tahoma,sans-serif">error 
+out</span><span style="font-family: 宋体">和</span><span style="font-family: Tahoma,sans-serif">error 
+in</span><span style="font-family: 宋体">连接：</span></font></p>
+<p class="MsoNormal" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoNormal" style="text-indent: 15.75pt">
+<font size="2">
+<img border="0" src="2010-09-25_155607.png" width="498" height="61"></font></p>
+<p class="MsoNormal" style="text-indent: 15.75pt">　</p>
+<p class="MsoNormal" style="text-indent: 15.75pt"><span lang="EN-US">
+<font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="text-indent: -18.0pt; margin-left: 18.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">4.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">在</span><span style="font-family: Tahoma,sans-serif">VISA 
+Write</span><span style="font-family: 宋体">控件的</span><span style="font-family: Tahoma,sans-serif">write 
+buffer</span><span style="font-family: 宋体">上添加文本框，分别写入：“</span><span style="font-family: Tahoma,sans-serif">:WAV:FORM\sBYTE\n</span><span style="font-family: 宋体">”和“</span><span style="font-family: Tahoma,sans-serif">:WAV:DATA?\sCHAN1\n</span><span style="font-family: 宋体">”。前者是设置波形以</span><span style="font-family: Tahoma,sans-serif">BYTE</span><span style="font-family: 宋体">格式读取，后者用来读取屏幕波形数据。
+此外，再创建一个值为</span><span style="font-family: Tahoma,sans-serif">1035</span><span style="font-family: 宋体">的</span><span style="font-family: Tahoma,sans-serif">U32</span><span style="font-family: 宋体">整型常量（</span><span style="font-family: Tahoma,sans-serif">Mathematics</span><span style="font-family: 宋体"> 
+→ </span><span style="font-family: Tahoma,sans-serif">Numeric</span><span style="font-family: 宋体"> 
+→ </span><span style="font-family: Tahoma,sans-serif">Numeric Constant</span><span style="font-family: 宋体">），并按下图所示连接。</span></font></p>
+<p class="MsoNormal" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoNormal" style="text-indent: 15.75pt">
+<font size="2">
+<img border="0" src="2010-09-25_155620.png" width="561" height="99"></font></p>
+<p class="MsoNormal" style="text-indent: 15.75pt"><span lang="EN-US">
+<font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal"><span lang="EN-US"><font size="2">&nbsp;&nbsp;&nbsp; </font> </span></p>
+<p class="MsoNormal" style="text-indent: -18.0pt; margin-left: 18.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">5.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">打开前面板</span><span style="font-family: Tahoma,sans-serif">Front 
+Panel</span>，<span style="font-family: 宋体">从</span><span style="font-family: Tahoma,sans-serif">Modern→Graph→Waveform 
+Graph</span><span style="font-family: 宋体">中添加一个波形图控件</span><span style="font-family: Tahoma,sans-serif">Waveform 
+Graph</span>；从Modern → Boolean → OK Button 
+：添加两个按钮，分别用来控制开始捕捉波形和停止程序。参考下图修改控件和按钮的属性。</font></p>
+<p class="MsoNormal" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<img border="0" src="2010-09-25_155631.png" width="553" height="360"></p>
+<p class="MsoNormal">
+　</p>
+<p class="MsoNormal">
+<b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">6.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">打开程序框图</span>Block 
+Diagram；<span style="font-family: 宋体">右键选择</span>Programming → String → 
+String/Array/Path Conversion → String To Byte Array；<span style="font-family: 宋体">右键选择</span>Programming 
+→ Array → Array Subset，<span style="font-family: 宋体">按照图示连接</span>。<span style="font-family: 宋体">创建两个</span>I32<span style="font-family: 宋体">整型常量，其值分别为</span>11、700，<span style="font-family: 宋体">将常量</span>11<span style="font-family: 宋体">连接至</span>Array 
+Subset<span style="font-family: 宋体">的</span>Index<span style="font-family: 宋体">端</span>，<span style="font-family: 宋体">将常量</span>700<span style="font-family: 宋体">连接至</span>Array 
+Subset<span style="font-family: 宋体">的</span>length<span style="font-family: 宋体">端，从而去除波形头部数据，将剩余的波形数据传至显示控件显示</span>。</font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155640.png" width="601" height="154"></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal">
+<span lang="en-us"><font size="2"><b>7</b></font></span><b><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">增加一个事件结构 
+（右击程序框图空白处 → </span>Programming<span style="font-family: 宋体"> → </span>
+Structures <span style="font-family: 宋体">→ </span>Event Structure<span style="font-family: 宋体">）：</span></font></p>
+<p class="MsoNormal">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155652.png" width="733" height="238"></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal">
+<b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">8.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">在选择器标签</span>selector 
+label<span style="font-family: 宋体">上右键选择</span>Edit Events Handled by This Case<span style="font-family: 宋体">或</span>Add 
+Event case<span style="font-family: 宋体">分别为按钮添加事件</span>，<span style="font-family: 宋体">按</span>Start 
+捕<span style="font-family: 宋体">捉波形</span>，<span style="font-family: 宋体">按</span>Stop<span style="font-family: 宋体">退出程序</span>。</font></p>
+<p class="MsoNormal">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155716.png" width="401" height="507"></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal">
+<font size="2">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span style="font-family: 宋体">设置好</span>Start<span style="font-family: 宋体">的事件后，得到下图所示结果</span>：</font></p>
+<p class="MsoNormal">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155742.png" width="514" height="253"></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal">
+<b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">9.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">为程序增加一个</span>While<span style="font-family: 宋体">循环
+（右击程序框图空白处 → </span>Programming<span style="font-family: 宋体"> → </span>
+Structures<span style="font-family: 宋体"> → </span>While Loop<span style="font-family: 宋体">）</span>；<span style="font-family: 宋体">并添加一个</span>Boolean → True Constant，<span style="font-family: 宋体">将</span>Stop<span style="font-family: 宋体">按钮的事件指向</span>While<span style="font-family: 宋体">退出</span>。</font></p>
+<p class="MsoNormal">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155750.png" width="474" height="325"></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal">
+<b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">10.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">将</span>While<span style="font-family: 宋体">循环上的</span>VISA<span style="font-family: 宋体">资源名输入和错误输入更改为“</span>Shift 
+Register<span style="font-family: 宋体">”</span>，<span style="font-family: 宋体">程序的控制就此结束。</span></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155804.png" width="705" height="265"></font></p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+　</p>
+<p class="MsoNormal">
+<b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">11.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">调整前面板</span>Front 
+Panel <span style="font-family: 宋体">的样式，点击“</span>Fetch Waveform<span style="font-family: 宋体">”</span>
+<span style="font-family: 宋体">后可得到如下界面（示波器已正确连接）</span>。</font></p>
+<p class="MsoNormal">
+　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<font size="2">
+<img border="0" src="2010-09-25_155815.png" width="560" height="427"></font></p>
+
+</body>
+
+</html>

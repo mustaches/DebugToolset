@@ -147,10 +147,28 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     bool isActive = ch.isVisible;
     Color boxColor = isActive ? ch.color : Colors.grey.shade600;
 
+    String formatVoltage(double volts) {
+      if (volts.abs() < 1.0 && volts != 0.0) {
+        return '${(volts * 1000).toStringAsFixed(0)}mV';
+      }
+      return '${volts.toStringAsFixed(2)}V';
+    }
+
+    String formatOffset(double volts) {
+      if (volts == 0.0) return '0.00V';
+      final formatted = formatVoltage(volts);
+      if (volts > 0.0) return '+$formatted';
+      return formatted;
+    }
+
+    // Offset voltage: (offset in pixels / pixel height per division) * yScale
+    double offsetDivisions = -ch.yOffset / (state.chartHeight / 8.0);
+    double offsetVolts = offsetDivisions * ch.yScale;
+
     return HoverBuilder(
       builder: (context, isHovered) {
         return Container(
-          width: 85,
+          width: 98,
           margin: const EdgeInsets.only(right: 6.0),
           decoration: BoxDecoration(
             color: isHovered ? const Color(0xFF2A2A2A) : const Color(0xFF202020),
@@ -184,28 +202,65 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
               ),
               // Channel Info
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(isActive ? '${ch.yScale.toStringAsFixed(2)}V/' : '', style: TextStyle(color: boxColor, fontSize: 10, fontWeight: FontWeight.bold)),
-                          Text(isActive ? '' : 'OFF', style: TextStyle(color: Colors.grey.shade600, fontSize: 10)),
-                        ],
-                      ),
-                      Text(isActive ? '${ch.yOffset.toStringAsFixed(2)}V' : '', style: const TextStyle(color: Colors.grey, fontSize: 10)),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(isActive ? '1X' : '', style: const TextStyle(color: Colors.grey, fontSize: 9)),
-                          Text(isActive ? '----' : '', style: const TextStyle(color: Colors.grey, fontSize: 9)),
-                        ],
-                      )
-                    ],
+                child: GestureDetector(
+                  onTap: isActive ? () => _showAnalogChannelConfigDialog(context, state, index, ch) : null,
+                  child: Container(
+                    color: Colors.transparent, // Expand tap target
+                    padding: const EdgeInsets.symmetric(horizontal: 6.0, vertical: 4.0),
+                    child: isActive
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              // Line 1: Scale (V/div)
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('${formatVoltage(ch.yScale)}/div', style: TextStyle(color: boxColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  const SizedBox(),
+                                ],
+                              ),
+                              // Line 2: Offset (Volts) & Attenuation (X)
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(formatOffset(offsetVolts), style: TextStyle(color: boxColor, fontSize: 9, fontWeight: FontWeight.w600)),
+                                  Text('${ch.probeAttenuation}X', style: TextStyle(color: boxColor, fontSize: 9, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              // Line 3: Coupling Mode (Icon + Text) & Impedance
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 14,
+                                        height: 8,
+                                        child: CustomPaint(
+                                          painter: ch.couplingMode == 'DC'
+                                              ? DcIconPainter(color: boxColor)
+                                              : ch.couplingMode == 'AC'
+                                                  ? AcIconPainter(color: boxColor)
+                                                  : GndIconPainter(color: boxColor),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(ch.couplingMode, style: TextStyle(color: boxColor, fontSize: 8, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                  Text(ch.probeImpedance, style: TextStyle(color: boxColor, fontSize: 9, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ],
+                          )
+                        : const Center(
+                            child: Text(
+                              'OFF',
+                              style: TextStyle(color: Colors.white24, fontSize: 12, fontWeight: FontWeight.bold),
+                            ),
+                          ),
                   ),
                 ),
               )
@@ -216,27 +271,194 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
     );
   }
 
+  void _showAnalogChannelConfigDialog(BuildContext context, OscilloscopeState state, int index, ChannelData ch) {
+    showDialog(
+      context: context,
+      useRootNavigator: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: BorderSide(color: ch.color.withValues(alpha: 0.6), width: 1.5),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: ch.color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('模拟通道 A${index + 1} 配置', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Attenuation
+                  const Text('探头衰减 (Probe Attenuation)', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [1, 10, 100].map((val) {
+                      bool isSelected = ch.probeAttenuation == val;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            state.setChannelProbeAttenuation(index, val);
+                            setState(() {});
+                          },
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            decoration: BoxDecoration(
+                              color: isSelected ? ch.color.withValues(alpha: 0.2) : const Color(0xFF2A2A2A),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: isSelected ? ch.color : Colors.grey.shade800,
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              '${val}X',
+                              style: TextStyle(
+                                color: isSelected ? Colors.white : Colors.grey,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Impedance
+                  const Text('探头阻抗 (Impedance)', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: ['1M', '50Ω'].map((val) {
+                      bool isSelected = ch.probeImpedance == val;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            state.setChannelProbeImpedance(index, val);
+                            setState(() {});
+                          },
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            decoration: BoxDecoration(
+                              color: isSelected ? ch.color.withValues(alpha: 0.2) : const Color(0xFF2A2A2A),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: isSelected ? ch.color : Colors.grey.shade800,
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              val,
+                              style: TextStyle(
+                                color: isSelected ? Colors.white : Colors.grey,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Coupling Mode
+                  const Text('耦合方式 (Coupling)', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: ['DC', 'AC', 'GND'].map((val) {
+                      bool isSelected = ch.couplingMode == val;
+                      Widget iconWidget;
+                      if (val == 'DC') {
+                        iconWidget = CustomPaint(size: const Size(16, 10), painter: DcIconPainter(color: isSelected ? Colors.white : Colors.grey));
+                      } else if (val == 'AC') {
+                        iconWidget = CustomPaint(size: const Size(16, 10), painter: AcIconPainter(color: isSelected ? Colors.white : Colors.grey));
+                      } else {
+                        iconWidget = CustomPaint(size: const Size(16, 10), painter: GndIconPainter(color: isSelected ? Colors.white : Colors.grey));
+                      }
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            state.setChannelCouplingMode(index, val);
+                            setState(() {});
+                          },
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            decoration: BoxDecoration(
+                              color: isSelected ? ch.color.withValues(alpha: 0.2) : const Color(0xFF2A2A2A),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: isSelected ? ch.color : Colors.grey.shade800,
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                iconWidget,
+                                const SizedBox(width: 4),
+                                Text(
+                                  val,
+                                  style: TextStyle(
+                                    color: isSelected ? Colors.white : Colors.grey,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('确定', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildDigitalBusBox(BuildContext context, OscilloscopeState state, int busIndex) {
     int startPin = busIndex * 8;
     int endPin = startPin + 7;
     bool isActive = state.digitalChannel.enabledPins.any((p) => p >= startPin && p <= endPin);
     Color boxColor = isActive ? Colors.purpleAccent : Colors.grey.shade600;
     
-    String rangeLabel = '';
-    if (busIndex == 0) {
-      rangeLabel = 'D[7:0]';
-    } else if (busIndex == 1) {
-      rangeLabel = 'D[15:8]';
-    } else if (busIndex == 2) {
-      rangeLabel = 'D[23:16]';
-    } else if (busIndex == 3) {
-      rangeLabel = 'D[31:24]';
-    }
+
 
     return HoverBuilder(
       builder: (context, isHovered) {
         return Container(
-          width: 85,
+          width: 98,
           margin: const EdgeInsets.only(right: 6.0),
           decoration: BoxDecoration(
             color: isHovered ? const Color(0xFF2A2A2A) : const Color(0xFF202020),
@@ -277,6 +499,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                   ),
                 ),
               ),
+              // Channel Info
               Expanded(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -288,13 +511,13 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                     );
                   },
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 2.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 0.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          rangeLabel,
+                          'VDD: ${(state.digitalChannel.groupVdds[busIndex] ?? 3.3).toStringAsFixed(1)}V',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: boxColor, fontSize: 9, fontWeight: FontWeight.bold),
                         ),
@@ -321,7 +544,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
           '$pin',
           style: TextStyle(
             color: isEnabled ? Colors.greenAccent : Colors.grey.shade700,
-            fontSize: 8,
+            fontSize: 10.5,
             fontWeight: isEnabled ? FontWeight.bold : FontWeight.normal,
           ),
         );
@@ -338,7 +561,12 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
         children: [
           Row(
             children: [
-              Text('LXI', style: TextStyle(color: terminal.isConnected ? Colors.greenAccent : Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
+              Image.asset(
+                'LXI_Logo/LXI_Logo_2.png',
+                height: 10,
+                color: terminal.isConnected ? Colors.greenAccent : Colors.grey,
+                colorBlendMode: BlendMode.srcIn,
+              ),
               const SizedBox(width: 8),
               Icon(terminal.isConnected ? Icons.usb : Icons.usb_off, color: terminal.isConnected ? Colors.greenAccent : Colors.grey, size: 14),
             ],
@@ -2691,7 +2919,7 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
       ),
       child: Container(
         width: 380,
-        height: 480,
+        height: 580,
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2710,6 +2938,44 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
                 GestureDetector(
                   onTap: () => Navigator.of(context).pop(),
                   child: Icon(Icons.close, color: Colors.grey.shade400, size: 18),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(color: Colors.grey.shade800, height: 1),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('VDD 电压:', style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF252525),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.grey.shade800),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<double>(
+                      dropdownColor: const Color(0xFF1E1E1E),
+                      value: widget.state.digitalChannel.groupVdds[widget.busIndex] ?? 3.3,
+                      isDense: true,
+                      style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                      items: [0.9, 1.2, 1.5, 1.8, 2.5, 3.3, 5.0].map((v) {
+                        return DropdownMenuItem<double>(
+                          value: v,
+                          child: Text('${v.toStringAsFixed(1)}V'),
+                        );
+                      }).toList(),
+                      onChanged: (newV) {
+                        if (newV != null) {
+                          setState(() {
+                            widget.state.setDigitalGroupVdd(widget.busIndex, newV);
+                          });
+                        }
+                      },
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -2795,4 +3061,67 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
     );
   }
 }
+
+class DcIconPainter extends CustomPainter {
+  final Color color;
+  DcIconPainter({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(Offset(0, size.height * 0.3), Offset(size.width, size.height * 0.3), paint);
+    double dashWidth = 3;
+    double dashSpace = 2;
+    double startX = 0;
+    double y = size.height * 0.7;
+    while (startX < size.width) {
+      canvas.drawLine(Offset(startX, y), Offset(startX + dashWidth, y), paint);
+      startX += dashWidth + dashSpace;
+    }
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class AcIconPainter extends CustomPainter {
+  final Color color;
+  AcIconPainter({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    final path = Path();
+    double midY = size.height / 2;
+    path.moveTo(0, midY);
+    path.quadraticBezierTo(size.width * 0.25, midY - size.height * 0.4, size.width * 0.5, midY);
+    path.quadraticBezierTo(size.width * 0.75, midY + size.height * 0.4, size.width, midY);
+    canvas.drawPath(path, paint);
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class GndIconPainter extends CustomPainter {
+  final Color color;
+  GndIconPainter({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    double midX = size.width / 2;
+    canvas.drawLine(Offset(midX, 0), Offset(midX, size.height * 0.4), paint);
+    canvas.drawLine(Offset(size.width * 0.15, size.height * 0.4), Offset(size.width * 0.85, size.height * 0.4), paint);
+    canvas.drawLine(Offset(size.width * 0.3, size.height * 0.65), Offset(size.width * 0.7, size.height * 0.65), paint);
+    canvas.drawLine(Offset(size.width * 0.45, size.height * 0.9), Offset(size.width * 0.55, size.height * 0.9), paint);
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 

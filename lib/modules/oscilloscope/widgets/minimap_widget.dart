@@ -103,7 +103,7 @@ class _MinimapWidgetState extends State<MinimapWidget> {
                   ),
                 ),
                 SizedBox(
-                  height: 8.0,
+                  height: 4.0,
                   width: double.infinity,
                   child: CustomPaint(
                     painter: MinimapProgressBarPainter(state: state),
@@ -580,29 +580,66 @@ class MinimapProgressBarPainter extends CustomPainter {
     if (headPercent > 1.0) headPercent = 1.0;
 
     final progressBarBackgroundPaint = Paint()..style = PaintingStyle.fill;
-    final progressBarPaint = Paint()..style = PaintingStyle.fill;
 
     double barWidth = 0.0;
+    bool isRingBuffer = maxCount >= OscilloscopeState.maxPointsPerChannel;
 
-    if (maxCount < OscilloscopeState.maxPointsPerChannel) {
+    Color stripeColor;
+    Color baseColor;
+
+    if (!isRingBuffer) {
       progressBarBackgroundPaint.color = Colors.grey.withValues(alpha: 0.3);
-      Color progressColor = Colors.blueAccent.withValues(alpha: 0.8);
       if (usagePercent > 0.8) {
-        progressColor = Colors.orangeAccent.withValues(alpha: 0.8);
+        baseColor = const Color(0xFFBF360C); // Dark orange base
+        stripeColor = const Color(0xFFFF6D00); // Bright orange stripe
+      } else {
+        baseColor = const Color(0xFF0D47A1); // Dark blue base
+        stripeColor = const Color(0xFF2979FF); // Bright blue stripe
       }
-      progressBarPaint.color = progressColor;
       barWidth = size.width * usagePercent;
     } else {
-      progressBarBackgroundPaint.color = Colors.green.withValues(alpha: 0.4);
-      progressBarPaint.color = Colors.greenAccent.withValues(alpha: 0.9);
+      progressBarBackgroundPaint.color = Colors.green.withValues(alpha: 0.2);
+      baseColor = const Color(0xFF1B5E20); // Dark green base
+      stripeColor = const Color(0xFF00E676); // Bright green stripe
       barWidth = size.width * headPercent;
+    }
+
+    // Ensure we always have at least some minimal visible progress bar if maxCount > 0
+    if (maxCount > 0 && barWidth < 4.0) {
+      barWidth = 4.0;
     }
 
     Rect bgRect = Rect.fromLTWH(0, 0, size.width, size.height);
     Rect progressRect = Rect.fromLTWH(0, 0, barWidth, size.height);
 
     canvas.drawRect(bgRect, progressBarBackgroundPaint);
-    canvas.drawRect(progressRect, progressBarPaint);
+
+    if (barWidth > 0) {
+      // Draw progress bar base background color
+      final basePaint = Paint()
+        ..color = baseColor
+        ..style = PaintingStyle.fill;
+      canvas.drawRect(progressRect, basePaint);
+
+      // Draw light and dark diagonal stripes (zebra pattern)
+      canvas.save();
+      canvas.clipRect(progressRect);
+
+      final stripePaint = Paint()
+        ..color = stripeColor
+        ..strokeWidth = 6.0
+        ..style = PaintingStyle.stroke;
+
+      double step = 14.0;
+      for (double x = -size.height; x < barWidth + size.height; x += step) {
+        canvas.drawLine(
+          Offset(x, size.height),
+          Offset(x + size.height, 0),
+          stripePaint,
+        );
+      }
+      canvas.restore();
+    }
 
     final borderLinePaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.3)

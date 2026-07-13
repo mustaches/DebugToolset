@@ -1,0 +1,57 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>*TST?</title>
+</head>
+
+<body>
+
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="4" face="Tahoma">
+<span style="font-weight: 700">*</span></font><span style="font-weight: 700"><font face="Tahoma" size="4">TST?</font></span></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2" face="宋体"><b>命令格式</b></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><font size="2" face="Tahoma">*TST?</font></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><font size="2" face="宋体"><b>功能描述</b></font></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><font size="2" face="宋体">
+执行一次自检并返回自检结果。</font></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><font size="2" face="宋体"><b>说明</b></font></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><font size="2" face="宋体">
+返回值是一个十进制整数，范围为</font><font size="2" face="Tahoma">0</font><font size="2" face="宋体">至</font><font size="2" face="Tahoma">2147483647（2<sup>31</sup>-1），</font><font size="2" face="宋体">对应</font><font size="2" face="Tahoma">32bit</font><font size="2" face="宋体">的二进制数</font><font size="2" face="Tahoma">，</font><font size="2" face="宋体">每</font><font size="2" face="Tahoma">bit</font><font size="2" face="宋体">代表的自检项目如下</font><font size="2" face="Tahoma">：<br>
+<br>
+BIT0: SYSTEM VOLTAGE 3.3<br>
+BIT1: ANA VOL<br>
+BIT2: STORAGE VOL <br>
+BIT3: DIG CORE VOL <br>
+BIT4: DIG PER VOL<br>
+<br>
+BIT8: BATT<br>
+BIT9: FAN1<br>
+BIT10:FAN2<br>
+<br>
+BIT12: TEMPE1<br>
+BIT13: TEMPE2<br>
+<br>
+BIT16: TMO<br>
+<br>
+</font><font size="2" face="宋体">注：</font><font size="2" face="Tahoma">BIT5~BIT7， 
+BIT11，BIT14~BIT15，BIT17~BIT31</font><font size="2" face="宋体">为预留位。</font></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><font size="2" face="宋体"><br>
+<b>返回格式</b></font></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><font face="宋体" size="2">
+查询返回一个十进制整数，对应二进制位上为</font><font size="2" face="Tahoma">0</font><font face="宋体" size="2">表示自检通过，为</font><font size="2" face="Tahoma">1</font><font face="宋体" size="2">表示自检失败。</font></p>
+
+</body>
+
+</html>

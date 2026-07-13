@@ -1,0 +1,202 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>Visual C++ 6.0 编程实例</title>
+<style>
+<!--
+span.1Char
+	{font-family:"Tahoma","sans-serif";
+	color:blue;
+	font-weight:bold}
+ p.MsoNormal
+	{mso-style-parent:"";
+	margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Tahoma","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+p.MsoBodyText
+	{margin-top:0cm;
+	margin-right:0cm;
+	margin-bottom:6.0pt;
+	margin-left:0cm;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Tahoma","sans-serif";
+	}
+-->
+</style>
+<!--[if !mso]>
+<style>
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+div.WordSection1
+	{page:WordSection1;}
+</style>
+<![endif]-->
+</head>
+
+<body>
+
+<p class="2" style="text-align: justify; text-justify: inter-ideograph; margin-top:0; margin-bottom:0">
+<b>
+<a name="_Toc267903219">
+<span lang="EN-US" style="font-family: Tahoma; color: black">
+<font size="4">Visual C++ 6.0</font></span></a><span lang="EN-US" style="font-family: Tahoma; color: black"><font size="4">
+</font></span><span style="font-family: 黑体; color: black"><font size="4">编程实例</font></span></b></p>
+<p class="MsoNormal" style="margin:0; ">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="margin:0; ">
+　</p>
+<p class="MsoNormal" style="margin:0; "><span style="font-family: 宋体">
+<font size="2">进入</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">Visual C++6.0</span></font><span style="font-family: 宋体"><font size="2">编程环境，按照下列步骤操作：</font></span></p>
+<p class="MsoNormal" style="margin:0; ">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">1.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><span style="font-family: 宋体"><font size="2">建立一个基于对话框的</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">MFC</span></font><span style="font-family: 宋体"><font size="2">的工程。</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">2.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">打开</span><span style="font-family: Tahoma,sans-serif">Project</span><span style="font-family: 宋体">→</span><span style="font-family: Tahoma,sans-serif">Settings</span><span style="font-family: 宋体"> 
+中的</span><span style="font-family: Tahoma,sans-serif">C/C++</span><span style="font-family: 宋体">选项卡，在</span><span style="font-family: Tahoma,sans-serif">Category</span><span style="font-family: 宋体">中选</span><span style="font-family: Tahoma,sans-serif">Code 
+Generation</span><span style="font-family: 宋体">，在</span><span style="font-family: Tahoma,sans-serif">Use 
+run-time library</span><span style="font-family: 宋体">中选</span><span style="font-family: Tahoma,sans-serif">Debug 
+Multithreaded DLL</span><span style="font-family: 宋体">。点</span><span style="font-family: Tahoma,sans-serif">OK</span><span style="font-family: 宋体">关闭对话框。</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<font face="宋体" size="2">&nbsp;&nbsp;&nbsp;
+<img border="0" src="image002.png" width="392" height="264"></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<span lang="en-us"><font size="2"><b>3</b></font></span><b><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><span style="font-family: 宋体"><font size="2">打开</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">Project</span><span style="font-family: 宋体">→</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">Settings
+</span><span style="font-family: 宋体">中的</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">Link</span><span style="font-family: 宋体">选项卡，在</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">Object/library 
+modules</span><span style="font-family: 宋体">中手动添加</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">visa32.lib</span></font><span style="font-family: 宋体"><font size="2">。</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt; page-break-after: avoid">
+<img border="0" src="image003.png" width="397" height="266"></p>
+<p class="MsoNormal" style="text-indent: 21.0pt; page-break-after: avoid">
+　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<font size="2"><span style="font-family: Tahoma,sans-serif">4</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">.</span></font><span lang="PT-BR" style="font-family: Tahoma,sans-serif"><span lang="PT-BR" style="font-family: Tahoma,sans-serif"><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></span></b><span style="font-family: 宋体"><font size="2">打开</font></span><font size="2"><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Tools</span><span style="font-family: 宋体">→</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Options
+</span><span style="font-family: 宋体">中的</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Directories</span></font><span style="font-family: 宋体"><font size="2">选项卡。</font></span></p>
+<p class="MsoNormal" style="margin-left: 21.0pt"><span style="font-family: 宋体">
+<font size="2">在</font></span><font size="2"><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Show 
+directories for</span><span style="font-family: 宋体">中选择</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Include 
+files</span><span style="font-family: 宋体">，双击</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Directories</span><span style="font-family: 宋体">选框中的空白处添加</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Include</span><span style="font-family: 宋体">的路径：</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">C:\Program 
+Files\IVI Foundation\VISA\WinNT\include</span></font><span style="font-family: 宋体"><font size="2">。</font></span></p>
+<p class="MsoNormal" style="margin-left: 21.0pt; margin-right: 0cm; margin-top: 6.0pt; margin-bottom: .0001pt">
+<span style="font-family: 宋体"><font size="2">在</font></span><font size="2"><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Show 
+directories for</span><span style="font-family: 宋体">中选择</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Library 
+files</span><span style="font-family: 宋体">，双击</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Directories</span><span style="font-family: 宋体">选框中的空白处添加</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">Lib</span><span style="font-family: 宋体">的路径：</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">C:\Program 
+Files\IVI Foundation\VISA\WinNT\lib\msc</span></font><span style="font-family: 宋体"><font size="2">。</font></span></p>
+<p class="MsoNormal" style="margin-left: 21.0pt; margin-right: 0cm; margin-top: 6.0pt; margin-bottom: .0001pt">
+<img border="0" src="image004.png" width="416" height="292"></p>
+<p class="MsoNormal" style="text-indent: 22.15pt; margin-top: 6.0pt"><b>
+<span style="font-family: 宋体"><font size="2">注：至此，</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">VISA</font></span><span style="font-family: 宋体"><font size="2">库添加完毕。</font></span></b></p>
+<p class="MsoNormal"><span lang="EN-US"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">5.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><span style="font-family: 宋体"><font size="2">添加</font></span><font size="2"><span lang="EN-US" style="font-family: Tahoma,sans-serif">Text</span><span style="font-family: 宋体">、</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">Com 
+box</span><span style="font-family: Tahoma,sans-serif">、</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">Button</span><span style="font-family: 宋体">和</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">Edit</span></font><span style="font-family: 宋体"><font size="2">控件。布局如下所示：</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: 21.0pt">
+<img border="0" src="image005.png" width="417" height="241"></p>
+<p class="MsoNormal"><span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">6.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><span style="font-family: 宋体"><font size="2">修改控件属性。</font></span><font size="2"><span lang="en-us"><b><br>
+</b>1) </span><span style="font-family: 宋体">将</span><span lang="en-us">Text</span><span style="font-family: 宋体">命名为</span><span lang="en-us">“Command”。<br>
+2) </span><span style="font-family: 宋体">打开</span><span lang="en-us">Com box</span><span style="font-family: 宋体">属性中的</span><span lang="en-us">Data</span><span style="font-family: 宋体">项，手动输入三个命令</span><span lang="en-us">：<br>
+*IDN?<br>
+:CHAN1:DISP 1<br>
+:CHAN1:DISP 0<br>
+<br>
+3) </span><span style="font-family: 宋体">打开</span><span lang="en-us">Edit </span>
+<span style="font-family: 宋体">属性中的</span><span lang="en-us">General</span><span style="font-family: 宋体">项，选中</span><span lang="en-us">Disable。<br>
+4) </span><span style="font-family: 宋体">将</span><span lang="en-us">Button</span><span style="font-family: 宋体">命名为</span><span lang="en-us">Send 
+and Read。</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">7.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">为</span>Com box<span style="font-family: 宋体">和</span>Edit<span style="font-family: 宋体">控件分别添加变量</span>m_combox<span style="font-family: 宋体">和</span>m_receive<span lang="en-us">。</span></font></p>
+<p class="MsoNormal" style="margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="margin-left: 21.0pt">
+<img border="0" src="image006.png" width="451" height="312"></p>
+<p class="MsoNormal" style="margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="margin-left: 21.0pt">
+<img border="0" src="image007.png" width="456" height="303"></p>
+<p class="MsoNormal" style="margin-left: 21.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">8.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><span style="font-family: 宋体"><font size="2">添加代码。</font></span></p>
+<p class="MsoNormal" style="margin-left: 21.0pt">
+<font size="2">
+<span style="font-family: 宋体">双击</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">“Send 
+and Read”</span><span style="font-family: 宋体">进入编程环境，首先请在头文件中对</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">visa</span><span style="font-family: 宋体">库</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">“#include
+&lt;visa.h&gt;”</span><span style="font-family: 宋体">进行声明，然后添加如下代码</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">：<br>
+ViSession defaultRM, vi;<br>
+char buf [256] = {0};<br>
+CString s,strTemp;<br>
+char* stringTemp; <br>
+<br>
+ViChar buffer [VI_FIND_BUFLEN];<br>
+ViRsrc matches=buffer;<br>
+ViUInt32 nmatches;<br>
+ViFindList list;<br>
+<br>
+viOpenDefaultRM (&amp;defaultRM);<br>
+<br>
+//</span><span style="font-family: 宋体">获取</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">visa</span><span style="font-family: 宋体">的</span><span lang="EN-US" style="font-family: Tahoma,sans-serif">USB</span><span style="font-family: 宋体">资源</span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><br>
+viFindRsrc(defaultRM, &quot;USB?*&quot;, &amp;list,&amp;nmatches, matches);<br>
+viOpen (defaultRM,matches,VI_NULL,VI_NULL,&amp;vi); <br>
+viPrintf (vi, &quot;*RST\n&quot;);<br>
+<br>
+//</span><span style="font-family: 宋体">发送接收到的命令</span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><br>
+m_combox.GetLBText(m_combox.GetCurSel(),strTemp); <br>
+strTemp = strTemp + &quot;\n&quot;;<br>
+stringTemp = (char *)(LPCTSTR)strTemp; <br>
+viPrintf (vi,stringTemp);<br>
+<br>
+//</span><span style="font-family: 宋体">读取结果</span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><br>
+viScanf (vi, &quot;%t\n&quot;, &amp;buf);<br>
+<br>
+//</span><span style="font-family: 宋体">将结果显示出来</span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><br>
+UpdateData (TRUE); <br>
+m_receive = buf;<br>
+UpdateData (FALSE);<br>
+viClose (vi);<br>
+viClose (defaultRM);&nbsp;&nbsp;&nbsp;&nbsp; &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></font></p>
+<p class="MsoNormal" style="margin-left: 21.0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt"><b>
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">9.</font><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Times New Roman"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;
+</font>
+</span></span></b><font size="2"><span style="font-family: 宋体">
+保存、编译和运行工程，可得到单个可执行文件。当示波器与</span><span style="font-family: Tahoma,sans-serif">PC</span><span style="font-family: 宋体">成功相连时，选择一条命令如</span><span style="font-family: Tahoma,sans-serif">*IDN?</span><span style="font-family: 宋体">，按“</span><span style="font-family: Tahoma,sans-serif">Send 
+and Read</span><span style="font-family: 宋体">”按键，将显示示波器返回的结果。</span></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">
+<font face="宋体" size="2">&nbsp;&nbsp;&nbsp;
+<img border="0" src="image008.png" width="486" height="278"></font></p>
+<p class="MsoNormal" style="text-indent: -21.0pt; margin-left: 21.0pt">　</p>
+
+</body>
+
+</html>

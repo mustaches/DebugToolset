@@ -1,0 +1,40 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>命令格式</title>
+</head>
+
+<body>
+
+<p style="margin-top: 0; margin-bottom: 0">
+<span style="font-weight: 700"><font face="黑体" size="4">命令格式</font></span></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span lang="PT-BR" style="font-family: Tahoma,sans-serif"><font size="2">SCPI</font></span><font size="2"><span style="font-family: 宋体">命令为树状层次结构，包括多个子系统，每个子系统由一个根关键字和一个或数个层次关键字构成。</span><span style="font-family: 宋体; color: black">命令行通常以冒号“</span><b><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">:</span></b><span style="font-family: 宋体; color: black">”开始；</span><span style="font-family: 宋体">关键字之间用冒号</span><span style="font-family: 宋体; color: black">“</span><b><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">:</span></b><span style="font-family: 宋体; color: black">”分隔，关键字后面跟随可选的参数设置；命令行后面添加问号“</span><b><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">?</span></b></font><span style="font-family: 宋体; color: black"><font size="2">”，表示对此功能进行查询；命令和参数以“空格”分开。</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span style="font-family: 宋体"><font size="2">例如：</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<font size="2">
+<span lang="PT-BR" style="font-family: Tahoma,sans-serif">:CALCulate:ADVanc</span><span style="font-family: Tahoma,sans-serif">ed:EXPRession &lt;str&gt;</span></font></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<font size="2">
+<span style="font-family: Tahoma,sans-serif">:CALCulate:ADVanced:E</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">XPRession?</span></font></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span lang="PT-BR" style="font-family: Tahoma,sans-serif"><font size="2"><br>
+CALCulate</font></span><font size="2"><span style="font-family: 宋体">是命令的根关键字，</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">ADVanc</span><span style="font-family: Tahoma,sans-serif">ed</span><span style="font-family: 宋体">和</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">EXPRession</span><span style="font-family: 宋体">分别是第二级、第三级关键字。命令行以冒号</span><span style="font-family: 宋体; color: black">“</span><b><span lang="PT-BR" style="font-family: Tahoma,sans-serif; color: black">:</span></b><span style="font-family: 宋体; color: black">”开始，同时将各级关键字分开，</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">&lt;rel_ampl&gt;</span><span style="font-family: 宋体">表示可设置的参数；问号<span style="color: black">“</span></span><b><span lang="PT-BR" style="font-family: Tahoma,sans-serif; color: black">?</span></b><span style="font-family: 宋体; color: black">”表示查询；命令</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">:CALCulate:ADVance</span><span style="font-family: Tahoma,sans-serif">d</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">:EXPRession</span><span style="font-family: 宋体">和参数</span><span lang="PT-BR" style="font-family: Tahoma,sans-serif">&lt;str&gt;</span></font><span style="font-family: 宋体"><font size="2">之间用“空格”分开。</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0"><span lang="PT-BR">
+<font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span style="font-family: 宋体; color: black"><font size="2">在一些带参数的命令中，通常用逗号“</font></span><font size="2"><b><span lang="EN-US" style="font-family: Tahoma,sans-serif; color: black">,</span></b></font><span style="font-family: 宋体; color: black"><font size="2">”分隔多个参数，例如：</font></span></p>
+<p style="margin-top: 0; margin-bottom: 0">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">:SYSTem:DATE 
+&lt;year&gt;,&lt;month&gt;,&lt;day&gt;</font></span></p>
+
+</body>
+
+</html>

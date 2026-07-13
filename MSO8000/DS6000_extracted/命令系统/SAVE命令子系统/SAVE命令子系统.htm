@@ -1,0 +1,74 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>SAVE命令子系统</title>
+<script language="JavaScript">
+<!--
+function FP_swapImg() {//v1.0
+ var doc=document,args=arguments,elm,n; doc.$imgSwaps=new Array(); for(n=2; n<args.length;
+ n+=2) { elm=FP_getObjectByID(args[n]); if(elm) { doc.$imgSwaps[doc.$imgSwaps.length]=elm;
+ elm.$src=elm.src; elm.src=args[n+1]; } }
+}
+
+function FP_preloadImgs() {//v1.0
+ var d=document,a=arguments; if(!d.FP_imgs) d.FP_imgs=new Array();
+ for(var i=0; i<a.length; i++) { d.FP_imgs[i]=new Image; d.FP_imgs[i].src=a[i]; }
+}
+
+function FP_getObjectByID(id,o) {//v1.0
+ var c,el,els,f,m,n; if(!o)o=document; if(o.getElementById) el=o.getElementById(id);
+ else if(o.layers) c=o.layers; else if(o.all) el=o.all[id]; if(el) return el;
+ if(o.id==id || o.name==id) return o; if(o.childNodes) c=o.childNodes; if(c)
+ for(n=0; n<c.length; n++) { el=FP_getObjectByID(id,c[n]); if(el) return el; }
+ f=o.forms; if(f) for(n=0; n<f.length; n++) { els=f[n].elements;
+ for(m=0; m<els.length; m++){ el=FP_getObjectByID(id,els[n]); if(el) return el; } }
+ return null;
+}
+// -->
+</script>
+<style>
+<!--
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+-->
+</style>
+</head>
+
+<body onload="FP_preloadImgs(/*url*/'../../../../../buttonA.jpg', /*url*/'../../../../../buttonB.jpg', /*url*/'../../../../../buttonF.jpg')">
+
+<p style="margin-top: 0; margin-bottom: 0">
+<span style="font-weight: 700"><font face="Tahoma" size="4">:SAVE</font><font face="黑体" size="4">命令系统</font></span></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0; line-height:150%"><u>
+<font face="Tahoma" size="2" color="#0000FF">IEEE 488.2公用命令<br>
+:AUToscale<br>
+:RUN<br>
+:SINGle<br>
+:STOP<br>
+:TFORce<br>
+:TLHAlf<br>
+:ACQuire命令子系统<br>
+:BUS&lt;n&gt;命令子系统<br>
+:CALCulate命令子系统<br>
+:CALibrate命令子系统<br>
+　</font></u></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+　</p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<font face="Tahoma" size="2">&nbsp;</font></p>
+
+<p class="MsoNormal" style="margin-top: 0px; margin-bottom: 0px" align="left">
+<img onmouseup="FP_swapImg(0,0,/*id*/'img3',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/buttonF.jpg')" onmousedown="FP_swapImg(1,0,/*id*/'img3',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/button10.jpg')" id="img3" onmouseover="FP_swapImg(1,0,/*id*/'img3',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/buttonF.jpg')" onmouseout="FP_swapImg(0,0,/*id*/'img3',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/buttonE.jpg')" height="19" alt="↑上一页" src="file:///F:/WorkSpace/1-Falcon/CHS_PG/buttonE.jpg" width="65" border="0" fp-title="↑上一页" fp-style="fp-btn: Metal Capsule 5; fp-font: 宋体; fp-font-style: Bold; fp-proportional: 0; fp-orig: 0">
+</p>
+<p class="MsoNormal" style="margin-top: 0px; margin-bottom: 0px" align="left">　</p>
+<p class="MsoNormal" style="margin-top: 0px; margin-bottom: 0px" align="left">
+<img onmouseup="FP_swapImg(0,0,/*id*/'img2',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/buttonA.jpg')" onmousedown="FP_swapImg(1,0,/*id*/'img2',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/buttonB.jpg')" id="img2" onmouseover="FP_swapImg(1,0,/*id*/'img2',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/buttonA.jpg')" onmouseout="FP_swapImg(0,0,/*id*/'img2',/*url*/'file:///F:/WorkSpace/1-Falcon/CHS_PG/button9.jpg')" height="19" alt="↓下一页" src="file:///F:/WorkSpace/1-Falcon/CHS_PG/button9.jpg" width="65" border="0" fp-title="↓下一页" fp-style="fp-btn: Metal Capsule 5; fp-font: 宋体; fp-font-style: Bold; fp-proportional: 0; fp-orig: 0"></p>
+
+</body>
+
+</html>

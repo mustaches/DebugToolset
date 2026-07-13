@@ -1,0 +1,213 @@
+<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns="http://www.w3.org/TR/REC-html40">
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>C#编程实例</title>
+<style>
+<!--
+ p.MsoNormal
+	{mso-style-parent:"";
+	margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	font-size:10.5pt;
+	font-family:"Calibri","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+p.MsoListParagraph
+	{margin-bottom:.0001pt;
+	text-align:justify;
+	text-justify:inter-ideograph;
+	text-indent:21.0pt;
+	font-size:10.5pt;
+	font-family:"Calibri","sans-serif";
+	margin-left:0cm; margin-right:0cm; margin-top:0cm}
+-->
+</style>
+</head>
+
+<body>
+
+<p class="MsoNormal"><b><span lang="EN-US" style="font-family: Tahoma">
+<font size="4">C#</font></span><span style="font-family: 黑体"><font size="4">编程实例</font></span></b></p>
+<p class="MsoNormal"><span lang="EN-US">&nbsp;</span></p>
+<p class="MsoNormal">　</p>
+<p class="MsoNormal"><span style="font-family: 宋体"><font size="2">程序的功能：</font></span><font size="2"><span style="font-family: 宋体">读取设备信息。</span></font></p>
+<p class="MsoNormal"><span lang="EN-US" style="font-family: Tahoma,sans-serif">&nbsp;</span></p>
+<p class="MsoNormal" style="margin-bottom: 0pt"><span lang="en-us" style="font-family: Tahoma,sans-serif">
+1. </span><span style="font-family: 宋体"><font size="2">建立一个工程，在</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">VISA</font></span><span style="font-family: 宋体"><font size="2">安装目录下找到</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">visa32.cs</font></span><span style="font-family: 宋体"><font size="2">，添加到工程中，
+添加完成后在“解决方案管理器”中多出了</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">visa32.cs</font></span><span style="font-family: 宋体">，<font size="2">同时引入了类</font></span><span style="font-family: Tahoma,sans-serif"><font size="2">visa32</font></span><span style="font-family: 宋体">。</span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" align="center" style="text-align: center; text-indent: 0cm; margin-left: 18.0pt">
+</p>
+<p class="MsoListParagraph" style="text-indent: -18pt; margin-left: 18pt; margin-bottom:0pt">
+<span style="font-family: Tahoma,sans-serif">2.</span><font size="2"><span style="font-family: 宋体">
+</span></font><span style="font-family: 宋体"><font size="2">首先打开资源管理器，然后打开设备（打开设备时需要设置描述符）</font>。</span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 18px; margin-bottom:0">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: blue">&nbsp;
+<font size="2">Const string</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2"> 
+Cdevice_INSTR=</font><span style="color: #C00000"><font size="2">@</font></span><font size="2"><span style="color: #C00000">&quot;</span></font><span style="color: #C00000"><font size="2">USB0::0x1AB1::0x04B1::DS4C0000000001::INSTR</font></span><font size="2"><span style="color: #C00000">&quot;</span></font></span></p>
+<p class="MsoListParagraph" style="margin-left: 18px; margin-bottom:0">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="margin-left: 18pt; margin-bottom: 0">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">viError=<span style="color: #0099FF">visa32</span>.viOpenDefaultRM(<span style="color: blue">out</span> 
+viDefRm);</font></span></p>
+<p class="MsoNormal" style="margin-left: 18pt; margin-bottom: 0">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">viError=<span style="color: #0099FF">visa32</span>.viOpen(viDefRm,cDEVICE_INSTR,0,5000,<span style="color: blue">out</span> 
+viSession);</font></span></p>
+<p class="MsoNormal" style="margin-left:0; margin-bottom:0"><span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">3.</span><span lang="EN-US" style="font-family: Times New Roman; font-size:7pt"> </span>
+<font size="2"><span style="font-family: 宋体">&nbsp;</span></font><span style="font-family: 宋体"><font size="2">发送请求，读取数据。</font></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: #0099FF">
+<font size="2">visa32</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">.viPrintf(viSession<span style="color: #C00000">,&quot;*IND?\n&quot;</span>);</font></span></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+byteReadBuf = new byte[128];</font></span></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: #0099FF">
+<font size="2">visa32</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">.viRead(viSession,byteReadBuf,128,outretCnt);</font></span></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+　</p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span style="font-family: 宋体"><font size="2">读取的数据为</font></span><font size="2"><span style="font-family: Tahoma,sans-serif">byte</span></font><span style="font-family: 宋体"><font size="2">形式，需要转换为</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">string</font></span><span style="font-family: 宋体">：</span></p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">StrIdn=</span><font face="Tahoma" color="#C00000"><span lang="EN-US">&quot;&quot;</span></font><span lang="EN-US" style="font-family: Tahoma,sans-serif">;</span></font></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: blue">
+<font size="2">For</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">(i=0;i&lt;retCnt;i++);</font></span></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">{</font></span></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;&nbsp;&nbsp; 
+strIdn=strIdn+<span style="color: #0099FF">Convert</span>.ToChar(byteReadBuf[i]);</font></span></p>
+<p class="MsoNormal" style="text-indent: 0pt; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">}</font></span></p>
+<p class="MsoNormal" style="text-indent: 15.75pt; margin-left: 6.7pt">　</p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 0pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">4.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;&nbsp;</span></span><span style="font-family: 宋体"><font size="2">通讯完成后关闭设备和资源管理器。</font></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: #0099FF">
+<font size="2">visa32</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">.viClose( 
+viSession );</font></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif; color: #0099FF">
+<font size="2">visa32</font></span><span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">.viClose( 
+viDefRm );</font></span></p>
+<p class="MsoListParagraph" style="text-indent: 0cm; margin-left: 18.0pt">
+<span lang="EN-US">&nbsp;</span></p>
+<p class="MsoListParagraph" style="text-indent: 0pt; margin-left: 0pt; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif">5.<span style="font-style: normal; font-variant: normal; font-weight: normal; font-size: 7.0pt; font-family: Times New Roman">&nbsp;&nbsp;&nbsp;</span></span><span lang="EN-US" style="font-family: Tahoma"><font size="2">C#</font></span><span style="font-family: 宋体"><font size="2">程序</font></span></p>
+<p class="MsoListParagraph" style="text-indent: -18.0pt; margin-left: 18.0pt">　</p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">using 
+System.Collections.Generic;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">using 
+System.Linq;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">using 
+System.Text;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+namespace IDN</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">{</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;&nbsp;&nbsp; 
+class Program</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;&nbsp;&nbsp; {</font></span></p>
+<p class="MsoListParagraph" align="left" style="text-align: left; margin-left: 18px; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+const string cDEVICE_INSTR = @&quot;USB0::0x1AB1::0x04B1::DS4C0000000007::INSTR&quot;;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+static void Main(string[] args)</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+{</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Int32 viError;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Int32 viDefRm;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Int32 viSession;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Int32 retCnt;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Int32 i;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; String strIdn;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; byte [] byteReadBuf;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; viError = visa32.viOpenDefaultRM(out viDefRm);</font></span></p>
+<p class="MsoListParagraph" style="margin-left: 18px; text-align:left; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; viError = visa32.viOpen(viDefRm, cDEVICE_INSTR, 0, 5000, out 
+viSession);</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; visa32.viPrintf(viSession, &quot;*IDN?\n&quot;);</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; byteReadBuf = new byte[128];</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; visa32.viRead(viSession, byteReadBuf, 128, out retCnt);</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &nbsp;&nbsp;strIdn = &quot;&quot;;</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; for ( i = 0; i &lt; retCnt; i++ )</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; strIdn = strIdn + Convert.ToChar( byteReadBuf[i] );</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Console.WriteLine(strIdn);</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Console.ReadKey();</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; visa32.viClose( viSession );</font></span></p>
+<p class="MsoListParagraph" style="text-align: left; text-indent: 0; margin-left: 18px; margin-bottom: 0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; visa32.viClose( viDefRm );</font></span></p>
+<p class="MsoListParagraph" style="margin-left: 18px; text-align:left; text-indent:0; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+}<br>
+&nbsp;&nbsp;&nbsp; }</font></span></p>
+<p class="MsoListParagraph" style="margin-left: 18px; text-align:left; text-indent:0; margin-bottom:0pt">
+<span lang="EN-US" style="font-family: Tahoma,sans-serif"><font size="2">}</font></span></p>
+
+</body>
+
+</html>

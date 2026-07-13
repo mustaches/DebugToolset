@@ -203,6 +203,10 @@ class ChannelData {
   double yScale = 0.1; // V/div scale factor (0.1 means 1 ADC unit = 0.1 pixels)
   double yOffset = 0.0; // Vertical offset
 
+  int probeAttenuation = 10; // 1, 10, 100
+  String probeImpedance = '1M'; // '1M' or '50Ω'
+  String couplingMode = 'DC'; // 'DC', 'AC', 'GND'
+
   ChannelData(this.maxPoints, this.color) {
     points = Float32List(maxPoints);
     int numChunks = (maxPoints / OscilloscopeState.chunkSize).ceil();
@@ -363,6 +367,15 @@ class DigitalChannelData {
   Set<int> enabledPins = {}; 
 
   List<DigitalBus> buses = [];
+
+  // Key: group index (0 for L1, 1 for L2, 2 for L3, 3 for L4)
+  // Value: VDD voltage double (default 3.3)
+  Map<int, double> groupVdds = {
+    0: 3.3,
+    1: 3.3,
+    2: 3.3,
+    3: 3.3,
+  };
 
   // The base Y offset for drawing each pin in the mixed canvas
   // Key: pin number, Value: baseline Y coordinate
@@ -1771,8 +1784,8 @@ class OscilloscopeState extends ChangeNotifier {
       notifyListeners();
 
       if (!isAutoResolution) {
-        final double width = displayWidth + 320.0 + 82.0;
-        final double height = displayHeight + 73.0;
+        final double width = displayWidth + 320.0 + 58.0;
+        final double height = displayHeight + 69.0;
         try {
           if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
             windowManager.setSize(Size(width, height));
@@ -1806,15 +1819,16 @@ class OscilloscopeState extends ChangeNotifier {
     if (chartWidth != width || chartHeight != height) {
       chartWidth = width;
       chartHeight = height;
+      autoSetup(adjustX: false);
       notifyListeners();
     }
   }
 
   final List<ChannelData> channels = [
-    ChannelData(maxPointsPerChannel, Colors.redAccent),
-    ChannelData(maxPointsPerChannel, Colors.blueAccent),
-    ChannelData(maxPointsPerChannel, Colors.greenAccent),
-    ChannelData(maxPointsPerChannel, Colors.orangeAccent),
+    ChannelData(maxPointsPerChannel, const Color(0xFFFFFF00)), // Bright Yellow (255, 255, 0)
+    ChannelData(maxPointsPerChannel, const Color(0xFF50DCFF)), // Bright Cyan (80, 220, 255)
+    ChannelData(maxPointsPerChannel, const Color(0xFFFF643C)), // Orange-Red (255, 100, 60)
+    ChannelData(maxPointsPerChannel, const Color(0xFF28FF28)), // Bright Green (40, 255, 40)
   ];
 
   late final DigitalChannelData digitalChannel = DigitalChannelData(maxPointsPerChannel);
@@ -3304,6 +3318,7 @@ class OscilloscopeState extends ChangeNotifier {
     if (index >= 0 && index < channels.length) {
       channels[index].isVisible = !channels[index].isVisible;
       _sendLxiScpi(':CHANnel${index + 1}:DISPlay ${channels[index].isVisible ? 'ON' : 'OFF'}');
+      autoSetup(adjustX: false);
       notifyListeners();
     }
   }
@@ -3312,6 +3327,7 @@ class OscilloscopeState extends ChangeNotifier {
     for (var ch in channels) {
       ch.isVisible = visible;
     }
+    autoSetup(adjustX: false);
     notifyListeners();
   }
 
@@ -3323,6 +3339,7 @@ class OscilloscopeState extends ChangeNotifier {
     }
     
     decodeAllProtocols();
+    autoSetup(adjustX: false);
     notifyListeners();
   }
 
@@ -3334,6 +3351,7 @@ class OscilloscopeState extends ChangeNotifier {
         digitalChannel.enabledPins.remove(i);
       }
     }
+    autoSetup(adjustX: false);
     notifyListeners();
   }
 
@@ -3425,9 +3443,42 @@ class OscilloscopeState extends ChangeNotifier {
     }
   }
 
+  void setChannelProbeAttenuation(int index, int val) {
+    if (index >= 0 && index < channels.length) {
+      channels[index].probeAttenuation = val;
+      _sendLxiScpi(':CHANnel${index + 1}:PROBe $val');
+      notifyListeners();
+    }
+  }
+
+  void setChannelProbeImpedance(int index, String val) {
+    if (index >= 0 && index < channels.length) {
+      channels[index].probeImpedance = val;
+      final scpiVal = val.contains('50') ? '50' : '1M';
+      _sendLxiScpi(':CHANnel${index + 1}:IMPedance $scpiVal');
+      notifyListeners();
+    }
+  }
+
+  void setChannelCouplingMode(int index, String val) {
+    if (index >= 0 && index < channels.length) {
+      channels[index].couplingMode = val;
+      _sendLxiScpi(':CHANnel${index + 1}:COUPling $val');
+      notifyListeners();
+    }
+  }
+
   void setDigitalPinOffset(int pin, double offset) {
     digitalChannel.pinYOffsets[pin] = offset;
     notifyListeners();
+  }
+
+  void setDigitalGroupVdd(int busIndex, double vdd) {
+    if (busIndex >= 0 && busIndex < 4) {
+      digitalChannel.groupVdds[busIndex] = vdd;
+      _sendLxiScpi(':LA:GROUp${busIndex + 1}:VDD $vdd');
+      notifyListeners();
+    }
   }
 
   void setDigitalPinScale(int pin, double scale) {
@@ -3505,6 +3556,7 @@ class OscilloscopeState extends ChangeNotifier {
       }
       decodeAllProtocols();
     }
+    autoSetup(adjustX: false);
     notifyListeners();
   }
 
@@ -3559,6 +3611,7 @@ class OscilloscopeState extends ChangeNotifier {
       clearSearchMatches();
     }
     
+    autoSetup(adjustX: false);
     notifyListeners();
   }
 
@@ -3575,6 +3628,7 @@ class OscilloscopeState extends ChangeNotifier {
     if (lastSearchConfig != null && lastSearchConfig!['busName'] == name) {
       clearSearchMatches();
     }
+    autoSetup(adjustX: false);
     notifyListeners();
   }
 
@@ -3653,7 +3707,7 @@ class OscilloscopeState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void autoSetup() {
+  void autoSetup({bool adjustX = true}) {
     List<int> activeAnalog = [];
     for (int i = 0; i < channels.length; i++) {
       if (channels[i].isVisible) activeAnalog.add(i);
@@ -3755,7 +3809,7 @@ class OscilloscopeState extends ChangeNotifier {
       latestX = (digitalChannel.count - 1).toDouble();
     }
 
-    if (latestX > 0) {
+    if (adjustX && latestX > 0) {
       double newScale = chartWidth / latestX;
       double minScale = chartWidth / OscilloscopeState.maxPointsPerChannel;
       if (newScale < minScale) newScale = minScale;

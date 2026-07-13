@@ -1,0 +1,61 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>编程实例</title>
+<style>
+<!--
+ table.MsoNormalTable
+	{mso-style-parent:"";
+	font-size:10.0pt;
+	font-family:"Times New Roman","serif"}
+-->
+</style>
+</head>
+
+<body>
+
+<p style="margin-top: 0; margin-bottom: 0">
+<font face="黑体" size="4"><span style="font-weight: 700">编程实例</span></font></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span style="font-family: 宋体"><font size="2">本章例举了在</font></span><font size="2"><font face="Tahoma">Visual 
+C++ 6.0，Visual Basic 6.0</font><span style="font-family: 宋体">和</span><font face="Tahoma">LabVIEW 
+8.6</font><span style="font-family: 宋体">开发环境中如何使用命令实现示波器常用功能的编程实例。这些实例都是基于</span></font><font size="2" face="Tahoma">VISA（Virtual 
+Instrument Software Architecture）</font><font size="2"><span style="font-family: 宋体">库编程实现的。</span></font></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span lang="EN-US" style="font-family: 宋体"><font size="2">&nbsp;</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<font size="2" face="Tahoma">VISA</font><font size="2"><span style="font-family: 宋体">是一个用于控制仪器的应用程序编程接口，它使用户可以方便地开发与仪器、接口类型无关的测试应用。请注意，这里所说的</span><font face="Tahoma">VISA</font><span style="font-family: 宋体">指的是</span><font face="Tahoma">NI（National 
+Instrument）-VISA</font><span style="font-family: 宋体">。</span><font face="Tahoma">NI-VISA</font><span style="font-family: 宋体">是美国国家仪器有限公司根据</span><font face="Tahoma">VISA</font><span style="font-family: 宋体">标准编写的应用程序接口。您可以使用</span><font face="Tahoma">NI-VISA</font><span style="font-family: 宋体">通过</span><font face="Tahoma">USB</font><span style="font-family: 宋体">、</span><font face="Tahoma">GPIB</font><span style="font-family: 宋体">（通过</span><font face="Tahoma">USB-GPIB</font><span style="font-family: 宋体">扩展）以及</span><font face="Tahoma">LAN</font><span style="font-family: 宋体">等仪器总线实现示波器与</span><font face="Tahoma">PC</font><span style="font-family: 宋体">的通信。</span><font face="Tahoma">VISA</font><span style="font-family: 宋体">定义了一套软件命令，用户无需了解接口总线如何工作，就可以对仪器进行控制。具体细节可参考</span><font face="Tahoma">NI-VISA</font></font><span style="font-family: 宋体"><font size="2">的帮助。</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">　</p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">　</p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<span style="font-family: 宋体"><font size="2">一个典型的</font></span><font size="2" face="Tahoma">VISA</font><span style="font-family: 宋体"><font size="2">应用分为以下几个步骤：</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">　</p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0"><span lang="EN-US">
+<font size="2" face="Tahoma">1.</font></span><span style="font-style: normal; font-variant: normal; font-weight: normal; font-family: Tahoma" lang="EN-US"><font size="2">&nbsp;</font></span><span style="font-family: 宋体"><font size="2">为已有的资源建立会话</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<font size="2" face="Tahoma">2.&nbsp;</font><span style="font-family: 宋体"><font size="2">对资源做一些配置（如波特率）</font></span></p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0">
+<font size="2" face="Tahoma">3. </font><span style="font-family: 宋体">
+<font size="2">关闭会话资源</font></span></p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0; line-height:150%"><u>
+<font face="宋体" size="2" color="#0000FF"><a href="编程准备.htm">编程准备</a></font></u></p>
+<p style="margin-top: 0; margin-bottom: 0; line-height:150%"><u>
+<a href="Visual%20C++%206.0%20编程实例.htm">
+<font face="Tahoma" size="2" color="#0000FF">Visual C++ 6.0</font><font face="宋体" size="2" color="#0000FF">编程实例</font></a></u></p>
+<p style="margin-top: 0; margin-bottom: 0; line-height:150%"><u>
+<a href="Visual%20Basic%206.0%20编程实例.htm">
+<font size="2" color="#0000FF" face="Tahoma">Visual Basic 6.0</font><font face="宋体" size="2" color="#0000FF">编程实例</font></a></u></p>
+<p style="margin-top: 0; margin-bottom: 0; line-height:150%"><u>
+<a href="LabVIEW%208.6%20编程实例.htm"><font size="2" color="#0000FF" face="Tahoma">
+LabVIEW 8.6</font><font face="宋体" size="2" color="#0000FF">编程实例</font></a></u></p>
+
+</body>
+
+</html>

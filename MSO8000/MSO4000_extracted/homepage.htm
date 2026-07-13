@@ -1,0 +1,69 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Language" content="zh-cn">
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>MSO4000/DS4000系列数字示波器编程手册</title>
+</head>
+
+<body>
+
+<p style="margin-top: 0px; margin-bottom: 0px">
+<span style="font-weight: 700; font-family: Tahoma,sans-serif"><font size="4">
+MSO4000/DS4000</font></span><font face="黑体" size="4"><span style="font-weight: 700">系列数字示波器编程</span></font><span style="font-weight: 700"><font face="黑体" size="4">手册</font></span></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2">
+<span style="font-family: 宋体">本手册指导用户如何使用</span></font><font face="Tahoma" size="2">SCPI</font><font size="2"><span style="font-family: 宋体">命令通过远程接口编程控制</span><b><font face="Bookman Old Style">RIGOL</font></b><font face="Tahoma">(RIGOL 
+Technologies, Inc.) </font></font><font face="Tahoma" size="2">MSO4000/DS4000</font><font size="2"><span style="font-family: 宋体">系列数字示波器。</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font face="Tahoma" size="2">
+MSO4000/DS4000</font><font size="2"><span style="font-family: 宋体">可通过</span></font><font face="Tahoma" size="2">USB</font><font size="2"><span style="font-family: 宋体">和</span></font><font face="Tahoma" size="2">LAN</font><font size="2"><span style="font-family: 宋体">与计算机通信。欲了解更多关于各种接口的使用，请参考</span></font><font face="Tahoma" size="2">MSO4000/DS4000</font><font size="2"><span style="font-family: 宋体">的《用户手册》。</span></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><b><font face="宋体" size="2">本手册内容</font></b></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="line-height: 150%; margin-top: 0px; margin-bottom: 0px"><u>
+<a href="SCPI%20Overview/SCPI%20Overview.htm">
+<font face="Tahoma" size="2">SCPI</font><font face="宋体" size="2">简介</font></a></u></p>
+<p style="line-height: 150%; margin-top: 0px; margin-bottom: 0px"><u>
+<font face="宋体" color="#0000ff" size="2">
+<a href="Command%20System/CommandSystem.htm">命令系统</a></font></u></p>
+<p style="line-height: 150%; margin-top: 0px; margin-bottom: 0px"><u>
+<font face="宋体" color="#0000ff" size="2">
+<a href="Programming%20Demos/Programming%20Demos.htm">编程实例</a></font></u></p>
+<p style="line-height: 150%; margin-top: 0px; margin-bottom: 0px"><font size="2">
+<a href="Command%20Quick%20Reference%20A_Z/Command%20Quick%20Reference%20A_Z.htm"><span style="font-family: 宋体">
+命令速查</span><font face="Tahoma">A-Z</font></a></font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px"><b><font size="2">声明</font></b></p>
+<p style="margin-top: 0px; margin-bottom: 0px"><font size="2"><br>
+本公司产品受已获准及尚在审批的中华人民共和国专利的保护。<br>
+本公司保留改变规格及价格的权利。<br>
+本手册提供的信息取代以往出版的所有资料。<br>
+对于本手册可能包含的错误，或因手册所提供的信息及演绎的功能，以及因使用本手册而导致的任何偶然或继发的损失，<b><font face="Bookman Old Style">RIGOL</font></b>概不负责。<br>
+未经<b><font face="Bookman Old Style">RIGOL</font></b>事先书面许可不得影印复制或改编本手册的任何部分。</font></p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p class="MsoNormal" align="left" style="text-align: left; margin-top: 0; margin-bottom: 0">
+<span style="font-family: 宋体"><font size="2">如您在使用此产品的过程中有任何问题或需求，可与</font></span><font size="2"><b><span lang="EN-US" style="font-family: 'Bookman Old Style',serif">RIGOL</span></b></font><span style="font-family: 宋体"><font size="2">联系：</font></span></p>
+<p class="MsoNormal" align="left" style="text-align: left; margin-top: 0; margin-bottom: 0">　</p>
+<p class="MsoNormal" align="left" style="text-align: left; margin-top: 0; margin-bottom: 0">
+<font size="2"><span style="font-family: 宋体">电子邮箱：</span><span style="font-family: Tahoma,sans-serif" lang="en-us">service@rigol.com</span></font></p>
+<p class="MsoNormal" align="left" style="text-align: left; margin-top: 0; margin-bottom: 0">　</p>
+<p style="margin-top: 0; margin-bottom: 0"><span style="font-family: 宋体">
+<font size="2">网址：</font></span><span style="color: windowtext; font-family: Tahoma,sans-serif" lang="EN-US"><font size="2"><a style="color: blue; text-decoration: underline; text-underline: single" href="http://www.rigol.com/">www.rigol.com</a></font></span></p>
+
+<p style="margin-top: 0px; margin-bottom: 0px">　</p>
+<p class="MsoNormal" style="margin-top: 0px; margin-bottom: 0px">
+<font face="Tahoma" size="2">&copy; 2013 </font><span style="font-family: 宋体">
+<font size="2">北京普源精电科技有限公司版权所有</font></span></p>
+<p class="MsoNormal" style="margin-top: 0px; margin-bottom: 0px">
+　</p>
+<p class="MsoNormal" style="margin-top: 0; margin-bottom: 0" align="left">
+<font size="2"><span style="font-family: Tahoma,sans-serif">2013</span>年<span style="font-family: Tahoma,sans-serif">8</span>月&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+文档编号：<span style="font-family: Tahoma,sans-serif">PGA15002-1110</span></font></p>
+
+</body>
+
+</html>
