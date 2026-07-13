@@ -344,6 +344,8 @@ class _ChartWidgetState extends State<ChartWidget> {
 
                     bool hasDigital = state.digitalChannel.enabledPins.isNotEmpty;
                     double topOffset = hasDigital ? 25.0 : 0.0;
+                    bool hasToolbar = state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty;
+                    double gridCenterY = constraints.maxHeight / 2 - (hasToolbar ? 12.0 : 0.0);
 
                     void updateX1FromGlobal(Offset globalPos) {
                       RenderBox box = context.findRenderObject() as RenderBox;
@@ -509,28 +511,28 @@ class _ChartWidgetState extends State<ChartWidget> {
                       // Arrows (placed last with IgnorePointer to avoid blocking gestures)
                       if (isX1ClampedLeft)
                         Positioned(
-                          left: 0, top: constraints.maxHeight / 2 - 12,
+                          left: 0, top: gridCenterY - 12,
                           child: const IgnorePointer(
                             child: Icon(Icons.arrow_left, color: Colors.yellowAccent, size: 24),
                           )
                         ),
                       if (isX1ClampedRight)
                         Positioned(
-                          left: constraints.maxWidth - 24, top: constraints.maxHeight / 2 - 12,
+                          left: constraints.maxWidth - 24, top: gridCenterY - 12,
                           child: const IgnorePointer(
                             child: Icon(Icons.arrow_right, color: Colors.yellowAccent, size: 24),
                           )
                         ),
                       if (isX2ClampedLeft)
                         Positioned(
-                          left: 0, top: constraints.maxHeight / 2 + 12,
+                          left: 0, top: gridCenterY + 12,
                           child: const IgnorePointer(
                             child: Icon(Icons.arrow_left, color: Colors.yellowAccent, size: 24),
                           )
                         ),
                       if (isX2ClampedRight)
                         Positioned(
-                          left: constraints.maxWidth - 24, top: constraints.maxHeight / 2 + 12,
+                          left: constraints.maxWidth - 24, top: gridCenterY + 12,
                           child: const IgnorePointer(
                             child: Icon(Icons.arrow_right, color: Colors.yellowAccent, size: 24),
                           )
@@ -635,7 +637,7 @@ class _ChartWidgetState extends State<ChartWidget> {
                     child: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: const Color(0xCC222222),
+                        color: const Color(0xFA0C0C0C),
                         border: Border.all(color: Colors.yellowAccent),
                         borderRadius: BorderRadius.circular(4),
                       ),
@@ -662,7 +664,9 @@ class _ChartWidgetState extends State<ChartWidget> {
                           int ch = state.selectedChannelIndex;
                           
                           double getVoltage(double py) {
-                            double adcValue = (constraints.maxHeight / 2 + state.channels[ch].yOffset - py) / state.channels[ch].yScale;
+                            bool hasToolbar = state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty;
+                            double gridCenterY = constraints.maxHeight / 2 - (hasToolbar ? 12.0 : 0.0);
+                            double adcValue = (gridCenterY + state.channels[ch].yOffset - py) / state.channels[ch].yScale;
                             return adcValue * (5.0 / 4096.0); // Assume 5V reference
                           }
 
@@ -698,13 +702,13 @@ class _ChartWidgetState extends State<ChartWidget> {
                             children: [
                               const Text('Cursor Info', style: TextStyle(color: Colors.yellowAccent, fontWeight: FontWeight.bold, fontSize: 12)),
                               const SizedBox(height: 6),
-                              Text('X1: ${formatAbsTime(t1)}', style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                              Text('X2: ${formatAbsTime(t2)}', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                              Text('X1: ${formatAbsTime(t1)}', style: const TextStyle(color: Colors.white, fontSize: 10)),
+                              Text('X2: ${formatAbsTime(t2)}', style: const TextStyle(color: Colors.white, fontSize: 10)),
                               Text('ΔT: $timeStr', style: const TextStyle(color: Colors.yellowAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                               Text('1/ΔT: $freqStr', style: const TextStyle(color: Colors.yellowAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 4),
-                              Text('Y1: ${v1.toStringAsFixed(3)} V', style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                              Text('Y2: ${v2.toStringAsFixed(3)} V', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                              Text('Y1: ${v1.toStringAsFixed(3)} V', style: const TextStyle(color: Colors.white, fontSize: 10)),
+                              Text('Y2: ${v2.toStringAsFixed(3)} V', style: const TextStyle(color: Colors.white, fontSize: 10)),
                               Text('ΔAmp: ${deltaV.toStringAsFixed(3)} V (CH${ch+1})', style: const TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                             ],
                           );
@@ -1233,7 +1237,9 @@ class _DraggableChannelIndicatorState extends State<DraggableChannelIndicator> w
   @override
   Widget build(BuildContext context) {
     var ch = widget.state.channels[widget.chIndex];
-    double y = widget.maxHeight / 2 + ch.yOffset;
+    bool hasToolbar = widget.state.digitalChannel.enabledPins.isNotEmpty || widget.state.digitalChannel.buses.isNotEmpty;
+    double gridCenterY = widget.maxHeight / 2 - (hasToolbar ? 12.0 : 0.0);
+    double y = gridCenterY + ch.yOffset;
     
     // Keep within bounds
     if (y < 8) y = 8;
@@ -1274,8 +1280,10 @@ class _DraggableChannelIndicatorState extends State<DraggableChannelIndicator> w
               });
             },
             onPanUpdate: (details) {
-              double edgeTop = 8 - widget.maxHeight / 2;
-              double edgeBottom = widget.maxHeight - 8 - widget.maxHeight / 2;
+              bool hasToolbar = widget.state.digitalChannel.enabledPins.isNotEmpty || widget.state.digitalChannel.buses.isNotEmpty;
+              double gridCenterY = widget.maxHeight / 2 - (hasToolbar ? 12.0 : 0.0);
+              double edgeTop = 8 - gridCenterY;
+              double edgeBottom = widget.maxHeight - 8 - gridCenterY;
               
               // Read latest state to prevent stale closure data causing drag lag
               double currentOffset = widget.state.channels[widget.chIndex].yOffset;
@@ -1754,7 +1762,9 @@ class OscilloscopePainter extends CustomPainter {
       canvas.save();
       // Apply per-channel vertical offset and scale
       // Note: we invert Y axis mathematically so positive values go up.
-      canvas.translate(0, size.height / 2 + ch.yOffset);
+      bool hasToolbar = state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty;
+      double gridCenterY = size.height / 2 - (hasToolbar ? 12.0 : 0.0);
+      canvas.translate(0, gridCenterY + ch.yOffset);
 
       int startI = (-translateX / activeScale).floor();
       int endI = ((size.width - translateX) / activeScale).ceil();
@@ -2578,12 +2588,14 @@ class OscilloscopePainter extends CustomPainter {
     int hGrids = 8;
     int vGrids = 14; // Rigol style 14 divisions horizontally
     
-    double hSpacing = size.height / hGrids;
+    bool hasToolbar = state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty;
+    double refHeight = size.height + (hasToolbar ? 24.0 : 0.0);
+    double hSpacing = refHeight / hGrids;
     double vSpacing = size.width / vGrids;
 
     // Draw horizontal grids
     for (int i = 1; i < hGrids; i++) {
-      double y = i * hSpacing;
+      double y = size.height - i * hSpacing;
       if (i == hGrids / 2) {
         // Draw center horizontal line slightly brighter with tick marks
         canvas.drawLine(Offset(0, y), Offset(size.width, y), centerPaint);
@@ -2605,7 +2617,7 @@ class OscilloscopePainter extends CustomPainter {
         canvas.drawLine(Offset(x, 0), Offset(x, size.height), centerPaint);
         // Draw tick marks
         for(int j=0; j < hGrids * 5; j++) {
-           double tickY = j * (hSpacing / 5);
+           double tickY = size.height - j * (hSpacing / 5);
            canvas.drawLine(Offset(x - 2, tickY), Offset(x + 2, tickY), centerPaint);
         }
       } else {

@@ -13,7 +13,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
     final state = context.watch<OscilloscopeState>();
 
     return Container(
-      height: 36,
+      height: 24,
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E1E),
         border: Border(
@@ -50,7 +50,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Container(
-            height: 20,
+            height: 14,
             width: 1,
             color: Colors.grey.shade700,
           ),
@@ -100,7 +100,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Container(
-            height: 20,
+            height: 14,
             width: 1,
             color: Colors.grey.shade700,
           ),
@@ -145,7 +145,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
           ],
           const SizedBox(width: 4),
           Container(
-            height: 20,
+            height: 14,
             width: 1,
             color: Colors.grey.shade700,
           ),
@@ -215,7 +215,7 @@ class LogicAnalyzerToolbar extends StatelessWidget {
           ],
           const SizedBox(width: 4),
           Container(
-            height: 20,
+            height: 14,
             width: 1,
             color: Colors.grey.shade700,
           ),
@@ -342,8 +342,8 @@ class LogicAnalyzerToolbar extends StatelessWidget {
           onTapUp: onTapUp,
           onTapCancel: onTapCancel,
           child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
-            padding: EdgeInsets.symmetric(horizontal: label.isNotEmpty ? 10.0 : 6.0, vertical: 4.0),
+            margin: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 1.0),
+            padding: EdgeInsets.symmetric(horizontal: label.isNotEmpty ? 10.0 : 6.0, vertical: 2.0),
             decoration: BoxDecoration(
               color: isActive 
                   ? (color?.withValues(alpha: 0.2) ?? Colors.blueAccent.withValues(alpha: 0.2)) 

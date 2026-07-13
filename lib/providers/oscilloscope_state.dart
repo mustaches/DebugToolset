@@ -371,10 +371,10 @@ class DigitalChannelData {
   // Key: group index (0 for L1, 1 for L2, 2 for L3, 3 for L4)
   // Value: VDD voltage double (default 3.3)
   Map<int, double> groupVdds = {
-    0: 3.3,
-    1: 3.3,
-    2: 3.3,
-    3: 3.3,
+    0: 1.25,
+    1: 1.25,
+    2: 1.25,
+    3: 1.25,
   };
 
   // The base Y offset for drawing each pin in the mixed canvas

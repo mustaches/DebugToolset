@@ -517,7 +517,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'VDD: ${(state.digitalChannel.groupVdds[busIndex] ?? 3.3).toStringAsFixed(1)}V',
+                          '阈值: ${(state.digitalChannel.groupVdds[busIndex] ?? 1.25).toString()}V',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: boxColor, fontSize: 9, fontWeight: FontWeight.bold),
                         ),
@@ -2887,6 +2887,7 @@ class MsoGroupDialog extends StatefulWidget {
 
 class _MsoGroupDialogState extends State<MsoGroupDialog> {
   final Map<int, TextEditingController> _controllers = {};
+  late TextEditingController _customController;
 
   @override
   void initState() {
@@ -2896,6 +2897,10 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
     for (int p = end; p >= start; p--) {
       _controllers[p] = TextEditingController(text: widget.state.digitalChannel.pinNames[p] ?? '');
     }
+    double currentVdd = widget.state.digitalChannel.groupVdds[widget.busIndex] ?? 1.25;
+    final presets = [0.6, 0.75, 0.9, 1.25, 1.65, 2.5];
+    bool isPreset = presets.contains(currentVdd);
+    _customController = TextEditingController(text: isPreset ? '' : currentVdd.toString());
   }
 
   @override
@@ -2903,6 +2908,7 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
     for (var controller in _controllers.values) {
       controller.dispose();
     }
+    _customController.dispose();
     super.dispose();
   }
 
@@ -2947,35 +2953,95 @@ class _MsoGroupDialogState extends State<MsoGroupDialog> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('VDD 电压:', style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF252525),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.grey.shade800),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<double>(
-                      dropdownColor: const Color(0xFF1E1E1E),
-                      value: widget.state.digitalChannel.groupVdds[widget.busIndex] ?? 3.3,
-                      isDense: true,
-                      style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold),
-                      items: [0.9, 1.2, 1.5, 1.8, 2.5, 3.3, 5.0].map((v) {
-                        return DropdownMenuItem<double>(
-                          value: v,
-                          child: Text('${v.toStringAsFixed(1)}V'),
-                        );
-                      }).toList(),
-                      onChanged: (newV) {
-                        if (newV != null) {
-                          setState(() {
-                            widget.state.setDigitalGroupVdd(widget.busIndex, newV);
-                          });
-                        }
-                      },
+                const Text('阈值电压:', style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF252525),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.grey.shade800),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<double?>(
+                          dropdownColor: const Color(0xFF1E1E1E),
+                          value: (() {
+                            double currentVdd = widget.state.digitalChannel.groupVdds[widget.busIndex] ?? 1.25;
+                            final presets = [0.6, 0.75, 0.9, 1.25, 1.65, 2.5];
+                            return presets.contains(currentVdd) ? currentVdd : null;
+                          })(),
+                          isDense: true,
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                          items: [
+                            ...[0.6, 0.75, 0.9, 1.25, 1.65, 2.5].map((v) => DropdownMenuItem<double?>(
+                              value: v,
+                              child: Text('${v}V'),
+                            )),
+                            const DropdownMenuItem<double?>(
+                              value: null,
+                              child: Text('自定义'),
+                            ),
+                          ],
+                          onChanged: (newV) {
+                            if (newV != null) {
+                              setState(() {
+                                _customController.text = '';
+                                widget.state.setDigitalGroupVdd(widget.busIndex, newV);
+                              });
+                            } else {
+                              setState(() {
+                                double currentVdd = widget.state.digitalChannel.groupVdds[widget.busIndex] ?? 1.25;
+                                _customController.text = currentVdd.toString();
+                              });
+                            }
+                          },
+                        ),
+                      ),
                     ),
-                  ),
+                    (() {
+                      double currentVdd = widget.state.digitalChannel.groupVdds[widget.busIndex] ?? 1.25;
+                      final presets = [0.6, 0.75, 0.9, 1.25, 1.65, 2.5];
+                      bool isPreset = presets.contains(currentVdd);
+                      if (!isPreset) {
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 8.0),
+                          child: SizedBox(
+                            width: 75,
+                            height: 28,
+                            child: TextField(
+                              controller: _customController,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                              decoration: InputDecoration(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                filled: true,
+                                fillColor: const Color(0xFF252525),
+                                enabledBorder: OutlineInputBorder(
+                                  borderSide: BorderSide(color: Colors.grey.shade800),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderSide: const BorderSide(color: Colors.greenAccent),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                suffixText: 'V',
+                                suffixStyle: const TextStyle(color: Colors.grey, fontSize: 10),
+                              ),
+                              onChanged: (val) {
+                                double? parsed = double.tryParse(val);
+                                if (parsed != null && parsed >= 0.0 && parsed <= 10.0) {
+                                  widget.state.setDigitalGroupVdd(widget.busIndex, parsed);
+                                }
+                              },
+                            ),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    })(),
+                  ],
                 ),
               ],
             ),
