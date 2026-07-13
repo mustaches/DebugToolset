@@ -3762,10 +3762,14 @@ class OscilloscopeState extends ChangeNotifier {
         ch.yScale = targetAmplitude / ptp;
 
         double dataCenter = (minY + maxY) / 2;
-        ch.yOffset = center - chartHeight / 2 + dataCenter * ch.yScale;
+        bool hasToolbar = digitalChannel.enabledPins.isNotEmpty || digitalChannel.buses.isNotEmpty;
+        double gridCenterY = chartHeight / 2 - (hasToolbar ? 12.0 : 0.0);
+        ch.yOffset = center - gridCenterY + dataCenter * ch.yScale;
       } else {
         ch.yScale = 1.0;
-        ch.yOffset = center - chartHeight / 2;
+        bool hasToolbar = digitalChannel.enabledPins.isNotEmpty || digitalChannel.buses.isNotEmpty;
+        double gridCenterY = chartHeight / 2 - (hasToolbar ? 12.0 : 0.0);
+        ch.yOffset = center - gridCenterY;
       }
 
       currentY += sliceHeight;

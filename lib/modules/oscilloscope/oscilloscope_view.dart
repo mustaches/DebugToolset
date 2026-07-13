@@ -53,7 +53,7 @@ class OscilloscopeView extends StatelessWidget {
                             child: ChartWidget(),
                           ),
                         ),
-                        if (state.digitalChannel.enabledPins.isNotEmpty)
+                        if (state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty)
                           Positioned(
                             top: 0,
                             left: 0,

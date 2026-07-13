@@ -342,7 +342,7 @@ class _ChartWidgetState extends State<ChartWidget> {
                     bool isX2ClampedLeft = px2Raw < 0;
                     bool isX2ClampedRight = px2Raw > constraints.maxWidth;
 
-                    bool hasDigital = state.digitalChannel.enabledPins.isNotEmpty;
+                    bool hasDigital = state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty;
                     double topOffset = hasDigital ? 25.0 : 0.0;
                     bool hasToolbar = state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty;
                     double gridCenterY = constraints.maxHeight / 2 - (hasToolbar ? 12.0 : 0.0);
