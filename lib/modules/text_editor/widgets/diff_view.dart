@@ -47,17 +47,19 @@ class _DiffViewState extends State<DiffView> {
       child: Scrollbar(
         controller: controller,
         thumbVisibility: true,
-        child: ListView.builder(
-          controller: controller,
-          itemCount: widget.diffLines.length,
-          itemBuilder: (context, index) {
-            final line = widget.diffLines[index];
-            return _DiffRow(
-              line: line,
-              originalPath: widget.originalPath,
-              modifiedPath: widget.modifiedPath,
-            );
-          },
+        child: SelectionArea(
+          child: ListView.builder(
+            controller: controller,
+            itemCount: widget.diffLines.length,
+            itemBuilder: (context, index) {
+              final line = widget.diffLines[index];
+              return _DiffRow(
+                line: line,
+                originalPath: widget.originalPath,
+                modifiedPath: widget.modifiedPath,
+              );
+            },
+          ),
         ),
       ),
     );

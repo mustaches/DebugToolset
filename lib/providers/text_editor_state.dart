@@ -73,6 +73,14 @@ class TextEditorState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Discards the current diff result and returns to the split editor view.
+  void discardDiff() {
+    _hasCompared = false;
+    _diffResult = [];
+    _lastError = null;
+    notifyListeners();
+  }
+
   /// Saves the current diff as a unified diff patch file.
   Future<void> savePatch(String outputPath) async {
     final patch = generateUnifiedDiff(

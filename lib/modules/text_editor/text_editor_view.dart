@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../../providers/text_editor_state.dart';
 import 'utils/file_type_groups.dart';
 import 'utils/highlight_text_controller.dart';
+import 'utils/syntax_highlighter.dart';
 import 'widgets/diff_view.dart';
 import 'widgets/patch_dialog.dart';
 
@@ -34,7 +35,6 @@ class _TextEditorBody extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildToolbar(context, state),
-        const SizedBox(height: 8),
         if (state.hasCompared && state.diffResult.isNotEmpty)
           Container(
             color: const Color(0xFF252525),
@@ -96,16 +96,23 @@ class _TextEditorBody extends StatelessWidget {
             label: '打开修改文件',
             onPressed: () => _pickModifiedFile(context, state),
           ),
+          if (state.hasCompared)
+            _ToolbarButton(
+              icon: Icons.close,
+              label: '放弃差异',
+              onPressed: () => state.discardDiff(),
+            )
+          else
+            _ToolbarButton(
+              icon: Icons.compare_arrows,
+              label: '比较差异',
+              onPressed: state.originalContent.isNotEmpty || state.modifiedContent.isNotEmpty
+                  ? () => state.compare()
+                  : null,
+            ),
           _ToolbarButton(
-            icon: Icons.compare_arrows,
-            label: '比较差异',
-            onPressed: state.originalContent.isNotEmpty || state.modifiedContent.isNotEmpty
-                ? () => state.compare()
-                : null,
-          ),
-          _ToolbarButton(
-            icon: Icons.save_alt,
-            label: '保存补丁',
+            icon: Icons.upload,
+            label: '生成补丁',
             onPressed: state.diffResult.isNotEmpty ? () => _savePatch(context, state) : null,
           ),
           _ToolbarButton(
@@ -136,7 +143,6 @@ class _TextEditorBody extends StatelessWidget {
             title: '原文件',
             path: state.originalPath,
             content: state.originalContent,
-            onChanged: state.setOriginalContent,
           ),
         ),
         Container(width: 1, color: Colors.grey.shade800),
@@ -145,7 +151,6 @@ class _TextEditorBody extends StatelessWidget {
             title: '修改后',
             path: state.modifiedPath,
             content: state.modifiedContent,
-            onChanged: state.setModifiedContent,
           ),
         ),
       ],
@@ -288,13 +293,11 @@ class _TextPane extends StatefulWidget {
   final String title;
   final String? path;
   final String content;
-  final ValueChanged<String> onChanged;
 
   const _TextPane({
     required this.title,
     this.path,
     required this.content,
-    required this.onChanged,
   });
 
   @override
@@ -307,47 +310,31 @@ class _TextPaneState extends State<_TextPane> {
   static const double _contentPadding = 12.0;
   static const double _gutterWidth = 56.0;
 
+  static const _style = TextStyle(
+    color: Colors.white,
+    fontSize: _fontSize,
+    fontFamily: 'Consolas',
+    height: _lineHeightFactor,
+  );
+  static const _strut = StrutStyle(
+    fontSize: _fontSize,
+    height: _lineHeightFactor,
+    leadingDistribution: TextLeadingDistribution.even,
+  );
+
   late final HighlightTextEditingController _controller;
   final _textScrollController = ScrollController();
   final _gutterScrollController = ScrollController();
-  double _lineHeight = _fontSize * _lineHeightFactor;
 
   @override
   void initState() {
     super.initState();
-    final style = const TextStyle(
-      color: Colors.white,
-      fontSize: _fontSize,
-      fontFamily: 'Consolas',
-      height: _lineHeightFactor,
-    );
     _controller = HighlightTextEditingController(
       text: widget.content,
       language: _detectLanguage(widget.path),
-      style: style,
+      style: _style,
     );
     _textScrollController.addListener(_syncGutterScroll);
-    _measureLineHeight();
-  }
-
-  void _measureLineHeight() {
-    const style = TextStyle(
-      color: Colors.white,
-      fontSize: _fontSize,
-      fontFamily: 'Consolas',
-      height: _lineHeightFactor,
-    );
-    const strut = StrutStyle(
-      fontSize: _fontSize,
-      height: _lineHeightFactor,
-      leadingDistribution: TextLeadingDistribution.even,
-    );
-    final painter = TextPainter(
-      text: const TextSpan(text: '0', style: style),
-      strutStyle: strut,
-      textDirection: TextDirection.ltr,
-    )..layout();
-    _lineHeight = painter.preferredLineHeight;
   }
 
   @override
@@ -385,6 +372,8 @@ class _TextPaneState extends State<_TextPane> {
 
   int get _lineCount => _controller.text.split('\n').length;
 
+  String get _lineNumbers => List.generate(_lineCount, (i) => '${i + 1}').join('\n');
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -411,33 +400,32 @@ class _TextPaneState extends State<_TextPane> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Line number gutter
+              // Line number gutter. Rendered as a single multi-line Text using
+              // the exact same style/strut as the editor so each line number
+              // lands on the same baseline as its corresponding editor line.
               Container(
                 width: _gutterWidth,
                 color: const Color(0xFF252525),
                 child: ScrollConfiguration(
                   behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-                  child: ListView.builder(
+                  child: SingleChildScrollView(
                     controller: _gutterScrollController,
                     physics: const NeverScrollableScrollPhysics(),
                     padding: const EdgeInsets.symmetric(vertical: _contentPadding),
-                    itemExtent: _lineHeight,
-                    itemCount: _lineCount,
-                    itemBuilder: (context, index) {
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 10),
-                        child: Text(
-                          '${index + 1}',
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: _fontSize,
-                            fontFamily: 'Consolas',
-                            height: _lineHeightFactor,
-                          ),
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: Text(
+                        _lineNumbers,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: _fontSize,
+                          fontFamily: 'Consolas',
+                          height: _lineHeightFactor,
                         ),
-                      );
-                    },
+                        strutStyle: _strut,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -446,27 +434,21 @@ class _TextPaneState extends State<_TextPane> {
               Expanded(
                 child: Container(
                   color: const Color(0xFF1E1E1E),
-                  child: TextField(
-                    controller: _controller,
-                    onChanged: widget.onChanged,
-                    maxLines: null,
-                    expands: true,
-                    scrollController: _textScrollController,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: _fontSize,
-                      fontFamily: 'Consolas',
-                      height: _lineHeightFactor,
-                    ),
-                    strutStyle: const StrutStyle(
-                      fontSize: _fontSize,
-                      height: _lineHeightFactor,
-                      leadingDistribution: TextLeadingDistribution.even,
-                    ),
-                    decoration: const InputDecoration(
-                      contentPadding: EdgeInsets.all(_contentPadding),
-                      border: InputBorder.none,
+                  padding: const EdgeInsets.all(_contentPadding),
+                  child: SingleChildScrollView(
+                    controller: _textScrollController,
+                    child: SelectionArea(
+                      child: Text.rich(
+                        TextSpan(
+                          style: _style,
+                          children: SyntaxHighlighter.highlightText(
+                            _controller.text,
+                            _detectLanguage(widget.path),
+                            baseStyle: _style,
+                          ),
+                        ),
+                        strutStyle: _strut,
+                      ),
                     ),
                   ),
                 ),
