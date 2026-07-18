@@ -4,6 +4,8 @@ import '../providers/app_state.dart';
 import '../providers/terminal_state.dart';
 import '../modules/terminal/terminal_view.dart';
 import '../modules/oscilloscope/oscilloscope_view.dart';
+import '../modules/hex_editor/hex_editor_view.dart';
+import '../modules/text_editor/text_editor_view.dart';
 
 class MainLayout extends StatelessWidget {
   const MainLayout({super.key});
@@ -56,24 +58,24 @@ class MainLayout extends StatelessWidget {
             onTap: () => appState.setModuleIndex(2),
           ),
           _SidebarIcon(
-            icon: Icons.text_fields,
-            tooltip: '字库提取',
+            icon: Icons.text_snippet,
+            tooltip: '文本对比 / 补丁',
             isSelected: appState.selectedModuleIndex == 3,
             onTap: () => appState.setModuleIndex(3),
           ),
           _SidebarIcon(
-            icon: Icons.image,
-            tooltip: '图像提取',
+            icon: Icons.text_fields,
+            tooltip: '字库提取',
             isSelected: appState.selectedModuleIndex == 4,
             onTap: () => appState.setModuleIndex(4),
           ),
-          const Spacer(),
           _SidebarIcon(
-            icon: Icons.settings,
-            tooltip: '设置',
+            icon: Icons.image,
+            tooltip: '图像提取',
             isSelected: appState.selectedModuleIndex == 5,
             onTap: () => appState.setModuleIndex(5),
           ),
+          const Spacer(),
           const SizedBox(height: 10),
         ],
       ),
@@ -93,16 +95,16 @@ class MainLayout extends StatelessWidget {
         activeModule = const TerminalView();
         break;
       case 2:
-        activeModule = const Center(child: Text('Hex 编辑器 (开发中...)', textAlign: TextAlign.center));
+        activeModule = const HexEditorView();
         break;
       case 3:
-        activeModule = const Center(child: Text('字库提取器 (开发中...)', textAlign: TextAlign.center));
+        activeModule = const TextEditorView();
         break;
       case 4:
-        activeModule = const Center(child: Text('图像提取器 (开发中...)', textAlign: TextAlign.center));
+        activeModule = const Center(child: Text('字库提取器 (开发中...)', textAlign: TextAlign.center));
         break;
       case 5:
-        activeModule = const Center(child: Text('设置', textAlign: TextAlign.center));
+        activeModule = const Center(child: Text('图像提取器 (开发中...)', textAlign: TextAlign.center));
         break;
       default:
         activeModule = const Center(child: Text('未知模块'));

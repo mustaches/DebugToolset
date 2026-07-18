@@ -637,7 +637,7 @@ class _ChartWidgetState extends State<ChartWidget> {
                     child: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: const Color(0xFA0C0C0C),
+                        color: const Color(0xB30C0C0C),
                         border: Border.all(color: Colors.yellowAccent),
                         borderRadius: BorderRadius.circular(4),
                       ),
@@ -667,7 +667,7 @@ class _ChartWidgetState extends State<ChartWidget> {
                             bool hasToolbar = state.digitalChannel.enabledPins.isNotEmpty || state.digitalChannel.buses.isNotEmpty;
                             double gridCenterY = constraints.maxHeight / 2 - (hasToolbar ? 12.0 : 0.0);
                             double adcValue = (gridCenterY + state.channels[ch].yOffset - py) / state.channels[ch].yScale;
-                            return adcValue * (5.0 / 4096.0); // Assume 5V reference
+                            return adcValue * (20.0 / 4095.0); // Corrected to +/-10V span (20V range / 4095)
                           }
 
                           double v1 = getVoltage(state.cursorY1);

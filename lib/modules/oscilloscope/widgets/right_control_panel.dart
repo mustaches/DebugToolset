@@ -54,230 +54,195 @@ class _RightControlPanelState extends State<RightControlPanel> {
 
           // Lower Section: Vertical, Horizontal, Trigger Columns
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Column(
               children: [
-                // 1. Vertical
+                // 1. Horizontal & Trigger Row (Upper Half)
                 Expanded(
-                  child: Column(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Vertical', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 2),
-                      DualHardwareKnob(
-                        key: ValueKey('v_pos_${state.resetCount}'),
-                        label: 'POSITION',
-                        onRotate: (delta, isFine) {
-                          int ch = state.selectedChannelIndex;
-                          double step = isFine ? 1.0 : 10.0;
-                          double val = state.channels[ch].yOffset - delta * step;
-                          if (val < -10000.0) val = -10000.0;
-                          if (val > 10000.0) val = 10000.0;
-                          state.setChannelOffset(ch, val);
-                        },
+                      // Horizontal Column
+                      Expanded(
+                        child: Column(
+                          children: [
+                            const Text('Horizontal', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 2),
+                            DualHardwareKnob(
+                              key: ValueKey('h_pos_${state.resetCount}'),
+                              label: 'POSITION',
+                              onRotate: (delta, isFine) {
+                                // TODO: implement xOffset logic
+                              },
+                            ),
+                            const SizedBox(height: 4),
+                            _buildBtn('Menu'),
+                            _buildBtn('Navigate'),
+                            const SizedBox(height: 2),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.arrow_left, color: Colors.grey.shade400, size: 24),
+                                Icon(Icons.pause_circle_filled, color: Colors.grey.shade400, size: 24),
+                                Icon(Icons.arrow_right, color: Colors.grey.shade400, size: 24),
+                              ],
+                            ),
+                            const Spacer(),
+                            DualHardwareKnob(
+                              key: ValueKey('h_scl_${state.resetCount}'),
+                              label: 'SCALE',
+                              onRotate: (delta, isFine) {
+                                double step = isFine ? 0.0025 : 0.05;
+                                double val = state.xScale - delta * step;
+                                if (val < 0.1) val = 0.1;
+                                if (val > 10.0) val = 10.0;
+                                state.setTimebase(val);
+                              },
+                            ),
+                            const SizedBox(height: 4),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 4),
-                      _buildUniformButton(
-                        label: '1',
-                        isActive: state.channels[0].isVisible,
-                        isSelected: state.selectedChannelIndex == 0,
-                        activeColor: state.channels[0].color,
-                        onTap: () {
-                          if (!state.channels[0].isVisible) {
-                            state.toggleChannelVisibility(0);
-                          }
-                          state.selectChannel(0);
-                        },
-                        onLongPress: () {
-                          if (state.channels[0].isVisible) {
-                            state.toggleChannelVisibility(0);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 6),
-                      _buildUniformButton(
-                        label: '2',
-                        isActive: state.channels[1].isVisible,
-                        isSelected: state.selectedChannelIndex == 1,
-                        activeColor: state.channels[1].color,
-                        onTap: () {
-                          if (!state.channels[1].isVisible) {
-                            state.toggleChannelVisibility(1);
-                          }
-                          state.selectChannel(1);
-                        },
-                        onLongPress: () {
-                          if (state.channels[1].isVisible) {
-                            state.toggleChannelVisibility(1);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 6),
-                      _buildUniformButton(
-                        label: '3',
-                        isActive: state.channels[2].isVisible,
-                        isSelected: state.selectedChannelIndex == 2,
-                        activeColor: state.channels[2].color,
-                        onTap: () {
-                          if (!state.channels[2].isVisible) {
-                            state.toggleChannelVisibility(2);
-                          }
-                          state.selectChannel(2);
-                        },
-                        onLongPress: () {
-                          if (state.channels[2].isVisible) {
-                            state.toggleChannelVisibility(2);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 6),
-                      _buildUniformButton(
-                        label: '4',
-                        isActive: state.channels[3].isVisible,
-                        isSelected: state.selectedChannelIndex == 3,
-                        activeColor: state.channels[3].color,
-                        onTap: () {
-                          if (!state.channels[3].isVisible) {
-                            state.toggleChannelVisibility(3);
-                          }
-                          state.selectChannel(3);
-                        },
-                        onLongPress: () {
-                          if (state.channels[3].isVisible) {
-                            state.toggleChannelVisibility(3);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 6),
-                      _buildUniformButton(
-                        label: 'MATH',
-                        isActive: _isMathActive,
-                        isSelected: false,
-                        activeColor: Colors.orangeAccent,
-                        onTap: () {
-                          setState(() {
-                            _isMathActive = !_isMathActive;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 6),
-                      _buildUniformButton(
-                        label: 'LA',
-                        isActive: state.digitalChannel.enabledPins.isNotEmpty,
-                        isSelected: false,
-                        activeColor: Colors.purpleAccent,
-                        onTap: () {
-                          if (state.digitalChannel.enabledPins.isNotEmpty) {
-                            state.setDigitalPinGroupVisibility(0, 31, false);
-                          } else {
-                            state.setDigitalPinGroupVisibility(0, 7, true);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 4),
-                      DualHardwareKnob(
-                        key: ValueKey('v_scl_${state.resetCount}'),
-                        label: 'SCALE',
-                        onRotate: (delta, isFine) {
-                          int ch = state.selectedChannelIndex;
-                          double step = isFine ? 0.0025 : 0.05;
-                          double val = state.channels[ch].yScale - delta * step;
-                          if (val < 0.1) val = 0.1;
-                          if (val > 10.0) val = 10.0;
-                          state.setChannelScale(ch, val);
-                        },
+                      Container(width: 1, color: Colors.grey.shade800),
+                      // Trigger Column
+                      Expanded(
+                        child: Column(
+                          children: [
+                            const Text('Trigger', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 2),
+                            _buildBtn('Menu', isOutline: true, onTap: () {
+                              showDialog(
+                                context: context.read<OscilloscopeState>().oscNavigatorKey.currentContext ?? context,
+                                useRootNavigator: false,
+                                builder: (context) => const TriggerMenuDialog(),
+                              );
+                            }),
+                            const Spacer(),
+                            HardwareKnob(
+                              key: ValueKey('t_lvl_${state.resetCount}'),
+                              label: 'LEVEL',
+                              onRotate: (delta) {
+                                int val = state.triggerLevel - (delta * 10).round();
+                                if (val < 0) val = 0;
+                                if (val > 4095) val = 4095;
+                                state.setTriggerLevel(val);
+                              },
+                            ),
+                            const Spacer(),
+                            _buildBtn('Slope', onTap: () {
+                              TriggerEdge nextEdge;
+                              if (state.triggerEdge == TriggerEdge.rising) {
+                                nextEdge = TriggerEdge.falling;
+                              } else if (state.triggerEdge == TriggerEdge.falling) {
+                                nextEdge = TriggerEdge.both;
+                              } else {
+                                nextEdge = TriggerEdge.rising;
+                              }
+                              state.setTriggerEdge(nextEdge);
+                            }),
+                            _buildBtn('Force', onTap: () {
+                              state.forceTrigger();
+                            }),
+                            const SizedBox(height: 4),
+                          ],
+                        ),
                       ),
                     ],
                   ),
                 ),
 
-                Container(width: 1, color: Colors.grey.shade800),
+                const SizedBox(height: 12),
+                Divider(color: Colors.grey.shade800, height: 1),
+                const SizedBox(height: 12),
 
-                // 2. Horizontal
-                Expanded(
-                  child: Column(
-                    children: [
-                      const Text('Horizontal', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 2),
-                      DualHardwareKnob(
-                        key: ValueKey('h_pos_${state.resetCount}'),
-                        label: 'POSITION',
-                        onRotate: (delta, isFine) {
-                          // TODO: implement xOffset logic
-                        },
-                      ),
-                      const SizedBox(height: 4),
-                      _buildBtn('Menu'),
-                      _buildBtn('Navigate'),
-                      const SizedBox(height: 2),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.arrow_left, color: Colors.grey.shade400, size: 24),
-                          Icon(Icons.pause_circle_filled, color: Colors.grey.shade400, size: 24),
-                          Icon(Icons.arrow_right, color: Colors.grey.shade400, size: 24),
-                        ],
-                      ),
-                      const Spacer(),
-                      DualHardwareKnob(
-                        key: ValueKey('h_scl_${state.resetCount}'),
-                        label: 'SCALE',
-                        onRotate: (delta, isFine) {
-                          double step = isFine ? 0.0025 : 0.05;
-                          double val = state.xScale - delta * step;
-                          if (val < 0.1) val = 0.1;
-                          if (val > 10.0) val = 10.0;
-                          state.setTimebase(val);
-                        },
-                      ),
-                      const SizedBox(height: 4), // Align bottom
-                    ],
-                  ),
-                ),
-
-                Container(width: 1, color: Colors.grey.shade800),
-
-                // 3. Trigger
-                Expanded(
-                  child: Column(
-                    children: [
-                      const Text('Trigger', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 2),
-                      _buildBtn('Menu', isOutline: true, onTap: () {
-                        showDialog(
-                          context: context.read<OscilloscopeState>().oscNavigatorKey.currentContext ?? context,
-                          useRootNavigator: false,
-                          builder: (context) => const TriggerMenuDialog(),
+                // 2. Vertical Section (Bottom Half)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Vertical', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                        Row(
+                          children: [
+                            _buildUniformButton(
+                              label: 'MATH',
+                              width: 52,
+                              isActive: _isMathActive,
+                              isSelected: false,
+                              activeColor: Colors.orangeAccent,
+                              onTap: () {
+                                setState(() {
+                                  _isMathActive = !_isMathActive;
+                                });
+                              },
+                            ),
+                            const SizedBox(width: 6),
+                            _buildUniformButton(
+                              label: 'LA',
+                              width: 52,
+                              isActive: state.digitalChannel.enabledPins.isNotEmpty,
+                              isSelected: false,
+                              activeColor: Colors.purpleAccent,
+                              onTap: () {
+                                if (state.digitalChannel.enabledPins.isNotEmpty) {
+                                  state.setDigitalPinGroupVisibility(0, 31, false);
+                                } else {
+                                  state.setDigitalPinGroupVisibility(0, 7, true);
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: List.generate(4, (i) {
+                        return Column(
+                          children: [
+                            DualHardwareKnob(
+                              key: ValueKey('v_pos_${i}_${state.resetCount}'),
+                              label: 'POSITION',
+                              onRotate: (delta, isFine) {
+                                double step = isFine ? 1.0 : 10.0;
+                                double val = state.channels[i].yOffset - delta * step;
+                                if (val < -10000.0) val = -10000.0;
+                                if (val > 10000.0) val = 10000.0;
+                                state.setChannelOffset(i, val);
+                              },
+                            ),
+                            const SizedBox(height: 4),
+                            _buildUniformButton(
+                              label: 'A${i + 1}',
+                              width: 52,
+                              isActive: state.channels[i].isVisible,
+                              isSelected: state.selectedChannelIndex == i,
+                              activeColor: state.channels[i].color,
+                              onTap: () {
+                                state.toggleChannelVisibility(i);
+                                if (state.channels[i].isVisible) {
+                                  state.selectChannel(i);
+                                }
+                              },
+                            ),
+                            const SizedBox(height: 4),
+                            DualHardwareKnob(
+                              key: ValueKey('v_scl_${i}_${state.resetCount}'),
+                              label: 'SCALE',
+                              onRotate: (delta, isFine) {
+                                double step = isFine ? 0.0025 : 0.05;
+                                double val = state.channels[i].yScale - delta * step;
+                                if (val < 0.1) val = 0.1;
+                                if (val > 10.0) val = 10.0;
+                                state.setChannelScale(i, val);
+                              },
+                            ),
+                          ],
                         );
                       }),
-                      const Spacer(),
-                      HardwareKnob(
-                        key: ValueKey('t_lvl_${state.resetCount}'),
-                        label: 'LEVEL',
-                        onRotate: (delta) {
-                          int val = state.triggerLevel - (delta * 10).round();
-                          if (val < 0) val = 0;
-                          if (val > 4095) val = 4095;
-                          state.setTriggerLevel(val);
-                        },
-                      ),
-                      const Spacer(),
-                      _buildBtn('Slope', onTap: () {
-                        TriggerEdge nextEdge;
-                        if (state.triggerEdge == TriggerEdge.rising) {
-                          nextEdge = TriggerEdge.falling;
-                        } else if (state.triggerEdge == TriggerEdge.falling) {
-                          nextEdge = TriggerEdge.both;
-                        } else {
-                          nextEdge = TriggerEdge.rising;
-                        }
-                        state.setTriggerEdge(nextEdge);
-                      }),
-                      _buildBtn('Force', onTap: () {
-                        state.forceTrigger();
-                      }),
-                      const SizedBox(height: 4), // Align bottom
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -345,6 +310,7 @@ class _RightControlPanelState extends State<RightControlPanel> {
     required Color activeColor,
     required VoidCallback onTap,
     VoidCallback? onLongPress,
+    double width = 76,
   }) {
     return HoverBuilder(
       builder: (context, isHovered) {
@@ -353,18 +319,20 @@ class _RightControlPanelState extends State<RightControlPanel> {
         Border border;
         List<BoxShadow>? shadow;
 
-        if (isSelected) {
-          bgColor = activeColor;
-          textColor = Colors.black;
-          border = Border.all(color: activeColor, width: 1.5);
-          shadow = [BoxShadow(color: activeColor.withValues(alpha: 0.3), blurRadius: 6)];
-        } else if (isActive) {
-          bgColor = const Color(0xFF222222);
-          textColor = activeColor;
-          border = Border.all(color: activeColor, width: 1.5);
-          if (isHovered) {
-            bgColor = const Color(0xFF333333);
-            shadow = [BoxShadow(color: activeColor.withValues(alpha: 0.2), blurRadius: 4)];
+        if (isActive) {
+          if (isSelected) {
+            bgColor = activeColor;
+            textColor = Colors.black;
+            border = Border.all(color: activeColor, width: 1.5);
+            shadow = [BoxShadow(color: activeColor.withValues(alpha: 0.3), blurRadius: 6)];
+          } else {
+            bgColor = const Color(0xFF222222);
+            textColor = activeColor;
+            border = Border.all(color: activeColor, width: 1.5);
+            if (isHovered) {
+              bgColor = const Color(0xFF333333);
+              shadow = [BoxShadow(color: activeColor.withValues(alpha: 0.2), blurRadius: 4)];
+            }
           }
         } else {
           bgColor = isHovered ? const Color(0xFF444444) : const Color(0xFF333333);
@@ -376,7 +344,7 @@ class _RightControlPanelState extends State<RightControlPanel> {
           onTap: onTap,
           onLongPress: onLongPress,
           child: Container(
-            width: 76,
+            width: width,
             height: 28,
             alignment: Alignment.center,
             decoration: BoxDecoration(

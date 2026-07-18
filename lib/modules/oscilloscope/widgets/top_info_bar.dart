@@ -266,21 +266,24 @@ class TopInfoBar extends StatelessWidget {
 
           _buildActionButton(
             label: '',
-            color: state.isDemoMode ? Colors.purpleAccent : Colors.grey.shade400,
+            color: Colors.purpleAccent,
+            isActive: state.isDemoMode,
             onTap: () => state.toggleDemoMode(),
             icon: Icons.auto_awesome,
-            iconSize: 18.0,
-            width: 48.0,
+            iconSize: 16.0,
+            width: 36.0,
+            tooltip: '演示模式',
           ),
           Container(
             height: 24,
             width: 1,
             color: Colors.grey.shade800,
-            margin: const EdgeInsets.symmetric(horizontal: 8),
+            margin: const EdgeInsets.symmetric(horizontal: 4),
           ),
           _buildActionButton(
             label: '',
             color: Colors.greenAccent,
+            isActive: state.connectionSource == 'LXI' && state.isLxiConnected,
             onTap: () {
               showDialog(
                 context: state.oscNavigatorKey.currentContext ?? context,
@@ -288,35 +291,34 @@ class TopInfoBar extends StatelessWidget {
                 builder: (context) => const LxiConnectionDialog(),
               );
             },
-            customIcon: Image.asset(
-              'LXI_Logo/LXI_Logo_2.png',
-              height: 16,
-              color: Colors.greenAccent,
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            width: 48.0,
+            customIconAsset: 'LXI_Logo/LXI_Logo_2.png',
+            iconSize: 14.0,
+            width: 36.0,
+            tooltip: 'LXI 仪器设置与连接',
           ),
           Container(
             height: 24,
             width: 1,
             color: Colors.grey.shade800,
-            margin: const EdgeInsets.symmetric(horizontal: 8),
+            margin: const EdgeInsets.symmetric(horizontal: 4),
           ),
           _buildActionButton(
             label: '',
             color: Colors.blueAccent,
             onTap: () => _handleSave(context, state),
             icon: Icons.save,
-            iconSize: 18.0,
-            width: 48.0,
+            iconSize: 20.0,
+            width: 36.0,
+            tooltip: '保存波形数据',
           ),
           _buildActionButton(
             label: '',
             color: Colors.orangeAccent,
             onTap: () => _handleLoad(context, state),
-            icon: Icons.folder_open,
-            iconSize: 18.0,
-            width: 48.0,
+            icon: Icons.download,
+            iconSize: 20.0,
+            width: 36.0,
+            tooltip: '加载波形数据',
           ),
         ],
       ),
@@ -342,52 +344,84 @@ class TopInfoBar extends StatelessWidget {
     required Color color, 
     required VoidCallback onTap, 
     IconData? icon,
-    Widget? customIcon,
+    String? customIconAsset,
     double? width,
     double? iconSize,
     bool isDoubleLine = false,
     String? topText,
     String? bottomText,
     bool activeBottom = false,
+    bool isActive = false,
+    String? tooltip,
   }) {
-    return HoverBuilder(
+    final buttonWidget = HoverBuilder(
       builder: (context, isHovered) {
+        final displayColor = (isHovered || isActive) ? color : Colors.grey;
         return InkWell(
           onTap: onTap,
           child: Container(
             width: width,
-            margin: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 4.0),
-            padding: const EdgeInsets.symmetric(horizontal: 10.0),
+            margin: const EdgeInsets.symmetric(horizontal: 1.0, vertical: 4.0),
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
             decoration: BoxDecoration(
-              color: isHovered ? const Color(0xFF333333) : const Color(0xFF252525),
+              color: isHovered ? const Color(0xFF222222) : Colors.transparent,
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: isHovered ? color : color.withValues(alpha: 0.5), 
-                width: 1.5
-              ),
-              boxShadow: isHovered ? [BoxShadow(color: color.withValues(alpha: 0.2), blurRadius: 4)] : null,
             ),
             alignment: Alignment.center,
             child: isDoubleLine
               ? Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(topText!, style: TextStyle(color: !activeBottom || isHovered ? color : Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
-                    Text(bottomText!, style: TextStyle(color: activeBottom || isHovered ? color : Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
+                    Text(topText!, style: TextStyle(color: !activeBottom || isHovered ? displayColor : Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
+                    Text(bottomText!, style: TextStyle(color: activeBottom || isHovered ? displayColor : Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
                   ],
                 )
               : Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    ?customIcon,
-                    if (customIcon == null && icon != null) Icon(icon, color: color, size: iconSize ?? 14),
-                    if (label.isNotEmpty) Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+                    if (customIconAsset != null)
+                      Image.asset(
+                        customIconAsset,
+                        height: iconSize ?? 16,
+                        color: displayColor,
+                        colorBlendMode: BlendMode.srcIn,
+                      ),
+                    if (customIconAsset == null && icon != null) Icon(icon, color: displayColor, size: iconSize ?? 14),
+                    if (label.isNotEmpty) Text(label, style: TextStyle(color: displayColor, fontSize: 10, fontWeight: FontWeight.bold)),
                   ],
                 ),
           ),
         );
       }
     );
+
+    if (tooltip != null) {
+      return Tooltip(
+        message: tooltip,
+        preferBelow: true,
+        verticalOffset: 16,
+        decoration: BoxDecoration(
+          color: const Color(0xFF2C2C2C),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.grey.shade800, width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        textStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+        ),
+        waitDuration: const Duration(milliseconds: 500),
+        child: buttonWidget,
+      );
+    }
+    return buttonWidget;
   }
 
   void _showTimebaseDialog(BuildContext context, OscilloscopeState state) {

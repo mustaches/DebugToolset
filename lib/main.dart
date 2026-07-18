@@ -7,6 +7,8 @@ import 'providers/app_state.dart';
 import 'providers/terminal_state.dart';
 import 'providers/macro_state.dart';
 import 'providers/oscilloscope_state.dart';
+import 'providers/hex_editor_state.dart';
+import 'providers/text_editor_state.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
@@ -40,6 +42,8 @@ void main() async {
           },
         ),
         ChangeNotifierProvider(create: (_) => MacroState()),
+        ChangeNotifierProvider(create: (_) => HexEditorState()),
+        ChangeNotifierProvider(create: (_) => TextEditorState()),
       ],
       child: const DebugToolSetApp(),
     ),

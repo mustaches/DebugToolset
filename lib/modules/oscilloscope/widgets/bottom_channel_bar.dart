@@ -161,9 +161,12 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
       return formatted;
     }
 
-    // Offset voltage: (offset in pixels / pixel height per division) * yScale
-    double offsetDivisions = -ch.yOffset / (state.chartHeight / 8.0);
-    double offsetVolts = offsetDivisions * ch.yScale;
+    double hDiv = state.chartHeight / 8.0;
+    double voltsPerAdc = 20.0 / 4095.0;
+    double vDiv = (hDiv / ch.yScale) * voltsPerAdc;
+
+    double offsetDivisions = -ch.yOffset / hDiv;
+    double offsetVolts = offsetDivisions * vDiv;
 
     return HoverBuilder(
       builder: (context, isHovered) {
@@ -216,7 +219,7 @@ class _BottomChannelBarState extends State<BottomChannelBar> {
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text('${formatVoltage(ch.yScale)}/div', style: TextStyle(color: boxColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  Text('${formatVoltage(vDiv)}/div', style: TextStyle(color: boxColor, fontSize: 10, fontWeight: FontWeight.bold)),
                                   const SizedBox(),
                                 ],
                               ),

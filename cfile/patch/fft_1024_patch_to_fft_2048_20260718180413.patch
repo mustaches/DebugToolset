@@ -1,0 +1,78 @@
+--- fft_1024.c
++++ fft_2048.c
+@@ -1,15 +1,16 @@
+ /*******************************************************************************
+- * fft_1024.c
++ * fft_2048.c
+  *
+- * Basic FFT implementation with fixed window size 1024.
+- * This is the baseline version used for signal spectrum analysis.
++ * FFT implementation with window size 2048.
++ * This is a straightforward radix-2 complex FFT intended for medium-length
++ * signal analysis.
+  ******************************************************************************/
+ 
+ #include <math.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#define FFT_WINDOW_SIZE     1024
++#define FFT_WINDOW_SIZE     2048
+ #define FFT_PI              3.14159265358979323846
+ 
+ #ifndef M_PI
+@@ -42,10 +43,10 @@
+  * In-place iterative complex FFT (radix-2, DIT).
+  * input/output: interleaved real/imag floats, length = 2 * FFT_WINDOW_SIZE.
+  ******************************************************************************/
+-void fft_1024_process(float *io_buffer)
++void fft_2048_process(float *io_buffer)
+ {
+     int n = FFT_WINDOW_SIZE;
+-    int bits = 10; /* log2(1024) */
++    int bits = 11; /* log2(2048) */
+     complex_t temp[FFT_WINDOW_SIZE];
+ 
+     /* Convert interleaved input to complex array */
+@@ -106,7 +107,7 @@
+ /*******************************************************************************
+  * Retrieve the magnitude buffer computed by the last FFT call.
+  ******************************************************************************/
+-const float *fft_1024_get_magnitude(void)
++const float *fft_2048_get_magnitude(void)
+ {
+     return g_fft_output;
+ }
+@@ -114,7 +115,7 @@
+ /*******************************************************************************
+  * Initialize all internal buffers to zero.
+  ******************************************************************************/
+-void fft_1024_init(void)
++void fft_2048_init(void)
+ {
+     memset(g_fft_output, 0, sizeof(g_fft_output));
+ }
+@@ -122,19 +123,19 @@
+ /*******************************************************************************
+  * Simple entry point for testing.
+  ******************************************************************************/
+-int fft_1024_demo(void)
++int fft_2048_demo(void)
+ {
+     float sample_buffer[2 * FFT_WINDOW_SIZE];
+ 
+-    fft_1024_init();
++    fft_2048_init();
+ 
+     for (int i = 0; i < FFT_WINDOW_SIZE; i++) {
+         sample_buffer[2 * i] = (float)sin(2.0 * M_PI * 100.0 * i / FFT_WINDOW_SIZE);
+         sample_buffer[2 * i + 1] = 0.0f;
+     }
+ 
+-    fft_1024_process(sample_buffer);
+-    const float *mag = fft_1024_get_magnitude();
++    fft_2048_process(sample_buffer);
++    const float *mag = fft_2048_get_magnitude();
+ 
+     (void)mag;
+     return 0;
