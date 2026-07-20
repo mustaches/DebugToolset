@@ -6,6 +6,7 @@ import '../modules/terminal/terminal_view.dart';
 import '../modules/oscilloscope/oscilloscope_view.dart';
 import '../modules/hex_editor/hex_editor_view.dart';
 import '../modules/text_editor/text_editor_view.dart';
+import '../modules/font_extractor/font_extractor_view.dart';
 
 class MainLayout extends StatelessWidget {
   const MainLayout({super.key});
@@ -101,7 +102,7 @@ class MainLayout extends StatelessWidget {
         activeModule = const TextEditorView();
         break;
       case 4:
-        activeModule = const Center(child: Text('字库提取器 (开发中...)', textAlign: TextAlign.center));
+        activeModule = const FontExtractorView();
         break;
       case 5:
         activeModule = const Center(child: Text('图像提取器 (开发中...)', textAlign: TextAlign.center));

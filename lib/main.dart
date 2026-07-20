@@ -4,6 +4,7 @@ import 'package:window_manager/window_manager.dart'; // Uncomment after enabling
 
 import 'layout/main_layout.dart';
 import 'providers/app_state.dart';
+import 'providers/font_extractor_state.dart';
 import 'providers/terminal_state.dart';
 import 'providers/macro_state.dart';
 import 'providers/oscilloscope_state.dart';
@@ -44,6 +45,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => MacroState()),
         ChangeNotifierProvider(create: (_) => HexEditorState()),
         ChangeNotifierProvider(create: (_) => TextEditorState()),
+        ChangeNotifierProvider(create: (_) => FontExtractorState()),
       ],
       child: const DebugToolSetApp(),
     ),
