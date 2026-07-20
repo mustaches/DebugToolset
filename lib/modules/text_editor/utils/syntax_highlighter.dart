@@ -1,12 +1,32 @@
 import 'package:flutter/material.dart';
 
+// VSCode "Dark+" default token colors for the text editor / diff view.
+// These values are taken from the Visual Studio Code default dark theme
+// so the in-app editor feels familiar to VSCode users.
+const Color kVscodePlain = Color(0xFFD4D4D4);
+const Color kVscodeKeyword = Color(0xFF569CD6);
+const Color kVscodeControlKeyword = Color(0xFFC586C0);
+const Color kVscodeString = Color(0xFFCE9178);
+const Color kVscodeComment = Color(0xFF6A9955);
+const Color kVscodeNumber = Color(0xFFB5CEA8);
+const Color kVscodeOperator = Color(0xFFD4D4D4);
+const Color kVscodePreprocessor = Color(0xFFC586C0);
+const Color kVscodeFunction = Color(0xFFDCDCAA);
+const Color kVscodeType = Color(0xFF4EC9B0);
+const Color kVscodeVariable = Color(0xFF9CDCFE);
+
 enum _TokenType {
   plain,
   keyword,
+  controlKeyword,
   string,
   comment,
   number,
   operator,
+  preprocessor,
+  function,
+  type,
+  variable,
 }
 
 /// Describes a language for simple regex-free syntax highlighting.
@@ -110,25 +130,56 @@ const Set<String> _vbKeywords = {
   'WithEvents', 'WriteOnly', 'Xor',
 };
 
-const Set<String> _hdlKeywords = {
-  // Verilog
-  'module', 'endmodule', 'input', 'output', 'inout', 'wire', 'reg', 'logic', 'integer',
-  'parameter', 'localparam', 'assign', 'always', 'initial', 'begin', 'end', 'if', 'else',
-  'case', 'casex', 'casez', 'endcase', 'for', 'while', 'repeat', 'forever', 'posedge',
-  'negedge', 'or', 'and', 'nand', 'nor', 'xor', 'xnor', 'buf', 'not', 'supply0', 'supply1',
-  'tri', 'triand', 'trior', 'trireg', 'vectored', 'scalared', 'signed', 'unsigned', 'genvar',
-  'generate', 'endgenerate', 'function', 'endfunction', 'task', 'endtask', 'specify',
-  'endspecify', 'realtime', 'time', 'event', 'defparam', 'disable', 'fork', 'join', 'wait',
-  'deassign', 'release', 'force', 'strong0', 'strong1', 'weak0', 'weak1', 'highz0', 'highz1',
-  'small', 'medium', 'large', 'primitive', 'endprimitive', 'table', 'endtable',
-  // VHDL
-  'library', 'use', 'entity', 'architecture', 'port', 'signal', 'variable', 'constant',
-  'process', 'component', 'configuration', 'package', 'body', 'type', 'subtype', 'array',
-  'record', 'access', 'file', 'alias', 'attribute', 'literal', 'range', 'downto', 'to',
-  'others', 'all', 'of', 'is', 'are', 'with', 'select', 'unaffected', 'group', 'guarded',
-  'reject', 'on', 'after', 'transport', 'inertial', 'null', 'map', 'out',
-  'buffer', 'in', 'through', 'when', 'then', 'elsif', 'return', 'procedure', 'exit', 'next',
-  'loop', 'assert', 'report', 'severity', 'note', 'warning', 'error', 'failure',
+const Set<String> _verilogControlFlowKeywords = {
+  // Block / procedural control
+  'begin', 'end', 'fork', 'join', 'join_any', 'join_none',
+  // Conditional
+  'if', 'else', 'case', 'casex', 'casez', 'endcase', 'unique', 'unique0', 'priority',
+  // Loops / jumps
+  'for', 'while', 'do', 'repeat', 'forever', 'return', 'break', 'continue',
+  // Procedural / timing
+  'always', 'always_comb', 'always_ff', 'always_latch', 'initial', 'final',
+  'assign', 'deassign', 'force', 'release', 'wait', 'disable',
+  'posedge', 'negedge', 'edge',
+};
+
+const Set<String> _verilogKeywords = {
+  // Verilog-2001 / SystemVerilog keywords (blue)
+  'module', 'endmodule', 'primitive', 'endprimitive', 'macromodule',
+  'input', 'output', 'inout', 'buf', 'wire', 'tri', 'triand', 'trior', 'trireg',
+  'reg', 'logic', 'integer', 'int', 'longint', 'shortint', 'byte', 'bit',
+  'time', 'realtime', 'real', 'shortreal', 'parameter', 'localparam', 'specparam',
+  'alias', 'generate', 'endgenerate', 'genvar', 'function', 'endfunction', 'task', 'endtask',
+  'specify', 'endspecify', 'pulsestyle_onevent', 'pulsestyle_ondetect', 'showcancelled',
+  'noshowcancelled', 'small', 'medium', 'large', 'strong0', 'strong1', 'pull0', 'pull1',
+  'weak0', 'weak1', 'highz0', 'highz1', 'supply0', 'supply1', 'cmos', 'rcmos', 'pmos',
+  'rpmos', 'nmos', 'rnmos', 'tran', 'rtran', 'tranif0', 'tranif1', 'rtranif0', 'rtranif1',
+  'and', 'nand', 'or', 'nor', 'xor', 'xnor', 'not', 'bufif0', 'bufif1', 'notif0', 'notif1',
+  'scalared', 'vectored', 'signed', 'unsigned', 'automatic', 'static', 'const', 'var',
+  'void', 'string', 'event', 'chandle', 'enum', 'struct', 'union', 'packed', 'tagged',
+  'virtual', 'interface', 'endinterface', 'modport', 'clocking', 'endclocking', 'clockvar',
+  'cover', 'covergroup', 'endgroup', 'coverpoint', 'cross', 'property', 'endproperty',
+  'sequence', 'endsequence', 'assert', 'assume', 'restrict', 'expect', 'rand', 'randc',
+  'randcase', 'randsequence', 'constraint', 'solve', 'before', 'dist', 'inside', 'with',
+  'extends', 'implements', 'super', 'this', 'new', 'null', 'typedef', 'import', 'export',
+  'context', 'extern', 'pure', 'ref', 'in', 'out', 'throughout',
+  'until', 'since', 'nexttime', 's_nexttime', 's_eventually', 'eventually',
+  's_always', 's_until', 's_until_with', 'until_with', 'weak', 'strong', 'accept_on',
+  'reject_on', 'sync_accept_on', 'sync_reject_on', 'checker', 'endchecker',
+  'class', 'endclass', 'package', 'endpackage', 'program', 'endprogram', 'config', 'endconfig',
+  'bind', 'design', 'instance', 'cell', 'use', 'liblist', 'include',
+};
+
+const Set<String> _vhdlKeywords = {
+  'library', 'use', 'entity', 'architecture', 'configuration', 'package', 'body',
+  'component', 'port', 'generic', 'map', 'attribute', 'signal', 'variable', 'constant',
+  'file', 'type', 'subtype', 'range', 'downto', 'to', 'of', 'is', 'are', 'in', 'out',
+  'inout', 'buffer', 'linkage', 'process', 'function', 'procedure', 'return', 'begin',
+  'end', 'if', 'then', 'else', 'elsif', 'case', 'when', 'others', 'select', 'with',
+  'wait', 'on', 'until', 'for', 'while', 'loop', 'next', 'exit', 'assert', 'report',
+  'severity', 'note', 'warning', 'error', 'failure', 'null', 'unaffected', 'transport',
+  'inertial', 'reject', 'after', 'guarded', 'group', 'shared', 'protected', 'record',
+  'access', 'alias', 'literal', 'units', 'new', 'all', 'open', 'context',
 };
 
 const Set<String> _scriptKeywords = {
@@ -169,13 +220,49 @@ const LanguageMode _vb = LanguageMode(
   caseSensitive: false,
 );
 
-const LanguageMode _hdl = LanguageMode(
-  name: 'HDL',
-  lineComments: ['//', '--'],
+const LanguageMode _verilog = LanguageMode(
+  name: 'Verilog',
+  lineComments: ['//'],
   blockCommentStart: '/*',
   blockCommentEnd: '*/',
   stringDelimiters: ['"', "'"],
-  keywords: _hdlKeywords,
+  keywords: {..._verilogKeywords, ..._verilogControlFlowKeywords},
+);
+
+const LanguageMode _vhdl = LanguageMode(
+  name: 'VHDL',
+  lineComments: ['--'],
+  blockCommentStart: null,
+  blockCommentEnd: null,
+  stringDelimiters: ['"'],
+  keywords: _vhdlKeywords,
+);
+
+const LanguageMode _xdc = LanguageMode(
+  name: 'XDC',
+  lineComments: ['#'],
+  stringDelimiters: ['"', "'"],
+  keywords: {
+    // Vivado Tcl / XDC commands
+    'set_property', 'get_property', 'report_property', 'create_clock',
+    'create_generated_clock', 'set_clock_groups', 'set_false_path',
+    'set_multicycle_path', 'set_max_delay', 'set_min_delay', 'set_input_delay',
+    'set_output_delay', 'set_case_analysis', 'set_clock_latency',
+    'set_clock_uncertainty', 'set_external_delay', 'set_data_check',
+    'set_clock_sense', 'set_ideal_network', 'set_ideal_transition',
+    'set_max_time_borrow', 'set_resistance', 'set_capacitance', 'set_load',
+    'set_driving_cell', 'set_fanout_load', 'set_operating_conditions',
+    'set_wire_load_model', 'set_wire_load_mode', 'set_voltage', 'set_temperature',
+    'set_timing_derate', 'set_clock_transition', 'set_disable_timing',
+    'set_max_fanout', 'set_max_transition', 'set_max_capacitance',
+    'get_ports', 'get_pins', 'get_cells', 'get_nets', 'get_clocks',
+    'get_timing_paths', 'get_designs', 'get_lib_cells', 'get_lib_pins',
+    'current_instance', 'all_inputs', 'all_outputs', 'all_registers', 'all_clocks',
+    'filter', 'find', 'lappend', 'set', 'puts', 'proc', 'return', 'if', 'else',
+    'elseif', 'for', 'while', 'foreach', 'switch', 'case', 'default', 'break',
+    'continue', 'expr', 'list', 'lindex', 'llength', 'concat', 'append', 'source',
+    'namespace', 'package', 'require', 'catch', 'error', 'eval', 'info',
+  },
 );
 
 const LanguageMode _script = LanguageMode(
@@ -257,8 +344,9 @@ const Map<String, LanguageMode> _languageByExtension = {
   // Python
   'py': _python,
   // HDL / FPGA
-  'v': _hdl, 'sv': _hdl, 'vhd': _hdl, 'vhdl': _hdl,
-  'xdc': _script, 'xci': _script, 'xpr': _script, 'xco': _script, 'xmp': _script,
+  'v': _verilog, 'sv': _verilog, 'vhd': _vhdl, 'vhdl': _vhdl,
+  'xdc': _xdc, 'ucf': _xdc,
+  'xci': _markup, 'xpr': _markup, 'xco': _markup, 'xmp': _markup,
   'bmm': _script, 'do': _script, 'wcfg': _script, 'tcl': _script,
   'coe': _plain, 'mif': _plain, 'edif': _plain, 'ngc': _plain, 'dcp': _plain, 'rpt': _plain,
   'sdf': _plain,
@@ -294,6 +382,134 @@ bool _isWordStart(String c) => RegExp(r'^[a-zA-Z_]$').hasMatch(c);
 bool _isWordChar(String c) => RegExp(r'^[a-zA-Z0-9_]$').hasMatch(c);
 bool _isOperatorChar(String c) => RegExp(r'^[+\-*/=<>!&|^%~?:]$').hasMatch(c);
 
+// Verilog number literal: [size][']<base><value>, e.g. 4'b1010, 16'hFF, 32'd100.
+// Also supports signed specifier: 4'sb1010, and underscores: 4'b10_10.
+bool _isVerilogNumberStart(String line, int i) {
+  int j = i;
+  while (j < line.length && _isDigit(line[j])) {
+    j++;
+  }
+  if (j >= line.length || line[j] != "'") return false;
+  j++;
+  if (j < line.length && (line[j] == 's' || line[j] == 'S')) {
+    j++;
+  }
+  if (j >= line.length) return false;
+  final base = line[j].toLowerCase();
+  return base == 'b' || base == 'o' || base == 'd' || base == 'h';
+}
+
+String _readVerilogNumber(String line, int i) {
+  int j = i;
+  while (j < line.length && _isDigit(line[j])) {
+    j++;
+  }
+  // Skip apostrophe and optional 's'/'S'.
+  j++; // '
+  if (j < line.length && (line[j] == 's' || line[j] == 'S')) {
+    j++;
+  }
+  if (j >= line.length) return line.substring(i);
+  final base = line[j].toLowerCase();
+  j++;
+
+  bool validChar(String c) {
+    if (c == '_' || c == '?' || c == 'x' || c == 'X' || c == 'z' || c == 'Z') return true;
+    switch (base) {
+      case 'b':
+        return c == '0' || c == '1';
+      case 'o':
+        final u = c.codeUnitAt(0);
+        return u >= 48 && u <= 55;
+      case 'd':
+        return _isDigit(c);
+      case 'h':
+        return _isDigit(c) || _isHexDigit(c);
+    }
+    return false;
+  }
+
+  while (j < line.length && validChar(line[j])) {
+    j++;
+  }
+  return line.substring(i, j);
+}
+
+bool _isVerilogSpecialOperator(String op) {
+  return op == '@' ||
+      op == '#' ||
+      op == '<=' ||
+      op == '>=' ||
+      op == '==' ||
+      op == '!=' ||
+      op == '===' ||
+      op == '!==';
+}
+
+bool _isFollowedByHash(String line, int afterIndex) {
+  int j = afterIndex;
+  while (j < line.length && (line[j] == ' ' || line[j] == '\t')) {
+    j++;
+  }
+  return j < line.length && line[j] == '#';
+}
+
+const Set<String> _cPreprocessorDirectives = {
+  'include', 'import', 'define', 'undef', 'ifdef', 'ifndef', 'if', 'elif', 'else',
+  'endif', 'pragma', 'error', 'line',
+};
+
+const Set<String> _cControlFlowKeywords = {
+  'if', 'else', 'switch', 'case', 'default', 'for', 'foreach', 'while', 'do', 'break',
+  'continue', 'return', 'goto', 'throw', 'try', 'catch', 'finally', 'co_await',
+  'co_return', 'co_yield',
+};
+
+bool _isLineStart(String line, int i) {
+  for (int k = 0; k < i; k++) {
+    if (line[k] != ' ' && line[k] != '\t') return false;
+  }
+  return true;
+}
+
+bool _isFollowedByParen(String line, int afterIndex) {
+  int j = afterIndex;
+  while (j < line.length && (line[j] == ' ' || line[j] == '\t')) {
+    j++;
+  }
+  return j < line.length && line[j] == '(';
+}
+
+_TokenType _classifyWord(String word, LanguageMode mode, String line, int afterIndex) {
+  final lookup = mode.caseSensitive ? word : word.toLowerCase();
+  if (mode.keywords.contains(lookup)) {
+    if (mode.name == 'C family' || mode.name == 'VHDL' || mode.name == 'XDC') {
+      if (_cControlFlowKeywords.contains(lookup)) {
+        return _TokenType.controlKeyword;
+      }
+    } else if (mode.name == 'Verilog') {
+      if (_verilogControlFlowKeywords.contains(lookup)) {
+        return _TokenType.controlKeyword;
+      }
+    }
+    return _TokenType.keyword;
+  }
+
+  // VSCode-style semantic heuristics for C-like and HDL languages.
+  if (mode.name == 'C family' ||
+      mode.name == 'Verilog' ||
+      mode.name == 'VHDL') {
+    if (word.endsWith('_t')) return _TokenType.type;
+    if (_isFollowedByParen(line, afterIndex)) return _TokenType.function;
+    if (mode.name == 'Verilog' && _isFollowedByHash(line, afterIndex)) {
+      return _TokenType.function;
+    }
+    return _TokenType.variable;
+  }
+
+  return _TokenType.plain;
+}
+
 int? _lineCommentLength(String line, int i, LanguageMode mode) {
   if (mode.lineComments.isEmpty) return null;
   for (final marker in mode.lineComments) {
@@ -316,22 +532,37 @@ TextSpan _span(String text, _TokenType type, TextStyle baseStyle) {
   Color color;
   switch (type) {
     case _TokenType.keyword:
-      color = Colors.cyanAccent;
+      color = kVscodeKeyword;
+      break;
+    case _TokenType.controlKeyword:
+      color = kVscodeControlKeyword;
       break;
     case _TokenType.string:
-      color = Colors.orangeAccent;
+      color = kVscodeString;
       break;
     case _TokenType.comment:
-      color = Colors.greenAccent;
+      color = kVscodeComment;
       break;
     case _TokenType.number:
-      color = Colors.yellow;
+      color = kVscodeNumber;
       break;
     case _TokenType.operator:
-      color = Colors.pinkAccent;
+      color = kVscodeOperator;
+      break;
+    case _TokenType.preprocessor:
+      color = kVscodePreprocessor;
+      break;
+    case _TokenType.function:
+      color = kVscodeFunction;
+      break;
+    case _TokenType.type:
+      color = kVscodeType;
+      break;
+    case _TokenType.variable:
+      color = kVscodeVariable;
       break;
     case _TokenType.plain:
-      color = baseStyle.color ?? Colors.white;
+      color = baseStyle.color ?? kVscodePlain;
       break;
   }
   return TextSpan(text: text, style: baseStyle.copyWith(color: color));
@@ -447,7 +678,45 @@ List<TextSpan> _tokenizeLine(
       continue;
     }
 
+    // Preprocessor directive (C/C++ family only).
+    if (line[i] == '#' && _isLineStart(line, i)) {
+      flush();
+      int j = i + 1;
+      while (j < line.length && (line[j] == ' ' || line[j] == '\t')) {
+        j++;
+      }
+      final directiveStart = j;
+      while (j < line.length && _isWordChar(line[j])) {
+        j++;
+      }
+      final directive = line.substring(directiveStart, j).toLowerCase();
+      if (_cPreprocessorDirectives.contains(directive)) {
+        spans.add(_span(line.substring(i, j), _TokenType.preprocessor, baseStyle));
+        if (directive == 'include') {
+          final rest = line.substring(j).trimLeft();
+          if (rest.isNotEmpty) {
+            spans.add(_span(rest, _TokenType.string, baseStyle));
+          }
+          break;
+        }
+        i = j;
+        continue;
+      }
+      // Not a recognized directive: fall back to plain text so # stays uncolored.
+      pending.write(line[i]);
+      i++;
+      continue;
+    }
+
     // Number
+    if (mode.name == 'Verilog' && _isVerilogNumberStart(line, i)) {
+      flush();
+      final number = _readVerilogNumber(line, i);
+      spans.add(_span(number, _TokenType.number, baseStyle));
+      i += number.length;
+      continue;
+    }
+
     if (_isDigit(line[i])) {
       flush();
       int j = i + 1;
@@ -483,10 +752,17 @@ List<TextSpan> _tokenizeLine(
         j++;
       }
       final word = line.substring(i, j);
-      final lookup = mode.caseSensitive ? word : word.toLowerCase();
-      final type = mode.keywords.contains(lookup) ? _TokenType.keyword : _TokenType.plain;
+      final type = _classifyWord(word, mode, line, j);
       spans.add(_span(word, type, baseStyle));
       i = j;
+      continue;
+    }
+
+    // Verilog special operators: sensitivity @, delay #, and comparison/equality.
+    if (mode.name == 'Verilog' && (line[i] == '@' || line[i] == '#')) {
+      flush();
+      spans.add(_span(line[i], _TokenType.controlKeyword, baseStyle));
+      i++;
       continue;
     }
 
@@ -497,7 +773,11 @@ List<TextSpan> _tokenizeLine(
       while (j < line.length && _isOperatorChar(line[j])) {
         j++;
       }
-      spans.add(_span(line.substring(i, j), _TokenType.operator, baseStyle));
+      final op = line.substring(i, j);
+      final type = mode.name == 'Verilog' && _isVerilogSpecialOperator(op)
+          ? _TokenType.controlKeyword
+          : _TokenType.operator;
+      spans.add(_span(op, type, baseStyle));
       i = j;
       continue;
     }

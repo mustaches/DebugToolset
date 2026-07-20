@@ -145,7 +145,7 @@ class _DiffLine extends StatelessWidget {
       fontFamily: 'Consolas',
     );
     const textStyle = TextStyle(
-      color: Colors.white,
+      color: kVscodePlain,
       fontSize: 13,
       fontFamily: 'Consolas',
       height: 1.4,

@@ -311,7 +311,7 @@ class _TextPaneState extends State<_TextPane> {
   static const double _gutterWidth = 56.0;
 
   static const _style = TextStyle(
-    color: Colors.white,
+    color: kVscodePlain,
     fontSize: _fontSize,
     fontFamily: 'Consolas',
     height: _lineHeightFactor,
