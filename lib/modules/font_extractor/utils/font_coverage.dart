@@ -46,7 +46,7 @@ const List<ScriptGroup> kScriptGroups = [
     name: '中文',
     tag: '中',
     ranges: [(start: 0x4E00, end: 0x9FFF), (start: 0x3000, end: 0x303F)],
-    sample: '中文字体演示，简体繁体',
+    sample: '中文字体演示，《红楼梦》，简体，繁体。【】',
   ),
   ScriptGroup(
     name: '日文',

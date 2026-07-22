@@ -127,7 +127,9 @@ Future<FontNameInfo> readFontNameInfo(String path) async {
     }
     if (tableOffset == null) return const FontNameInfo.empty();
 
-    await raf.setPosition(sfntOffset + tableOffset);
+    // Table directory offsets are absolute from the start of the file,
+    // including inside TTC collections.
+    await raf.setPosition(tableOffset);
     final header = await raf.read(6);
     if (header.length < 6) return const FontNameInfo.empty();
     final headerData = ByteData.sublistView(header);
@@ -144,8 +146,8 @@ Future<FontNameInfo> readFontNameInfo(String path) async {
     final recordsData = ByteData.sublistView(records);
 
     // Read the whole string storage in one go.
-    final tableLength = await raf.length() - (sfntOffset + tableOffset);
-    await raf.setPosition(sfntOffset + tableOffset + storageOffset);
+    final tableLength = await raf.length() - tableOffset;
+    await raf.setPosition(tableOffset + storageOffset);
     final stringStorage = await raf.read(tableLength);
 
     final preferredLangIds = _systemLanguageIds();

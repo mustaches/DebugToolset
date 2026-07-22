@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:characters/characters.dart';
@@ -7,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../modules/font_extractor/utils/binary_exporter.dart';
 import '../modules/font_extractor/utils/bitmap_converter.dart';
 import '../modules/font_extractor/utils/c_array_exporter.dart';
+import '../modules/font_extractor/utils/font_info.dart';
 import '../modules/font_extractor/utils/glyph_renderer.dart';
 import '../modules/font_extractor/utils/packed_glyph.dart';
 import '../modules/font_extractor/utils/unicode_blocks.dart';
@@ -17,6 +19,11 @@ class FontExtractorState extends ChangeNotifier {
 
   // Font sources
   final List<String> _fontPaths = [];
+
+  /// Localized display names (from each font's `name` table) keyed by path,
+  /// e.g. "微软雅黑" for msyh.ttc. Filled asynchronously after a font loads;
+  /// the UI falls back to the file name while a path has no entry.
+  final Map<String, String> _fontDisplayNames = {};
 
   // Render settings
   double _fontSize = 14;
@@ -37,6 +44,8 @@ class FontExtractorState extends ChangeNotifier {
   List<GlyphBitmap> _previewGlyphs = [];
   bool _previewLoading = false;
   double _previewProgress = 0;
+  bool _autoRefreshPreview = false;
+  Timer? _autoRefreshTimer;
 
   // Generation
   bool _isGenerating = false;
@@ -49,6 +58,19 @@ class FontExtractorState extends ChangeNotifier {
   // Getters
   // ------------------------------------------------------------------
   List<String> get fontPaths => List.unmodifiable(_fontPaths);
+
+  /// User-friendly name for a loaded font (its localized name-table entry,
+  /// e.g. "微软雅黑"), falling back to the file name when unavailable.
+  ///
+  /// The lookup is lazy: if the name has not been resolved yet (e.g. the
+  /// font was loaded before this cache existed, or a hot reload dropped the
+  /// pending call), it kicks off the asynchronous read now and the UI
+  /// updates when it completes.
+  String fontDisplayName(String path) {
+    final cached = _fontDisplayNames[path];
+    if (cached == null) _loadDisplayName(path);
+    return cached ?? p.basename(path);
+  }
   double get fontSize => _fontSize;
   int get cellWidth => _cellWidth;
   int get cellHeight => _cellHeight;
@@ -63,6 +85,7 @@ class FontExtractorState extends ChangeNotifier {
   List<GlyphBitmap> get previewGlyphs => List.unmodifiable(_previewGlyphs);
   bool get previewLoading => _previewLoading;
   double get previewProgress => _previewProgress;
+  bool get autoRefreshPreview => _autoRefreshPreview;
   bool get isGenerating => _isGenerating;
   double get progress => _progress;
   String? get lastError => _lastError;
@@ -80,17 +103,42 @@ class FontExtractorState extends ChangeNotifier {
       _lastError = '字体加载失败: $e';
     }
     notifyListeners();
+    _loadDisplayName(path);
+    _scheduleAutoRefresh();
+  }
+
+  /// Reads the font's localized display name in the background and updates
+  /// the cache once available. Each path is attempted only once; on failure
+  /// the UI keeps falling back to the file name.
+  final Set<String> _displayNameAttempted = {};
+
+  Future<void> _loadDisplayName(String path) async {
+    if (_fontDisplayNames.containsKey(path) ||
+        !_displayNameAttempted.add(path)) {
+      return;
+    }
+    final info = await readFontNameInfo(path);
+    final name = info.displayName;
+    if (name != null && name.isNotEmpty && _fontPaths.contains(path)) {
+      _fontDisplayNames[path] = name;
+      notifyListeners();
+    }
   }
 
   void removeFontAt(int index) {
     if (index < 0 || index >= _fontPaths.length) return;
+    _fontDisplayNames.remove(_fontPaths[index]);
+    _displayNameAttempted.remove(_fontPaths[index]);
     _fontPaths.removeAt(index);
     _renderer.removeLastFamily();
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   void clearFonts() {
     _fontPaths.clear();
+    _fontDisplayNames.clear();
+    _displayNameAttempted.clear();
     _renderer.clear();
     _previewGlyphs = [];
     notifyListeners();
@@ -102,17 +150,20 @@ class FontExtractorState extends ChangeNotifier {
   void setFontSize(double v) {
     _fontSize = v.clamp(4, 200);
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   void setCellSize(int w, int h) {
     _cellWidth = w.clamp(1, 256);
     _cellHeight = h.clamp(1, 256);
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   void setVerticalOffset(double v) {
     _verticalOffset = v;
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   void setBitDepth(BitmapBitDepth v) {
@@ -145,11 +196,13 @@ class FontExtractorState extends ChangeNotifier {
       _selectedBlockIndexes.remove(index);
     }
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   void setCustomRangeInput(String v) {
     _customRangeInput = v;
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   Future<void> importTextFile(String path) async {
@@ -160,11 +213,13 @@ class FontExtractorState extends ChangeNotifier {
       _lastError = '文本导入失败: $e';
     }
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   void clearImportedText() {
     _importedText = '';
     notifyListeners();
+    _scheduleAutoRefresh();
   }
 
   /// Builds the final grapheme list from blocks, custom ranges and the
@@ -196,6 +251,14 @@ class FontExtractorState extends ChangeNotifier {
       size += r.end - r.start + 1;
     }
     return size;
+  }
+
+  /// Suggested output base name: 字体名_格宽x格高.
+  String get suggestedBaseName {
+    final fontName = _fontPaths.isEmpty
+        ? 'font'
+        : p.basenameWithoutExtension(_fontPaths.first);
+    return '${fontName}_${_cellWidth}x$_cellHeight';
   }
 
   List<({int start, int end})> _parseRangesSafe() {
@@ -251,6 +314,32 @@ class FontExtractorState extends ChangeNotifier {
     }
   }
 
+  /// Enables/disables automatic preview refresh. When enabled, any change
+  /// to fonts, render settings or the charset re-renders the preview after
+  /// a short debounce.
+  void setAutoRefreshPreview(bool v) {
+    if (_autoRefreshPreview == v) return;
+    _autoRefreshPreview = v;
+    notifyListeners();
+    if (v && _renderer.hasFont) _scheduleAutoRefresh();
+  }
+
+  void _scheduleAutoRefresh() {
+    if (!_autoRefreshPreview || !_renderer.hasFont) return;
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer(const Duration(milliseconds: 600), () {
+      if (_autoRefreshPreview && !_previewLoading && !_isGenerating) {
+        refreshPreview();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> refreshPreview() async {
     if (!_renderer.hasFont) {
       _lastError = '请先加载字体文件';
@@ -298,6 +387,88 @@ class FontExtractorState extends ChangeNotifier {
       cellHeight: _cellHeight,
       verticalOffset: _verticalOffset,
     );
+  }
+
+  // ------------------------------------------------------------------
+  // Template (.gflm)
+  // ------------------------------------------------------------------
+
+  /// Template format version written by [exportTemplate].
+  static const int templateVersion = 1;
+
+  /// Serializes the current extraction configuration to a JSON map.
+  Map<String, dynamic> exportTemplate() {
+    return {
+      'version': templateVersion,
+      'fontPaths': List<String>.of(_fontPaths),
+      'fontSize': _fontSize,
+      'cellWidth': _cellWidth,
+      'cellHeight': _cellHeight,
+      'verticalOffset': _verticalOffset,
+      'bitDepth': _bitDepth.name,
+      'scanMode': _scanMode.name,
+      'threshold': _threshold,
+      'showCellGrid': _showCellGrid,
+      'selectedBlockIndexes': _selectedBlockIndexes.toList()..sort(),
+      'customRangeInput': _customRangeInput,
+      'importedText': _importedText,
+      'previewRangeInput': _previewRangeInput,
+      'autoRefreshPreview': _autoRefreshPreview,
+    };
+  }
+
+  /// Applies a template map previously produced by [exportTemplate].
+  ///
+  /// Returns the font file paths that no longer exist (or failed to load)
+  /// and were skipped. Throws [FormatException] when [json] is not a valid
+  /// template.
+  Future<List<String>> applyTemplate(Map<String, dynamic> json) async {
+    double numValue(String key, double fallback) =>
+        (json[key] as num?)?.toDouble() ?? fallback;
+
+    if (json['fontPaths'] is! List) {
+      throw const FormatException('不是有效的字库提取模板文件');
+    }
+
+    clearFonts();
+    _fontSize = numValue('fontSize', 14).clamp(4, 200);
+    _cellWidth = numValue('cellWidth', 8).round().clamp(1, 256);
+    _cellHeight = numValue('cellHeight', 16).round().clamp(1, 256);
+    _verticalOffset = numValue('verticalOffset', 0);
+    _bitDepth = BitmapBitDepth.values.asNameMap()[json['bitDepth']] ??
+        BitmapBitDepth.one;
+    _scanMode = BitmapScanMode.values.asNameMap()[json['scanMode']] ??
+        BitmapScanMode.rowMajor;
+    _threshold = numValue('threshold', 128).round().clamp(0, 255);
+    _showCellGrid = json['showCellGrid'] == true;
+    _selectedBlockIndexes
+      ..clear()
+      ..addAll((json['selectedBlockIndexes'] as List? ?? const [])
+          .whereType<num>()
+          .map((e) => e.toInt())
+          .where((i) => i >= 0 && i < kUnicodeBlocks.length));
+    _customRangeInput = json['customRangeInput'] as String? ?? '';
+    _importedText = json['importedText'] as String? ?? '';
+    _previewRangeInput = json['previewRangeInput'] as String? ?? '';
+    _autoRefreshPreview = json['autoRefreshPreview'] == true;
+
+    final missing = <String>[];
+    for (final path in (json['fontPaths'] as List).whereType<String>()) {
+      if (!File(path).existsSync()) {
+        missing.add(path);
+        continue;
+      }
+      try {
+        await _renderer.addFontFile(path);
+        _fontPaths.add(path);
+        _loadDisplayName(path);
+      } catch (_) {
+        missing.add(path);
+      }
+    }
+    _lastError = null;
+    notifyListeners();
+    return missing;
   }
 
   // ------------------------------------------------------------------
@@ -375,6 +546,7 @@ class FontExtractorState extends ChangeNotifier {
           cellWidth: _cellWidth,
           cellHeight: _cellHeight,
           bitsPerPixel: _bitDepth == BitmapBitDepth.one ? 1 : 8,
+          columnMajor: _scanMode == BitmapScanMode.columnMajor,
           glyphs: packed,
         );
         await File(p.join(outputDir, '${baseName}_font.c'))

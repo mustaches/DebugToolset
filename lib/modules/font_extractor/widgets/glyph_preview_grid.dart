@@ -102,6 +102,28 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
                 ),
               ),
             ),
+            InkWell(
+              onTap: () =>
+                  state.setAutoRefreshPreview(!state.autoRefreshPreview),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: Checkbox(
+                      value: state.autoRefreshPreview,
+                      onChanged: (v) =>
+                          state.setAutoRefreshPreview(v ?? false),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Text('自动刷新', style: TextStyle(fontSize: 12)),
+                ],
+              ),
+            ),
             if (state.previewRangeError != null)
               Tooltip(
                 message: state.previewRangeError!,
@@ -176,7 +198,7 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
             child: state.previewGlyphs.isEmpty
                 ? const Center(
                     child: Text(
-                      '加载字体并点击"刷新预览"',
+                      '尚未生成预览 — 从左侧 ① 添加字体开始，然后点击上方刷新图标',
                       style: TextStyle(color: Colors.grey, fontSize: 12),
                     ),
                   )
@@ -191,7 +213,7 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
                     ),
                     itemCount: state.previewGlyphs.length,
                     itemBuilder: (context, index) {
-                      return _GlyphCell(
+                      return GlyphCellView(
                         glyph: state.previewGlyphs[index],
                         scale: _zoom,
                         showCellGrid: state.showCellGrid,
@@ -208,7 +230,10 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
   }
 }
 
-class _GlyphCell extends StatelessWidget {
+/// A single glyph cell: the rendered bitmap plus its code point label,
+/// with optional cell-grid and vertical-offset overlays. Shared by the
+/// full preview grid and the bitmap-step sample preview.
+class GlyphCellView extends StatelessWidget {
   final GlyphBitmap glyph;
   final double scale;
   final bool showCellGrid;
@@ -216,7 +241,8 @@ class _GlyphCell extends StatelessWidget {
   final int cellHeight;
   final double verticalOffset;
 
-  const _GlyphCell({
+  const GlyphCellView({
+    super.key,
     required this.glyph,
     required this.scale,
     required this.showCellGrid,

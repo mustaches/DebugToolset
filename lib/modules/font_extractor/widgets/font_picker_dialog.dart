@@ -317,7 +317,7 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
       backgroundColor: const Color(0xFF252525),
       title: const Text('选择字体', style: TextStyle(color: Colors.white, fontSize: 16)),
       content: SizedBox(
-        width: 520,
+        width: 780,
         height: 520,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -596,7 +596,7 @@ class _FontRowState extends State<_FontRow> {
                   child: Text(
                     displayName,
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 13,
                       fontFamily: 'Consolas',
                       color: _isMono ? Colors.cyanAccent : Colors.white,
                     ),
@@ -659,7 +659,7 @@ class _FontRowState extends State<_FontRow> {
               child: Text(
                 '${_nameInfo.version ?? '未知版本'} · $fileName',
                 style: const TextStyle(
-                  fontSize: 9,
+                  fontSize: 11,
                   color: Colors.grey,
                   fontFamily: 'Consolas',
                 ),
@@ -674,7 +674,7 @@ class _FontRowState extends State<_FontRow> {
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 28,
                 height: 1.25,
                 color: _family != null ? Colors.white : Colors.white38,
                 fontFamily: _family,
