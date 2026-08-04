@@ -7,13 +7,26 @@ import '../../../providers/font_extractor_state.dart';
 
 /// Left-panel section for picking the character set:
 /// predefined Unicode blocks, custom ranges and text-file import.
-class CharsetPanel extends StatelessWidget {
+class CharsetPanel extends StatefulWidget {
   const CharsetPanel({super.key});
+
+  @override
+  State<CharsetPanel> createState() => _CharsetPanelState();
+}
+
+class _CharsetPanelState extends State<CharsetPanel> {
+  bool _showAll = false;
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<FontExtractorState>();
     final rangeError = state.customRangeError;
+
+    final blocks = [
+      for (int i = 0; i < kUnicodeBlocks.length; i++)
+        if (_showAll || state.selectedBlockIndexes.contains(i))
+          (index: i, block: kUnicodeBlocks[i])
+    ]..sort((a, b) => a.block.start.compareTo(b.block.start));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -26,6 +39,75 @@ class CharsetPanel extends StatelessWidget {
                 color: Colors.white,
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: () =>
+                  state.toggleSelectAllBlocks(!state.isAllBlocksSelected),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: Checkbox(
+                      value: state.isAllBlocksSelected,
+                      onChanged: (v) => state.toggleSelectAllBlocks(v ?? false),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  const SizedBox(width: 3),
+                  const Text('全选',
+                      style: TextStyle(fontSize: 11, color: Colors.cyanAccent)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: () =>
+                  state.toggleSelectNoneBlocks(!state.isNoneSelected),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: Checkbox(
+                      value: state.isNoneSelected,
+                      onChanged: (v) =>
+                          state.toggleSelectNoneBlocks(v ?? false),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  const SizedBox(width: 3),
+                  const Text('全不选',
+                      style: TextStyle(fontSize: 11, color: Colors.cyanAccent)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: () => setState(() => _showAll = !_showAll),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: Checkbox(
+                      value: _showAll,
+                      onChanged: (v) => setState(() => _showAll = v ?? false),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  const SizedBox(width: 3),
+                  const Text('显示全部',
+                      style: TextStyle(fontSize: 11, color: Colors.grey)),
+                ],
               ),
             ),
             const Spacer(),
@@ -43,63 +125,74 @@ class CharsetPanel extends StatelessWidget {
             border: Border.all(color: Colors.grey.shade800),
             borderRadius: BorderRadius.circular(4),
           ),
-          child: ListView.builder(
-            itemCount: kUnicodeBlocks.length,
-            itemBuilder: (context, index) {
-              final block = kUnicodeBlocks[index];
-              final selected = state.selectedBlockIndexes.contains(index);
-              return InkWell(
-                onTap: () => state.toggleBlock(index, !selected),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: Checkbox(
-                          value: selected,
-                          onChanged: (v) => state.toggleBlock(index, v ?? false),
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          block.name,
-                          style: const TextStyle(fontSize: 11),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (block.direction == TextDir.rtl)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 3, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF4A3A00),
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                          child: const Text('RTL',
-                              style: TextStyle(
-                                  fontSize: 9, color: Colors.amberAccent)),
-                        ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'U+${block.start.toRadixString(16).toUpperCase().padLeft(4, '0')}'
-                        '-U+${block.end.toRadixString(16).toUpperCase().padLeft(4, '0')}',
-                        style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.cyanAccent,
-                            fontFamily: 'Consolas'),
-                      ),
-                    ],
+          child: blocks.isEmpty
+              ? const Center(
+                  child: Text(
+                    '未选中任何字符集区块',
+                    style: TextStyle(color: Colors.grey, fontSize: 11),
                   ),
-                ),
-              );
-            },
-          ),
+                )
+              : ListView.builder(
+                  itemExtent: 26.0,
+                  itemCount: blocks.length,
+                  itemBuilder: (context, i) {
+                    final index = blocks[i].index;
+                    final block = blocks[i].block;
+                    final selected = state.selectedBlockIndexes.contains(index);
+                    return InkWell(
+                      onTap: () => state.toggleBlock(index, !selected),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: Checkbox(
+                                value: selected,
+                                onChanged: (v) =>
+                                    state.toggleBlock(index, v ?? false),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                block.name,
+                                style: const TextStyle(fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                              if (block.direction == TextDir.rtl)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 3, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF4A3A00),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                  child: const Text('RTL',
+                                      style: TextStyle(
+                                          fontSize: 9,
+                                          color: Colors.amberAccent)),
+                                ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${formatCodePoint(block.start)}-${formatCodePoint(block.end)}',
+                                style: const TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.cyanAccent,
+                                    fontFamily: 'Consolas'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
         ),
         const SizedBox(height: 10),
         const Text('自定义码点范围',

@@ -16,31 +16,98 @@ class BitmapSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _numberRow(
-          label: '字号 (px)',
-          value: state.fontSize.toStringAsFixed(0),
-          onMinus: () => state.setFontSize(state.fontSize - 1),
-          onPlus: () => state.setFontSize(state.fontSize + 1),
-          onSubmit: (v) => state.setFontSize(v.toDouble()),
+        if (state.pixelFontSizeWarning != null) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2416),
+              borderRadius: BorderRadius.circular(4),
+              border:
+                  Border.all(color: Colors.amberAccent.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    size: 14, color: Colors.amberAccent),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    state.pixelFontSizeWarning!,
+                    style: const TextStyle(
+                        fontSize: 10, color: Colors.amberAccent),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        _groupContainer(
+          title: '半角字符 (ASCII/拉丁/其它)',
+          children: [
+            _numberRow(
+              label: '字号 (px)',
+              value: state.fontSize.toStringAsFixed(0),
+              onMinus: () => state.setFontSize(state.fontSize - 1),
+              onPlus: () => state.setFontSize(state.fontSize + 1),
+              onSubmit: (v) => state.setFontSize(v.toDouble()),
+            ),
+            _numberRow(
+              label: '单元格宽',
+              value: '${state.cellWidth}',
+              onMinus: () =>
+                  state.setCellSize(state.cellWidth - 1, state.cellHeight),
+              onPlus: () =>
+                  state.setCellSize(state.cellWidth + 1, state.cellHeight),
+              onSubmit: (v) => state.setCellSize(v, state.cellHeight),
+            ),
+            _numberRow(
+              label: '单元格高',
+              value: '${state.cellHeight}',
+              onMinus: () =>
+                  state.setCellSize(state.cellWidth, state.cellHeight - 1),
+              onPlus: () =>
+                  state.setCellSize(state.cellWidth, state.cellHeight + 1),
+              onSubmit: (v) => state.setCellSize(state.cellWidth, v),
+            ),
+          ],
         ),
-        _numberRow(
-          label: '单元格宽',
-          value: '${state.cellWidth}',
-          onMinus: () =>
-              state.setCellSize(state.cellWidth - 1, state.cellHeight),
-          onPlus: () =>
-              state.setCellSize(state.cellWidth + 1, state.cellHeight),
-          onSubmit: (v) => state.setCellSize(v, state.cellHeight),
-        ),
-        _numberRow(
-          label: '单元格高',
-          value: '${state.cellHeight}',
-          onMinus: () =>
-              state.setCellSize(state.cellWidth, state.cellHeight - 1),
-          onPlus: () =>
-              state.setCellSize(state.cellWidth, state.cellHeight + 1),
-          onSubmit: (v) => state.setCellSize(state.cellWidth, v),
-        ),
+        if (state.fontPaths.isNotEmpty && state.hasFullWidthActive) ...[
+          const SizedBox(height: 8),
+          _groupContainer(
+            title: '全角字符 (中/日/韩/彝)',
+            children: [
+              _numberRow(
+                label: '字号 (px)',
+                value: state.cjkFontSize.toStringAsFixed(0),
+                onMinus: () => state.setCjkFontSize(state.cjkFontSize - 1),
+                onPlus: () => state.setCjkFontSize(state.cjkFontSize + 1),
+                onSubmit: (v) => state.setCjkFontSize(v.toDouble()),
+              ),
+              _numberRow(
+                label: '单元格大小',
+                value: '${state.cjkCellSize}',
+                onMinus: () => state.setCjkCellSize(state.cjkCellSize - 1),
+                onPlus: () => state.setCjkCellSize(state.cjkCellSize + 1),
+                onSubmit: state.setCjkCellSize,
+              ),
+            ],
+          ),
+        ],
+        if (state.fontPaths.isNotEmpty && state.hasProportionalActive) ...[
+          const SizedBox(height: 8),
+          _groupContainer(
+            title: '变宽字符 (天城文/阿拉伯/泰文/希腊等)',
+            children: const [
+              Text(
+                '宽度按字体实际字形自动测定，字号与单元格高同半角组',
+                style: TextStyle(fontSize: 10, color: Colors.grey),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 8),
         _numberRow(
           label: '垂直偏移',
           value: state.verticalOffset.toStringAsFixed(0),
@@ -111,7 +178,84 @@ class BitmapSection extends StatelessWidget {
                 style: TextStyle(fontSize: 11, color: Colors.grey)),
           ],
         ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: Checkbox(
+                value: state.showThresholdPreview,
+                onChanged: (v) => state.setShowThresholdPreview(v ?? false),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Text('预览中应用阈值效果 (1bpp)',
+                style: TextStyle(fontSize: 11, color: Colors.grey)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: Checkbox(
+                value: state.pixelSnap,
+                onChanged: (v) => state.setPixelSnap(v ?? true),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Text('1:1 像素硬对齐 (消除次像素模糊)',
+                style: TextStyle(fontSize: 11, color: Colors.cyanAccent)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ElevatedButton.icon(
+          onPressed: state.applyOneToOnePreset,
+          icon: const Icon(Icons.grid_on, size: 14),
+          label: const Text('一键 1:1 像素模式预设', style: TextStyle(fontSize: 11)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF0A4A5A),
+            foregroundColor: Colors.cyanAccent,
+            minimumSize: const Size(0, 30),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _groupContainer({
+    required String title,
+    required List<Widget> children,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border.all(color: Colors.grey.shade900),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: Colors.cyanAccent,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...children,
+        ],
+      ),
     );
   }
 

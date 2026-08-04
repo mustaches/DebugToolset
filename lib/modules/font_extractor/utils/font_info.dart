@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:path/path.dart' as p;
+
 /// Basic font metadata extracted from the TrueType/OpenType `name` table.
 class FontNameInfo {
   /// Full font name (nameID 4), e.g. "Arial".
@@ -336,3 +338,170 @@ Future<bool> isMonospaceFontFile(String path) async {
 
 String _tag(List<int> bytes, int offset) =>
     String.fromCharCodes(bytes.sublist(offset, offset + 4));
+
+/// SFNT table tags whose `bitmapSizeTable` records the pixel sizes (ppemY)
+/// of embedded bitmap strikes: OpenType EBLC, color CBLC and Apple bloc.
+const _bitmapSizeTableTags = {'EBLC', 'CBLC', 'bloc'};
+
+/// Reads the pixel sizes (ppemY) of the embedded bitmap strikes of a
+/// TTF/OTF/TTC font file, e.g. `[12, 16]`. Every member font of a TTC
+/// collection is checked; sizes are merged, deduplicated and sorted.
+///
+/// Returns an empty list when the font has no embedded bitmap data or the
+/// file is unreadable/malformed.
+Future<List<int>> readEmbeddedBitmapSizes(String path) async {
+  RandomAccessFile? raf;
+  try {
+    raf = await File(path).open();
+
+    final head = await raf.read(16);
+    if (head.length < 12) return const [];
+
+    final sfntOffsets = <int>[];
+    if (_tag(head, 0) == 'ttcf') {
+      final numFonts = ByteData.sublistView(head).getUint32(8, Endian.big);
+      if (numFonts <= 0 || numFonts > 256) return const [];
+      final offsetBytes = await raf.read(numFonts * 4);
+      if (offsetBytes.length < numFonts * 4) return const [];
+      final offsetData = ByteData.sublistView(offsetBytes);
+      for (int i = 0; i < numFonts; i++) {
+        sfntOffsets.add(offsetData.getUint32(i * 4, Endian.big));
+      }
+    } else {
+      sfntOffsets.add(0);
+    }
+
+    final sizes = <int>{};
+    for (final sfntOffset in sfntOffsets) {
+      await raf.setPosition(sfntOffset);
+      final sfnt = await raf.read(12);
+      if (sfnt.length < 12) continue;
+      final numTables = ByteData.sublistView(sfnt).getUint16(4, Endian.big);
+      if (numTables <= 0 || numTables > 256) continue;
+
+      final dir = await raf.read(numTables * 16);
+      if (dir.length < numTables * 16) continue;
+      final dirData = ByteData.sublistView(dir);
+
+      for (int i = 0; i < numTables; i++) {
+        if (!_bitmapSizeTableTags.contains(_tag(dir, i * 16))) continue;
+        final tableOffset = dirData.getUint32(i * 16 + 8, Endian.big);
+
+        // Table layout matches ebdt_parser.dart: numSizes is a u32 at
+        // offset 4; each bitmapSizeTable record is 48 bytes starting at
+        // offset 8, with ppemY a u8 at record offset 45.
+        await raf.setPosition(tableOffset);
+        final header = await raf.read(8);
+        if (header.length < 8) continue;
+        final numSizes =
+            ByteData.sublistView(header).getUint32(4, Endian.big);
+        if (numSizes <= 0 || numSizes > 100) continue;
+
+        final records = await raf.read(numSizes * 48);
+        if (records.length < numSizes * 48) continue;
+        final recordsData = ByteData.sublistView(records);
+        for (int s = 0; s < numSizes; s++) {
+          final ppemY = recordsData.getUint8(s * 48 + 45);
+          if (ppemY > 0) sizes.add(ppemY);
+        }
+      }
+    }
+    final result = sizes.toList()..sort();
+    return result;
+  } catch (_) {
+    return const [];
+  } finally {
+    await raf?.close();
+  }
+}
+
+/// SFNT table tags that indicate embedded bitmap (dot-matrix) glyph data.
+const _bitmapTableTags = {
+  'EBDT', 'EBLC', 'EBSC', // OpenType embedded bitmaps (typically 1-bit)
+  'bdat', 'bloc', // Apple bitmap data
+  'CBDT', 'CBLC', // color bitmaps (e.g. Noto Color Emoji)
+  'sbix', // Apple PNG bitmaps
+};
+
+/// Returns true when the TTF/OTF/TTC file contains embedded bitmap glyph
+/// data. Every member font of a TTC collection is checked; any bitmap
+/// table in any member counts.
+///
+/// Only the table directory is read, so this is fast. Returns false for
+/// unreadable or malformed files.
+Future<bool> fontHasEmbeddedBitmap(String path) async {
+  RandomAccessFile? raf;
+  try {
+    raf = await File(path).open();
+
+    final head = await raf.read(16);
+    if (head.length < 12) return false;
+
+    final sfntOffsets = <int>[];
+    if (_tag(head, 0) == 'ttcf') {
+      final numFonts = ByteData.sublistView(head).getUint32(8, Endian.big);
+      if (numFonts <= 0 || numFonts > 256) return false;
+      final offsetBytes = await raf.read(numFonts * 4);
+      if (offsetBytes.length < numFonts * 4) return false;
+      final offsetData = ByteData.sublistView(offsetBytes);
+      for (int i = 0; i < numFonts; i++) {
+        sfntOffsets.add(offsetData.getUint32(i * 4, Endian.big));
+      }
+    } else {
+      sfntOffsets.add(0);
+    }
+
+    for (final sfntOffset in sfntOffsets) {
+      await raf.setPosition(sfntOffset);
+      final sfnt = await raf.read(12);
+      if (sfnt.length < 12) continue;
+      final numTables = ByteData.sublistView(sfnt).getUint16(4, Endian.big);
+      if (numTables <= 0 || numTables > 256) continue;
+
+      final dir = await raf.read(numTables * 16);
+      if (dir.length < numTables * 16) continue;
+      for (int i = 0; i < numTables; i++) {
+        if (_bitmapTableTags.contains(_tag(dir, i * 16))) return true;
+      }
+    }
+    return false;
+  } catch (_) {
+    return false;
+  } finally {
+    await raf?.close();
+  }
+}
+
+/// Matches pixel-size hints like "16px" / "12 px" in font names and file
+/// names (e.g. "Ark Pixel 16px", "VonwaonBitmap-16px", "fusion-pixel-12px").
+final _pixelSizeHintRe = RegExp(r'(\d{1,2})\s*px', caseSensitive: false);
+
+/// Detects the design pixel size(s) of a pixel (dot-matrix) font:
+///
+/// 1. Embedded bitmap strikes ([readEmbeddedBitmapSizes]) — authoritative
+///    when the font ships EBLC/CBLC/bloc tables; returned as-is.
+/// 2. Otherwise a `Npx` hint extracted from the font's display name and
+///    the file name.
+///
+/// Returns an empty list when the design size is unknown (plain vector
+/// fonts with no size hint in the name).
+Future<List<int>> detectPixelFontDesignSizes(String path) async {
+  final strikes = await readEmbeddedBitmapSizes(path);
+  if (strikes.isNotEmpty) return strikes;
+
+  final sizes = <int>{};
+  void collect(String? text) {
+    if (text == null) return;
+    for (final m in _pixelSizeHintRe.allMatches(text)) {
+      final v = int.tryParse(m.group(1)!);
+      if (v != null && v > 0) sizes.add(v);
+    }
+  }
+
+  final info = await readFontNameInfo(path);
+  collect(info.displayName);
+  collect(p.basename(path));
+
+  final result = sizes.toList()..sort();
+  return result;
+}

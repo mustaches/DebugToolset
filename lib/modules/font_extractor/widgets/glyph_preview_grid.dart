@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
+import '../utils/bitmap_converter.dart';
+import '../utils/unicode_blocks.dart';
 import '../../../modules/font_extractor/utils/glyph_renderer.dart';
 import '../../../providers/font_extractor_state.dart';
 
@@ -16,33 +20,40 @@ class GlyphPreviewGrid extends StatefulWidget {
 }
 
 class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
-  double _zoom = 3.0;
-  late final TextEditingController _rangeController;
+  static const List<double> _zoomSteps = [
+    1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 16.0, 20.0, 24.0
+  ];
+  int _zoomIndex = 2; // Default to 3x (index 2)
+  double get _zoom => _zoomSteps[_zoomIndex];
+
+  late final TextEditingController _limitController;
   Timer? _refreshDebounce;
 
   @override
   void initState() {
     super.initState();
-    _rangeController = TextEditingController(
-        text: context.read<FontExtractorState>().previewRangeInput);
+    final state = context.read<FontExtractorState>();
+    _limitController =
+        TextEditingController(text: '${state.previewLimit}');
   }
 
   @override
   void dispose() {
     _refreshDebounce?.cancel();
-    _rangeController.dispose();
+    _limitController.dispose();
     super.dispose();
   }
 
-  /// Typing a range auto-refreshes the preview after a short pause
-  /// (only when a font is loaded, so typing before that is a no-op).
-  void _onRangeChanged(FontExtractorState state, String v) {
-    state.setPreviewRangeInput(v);
-    _refreshDebounce?.cancel();
-    if (state.fontPaths.isEmpty) return;
-    _refreshDebounce = Timer(const Duration(milliseconds: 600), () {
-      if (mounted) context.read<FontExtractorState>().refreshPreview();
-    });
+  void _onLimitChanged(FontExtractorState state, String v) {
+    final count = int.tryParse(v);
+    if (count != null && count >= 0) {
+      state.setPreviewLimit(count);
+      _refreshDebounce?.cancel();
+      if (state.fontPaths.isEmpty) return;
+      _refreshDebounce = Timer(const Duration(milliseconds: 600), () {
+        if (mounted) context.read<FontExtractorState>().refreshPreview();
+      });
+    }
   }
 
   void _refreshNow() {
@@ -64,21 +75,24 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
                     color: Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.bold)),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
+            const Text('数量：',
+                style: TextStyle(fontSize: 11, color: Colors.grey)),
             SizedBox(
-              width: 170,
+              width: 55,
               height: 28,
               child: TextField(
-                controller: _rangeController,
+                controller: _limitController,
+                keyboardType: TextInputType.number,
                 style: const TextStyle(fontSize: 11, fontFamily: 'Consolas'),
                 decoration: InputDecoration(
                   isDense: true,
-                  hintText: '预览范围 如 U+4E00-U+4E7F（空=前200）',
+                  hintText: '100',
                   hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
                   filled: true,
                   fillColor: const Color(0xFF252525),
                   contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(4),
                     borderSide: BorderSide(color: Colors.grey.shade800),
@@ -88,20 +102,23 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
                     borderSide: BorderSide(color: Colors.grey.shade800),
                   ),
                 ),
-                onChanged: (v) => _onRangeChanged(state, v),
+                onChanged: (v) => _onLimitChanged(state, v),
                 onSubmitted: (_) => _refreshNow(),
               ),
             ),
-            Tooltip(
-              message: '按范围刷新预览',
-              child: InkWell(
-                onTap: state.previewLoading ? null : _refreshNow,
-                child: const Padding(
-                  padding: EdgeInsets.all(4),
-                  child: Icon(Icons.refresh, size: 16, color: Colors.cyanAccent),
-                ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              onPressed: state.previewLoading ? null : _refreshNow,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('刷新预览', style: TextStyle(fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A4A5A),
+                foregroundColor: Colors.cyanAccent,
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
               ),
             ),
+            const SizedBox(width: 8),
             InkWell(
               onTap: () =>
                   state.setAutoRefreshPreview(!state.autoRefreshPreview),
@@ -114,7 +131,7 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
                     child: Checkbox(
                       value: state.autoRefreshPreview,
                       onChanged: (v) =>
-                          state.setAutoRefreshPreview(v ?? false),
+                          state.setAutoRefreshPreview(v ?? true),
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: VisualDensity.compact,
                     ),
@@ -124,28 +141,40 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
                 ],
               ),
             ),
-            if (state.previewRangeError != null)
-              Tooltip(
-                message: state.previewRangeError!,
-                child: const Padding(
-                  padding: EdgeInsets.only(left: 4),
-                  child: Icon(Icons.error_outline,
-                      size: 14, color: Colors.redAccent),
-                ),
-              ),
             const SizedBox(width: 12),
             const Icon(Icons.zoom_out, size: 14, color: Colors.grey),
             SizedBox(
-              width: 120,
-              child: Slider(
-                value: _zoom,
-                min: 1,
-                max: 8,
-                divisions: 7,
-                onChanged: (v) => setState(() => _zoom = v),
+              width: 400,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  tickMarkShape:
+                      const RoundSliderTickMarkShape(tickMarkRadius: 2.5),
+                  activeTickMarkColor: Colors.cyanAccent,
+                  inactiveTickMarkColor: Colors.grey.shade600,
+                  activeTrackColor: const Color(0xFF0A4A5A),
+                  inactiveTrackColor: const Color(0xFF333333),
+                  thumbColor: Colors.cyanAccent,
+                  overlayColor: Colors.cyanAccent.withValues(alpha: 0.2),
+                ),
+                child: Slider(
+                  value: _zoomIndex.toDouble(),
+                  min: 0,
+                  max: (_zoomSteps.length - 1).toDouble(),
+                  divisions: _zoomSteps.length - 1,
+                  onChanged: (v) => setState(() => _zoomIndex = v.round()),
+                ),
               ),
             ),
             const Icon(Icons.zoom_in, size: 14, color: Colors.grey),
+            const SizedBox(width: 4),
+            Text(
+              '${_zoom.toStringAsFixed(0)}x',
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.cyanAccent,
+                fontFamily: 'Consolas',
+              ),
+            ),
             const Spacer(),
             if (state.previewLoading)
               Row(
@@ -170,11 +199,13 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
                           const TextStyle(fontSize: 11, color: Colors.grey)),
                   const SizedBox(width: 4),
                   Tooltip(
-                    message: '预览范围留空时显示字符集前 '
-                        '${FontExtractorState.previewLimit} 个字素；'
-                        '填写范围（如 U+4E00-U+4E7F）则完整预览该范围，'
-                        '输入停顿或回车后自动刷新。\n'
-                        '点击“生成字库”会导出全部选中的字符',
+                    message: state.previewLimit == 0
+                        ? '全量预览模式（数量为 0）：预览所选字符集的全部字符；\n'
+                            '未包含在当前字体中的字符集会单独提示。\n'
+                            '点击“生成字库”即可导出所选字符集的全部字模'
+                        : '按字符集分类预览各区块头部前 ${state.previewLimit} 个字符（填 0 预览全部）；\n'
+                            '未包含在当前字体中的字符集会单独提示。\n'
+                            '点击“生成字库”即可导出所选字符集的全部字模',
                     child: const Icon(Icons.info_outline,
                         size: 12, color: Colors.grey),
                   ),
@@ -193,39 +224,336 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
           ),
         const SizedBox(height: 6),
         Expanded(
-          child: Container(
-            color: const Color(0xFF1E1E1E),
-            child: state.previewGlyphs.isEmpty
-                ? const Center(
-                    child: Text(
-                      '尚未生成预览 — 从左侧 ① 添加字体开始，然后点击上方刷新图标',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                  )
-                : GridView.builder(
-                    padding: const EdgeInsets.all(8),
-                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent:
-                          (state.cellWidth * _zoom) + 12,
-                      mainAxisExtent: (state.cellHeight * _zoom) + 26,
-                      crossAxisSpacing: 6,
-                      mainAxisSpacing: 6,
-                    ),
-                    itemCount: state.previewGlyphs.length,
-                    itemBuilder: (context, index) {
-                      return GlyphCellView(
-                        glyph: state.previewGlyphs[index],
-                        scale: _zoom,
-                        showCellGrid: state.showCellGrid,
-                        cellWidth: state.cellWidth,
-                        cellHeight: state.cellHeight,
-                        verticalOffset: state.verticalOffset,
-                      );
-                    },
-                  ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (state.extractMode == FontExtractMode.multiLang &&
+                  state.langBindings.any(
+                      (b) => b.fontPath != null && b.fontPath!.isNotEmpty))
+                _buildBoundLanguagesSidebar(context, state),
+              Expanded(
+                child: Container(
+                  color: const Color(0xFF1E1E1E),
+                  child: state.previewGroups.isEmpty
+                      ? const Center(
+                          child: Text(
+                            '尚未生成预览 — 从左侧 ① 添加字体开始，然后点击上方“刷新预览”按钮',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: state.previewGroups.length,
+                          itemBuilder: (context, groupIdx) {
+                            final group = state.previewGroups[groupIdx];
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Block Header Bar
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF2D2D2D),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.grey.shade800),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        group.isMissingInFont
+                                            ? Icons.warning_amber_rounded
+                                            : Icons.folder_special,
+                                        size: 15,
+                                        color: group.isMissingInFont
+                                            ? Colors.amberAccent
+                                            : Colors.cyanAccent,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        group.blockName,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '(${group.rangeLabel})',
+                                        style: const TextStyle(
+                                          color: Colors.cyanAccent,
+                                          fontSize: 11,
+                                          fontFamily: 'Consolas',
+                                        ),
+                                      ),
+                                      if (group.fontName.isNotEmpty) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 1.5),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF1E1E1E),
+                                            borderRadius:
+                                                BorderRadius.circular(3),
+                                            border: Border.all(
+                                                color: Colors.grey.shade700),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(
+                                                  Icons.font_download_outlined,
+                                                  size: 11,
+                                                  color: Colors.cyanAccent),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                group.fontName,
+                                                style: const TextStyle(
+                                                  color: Colors.cyanAccent,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                      const Spacer(),
+                                      Text(
+                                        '${group.glyphs.length} 字素',
+                                        style: const TextStyle(
+                                            color: Colors.grey, fontSize: 10),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                if (group.isMissingInFont)
+                                  Container(
+                                    width: double.infinity,
+                                    margin: const EdgeInsets.only(bottom: 16),
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF2A1E1E),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                          color: Colors.redAccent
+                                              .withValues(alpha: 0.5)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.info_outline,
+                                            size: 16, color: Colors.amberAccent),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            '此字符集在“${group.fontName}”里不存在或未分配字模',
+                                            style: const TextStyle(
+                                              color: Colors.amberAccent,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 16),
+                                    child: Wrap(
+                                      spacing: 4,
+                                      runSpacing: 4,
+                                      children: group.glyphs.map((g) {
+                                        return GlyphCellView(
+                                          glyph: g,
+                                          scale: _zoom,
+                                          showCellGrid: state.showCellGrid,
+                                          showThresholdPreview:
+                                              state.showThresholdPreview,
+                                          verticalOffset: state.verticalOffset,
+                                          threshold: state.threshold,
+                                          bitDepth: state.bitDepth,
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBoundLanguagesSidebar(
+      BuildContext context, FontExtractorState state) {
+    final boundList = state.langBindings
+        .where((b) => b.fontPath != null && b.fontPath!.isNotEmpty)
+        .toList();
+
+    return Container(
+      width: 240,
+      decoration: BoxDecoration(
+        color: const Color(0xFF222222),
+        border: Border(
+          right: BorderSide(color: Colors.grey.shade800),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Sidebar Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            color: const Color(0xFF2B2B2B),
+            child: Row(
+              children: [
+                const Icon(Icons.language, size: 16, color: Colors.cyanAccent),
+                const SizedBox(width: 6),
+                const Text(
+                  '已绑定语言',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A4A5A),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${boundList.length}',
+                    style: const TextStyle(
+                      color: Colors.cyanAccent,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Bound languages list
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.all(8),
+              itemCount: boundList.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 6),
+              itemBuilder: (context, index) {
+                final item = boundList[index];
+                final fontName =
+                    item.fontDisplayName ?? p.basename(item.fontPath!);
+
+                return Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E1E),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.grey.shade800),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0A4A5A),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '#${index + 1}',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: Colors.cyanAccent,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            item.flag,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              item.name,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF333333),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: Text(
+                              item.scriptTag,
+                              style: const TextStyle(
+                                color: Colors.cyanAccent,
+                                fontSize: 9,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(Icons.font_download_outlined,
+                              size: 12, color: Colors.grey),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              fontName,
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 10,
+                                fontFamily: 'Consolas',
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${item.blocks.length} 个字符区块 | ${item.sampleText}',
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 9,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -233,28 +561,111 @@ class _GlyphPreviewGridState extends State<GlyphPreviewGrid> {
 /// A single glyph cell: the rendered bitmap plus its code point label,
 /// with optional cell-grid and vertical-offset overlays. Shared by the
 /// full preview grid and the bitmap-step sample preview.
-class GlyphCellView extends StatelessWidget {
+///
+/// The grayscale pixels are composited once into a 1:1 [ui.Image] (white
+/// ink on transparent background) and drawn with
+/// [FilterQuality.none], so every bitmap pixel maps to an exact device
+/// pixel block without resampling blur — the same approach as the font
+/// test dialog's `_BitmapPainter`.
+class GlyphCellView extends StatefulWidget {
   final GlyphBitmap glyph;
   final double scale;
   final bool showCellGrid;
-  final int cellWidth;
-  final int cellHeight;
+  final bool showThresholdPreview;
   final double verticalOffset;
+  final int threshold;
+  final BitmapBitDepth bitDepth;
 
   const GlyphCellView({
     super.key,
     required this.glyph,
     required this.scale,
     required this.showCellGrid,
-    required this.cellWidth,
-    required this.cellHeight,
+    required this.showThresholdPreview,
     required this.verticalOffset,
+    required this.threshold,
+    required this.bitDepth,
   });
 
   @override
+  State<GlyphCellView> createState() => _GlyphCellViewState();
+}
+
+class _GlyphCellViewState extends State<GlyphCellView> {
+  ui.Image? _image;
+
+  @override
+  void initState() {
+    super.initState();
+    _rebuildImage();
+  }
+
+  @override
+  void didUpdateWidget(GlyphCellView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.glyph.pixels != widget.glyph.pixels ||
+        oldWidget.glyph.width != widget.glyph.width ||
+        oldWidget.glyph.height != widget.glyph.height ||
+        oldWidget.threshold != widget.threshold ||
+        oldWidget.showThresholdPreview != widget.showThresholdPreview ||
+        oldWidget.bitDepth != widget.bitDepth) {
+      _rebuildImage();
+    }
+  }
+
+  @override
+  void dispose() {
+    _image?.dispose();
+    super.dispose();
+  }
+
+  /// Composites the grayscale pixels into RGBA bytes (white ink, coverage
+  /// as alpha; optionally binarized by the 1bpp threshold) and decodes a
+  /// 1:1 [ui.Image]. The previous image is disposed once the new one is
+  /// ready.
+  void _rebuildImage() {
+    final g = widget.glyph;
+    final rgba = Uint8List(g.width * g.height * 4);
+    for (int i = 0; i < g.width * g.height; i++) {
+      final v = g.pixels[i];
+      final int a;
+      if (widget.showThresholdPreview) {
+        a = v >= widget.threshold ? 255 : 0;
+      } else {
+        a = v;
+      }
+      // decodeImageFromPixels expects PREMULTIPLIED alpha: the RGB channels
+      // must already be scaled by alpha. Writing (255,255,255,0) for the
+      // background would blend as opaque white (verified by engine
+      // readback), turning the whole cell white — so use rgb = a.
+      rgba[i * 4] = a;
+      rgba[i * 4 + 1] = a;
+      rgba[i * 4 + 2] = a;
+      rgba[i * 4 + 3] = a;
+    }
+    ui.decodeImageFromPixels(
+      rgba,
+      g.width,
+      g.height,
+      ui.PixelFormat.rgba8888,
+      (img) {
+        if (!mounted) {
+          img.dispose();
+          return;
+        }
+        setState(() {
+          _image?.dispose();
+          _image = img;
+        });
+      },
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final glyph = widget.glyph;
     final label =
-        'U+${glyph.codePoint.toRadixString(16).toUpperCase().padLeft(4, '0')} '
+        '${formatCodePoint(glyph.codePoint)} '
         '${glyph.grapheme}${glyph.isMissing ? ' (缺字)' : ''}';
 
     return Tooltip(
@@ -263,8 +674,8 @@ class GlyphCellView extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: glyph.width * scale,
-            height: glyph.height * scale,
+            width: glyph.width * widget.scale,
+            height: glyph.height * widget.scale,
             decoration: BoxDecoration(
               color: const Color(0xFF252525),
               border: Border.all(
@@ -275,21 +686,19 @@ class GlyphCellView extends StatelessWidget {
             ),
             child: CustomPaint(
               painter: _GlyphPainter(
-                glyph.pixels,
-                glyph.width,
-                glyph.height,
-                showCellGrid: showCellGrid,
-                cellWidth: cellWidth,
-                cellHeight: cellHeight,
-                verticalOffset: verticalOffset,
+                image: _image,
+                cellWidth: glyph.width,
+                cellHeight: glyph.height,
+                showCellGrid: widget.showCellGrid,
+                verticalOffset: widget.verticalOffset,
               ),
             ),
           ),
           const SizedBox(height: 2),
           Text(
-            'U+${glyph.codePoint.toRadixString(16).toUpperCase().padLeft(4, '0')}',
+            formatCodePoint(glyph.codePoint),
             style: const TextStyle(
-                fontSize: 8, color: Colors.grey, fontFamily: 'Consolas'),
+                fontSize: 10, color: Colors.white, fontFamily: 'Consolas'),
             overflow: TextOverflow.ellipsis,
           ),
         ],
@@ -298,42 +707,34 @@ class GlyphCellView extends StatelessWidget {
   }
 }
 
-/// Paints grayscale pixels as white squares, optionally overlaying the
-/// cell grid (width/height) and vertical offset baseline.
+/// Draws the 1:1 glyph image scaled up with nearest-neighbor sampling,
+/// optionally overlaying the cell grid (width/height) and vertical offset
+/// baseline.
 class _GlyphPainter extends CustomPainter {
-  final Uint8List pixels;
-  final int width;
-  final int height;
-  final bool showCellGrid;
+  final ui.Image? image;
   final int cellWidth;
   final int cellHeight;
+  final bool showCellGrid;
   final double verticalOffset;
 
-  _GlyphPainter(
-    this.pixels,
-    this.width,
-    this.height, {
-    required this.showCellGrid,
+  _GlyphPainter({
+    required this.image,
     required this.cellWidth,
     required this.cellHeight,
+    required this.showCellGrid,
     required this.verticalOffset,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cellW = size.width / width;
-    final cellH = size.height / height;
-    final paint = Paint();
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        final v = pixels[y * width + x];
-        if (v == 0) continue;
-        paint.color = Colors.white.withValues(alpha: v / 255);
-        canvas.drawRect(
-          Rect.fromLTWH(x * cellW, y * cellH, cellW + 0.5, cellH + 0.5),
-          paint,
-        );
-      }
+    final img = image;
+    if (img != null) {
+      // Nearest-neighbor: bitmap pixels stay hard-edged at any zoom.
+      final paint = Paint()..filterQuality = FilterQuality.none;
+      final src = Rect.fromLTWH(
+          0, 0, img.width.toDouble(), img.height.toDouble());
+      final dst = Rect.fromLTWH(0, 0, size.width, size.height);
+      canvas.drawImageRect(img, src, dst, paint);
     }
 
     if (!showCellGrid) return;
@@ -353,20 +754,21 @@ class _GlyphPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
 
-    // Vertical offset baseline, dark blue dashed line.
-    final offsetY = verticalOffset * (size.height / cellHeight);
-    if (offsetY > 0 && offsetY < size.height) {
+    // Vertical offset baseline, amber accent dashed line.
+    final baseLineY =
+        (cellHeight * 0.75 + verticalOffset) * (size.height / cellHeight);
+    if (baseLineY >= 0 && baseLineY <= size.height) {
       final dashPaint = Paint()
-        ..color = const Color(0xFF1A3A5C)
-        ..strokeWidth = 1;
-      const dashLen = 4.0;
-      const gapLen = 3.0;
+        ..color = Colors.amberAccent.withValues(alpha: 0.85)
+        ..strokeWidth = 1.2;
+      const dashLen = 3.0;
+      const gapLen = 2.0;
       double x = 0;
       while (x < size.width) {
         final seg = (x + dashLen).clamp(0.0, size.width).toDouble();
         canvas.drawLine(
-          Offset(x, offsetY),
-          Offset(seg, offsetY),
+          Offset(x, baseLineY),
+          Offset(seg, baseLineY),
           dashPaint,
         );
         x += dashLen + gapLen;
@@ -376,7 +778,7 @@ class _GlyphPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GlyphPainter oldDelegate) =>
-      oldDelegate.pixels != pixels ||
+      oldDelegate.image != image ||
       oldDelegate.showCellGrid != showCellGrid ||
       oldDelegate.cellWidth != cellWidth ||
       oldDelegate.cellHeight != cellHeight ||

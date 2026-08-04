@@ -7,6 +7,8 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../models/lang_binding.dart';
+
 /// A sorted, merged, inclusive code-point range list as stored in a font's
 /// `cmap` table.
 typedef CodePointRanges = List<({int start, int end})>;
@@ -14,10 +16,10 @@ typedef CodePointRanges = List<({int start, int end})>;
 /// A named group of scripts offered as quick target-language choices in the
 /// font picker.
 class ScriptGroup {
-  /// Display name, e.g. "中文".
+  /// Display name, e.g. "🇨🇳 中国 (简体中文 (CJK))".
   final String name;
 
-  /// Short one-character badge shown on font rows, e.g. "中".
+  /// Flag/icon emoji tag shown on font rows, e.g. "🇨🇳".
   final String tag;
 
   /// Code-point ranges that make up this script group.
@@ -26,81 +28,59 @@ class ScriptGroup {
   /// Sample text rendered with the candidate font in the picker preview.
   final String sample;
 
+  /// Optional dynamic preview text builder based on monospace flag.
+  final String Function(bool isMono)? sampleBuilder;
+
+  /// Continent category tag (e.g. "亚洲", "欧洲", "非洲", "美洲", "大洋洲", "符号与UI图形").
+  final String continent;
+
+  /// Region category tag (e.g. "东亚", "东南亚", "南亚", "中亚", "西亚", "北欧", "西欧", ...).
+  final String region;
+
+  /// Country or territorial region tag (e.g. "中国", "日本", "韩国/朝鲜", "英国", ...).
+  final String country;
+
+  /// The writing-system (charset) category (e.g. "汉字", "假名", "谚文", "拉丁文", "西里尔文", "阿拉伯文").
+  final String script;
+
   const ScriptGroup({
     required this.name,
     required this.tag,
     required this.ranges,
     required this.sample,
+    this.sampleBuilder,
+    required this.continent,
+    required this.region,
+    required this.country,
+    required this.script,
   });
+
+  /// Builds preview text for this target script/language, e.g.:
+  /// "中国，简体中文，等宽字体" or "日本、日本語、プロポーショナルフォント"
+  String buildPreviewText(bool isMono) {
+    if (sampleBuilder != null) {
+      return sampleBuilder!(isMono);
+    }
+    return sample;
+  }
 }
 
-/// Target-language groups used to filter and badge fonts in the picker.
-const List<ScriptGroup> kScriptGroups = [
-  ScriptGroup(
-    name: '拉丁/西欧',
-    tag: '拉',
-    ranges: [(start: 0x0000, end: 0x024F), (start: 0x1E00, end: 0x1EFF)],
-    sample: 'AaBbGgQq 0123',
-  ),
-  ScriptGroup(
-    name: '中文',
-    tag: '中',
-    ranges: [(start: 0x4E00, end: 0x9FFF), (start: 0x3000, end: 0x303F)],
-    sample: '中文字体演示，《红楼梦》，简体，繁体。【】',
-  ),
-  ScriptGroup(
-    name: '日文',
-    tag: '日',
-    ranges: [(start: 0x3040, end: 0x30FF)],
-    sample: 'あいうえお アイウエオ',
-  ),
-  ScriptGroup(
-    name: '韩文',
-    tag: '韩',
-    ranges: [(start: 0xAC00, end: 0xD7AF), (start: 0x1100, end: 0x11FF)],
-    sample: '한글 테스트',
-  ),
-  ScriptGroup(
-    name: '西里尔/俄文',
-    tag: '俄',
-    ranges: [(start: 0x0400, end: 0x052F)],
-    sample: 'Привет мир',
-  ),
-  ScriptGroup(
-    name: '希腊文',
-    tag: '希',
-    ranges: [(start: 0x0370, end: 0x03FF)],
-    sample: 'Ελληνικά αβγδ',
-  ),
-  ScriptGroup(
-    name: '阿拉伯文',
-    tag: '阿',
-    ranges: [
-      (start: 0x0600, end: 0x06FF),
-      (start: 0x0750, end: 0x077F),
-      (start: 0xFE70, end: 0xFEFF),
-    ],
-    sample: 'مرحبا بالعالم',
-  ),
-  ScriptGroup(
-    name: '希伯来文',
-    tag: '以',
-    ranges: [(start: 0x0590, end: 0x05FF)],
-    sample: 'שלום עולם',
-  ),
-  ScriptGroup(
-    name: '泰文',
-    tag: '泰',
-    ranges: [(start: 0x0E00, end: 0x0E7F)],
-    sample: 'สวัสดีชาวโลก',
-  ),
-  ScriptGroup(
-    name: '天城文/印地',
-    tag: '印',
-    ranges: [(start: 0x0900, end: 0x097F)],
-    sample: 'नमस्ते दुनिया',
-  ),
-];
+/// Target-language groups used to filter and badge fonts in the picker,
+/// classified as: 大洲 (continent) → 地区 (region) → 国家/语言 (country) → 文字 (script).
+/// Fully synchronized with the complete Multi-Language Binding preset database [LangBinding.defaultPresets()].
+final List<ScriptGroup> kScriptGroups = LangBinding.defaultPresets().map((b) {
+  return ScriptGroup(
+    name: '${b.flag} ${b.countryTag} (${b.name})',
+    tag: b.flag,
+    ranges: b.blocks.map((blk) => (start: blk.start, end: blk.end)).toList(),
+    sample: b.sampleText,
+    sampleBuilder: (isMono) => b.buildLocalizedPreviewText(isMono: isMono),
+    continent: b.continentTag,
+    region: b.regionTag,
+    country: b.countryTag,
+    script: b.scriptTag,
+  );
+}).toList();
 
 /// Fraction (0.0–1.0) of the inclusive code-point range [start, end] that is
 /// covered by [cmapRanges] (sorted, merged, inclusive).

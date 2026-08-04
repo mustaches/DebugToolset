@@ -130,3 +130,66 @@ int packedByteLength({
       ? ((width + 7) >> 3) * height
       : width * ((height + 7) >> 3);
 }
+
+/// Inverse of [packBitmap]: decodes packed bytes back into a grayscale
+/// pixel matrix (length width*height, left-to-right, top-to-bottom).
+/// 1bpp pixels come out as 0 or 255.
+///
+/// Throws [FormatException] when [bytes] is shorter than expected.
+Uint8List unpackBitmap({
+  required List<int> bytes,
+  required int width,
+  required int height,
+  required BitmapBitDepth depth,
+  required BitmapScanMode scan,
+}) {
+  final expected = packedByteLength(
+    width: width,
+    height: height,
+    depth: depth,
+    scan: scan,
+  );
+  if (bytes.length < expected) {
+    throw FormatException(
+      'bitmap data too short: ${bytes.length} < $expected bytes',
+    );
+  }
+  final out = Uint8List(width * height);
+  if (depth == BitmapBitDepth.eight) {
+    if (scan == BitmapScanMode.rowMajor) {
+      out.setRange(0, width * height, bytes);
+    } else {
+      int i = 0;
+      for (int x = 0; x < width; x++) {
+        for (int y = 0; y < height; y++) {
+          out[y * width + x] = bytes[i++];
+        }
+      }
+    }
+    return out;
+  }
+  if (scan == BitmapScanMode.rowMajor) {
+    final bytesPerRow = (width + 7) >> 3;
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        if (bytes[y * bytesPerRow + (x >> 3)] & (0x80 >> (x & 7)) != 0) {
+          out[y * width + x] = 255;
+        }
+      }
+    }
+  } else {
+    final pages = (height + 7) >> 3;
+    for (int page = 0; page < pages; page++) {
+      for (int x = 0; x < width; x++) {
+        final b = bytes[page * width + x];
+        for (int bit = 0; bit < 8; bit++) {
+          final y = page * 8 + bit;
+          if (y < height && b & (1 << bit) != 0) {
+            out[y * width + x] = 255;
+          }
+        }
+      }
+    }
+  }
+  return out;
+}

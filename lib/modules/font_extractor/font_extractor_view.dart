@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import '../../providers/font_extractor_state.dart';
+import 'widgets/bitmap_font_dialog.dart';
 import 'widgets/bitmap_section.dart';
 import 'widgets/charset_panel.dart';
 import 'widgets/font_section.dart';
@@ -75,7 +76,7 @@ class _FontExtractorViewState extends State<FontExtractorView> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Container(
-                width: 340,
+                width: 420,
                 color: const Color(0xFF252525),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(10),
@@ -186,6 +187,18 @@ class _FontExtractorViewState extends State<FontExtractorView> {
             style: TextStyle(fontSize: 11, color: Colors.grey),
           ),
           const Spacer(),
+          ElevatedButton.icon(
+            onPressed: () => showBitmapFontDialog(context),
+            icon: const Icon(Icons.grid_on, size: 14),
+            label: const Text('点阵字库', style: TextStyle(fontSize: 12)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0A4A5A),
+              foregroundColor: Colors.cyanAccent,
+              minimumSize: const Size(0, 28),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
+          ),
+          const SizedBox(width: 8),
           PopupMenuButton<String>(
             tooltip: '模板',
             color: const Color(0xFF333333),

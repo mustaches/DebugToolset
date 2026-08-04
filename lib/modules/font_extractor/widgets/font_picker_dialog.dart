@@ -6,6 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader;
 import 'package:path/path.dart' as p;
 
+import 'package:provider/provider.dart';
+
+import '../../../providers/font_extractor_state.dart';
+import '../models/lang_binding.dart';
 import '../utils/font_coverage.dart';
 import '../utils/font_info.dart';
 
@@ -22,10 +26,22 @@ import '../utils/font_info.dart';
 Future<String?> showFontPickerDialog(
   BuildContext context, {
   CodePointRanges? targetRanges,
+  String? initialContinent,
+  String? initialRegion,
+  String? initialCountry,
+  String? initialScript,
+  LangBinding? initialLangBinding,
 }) {
   return showDialog<String>(
     context: context,
-    builder: (_) => _FontPickerDialog(targetRanges: targetRanges),
+    builder: (_) => _FontPickerDialog(
+      targetRanges: targetRanges,
+      initialContinent: initialContinent,
+      initialRegion: initialRegion,
+      initialCountry: initialCountry,
+      initialScript: initialScript,
+      initialLangBinding: initialLangBinding,
+    ),
   );
 }
 
@@ -58,8 +74,20 @@ const _targetCharset = -1;
 
 class _FontPickerDialog extends StatefulWidget {
   final CodePointRanges? targetRanges;
+  final String? initialContinent;
+  final String? initialRegion;
+  final String? initialCountry;
+  final String? initialScript;
+  final LangBinding? initialLangBinding;
 
-  const _FontPickerDialog({this.targetRanges});
+  const _FontPickerDialog({
+    this.targetRanges,
+    this.initialContinent,
+    this.initialRegion,
+    this.initialCountry,
+    this.initialScript,
+    this.initialLangBinding,
+  });
 
   @override
   State<_FontPickerDialog> createState() => _FontPickerDialogState();
@@ -71,7 +99,38 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
   String _query = '';
   String? _scanError;
 
-  late int _target = widget.targetRanges != null ? _targetCharset : _targetAll;
+  late String _selectedContinent;
+  late String _selectedRegion;
+  late String _selectedCountry;
+
+  late int _target;
+
+  List<String> get _continents {
+    final list = <String>['全部'];
+    for (final g in kScriptGroups) {
+      if (!list.contains(g.continent)) list.add(g.continent);
+    }
+    return list;
+  }
+
+  List<String> _regionsFor(String continent) {
+    final list = <String>['全部'];
+    for (final g in kScriptGroups) {
+      if (continent != '全部' && g.continent != continent) continue;
+      if (!list.contains(g.region)) list.add(g.region);
+    }
+    return list;
+  }
+
+  List<String> _countriesFor(String continent, String region) {
+    final list = <String>['全部'];
+    for (final g in kScriptGroups) {
+      if (continent != '全部' && g.continent != continent) continue;
+      if (region != '全部' && g.region != region) continue;
+      if (!list.contains(g.country)) list.add(g.country);
+    }
+    return list;
+  }
 
   int get _targetCodePointCount {
     final ranges = widget.targetRanges;
@@ -86,7 +145,62 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
   @override
   void initState() {
     super.initState();
+
+    _selectedContinent = widget.initialContinent ?? '全部';
+    if (!_continents.contains(_selectedContinent)) _selectedContinent = '全部';
+
+    _selectedRegion = widget.initialRegion ?? '全部';
+    if (!_regionsFor(_selectedContinent).contains(_selectedRegion)) {
+      _selectedRegion = '全部';
+    }
+
+    _selectedCountry = widget.initialCountry ?? '全部';
+    if (!_countriesFor(_selectedContinent, _selectedRegion)
+        .contains(_selectedCountry)) {
+      _selectedCountry = '全部';
+    }
+
+    if (widget.initialLangBinding != null) {
+      final binding = widget.initialLangBinding!;
+      final idx = kScriptGroups.indexWhere((g) =>
+          (g.country == binding.countryTag && g.script == binding.scriptTag) ||
+          g.name.contains(binding.name));
+      if (idx != -1) {
+        _target = idx;
+      } else {
+        _target = widget.targetRanges != null ? _targetCharset : _targetAll;
+      }
+    } else if (widget.initialScript != null && widget.initialScript != '全部') {
+      final idx =
+          kScriptGroups.indexWhere((g) => g.script == widget.initialScript);
+      if (idx != -1) {
+        _target = idx;
+      } else {
+        _target = widget.targetRanges != null ? _targetCharset : _targetAll;
+      }
+    } else {
+      _target = widget.targetRanges != null ? _targetCharset : _targetAll;
+    }
+
     _scan();
+  }
+
+  void _notifySelectionToState({String? fontPath}) {
+    try {
+      final state = context.read<FontExtractorState>();
+      final ScriptGroup? group =
+          (_target >= 0 && _target < kScriptGroups.length)
+              ? kScriptGroups[_target]
+              : null;
+
+      state.selectBlocksForFilter(
+        continent: _selectedContinent,
+        region: _selectedRegion,
+        country: _selectedCountry,
+        scriptGroup: group,
+        fontPath: fontPath,
+      );
+    } catch (_) {}
   }
 
   @override
@@ -137,22 +251,26 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
     if (mounted) setState(() {});
   }
 
-  // Cached font-loading futures, keyed by file path, so scrolling the
-  // list does not re-read or re-register font files.
-  final Map<String, Future<String?>> _familyFutures = {};
+  // Process-global font family cache and counter so each font file gets a
+  // unique, permanent family name in the Flutter engine that persists across
+  // dialog re-opens and hot reloads.
+  static int _globalFamilyCounter = 0;
+  static final Map<String, Future<String?>> _globalFamilyFutures = {};
 
   Future<String?> _loadFamily(String path) {
-    return _familyFutures.putIfAbsent(path, () async {
-      try {
-        final bytes = await File(path).readAsBytes();
-        final family = 'FPREV_${_familyFutures.length}';
-        final loader = FontLoader(family);
-        loader.addFont(Future.value(ByteData.sublistView(bytes)));
-        await loader.load();
-        return family;
-      } catch (_) {
-        return null;
-      }
+    return _globalFamilyFutures.putIfAbsent(path, () {
+      final family = 'FPREV_${_globalFamilyCounter++}';
+      return () async {
+        try {
+          final bytes = await File(path).readAsBytes();
+          final loader = FontLoader(family);
+          loader.addFont(Future.value(ByteData.sublistView(bytes)));
+          await loader.load();
+          return family;
+        } catch (_) {
+          return null;
+        }
+      }();
     });
   }
 
@@ -161,6 +279,12 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
   bool _monoScanning = false;
   int _monoScanned = 0;
   final Map<String, bool> _monoResults = {};
+
+  // Embedded-bitmap filtering state.
+  bool _bitmapOnly = false;
+  bool _bitmapScanning = false;
+  int _bitmapScanned = 0;
+  final Map<String, bool> _bitmapResults = {};
 
   // Name/version metadata cache.
   bool _nameInfoScanning = false;
@@ -271,11 +395,57 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
     if (mounted) setState(() {});
   }
 
-  /// Preview text for a font row: the target script's sample when a script
-  /// group is selected, otherwise the default Latin + CJK sample.
-  String get _previewText {
-    if (_target >= 0) return kScriptGroups[_target].sample;
-    return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n中文字体演示，简体，繁体';
+  /// Checks the font file for embedded bitmap tables (EBDT/CBDT/sbix/...)
+  /// and caches the result.
+  Future<bool> _hasBitmap(String path) async {
+    final cached = _bitmapResults[path];
+    if (cached != null) return cached;
+    final has = await fontHasEmbeddedBitmap(path);
+    _bitmapResults[path] = has;
+    return has;
+  }
+
+  void _setBitmapOnly(bool value) {
+    setState(() => _bitmapOnly = value);
+    if (value) _scanBitmap();
+  }
+
+  /// Scans all fonts for embedded bitmap data in small batches so the UI
+  /// stays responsive; the list updates as results arrive.
+  Future<void> _scanBitmap() async {
+    if (_bitmapScanning) return;
+    _bitmapScanning = true;
+    _bitmapScanned = 0;
+    const batch = 32;
+    final all = List<File>.from(_fonts);
+    for (int i = 0; i < all.length; i += batch) {
+      if (!_bitmapOnly || !mounted) break;
+      final end = (i + batch > all.length) ? all.length : i + batch;
+      await Future.wait(
+        all.sublist(i, end).map((f) => _hasBitmap(f.path)),
+      );
+      _bitmapScanned = end;
+      if (mounted) setState(() {});
+    }
+    _bitmapScanning = false;
+    if (mounted) setState(() {});
+  }
+
+  /// Dynamic preview text builder for a font row: renders "[Country Name], [Target Language Name], [Monospace / Proportional Font]"
+  /// in the selected target script/language.
+  String _previewTextBuilder(bool isMono) {
+    if (_target >= 0 && _target < kScriptGroups.length) {
+      return kScriptGroups[_target].buildPreviewText(isMono);
+    }
+    if (_selectedCountry != '全部' || _selectedRegion != '全部' || _selectedContinent != '全部') {
+      for (final g in kScriptGroups) {
+        if (_selectedContinent != '全部' && g.continent != _selectedContinent) continue;
+        if (_selectedRegion != '全部' && g.region != _selectedRegion) continue;
+        if (_selectedCountry != '全部' && g.country != _selectedCountry) continue;
+        return g.buildPreviewText(isMono);
+      }
+    }
+    return isMono ? '中国，简体中文，等宽字体' : '中国，简体中文，比例字体';
   }
 
   @override
@@ -292,6 +462,10 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
           }).toList();
     if (_monoOnly) {
       filtered = filtered.where((f) => _monoResults[f.path] == true).toList();
+    }
+    if (_bitmapOnly) {
+      filtered =
+          filtered.where((f) => _bitmapResults[f.path] == true).toList();
     }
     if (_target != _targetAll) {
       // Keep fonts covering at least half of the target, best coverage
@@ -317,7 +491,7 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
       backgroundColor: const Color(0xFF252525),
       title: const Text('选择字体', style: TextStyle(color: Colors.white, fontSize: 16)),
       content: SizedBox(
-        width: 780,
+        width: 860,
         height: 520,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -345,11 +519,24 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
               onChanged: (v) => setState(() => _query = v),
             ),
             const SizedBox(height: 6),
+            // Classification & Target Script Dropdowns on a Single Row: 大洲 · 地区 · 国家 · 目标文字
             Row(
               children: [
-                const Text('目标文字', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const Text('大洲：', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(width: 3),
+                Expanded(flex: 3, child: _buildContinentDropdown()),
                 const SizedBox(width: 8),
-                Expanded(child: _buildTargetDropdown()),
+                const Text('地区：', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(width: 3),
+                Expanded(flex: 3, child: _buildRegionDropdown()),
+                const SizedBox(width: 8),
+                const Text('国家：', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(width: 3),
+                Expanded(flex: 3, child: _buildCountryDropdown()),
+                const SizedBox(width: 8),
+                const Text('目标文字：', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(width: 3),
+                Expanded(flex: 5, child: _buildTargetDropdown()),
               ],
             ),
             const SizedBox(height: 6),
@@ -367,7 +554,26 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                 ),
                 const SizedBox(width: 6),
                 const Text('只显示等宽字体', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 16),
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: Checkbox(
+                    value: _bitmapOnly,
+                    onChanged: (v) => _setBitmapOnly(v ?? false),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text('只显示包含点阵字库的字体',
+                    style: TextStyle(fontSize: 12)),
                 const Spacer(),
+                if (_bitmapOnly && _bitmapScanning)
+                  Text(
+                    '点阵检测 $_bitmapScanned/${_fonts.length}...',
+                    style: const TextStyle(fontSize: 10, color: Colors.grey),
+                  ),
                 if (_monoOnly && _monoScanning)
                   Text(
                     '等宽检测 $_monoScanned/${_fonts.length}...',
@@ -439,8 +645,11 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                             coveragePending: _target != _targetAll &&
                                 !_cmapResults.containsKey(file.path),
                             badges: _badgesFor(file.path),
-                            previewText: _previewText,
-                            onTap: () => Navigator.of(context).pop(file.path),
+                            previewTextBuilder: _previewTextBuilder,
+                            onTap: () {
+                              _notifySelectionToState(fontPath: file.path);
+                              Navigator.of(context).pop(file.path);
+                            },
                           );
                         },
                       ),
@@ -458,8 +667,160 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
     );
   }
 
-  Widget _buildTargetDropdown() {
+  Widget _buildContinentDropdown() {
+    final continents = _continents;
+    if (!continents.contains(_selectedContinent)) _selectedContinent = '全部';
     return Container(
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border.all(color: Colors.grey.shade800),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedContinent,
+          isExpanded: true,
+          isDense: true,
+          dropdownColor: const Color(0xFF2D2D2D),
+          style: const TextStyle(fontSize: 11, color: Colors.cyanAccent),
+          icon: const Icon(Icons.arrow_drop_down, size: 16, color: Colors.cyanAccent),
+          items: continents.map((c) {
+            final count = c == '全部'
+                ? kScriptGroups.length
+                : kScriptGroups.where((g) => g.continent == c).length;
+            return DropdownMenuItem<String>(
+              value: c,
+              child: Text('$c ($count)', overflow: TextOverflow.ellipsis),
+            );
+          }).toList(),
+          onChanged: (val) {
+            if (val != null) {
+              setState(() {
+                _selectedContinent = val;
+                _selectedRegion = '全部';
+                _selectedCountry = '全部';
+              });
+              _notifySelectionToState();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRegionDropdown() {
+    final regions = _regionsFor(_selectedContinent);
+    if (!regions.contains(_selectedRegion)) _selectedRegion = '全部';
+    return Container(
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border.all(color: Colors.grey.shade800),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedRegion,
+          isExpanded: true,
+          isDense: true,
+          dropdownColor: const Color(0xFF2D2D2D),
+          style: const TextStyle(fontSize: 11, color: Colors.cyanAccent),
+          icon: const Icon(Icons.arrow_drop_down, size: 16, color: Colors.cyanAccent),
+          items: regions.map((r) {
+            final count = kScriptGroups.where((g) {
+              if (_selectedContinent != '全部' && g.continent != _selectedContinent) {
+                return false;
+              }
+              return r == '全部' || g.region == r;
+            }).length;
+            return DropdownMenuItem<String>(
+              value: r,
+              child: Text('$r ($count)', overflow: TextOverflow.ellipsis),
+            );
+          }).toList(),
+          onChanged: (val) {
+            if (val != null) {
+              setState(() {
+                _selectedRegion = val;
+                _selectedCountry = '全部';
+              });
+              _notifySelectionToState();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCountryDropdown() {
+    final countries = _countriesFor(_selectedContinent, _selectedRegion);
+    if (!countries.contains(_selectedCountry)) _selectedCountry = '全部';
+    return Container(
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        border: Border.all(color: Colors.grey.shade800),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedCountry,
+          isExpanded: true,
+          isDense: true,
+          dropdownColor: const Color(0xFF2D2D2D),
+          style: const TextStyle(fontSize: 11, color: Colors.cyanAccent),
+          icon: const Icon(Icons.arrow_drop_down, size: 16, color: Colors.cyanAccent),
+          items: countries.map((c) {
+            final count = kScriptGroups.where((g) {
+              if (_selectedContinent != '全部' && g.continent != _selectedContinent) {
+                return false;
+              }
+              if (_selectedRegion != '全部' && g.region != _selectedRegion) {
+                return false;
+              }
+              return c == '全部' || g.country == c;
+            }).length;
+            return DropdownMenuItem<String>(
+              value: c,
+              child: Text('$c ($count)', overflow: TextOverflow.ellipsis),
+            );
+          }).toList(),
+          onChanged: (val) {
+            if (val != null) {
+              setState(() => _selectedCountry = val);
+              _notifySelectionToState();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTargetDropdown() {
+    final filteredIndices = <int>[];
+    for (int i = 0; i < kScriptGroups.length; i++) {
+      final g = kScriptGroups[i];
+      if (_selectedContinent != '全部' && g.continent != _selectedContinent) {
+        continue;
+      }
+      if (_selectedRegion != '全部' && g.region != _selectedRegion) continue;
+      if (_selectedCountry != '全部' && g.country != _selectedCountry) continue;
+      filteredIndices.add(i);
+    }
+
+    final validValues = <int>[
+      if (widget.targetRanges != null) _targetCharset,
+      _targetAll,
+      ...filteredIndices,
+    ];
+    final effectiveTarget = validValues.contains(_target) ? _target : _targetAll;
+
+    return Container(
+      height: 26,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E1E),
@@ -468,11 +829,11 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<int>(
-          value: _target,
+          value: effectiveTarget,
           isExpanded: true,
           isDense: true,
           dropdownColor: const Color(0xFF2D2D2D),
-          style: const TextStyle(fontSize: 12, color: Colors.white),
+          style: const TextStyle(fontSize: 11, color: Colors.white),
           items: [
             if (widget.targetRanges != null)
               DropdownMenuItem(
@@ -480,11 +841,17 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                 child: Text('当前字符集 ($_targetCodePointCount 码点)'),
               ),
             const DropdownMenuItem(value: _targetAll, child: Text('全部字体')),
-            for (int i = 0; i < kScriptGroups.length; i++)
-              DropdownMenuItem(value: i, child: Text(kScriptGroups[i].name)),
+            for (final i in filteredIndices)
+              DropdownMenuItem(
+                value: i,
+                child: Text(kScriptGroups[i].name, overflow: TextOverflow.ellipsis),
+              ),
           ],
           onChanged: (v) {
-            if (v != null) setState(() => _target = v);
+            if (v != null) {
+              setState(() => _target = v);
+              _notifySelectionToState();
+            }
           },
         ),
       ),
@@ -500,6 +867,7 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
       XTypeGroup(label: 'All Files', extensions: []),
     ]);
     if (file != null && mounted) {
+      _notifySelectionToState(fontPath: file.path);
       Navigator.of(context).pop(file.path);
     }
   }
@@ -516,7 +884,7 @@ class _FontRow extends StatefulWidget {
   final double? coverage;
   final bool coveragePending;
   final List<String> badges;
-  final String previewText;
+  final String Function(bool isMono) previewTextBuilder;
   final VoidCallback onTap;
 
   const _FontRow({
@@ -529,7 +897,7 @@ class _FontRow extends StatefulWidget {
     required this.coverage,
     required this.coveragePending,
     required this.badges,
-    required this.previewText,
+    required this.previewTextBuilder,
     required this.onTap,
   });
 
@@ -545,6 +913,18 @@ class _FontRowState extends State<_FontRow> {
   @override
   void initState() {
     super.initState();
+    _loadData();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FontRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.file.path != widget.file.path) {
+      _loadData();
+    }
+  }
+
+  void _loadData() {
     widget.isMono(widget.file.path).then((mono) {
       if (!mounted) return;
       setState(() => _isMono = mono);
@@ -563,6 +943,7 @@ class _FontRowState extends State<_FontRow> {
   Widget build(BuildContext context) {
     final displayName = _nameInfo.displayName ?? p.basename(widget.file.path);
     final fileName = p.basename(widget.file.path);
+    final previewText = widget.previewTextBuilder(_isMono);
 
     return InkWell(
       onTap: widget.onTap,
@@ -603,55 +984,67 @@ class _FontRowState extends State<_FontRow> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                for (final tag in widget.badges)
-                  Container(
-                    margin: const EdgeInsets.only(left: 3),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF3A3A20),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                    child: Text(
-                      tag,
-                      style: const TextStyle(
-                          fontSize: 9, color: Colors.amberAccent),
+                Flexible(
+                  fit: FlexFit.loose,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final tag in widget.badges)
+                          Container(
+                            margin: const EdgeInsets.only(left: 3),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF3A3A20),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: Text(
+                              tag,
+                              style: const TextStyle(
+                                  fontSize: 9, color: Colors.amberAccent),
+                            ),
+                          ),
+                        if (_isMono)
+                          Container(
+                            margin: const EdgeInsets.only(left: 3),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0A4A5A),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: const Text('等宽',
+                                style: TextStyle(
+                                    fontSize: 9, color: Colors.cyanAccent)),
+                          ),
+                        if (widget.coverage != null)
+                          Container(
+                            margin: const EdgeInsets.only(left: 3),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: _coverageBg(widget.coverage!),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: Text(
+                              '覆盖 ${(widget.coverage! * 100).toStringAsFixed(0)}%',
+                              style: TextStyle(
+                                  fontSize: 9, color: _coverageFg(widget.coverage!)),
+                            ),
+                          )
+                        else if (widget.coveragePending)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 3),
+                            child: Text('检测中…',
+                                style: TextStyle(fontSize: 9, color: Colors.grey)),
+                          ),
+                      ],
                     ),
                   ),
-                if (_isMono)
-                  Container(
-                    margin: const EdgeInsets.only(left: 3),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0A4A5A),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                    child: const Text('等宽',
-                        style: TextStyle(
-                            fontSize: 9, color: Colors.cyanAccent)),
-                  ),
-                if (widget.coverage != null)
-                  Container(
-                    margin: const EdgeInsets.only(left: 3),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: _coverageBg(widget.coverage!),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                    child: Text(
-                      '覆盖 ${(widget.coverage! * 100).toStringAsFixed(0)}%',
-                      style: TextStyle(
-                          fontSize: 9, color: _coverageFg(widget.coverage!)),
-                    ),
-                  )
-                else if (widget.coveragePending)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 3),
-                    child: Text('检测中…',
-                        style: TextStyle(fontSize: 9, color: Colors.grey)),
-                  ),
+                ),
               ],
             ),
             Padding(
@@ -670,7 +1063,7 @@ class _FontRowState extends State<_FontRow> {
             // Preview rendered with the candidate font. Falls back to the
             // default font until the file is registered.
             Text(
-              widget.previewText,
+              previewText,
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
