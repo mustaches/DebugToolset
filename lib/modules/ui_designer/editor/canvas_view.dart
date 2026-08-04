@@ -66,7 +66,14 @@ class _CanvasViewState extends State<CanvasView> {
           child: Transform.scale(
             scale: scale,
             alignment: Alignment.topLeft,
-            child: _buildCanvasSurface(state, page, logicalW, logicalH, scale),
+            // 松开 SizedBox 的紧约束，让画布表面保持逻辑尺寸；
+            // 否则表面先被拉伸到 scale 倍，再被 Transform 放大一次，
+            // 视觉上变成 scale²，右侧和下方溢出工作区。
+            child: UnconstrainedBox(
+              alignment: Alignment.topLeft,
+              child:
+                  _buildCanvasSurface(state, page, logicalW, logicalH, scale),
+            ),
           ),
         );
 
