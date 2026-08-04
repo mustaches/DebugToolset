@@ -3,17 +3,32 @@ import 'package:path/path.dart' as p;
 import '../../../modules/text_editor/utils/diff_utils.dart';
 import '../../../modules/text_editor/utils/syntax_highlighter.dart';
 
+/// Which pane(s) of the side-by-side diff to render.
+enum DiffViewSide {
+  /// Both panes side by side (default).
+  both,
+
+  /// Only the original (left) pane.
+  original,
+
+  /// Only the modified (right) pane.
+  modified,
+}
+
 /// Renders a side-by-side diff from a list of [DiffLine].
 ///
 /// The view is divided into two equal panes. Deletions appear in the left
 /// pane with a red background, insertions appear in the right pane with a
 /// green background, and equal lines are shown on both sides with the default
-/// background.
+/// background. With [side] set to [DiffViewSide.original] or
+/// [DiffViewSide.modified] only that single pane is rendered (used by the
+/// folder comparison, where each frame shows one side).
 class DiffView extends StatefulWidget {
   final List<DiffLine> diffLines;
   final String? originalPath;
   final String? modifiedPath;
   final ScrollController? scrollController;
+  final DiffViewSide side;
 
   const DiffView({
     super.key,
@@ -21,6 +36,7 @@ class DiffView extends StatefulWidget {
     this.originalPath,
     this.modifiedPath,
     this.scrollController,
+    this.side = DiffViewSide.both,
   });
 
   @override
@@ -50,6 +66,7 @@ class _DiffViewState extends State<DiffView> {
         child: SelectionArea(
           child: ListView.builder(
             controller: controller,
+            itemExtent: 22.0,
             itemCount: widget.diffLines.length,
             itemBuilder: (context, index) {
               final line = widget.diffLines[index];
@@ -57,6 +74,7 @@ class _DiffViewState extends State<DiffView> {
                 line: line,
                 originalPath: widget.originalPath,
                 modifiedPath: widget.modifiedPath,
+                side: widget.side,
               );
             },
           ),
@@ -70,11 +88,13 @@ class _DiffRow extends StatelessWidget {
   final DiffLine line;
   final String? originalPath;
   final String? modifiedPath;
+  final DiffViewSide side;
 
   const _DiffRow({
     required this.line,
     this.originalPath,
     this.modifiedPath,
+    this.side = DiffViewSide.both,
   });
 
   @override
@@ -91,30 +111,42 @@ class _DiffRow extends StatelessWidget {
             ? Colors.transparent
             : const Color(0xFF2A2A2A);
 
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: _DiffLine(
-              text: line.isInsert ? '' : line.text,
-              lineNumber: line.originalLineNumber,
-              backgroundColor: leftColor,
-              language: _language(originalPath),
-            ),
-          ),
-          Container(width: 1, color: Colors.grey.shade800),
-          Expanded(
-            child: _DiffLine(
-              text: line.isDelete ? '' : line.text,
-              lineNumber: line.modifiedLineNumber,
-              backgroundColor: rightColor,
-              language: _language(modifiedPath),
-            ),
-          ),
-        ],
+    final left = Expanded(
+      child: _DiffLine(
+        text: line.isInsert ? '' : line.text,
+        lineNumber: line.originalLineNumber,
+        backgroundColor: leftColor,
+        language: _language(originalPath),
       ),
     );
+    final right = Expanded(
+      child: _DiffLine(
+        text: line.isDelete ? '' : line.text,
+        lineNumber: line.modifiedLineNumber,
+        backgroundColor: rightColor,
+        language: _language(modifiedPath),
+      ),
+    );
+
+    switch (side) {
+      case DiffViewSide.original:
+        return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [left]);
+      case DiffViewSide.modified:
+        return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [right]);
+      case DiffViewSide.both:
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            left,
+            Container(width: 1, color: Colors.grey.shade800),
+            right,
+          ],
+        );
+    }
   }
 
   String? _language(String? path) {
