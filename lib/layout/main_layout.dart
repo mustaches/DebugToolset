@@ -7,6 +7,7 @@ import '../modules/oscilloscope/oscilloscope_view.dart';
 import '../modules/hex_editor/hex_editor_view.dart';
 import '../modules/text_editor/text_editor_view.dart';
 import '../modules/font_extractor/font_extractor_view.dart';
+import '../modules/ui_designer/ui_designer_view.dart';
 
 class MainLayout extends StatelessWidget {
   const MainLayout({super.key});
@@ -71,8 +72,8 @@ class MainLayout extends StatelessWidget {
             onTap: () => appState.setModuleIndex(4),
           ),
           _SidebarIcon(
-            icon: Icons.image,
-            tooltip: '图像提取',
+            icon: Icons.dashboard_customize,
+            tooltip: 'UI 设计器',
             isSelected: appState.selectedModuleIndex == 5,
             onTap: () => appState.setModuleIndex(5),
           ),
@@ -105,7 +106,7 @@ class MainLayout extends StatelessWidget {
         activeModule = const FontExtractorView();
         break;
       case 5:
-        activeModule = const Center(child: Text('图像提取器 (开发中...)', textAlign: TextAlign.center));
+        activeModule = const UiDesignerView();
         break;
       default:
         activeModule = const Center(child: Text('未知模块'));
