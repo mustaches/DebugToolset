@@ -71,14 +71,15 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
         '$nodeId:$port', () => GlobalKey(debugLabel: '$nodeId:$port'));
   }
 
-  /// 连线拖拽结束：在已注册的输入端口中找最近者（24 逻辑像素内）。
+  /// 连线拖拽结束：在已注册的输入端口中找最近者（约 24 屏幕像素内，
+  /// 换算为画布坐标随缩放调整——否则缩得越小说越难点中）。
   void endDrag() {
     final state = context.read<IspStudioState>();
     if (state.dragFromNodeId == null) return;
     final pos = state.dragCurrentPos;
     String? bestNodeId;
     String? bestPort;
-    var bestDist = 24.0;
+    var bestDist = 24.0 / state.canvasZoom;
     for (final entry in _portKeys.entries) {
       final ctx = entry.value.currentContext;
       if (ctx == null) continue;

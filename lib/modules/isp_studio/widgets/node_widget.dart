@@ -363,29 +363,58 @@ class IspNodeWidget extends StatelessWidget {
   Widget _inputDot(IspStudioState state, IspPortSpec port) {
     final connected =
         state.graph.connectionAt(node.id, port.name) != null;
-    return Transform.translate(
-      offset: const Offset(-kPortRadius, 0),
-      child: GestureDetector(
-        key: inputPortKeyFor(port.name),
-        onTap: connected
-            ? () => state.disconnectInput(node.id, port.name)
-            : null,
-        child: _dot(port, connected),
+    // 命中区是行内 20x行高 的不透明区域（全在 Row 自身范围内——
+    // Row 只命中测试自身范围内的点，直接把圆点平移出节点边缘会
+    // 让探出的那一半点不到）；视觉圆点经 Align+平移保持圆心在
+    // 节点边缘。GlobalKey 挂在圆点上，落点命中量的是圆点圆心。
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: connected
+          ? () => state.disconnectInput(node.id, port.name)
+          : null,
+      child: SizedBox(
+        width: kPortRadius * 4,
+        height: kPortRowHeight,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Transform.translate(
+            offset: const Offset(-kPortRadius, 0),
+            child: SizedBox(
+              key: inputPortKeyFor(port.name),
+              width: kPortRadius * 2,
+              height: kPortRadius * 2,
+              child: _dot(port, connected),
+            ),
+          ),
+        ),
       ),
     );
   }
 
   /// 输出端口：圆心位于节点右边缘，从此拖出连线。
   Widget _outputDot(IspStudioState state, IspPortSpec port) {
-    return Transform.translate(
-      offset: const Offset(kPortRadius, 0),
-      child: GestureDetector(
-        onPanStart: (d) => state.beginConnectionDrag(
-            node.id, port.name, globalToCanvas(d.globalPosition)),
-        onPanUpdate: (d) =>
-            state.updateConnectionDrag(globalToCanvas(d.globalPosition)),
-        onPanEnd: (_) => onConnectionDragEnd(),
-        child: _dot(port, false),
+    // 命中区处理同 _inputDot（行内 20x行高，圆心视觉在节点右边缘）。
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (d) => state.beginConnectionDrag(
+          node.id, port.name, globalToCanvas(d.globalPosition)),
+      onPanUpdate: (d) =>
+          state.updateConnectionDrag(globalToCanvas(d.globalPosition)),
+      onPanEnd: (_) => onConnectionDragEnd(),
+      child: SizedBox(
+        width: kPortRadius * 4,
+        height: kPortRowHeight,
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Transform.translate(
+            offset: const Offset(kPortRadius, 0),
+            child: SizedBox(
+              width: kPortRadius * 2,
+              height: kPortRadius * 2,
+              child: _dot(port, false),
+            ),
+          ),
+        ),
       ),
     );
   }

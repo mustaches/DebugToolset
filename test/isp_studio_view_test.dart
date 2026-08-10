@@ -1,6 +1,8 @@
 import 'package:debug_tool_set/modules/isp_studio/isp_studio_view.dart';
+import 'package:debug_tool_set/modules/isp_studio/models/isp_node.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/connection_painter.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_canvas.dart';
+import 'package:debug_tool_set/modules/isp_studio/widgets/node_layout.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_palette.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_widget.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
@@ -262,6 +264,51 @@ void main() {
     await tester.tap(find.descendant(of: palette, matching: find.text('MONO')));
     await tester.pumpAndSettle();
     expect(monoCount(), 1);
+  });
+
+  testWidgets('输出端口拉线到音频仪器输入：圆点视觉中心在节点边缘也可起拖',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final state = IspStudioState();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: const MaterialApp(home: Scaffold(body: IspStudioView())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    state.addNodeAt('video_source', const Offset(500, 100));
+    final v = state.selectedNodeId!;
+    state.addNodeAt('audio_level', const Offset(800, 300));
+    final a = state.selectedNodeId!;
+    await tester.pumpAndSettle();
+
+    final canvasRect = tester.getRect(find.byType(IspNodeCanvas));
+    Offset toGlobal(Offset canvasPos) =>
+        canvasRect.topLeft +
+        canvasPos * state.canvasZoom +
+        state.canvasOffset;
+
+    final fromCanvas = outputPortPos(state.graph.nodes[v]!,
+        IspNodeRegistry.byId('video_source')!, 3); // out_audio
+    final toCanvas = inputPortPos(
+        state.graph.nodes[a]!, IspNodeRegistry.byId('audio_level')!, 0);
+    final before = state.graph.connections.length;
+
+    // 端口圆点视觉圆心恰在节点边缘上（边缘外侧不命中），从圆心内侧
+    // 2px 起拖，落到输入端口圆心。
+    final from = toGlobal(fromCanvas + const Offset(-2, 0));
+    await tester.dragFrom(from, toGlobal(toCanvas) - from);
+    await tester.pumpAndSettle();
+
+    final conn = state.graph.connectionAt(a, 'in');
+    expect(conn, isNotNull, reason: '拖线应建立连接');
+    expect(conn!.fromNodeId, v);
+    expect(conn.fromPort, 'out_audio');
+    expect(state.graph.connections.length, before + 1);
   });
 
   testWidgets('右键拖动节点与画布，右键不再删除节点', (tester) async {
