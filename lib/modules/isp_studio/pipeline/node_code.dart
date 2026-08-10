@@ -798,6 +798,25 @@ void aaSegment(Uint32List counts, int x0, int y0, int x1, int y1) {
 }
 ''';
 
+/// 音频输出（audio_player.dart — 视频预览的音轨回放；含音轨即自动
+/// 回放，不依赖图上的连接，连接仅表达音频流向）。
+const String _audioOutputCode = r'''
+// isp_studio_state.dart — 播放循环在视频含音轨时自动回放：
+final wav = await ensureAudioWav(videoPath, ffmpegPath: ffmpegPath);
+audio.open(wav);              // MCI waveaudio 设备（winmm.dll）
+audio.playFrom(frame / fps);  // 首帧上屏时起播，与视频起点对齐
+
+// 漂移修正：每 20 帧对比 MCI 播放位置与当前帧时刻，超 120ms 重新 seek：
+final pos = audio.positionSeconds(); // status <alias> position
+if ((videoT - pos).abs() > 0.12) audio.playFrom(videoT);
+
+// audio_player.dart — ffmpeg 抽取音轨为临时 WAV（pcm_s16le 44.1kHz 立体声）：
+await Process.run(ffmpeg, [
+  '-i', videoPath, '-vn',
+  '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', wavPath,
+]);
+''';
+
 /// 节点类型 id → 只读源码片段。注册表中的每种类型都必须有对应条目。
 const Map<String, String> nodeSourceCode = {
   'bayer_source': _bayerPatternCode + _rawUnpackCode,
@@ -820,6 +839,7 @@ const Map<String, String> nodeSourceCode = {
   'vectorscope': _instrumentCode,
   'image_output': _imageOutputCode,
   'video_output': _videoOutputCode,
+  'audio_output': _audioOutputCode,
 };
 
 /// ---------------------------------------------------------------------------
@@ -936,6 +956,13 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'fps', type: 'int', value: '帧率（节点参数）'),
     CodeVariable(name: 'crf', type: 'int', value: 'x264 质量 0-51'),
   ],
+  'audio_output': [
+    CodeVariable(name: 'wav', type: 'String', value: 'ffmpeg 抽取的临时 WAV 路径'),
+    CodeVariable(
+        name: 'videoT', type: 'double', value: '当前帧时刻（秒，帧号/帧率）'),
+    CodeVariable(
+        name: 'pos', type: 'double', value: 'MCI 播放位置（秒，漂移修正依据）'),
+  ],
 };
 
 /// 节点类型 id → Output 变量（节点产出的数据）。
@@ -1007,6 +1034,9 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'video_output': [
     CodeVariable(
         name: 'outputPath', type: 'String', value: '写出的 MP4 文件'),
+  ],
+  'audio_output': [
+    CodeVariable(name: 'playing', type: 'bool', value: '是否正在回放'),
   ],
 };
 

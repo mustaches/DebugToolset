@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 20 种节点类型', () {
+    test('包含全部 21 种节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -28,11 +28,12 @@ void main() {
         'vectorscope',
         'image_output',
         'video_output',
+        'audio_output',
       ];
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 20);
+      expect(IspNodeRegistry.types.length, 21);
     });
 
     test('端口类型符合预期', () {
@@ -59,6 +60,14 @@ void main() {
         expect(inType(id), IspPortType.rgb, reason: id);
         expect(IspNodeRegistry.byId(id)!.outputs, isEmpty, reason: id);
       }
+
+      // video_source 的音轨输出与音频输出汇点。
+      final video = IspNodeRegistry.byId('video_source')!;
+      expect(video.outputPort('out_audio')?.type, IspPortType.audio);
+      final audioOut = IspNodeRegistry.byId('audio_output')!;
+      expect(audioOut.inputPort('in')?.type, IspPortType.audio);
+      expect(audioOut.outputs, isEmpty);
+      expect(sinkNodeTypes.contains('audio_output'), isTrue);
     });
 
     test('IspNode.create 按默认值初始化参数', () {
@@ -111,6 +120,12 @@ void main() {
       expect(g.connect(src, 'out', blc, 'in'), isNull);
       // bayer → rgb（demosaic）合法。
       expect(g.connect(blc, 'out', demosaic, 'in'), isNull);
+      // video_source 的 rgb 输出 → 音频输出（audio 输入）应失败。
+      final video = g.addNode('video_source', 0, 0);
+      final speaker = g.addNode('audio_output', 0, 0);
+      expect(g.connect(video, 'out_rgb', speaker, 'in'), '端口类型不匹配');
+      // audio → audio 合法。
+      expect(g.connect(video, 'out_audio', speaker, 'in'), isNull);
     });
 
     test('节点或端口不存在返回错误', () {

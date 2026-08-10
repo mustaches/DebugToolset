@@ -14,6 +14,9 @@ enum IspPortType {
 
   /// HSL 帧。
   hsl,
+
+  /// 音频流（视频音轨，预览播放时经 MCI 回放）。
+  audio,
 }
 
 /// 参数类型。
@@ -368,6 +371,9 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+        // 音轨输出：接到「音频输出」节点仅作流程示意；预览播放时
+        // 含音轨即自动回放（不依赖该连接）。
+        IspPortSpec(name: 'out_audio', type: IspPortType.audio, label: 'Audio'),
       ],
       params: [
         IspParamSpec(
@@ -655,6 +661,16 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         ),
       ],
     ),
+    'audio_output': IspNodeType(
+      typeId: 'audio_output',
+      displayName: '音频输出',
+      colorValue: 0xFF6E5E8E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.audio, label: 'Audio'),
+      ],
+      // 无参数：视频预览播放时含音轨即自动回放（MCI），该节点仅
+      // 在流程图上表达音频流向。
+    ),
     'video_output': IspNodeType(
       typeId: 'video_output',
       displayName: '视频输出 MP4',
@@ -714,10 +730,12 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
 /// 节点内嵌分析结果显示区。
 const instrumentTypes = {'histogram', 'waveform', 'vectorscope'};
 
-/// 透传汇点节点（不改变帧数据）：预览 / 仪器 / 图片输出 / 视频输出。
+/// 透传汇点节点（不改变帧数据）：预览 / 仪器 / 图片输出 / 视频输出 /
+/// 音频输出。
 const sinkNodeTypes = {
   'preview',
   ...instrumentTypes,
   'image_output',
   'video_output',
+  'audio_output',
 };

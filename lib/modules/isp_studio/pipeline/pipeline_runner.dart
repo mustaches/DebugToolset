@@ -377,6 +377,7 @@ Future<Uint8List> runChainFrame(
       case 'vectorscope':
       case 'image_output':
       case 'video_output':
+      case 'audio_output':
         // 透传 / 汇点，不改变数据。
         break;
       default:

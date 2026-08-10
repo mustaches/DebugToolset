@@ -34,6 +34,7 @@ const _outputTypeIds = [
   'preview',
   'image_output',
   'video_output',
+  'audio_output',
 ];
 
 /// 「Instrument」分组：仪器类分析节点。

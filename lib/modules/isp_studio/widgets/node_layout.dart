@@ -52,5 +52,6 @@ Color portColor(IspPortType type) {
     IspPortType.rgb => const Color(0xFF50C080),
     IspPortType.yuv => const Color(0xFF5078C0),
     IspPortType.hsl => const Color(0xFFC05078),
+    IspPortType.audio => const Color(0xFF9E8ED0),
   };
 }

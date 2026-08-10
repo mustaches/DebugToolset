@@ -185,7 +185,9 @@ void main() {
   });
 
   testWidgets('左侧工具栏按分组列出节点类型，点击可添加节点', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    // 高度给足：调色板是懒构建 ListView，表面太矮时分组标题会被
+    // 滚出可视区而不构建（find 不到）。
+    await tester.binding.setSurfaceSize(const Size(1400, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final state = IspStudioState();
@@ -232,6 +234,7 @@ void main() {
       '预览',
       '图片输出',
       '视频输出 MP4',
+      '音频输出',
       '直方图',
       '示波器',
       '矢量示波器',
