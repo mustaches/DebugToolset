@@ -16,6 +16,7 @@ import '../modules/isp_studio/pipeline/exporters.dart';
 import '../modules/isp_studio/pipeline/instrument_worker.dart';
 import '../modules/isp_studio/pipeline/instruments.dart';
 import '../modules/isp_studio/pipeline/pipeline_runner.dart';
+import '../modules/isp_studio/pipeline/pipeline_worker.dart';
 import '../modules/isp_studio/pipeline/raw_sidecar.dart';
 import '../modules/isp_studio/pipeline/video_source.dart';
 import '../modules/isp_studio/widgets/node_layout.dart';
@@ -679,124 +680,139 @@ class IspStudioState extends ChangeNotifier {
       final videoDirect = isVideo &&
           (chain.first['outFormat'] as String? ?? 'rgb') == 'rgb' &&
           chain.skip(1).every((op) => sinkNodeTypes.contains(op['typeId']));
-      // 走帧节奏：目标帧间隔 frameDuration，实际节奏 pace 按产能
-      // 自适应（EMA）：持续达不到目标帧率时自动降速全帧显示（分析
-      // 工具每帧都可能要看，不做持续丢帧）；只有偶发滞后（GC/JIT
-      // 热身等）才丢帧兜底，最多连丢 2 帧。截止时刻增量推进，避免
-      // 逐帧误差累积；Windows 定时器粒度粗（~15.6ms），先粗睡到剩
-      // 几毫秒，再用事件循环让出式等待补齐帧边界（60fps 可用）。
-      final playSw = Stopwatch(); // 首帧取到后才开始计时（见下）
+      // 预取式走帧：上一帧上屏后立刻启动下一帧的生产（取流 / 流水线 /
+      // 图像解码），与帧间隔等待并发；到截止时刻直接换图上屏，生产耗时
+      // 不再与等待叠加。走帧节奏按预览节点的「播放帧率」参数：目标帧
+      // 间隔 frameDuration，实际节奏 pace 按产能自适应（EMA），持续达
+      // 不到目标帧率时自动降速全帧显示（分析工具每帧都可能要看，不做
+      // 持续丢帧）；偶发停滞（GC/JIT 热身等）跳轴兜底。流水线走常驻
+      // worker isolate（PipelineFrameRunner）——每帧 compute() 新起
+      // isolate 的 spawn + JIT 冷启动会直接造成丢帧。
+      final pipeline = videoDirect ? null : PipelineFrameRunner();
+      final playSw = Stopwatch()..start();
       var pace = frameDuration;
       Duration? emaProd;
       var nextDeadline = Duration.zero;
       playbackProduced = playbackDisplayed = playbackDropped = 0;
+
+      // 生产一帧：取流（EOF 回卷重起流）→ 流水线 → 解码 ui.Image。
+      // 返回 (帧号, RGBA, 图像, 是否回卷重起, 生产耗时微秒)；空视频
+      // 返回 null。videoDirect 的流帧缓冲不在此归还——仪器刷新还要读，
+      // 由上屏后的消费方归还。
+      Future<(int, Uint8List, ui.Image, bool, int)?> produceFrame(
+          int f) async {
+        final prodSw = Stopwatch()..start();
+        var restarted = false;
+        final Uint8List rgba;
+        if (isVideo) {
+          final fetchSw = Stopwatch()..start();
+          var bytes = await stream!.next();
+          if (bytes == null) {
+            await stream!.dispose();
+            stream = await VideoFrameStream.start(
+                srcParams['filePath']?.toString() ?? '', 0,
+                ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '');
+            bytes = await stream!.next();
+            if (bytes == null) return null; // 空视频
+            f = 0;
+            restarted = true;
+            // 回卷：音频停下，待回卷后首帧上屏时从头起播对齐。
+            try {
+              audio.stop();
+              audioStarted = false;
+            } catch (_) {
+              // 音频设备异常不影响视频播放。
+            }
+          }
+          playbackProduced++;
+          if (fetchSw.elapsedMicroseconds > playbackMaxFetchUs) {
+            playbackMaxFetchUs = fetchSw.elapsedMicroseconds;
+          }
+          if (fetchSw.elapsedMilliseconds > 50) playbackFetchStalls++;
+          if (videoDirect) {
+            rgba = bytes;
+          } else {
+            rgba = await pipeline!.run(chain, f,
+                sourceRgba: bytes, sourceWidth: w, sourceHeight: h);
+            // 帧字节已拷入 worker，缓冲立即归还池。
+            stream!.recycle(bytes);
+          }
+        } else {
+          rgba = cache?[f] ?? await pipeline!.run(chain, f);
+        }
+        final completer = Completer<ui.Image>();
+        ui.decodeImageFromPixels(
+            rgba, w, h, ui.PixelFormat.rgba8888, completer.complete);
+        final image = await completer.future;
+        return (f, rgba, image, restarted, prodSw.elapsedMicroseconds);
+      }
+
+      Future<(int, Uint8List, ui.Image, bool, int)?>? pending =
+          produceFrame(frame);
       try {
         while (isPlaying && token == _runToken) {
-          final iterSw = Stopwatch()..start();
-          // 视频源：先取流帧（EOF 回卷重起流）。
-          Uint8List? streamBytes;
-          if (isVideo) {
-            final fetchSw = Stopwatch()..start();
-            streamBytes = await stream!.next();
-            var restarted = false;
-            if (streamBytes == null) {
-              await stream.dispose();
-              stream = await VideoFrameStream.start(
-                  srcParams['filePath']?.toString() ?? '', 0,
-                  ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '');
-              streamBytes = await stream.next();
-              if (streamBytes == null) break; // 空视频
-              frame = 0;
-              restarted = true;
-              // 回卷：音频停下，待回卷后首帧上屏时从头起播对齐。
-              try {
-                audio.stop();
-                audioStarted = false;
-              } catch (_) {
-                // 音频设备异常不影响视频播放。
-              }
-            }
-            playbackProduced++;
-            if (fetchSw.elapsedMicroseconds > playbackMaxFetchUs) {
-              playbackMaxFetchUs = fetchSw.elapsedMicroseconds;
-            }
-            if (fetchSw.elapsedMilliseconds > 50) playbackFetchStalls++;
-            if (!playSw.isRunning) {
-              // 首次播放：worker isolate + ffmpeg 启动约百毫秒，
-              // 启动开销不计入走帧时间轴，否则开局就连环丢帧。
-              playSw.start();
-              nextDeadline = playSw.elapsed + pace;
-            } else if (restarted) {
-              // EOF 回卷的重起流同理：重建时间轴，不算落后。
-              nextDeadline = playSw.elapsed + pace;
-            }
-          } else if (!playSw.isRunning) {
-            playSw.start();
-            nextDeadline = playSw.elapsed + pace;
+          // 等截止时刻：Windows 定时器粒度粗（~15.6ms），先循环粗睡到
+          // 剩几毫秒（睡过头/睡不足都由循环兜底），再用事件循环让出式
+          // 等待补齐帧边界。等待期间 pending 的生产在并发推进。
+          var remain = nextDeadline - playSw.elapsed;
+          while (remain > const Duration(milliseconds: 4) &&
+              isPlaying &&
+              token == _runToken) {
+            await Future<void>.delayed(
+                remain - const Duration(milliseconds: 4));
+            remain = nextDeadline - playSw.elapsed;
           }
-          if (!isPlaying || token != _runToken) return;
-          // 偶发停滞（GC / 事件循环抖动 / ffmpeg 重起）：不连环丢帧。
-          // 落后超过 2 个帧间隔时把时间轴跳过停滞段——一次小停顿后
-          // 立刻回到正确节奏，比"丢 2 显 1"的连环丢帧顺滑得多；
-          // 持续慢则由 pace 自适应降速兜底（全帧显示）。
-          if (isVideo && playSw.elapsed - nextDeadline > pace * 2) {
-            playbackDropped++;
-            nextDeadline = playSw.elapsed + pace;
+          while (remain > Duration.zero && isPlaying && token == _runToken) {
+            await Future<void>.delayed(Duration.zero);
+            remain = nextDeadline - playSw.elapsed;
           }
-          final Uint8List rgba;
-          if (isVideo) {
-            rgba = videoDirect
-                ? streamBytes!
-                : await compute(runChainFrameInIsolate, {
-                    'chain': chain,
-                    'frameIndex': frame,
-                    'sourceRgba': streamBytes,
-                    'sourceWidth': w,
-                    'sourceHeight': h,
-                  });
-            if (!videoDirect) {
-              // 帧字节已拷入 isolate，缓冲立即归还池。
-              stream!.recycle(streamBytes!);
-            }
-          } else {
-            rgba = cache?[frame] ??
-                await compute(runChainFrameInIsolate,
-                    {'chain': chain, 'frameIndex': frame});
+          final over = playSw.elapsed - nextDeadline;
+          if (over.inMicroseconds > playbackMaxWaitOverUs) {
+            playbackMaxWaitOverUs = over.inMicroseconds;
           }
-          if (!isPlaying || token != _runToken) return;
-          final completer = Completer<ui.Image>();
-          ui.decodeImageFromPixels(
-              rgba, w, h, ui.PixelFormat.rgba8888, completer.complete);
-          final image = await completer.future;
-          if (isVideo && videoDirect) {
-            // 像素已解码进 ui.Image，缓冲归还池。
-            stream!.recycle(streamBytes!);
-          }
+          // 取预取结果：生产已并发完成则立即返回；偶发停滞在此等到帧。
+          // 取出后即清空 pending——该帧图像所有权转给上屏流程，finally
+          // 的兜底释放只针对仍在途、未上屏的预取帧。
+          final pf = pending;
+          pending = null;
+          final produced = await pf!;
+          if (produced == null) break; // 空视频
+          final (f, rgba, image, restarted, prodUs) = produced;
           if (!isPlaying || token != _runToken) {
+            // 停止/重跑：该帧不再上屏；break 走循环外的暂停收尾
+            // （状态栏「已暂停」与仪器刷新），不能直接 return。
             image.dispose();
-            return;
+            break;
+          }
+          if (playbackDisplayed == 0 || restarted) {
+            // 首帧 / EOF 回卷首帧：以上屏时刻为时间轴零点（ffmpeg 与
+            // worker 的启动开销不计入走帧，否则开局就连环丢帧）。
+            nextDeadline = playSw.elapsed;
+          } else if (playSw.elapsed - nextDeadline > pace * 2) {
+            // 偶发停滞：不连环丢帧，把时间轴跳过停滞段立刻回到正确
+            // 节奏；持续慢由 pace 自适应降速兜底（全帧显示）。
+            playbackDropped++;
+            nextDeadline = playSw.elapsed;
           }
           previewImage?.dispose();
           previewImage = image;
           previewWidth = w;
           previewHeight = h;
-          previewFrame = frame;
+          previewFrame = f;
           playbackDisplayed++;
           // 产能自适应：持续慢于目标帧率时 pace 放宽到实测产能，
           // 全帧显示不丢帧；产能恢复后自动回到目标帧率。
-          final prod = iterSw.elapsed;
+          final prod = Duration(microseconds: prodUs);
           final prevEma = emaProd;
           final ema = prevEma == null ? prod : prevEma * 0.85 + prod * 0.15;
           emaProd = ema;
           pace = ema > frameDuration ? ema : frameDuration;
           playbackPaceUs = pace.inMicroseconds;
-          if (prod.inMicroseconds > playbackMaxProdUs) {
-            playbackMaxProdUs = prod.inMicroseconds;
-          }
+          if (prodUs > playbackMaxProdUs) playbackMaxProdUs = prodUs;
           statusMessage = (pace > frameDuration
-                  ? '播放中 第 ${frame + 1}/$total 帧'
+                  ? '播放中 第 ${f + 1}/$total 帧'
                       '（约 ${(1000000 / pace.inMicroseconds).toStringAsFixed(0)} fps，已降速）'
-                  : '播放中 第 ${frame + 1}/$total 帧') +
+                  : '播放中 第 ${f + 1}/$total 帧') +
               (playbackDropped > 0 ? '  停滞$playbackDropped次' : '');
           notifyListeners();
           // 音频同步：首帧上屏后起播对齐起点；此后周期性对比 MCI 播放
@@ -804,7 +820,7 @@ class IspStudioState extends ChangeNotifier {
           // 取整误差、输出缓冲延迟等都会让两侧时钟渐偏）。降速播放时
           // 不校正——视频已不按原速，强行对齐只会反复卡顿。
           if (audioReady && isVideo) {
-            final videoT = frame / stream!.info.fps;
+            final videoT = f / stream!.info.fps;
             if (!audioStarted) {
               try {
                 audio.playFrom(videoT);
@@ -812,7 +828,8 @@ class IspStudioState extends ChangeNotifier {
               } catch (_) {
                 audioReady = false; // 起播失败：本段播放不再尝试音频
               }
-            } else if (pace <= frameDuration && playbackDisplayed % 20 == 0) {
+            } else if (pace <= frameDuration &&
+                playbackDisplayed % 20 == 0) {
               final pos = audio.positionSeconds();
               if (pos != null && (videoT - pos).abs() > 0.12) {
                 try {
@@ -825,28 +842,25 @@ class IspStudioState extends ChangeNotifier {
           }
           // 仪器随播放刷新（后台分析，限频且不阻塞走帧）。
           _refreshInstrumentsFromFrame(rgba, w, h, liveInstruments, token);
-          frame = (frame + 1) % total;
+          if (isVideo && videoDirect) {
+            // 像素与仪器数据都已取走，流帧缓冲归还池。
+            stream!.recycle(rgba);
+          }
+          // 立刻启动下一帧生产，与下一轮的截止等待并发。
+          frame = (f + 1) % total;
+          pending = produceFrame(frame);
           nextDeadline += pace;
-          var remain = nextDeadline - playSw.elapsed;
-          if (remain > const Duration(milliseconds: 5)) {
-            // 粗睡到剩 ~3ms（定时器晚到也无妨，由下面的补齐兜底）。
-            await Future.delayed(remain - const Duration(milliseconds: 3));
-            remain = nextDeadline - playSw.elapsed;
-          }
-          while (remain > Duration.zero && isPlaying && token == _runToken) {
-            // 让出事件循环（不阻塞 UI 重绘），醒来即检查帧边界。
-            await Future<void>.delayed(Duration.zero);
-            remain = nextDeadline - playSw.elapsed;
-          }
-          final over = playSw.elapsed - nextDeadline;
-          if (over.inMicroseconds > playbackMaxWaitOverUs) {
-            playbackMaxWaitOverUs = over.inMicroseconds;
-          }
         }
       } finally {
+        // 在途的预取帧（未上屏）：结果回来后释放图像，避免泄漏 GPU 纹理。
+        final pf = pending;
+        if (pf != null) {
+          unawaited(pf.then((p) => p?.$3.dispose(), onError: (_) {}));
+        }
         audio
           ..stop()
           ..close();
+        pipeline?.dispose();
         await stream?.dispose();
       }
       // 暂停：刷新当前帧的仪器分析。
@@ -910,7 +924,7 @@ class IspStudioState extends ChangeNotifier {
 
   /// 播放中：用当前帧 RGBA 后台刷新仪器分析。上一批未完成或距上次
   /// 刷新不足 100ms 则跳过该帧（仪器刷新率自动低于帧率，不阻塞走帧；
-  /// 示波器类显示 10Hz 足够，限频避免每帧都起新 isolate 分析）。
+  /// 示波器类显示 10Hz 足够）。分析走常驻 worker isolate。
   bool _instrumentBusy = false;
   DateTime _lastLiveInstrumentRefresh = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -928,18 +942,17 @@ class IspStudioState extends ChangeNotifier {
     _lastLiveInstrumentRefresh = now;
     _instrumentBusy = true;
     // 仪器分析用 1/2 降采样帧：示波器/直方图/矢量示波器都是统计类
-    // 显示，降采样后结果视觉等效，但消息从 8MB 降到 2MB、分析耗时
-    // 降 4 倍。分析走常驻 worker isolate（每次新起 isolate 的 spawn
-    // + JIT 冷启动会阻塞 UI 事件循环上百毫秒，直接造成播放丢帧）。
-    final small = downsample2x2(rgba, w, h);
-    final sw = w ~/ 2 > 0 ? w ~/ 2 : w;
-    final sh = h ~/ 2 > 0 ? h ~/ 2 : h;
+    // 显示，降采样后结果视觉等效、分析耗时降 4 倍。降采样在常驻
+    // worker 内做——在 UI isolate 同步降采样大帧（4K 数十毫秒）会
+    // 直接卡住走帧节奏。帧数据先拷一份再发：videoDirect 的流帧缓冲
+    // 随后就归还解码池，而首个 analyze 要等 worker 起完才发消息。
+    final frame = Uint8List.fromList(rgba);
     () async {
       try {
         for (final node in targets) {
           try {
             final result = await _instrumentAnalyzer.analyze(
-                small, sw, sh, node.typeId);
+                frame, w, h, node.typeId, downsample: true);
             if (token != _runToken) return;
             instrumentResults[node.id] = result;
             await _updateInstrumentImage(node.id, result);

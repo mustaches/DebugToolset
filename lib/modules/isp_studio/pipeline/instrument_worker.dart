@@ -11,6 +11,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'pipeline_runner.dart' show instrumentAnalyze;
+import 'instruments.dart' show downsample2x2;
 
 /// 常驻 isolate 的仪器分析客户端。非线程安全：调用方自行串行化
 /// （IspStudioState 的 _instrumentBusy 闸保证一次只跑一批）。
@@ -24,14 +25,17 @@ class InstrumentAnalyzer {
   var _started = false;
 
   /// 分析一帧（直方图/波形/矢量示波器，见 pipeline_runner）。
-  /// 分析失败抛 [StateError]。
+  /// [downsample] 为 true 时先在 worker 内做 1/2 降采样再分析
+  /// （统计类仪器视觉等效；若在 UI isolate 同步降采样，4K 帧要数十
+  /// 毫秒，会直接卡住播放走帧）。分析失败抛 [StateError]。
   Future<Map<String, Object?>> analyze(
-      Uint8List rgba, int width, int height, String kind) async {
+      Uint8List rgba, int width, int height, String kind,
+      {bool downsample = false}) async {
     await _ensureStarted();
     final id = _reqId++;
     final c = Completer<Map<String, Object?>>();
     _pending[id] = c;
-    _worker!.send([id, rgba, width, height, kind]);
+    _worker!.send([id, rgba, width, height, kind, downsample]);
     return c.future;
   }
 
@@ -77,8 +81,8 @@ class InstrumentAnalyzer {
   }
 }
 
-/// worker 入口：逐条处理 [id, rgba, 宽, 高, 仪器类型]，回 [id, 结果]，
-/// 失败回 [id, 'error', 消息]。
+/// worker 入口：逐条处理 [id, rgba, 宽, 高, 仪器类型, 是否降采样]，
+/// 回 [id, 结果]，失败回 [id, 'error', 消息]。
 void _instrumentWorkerMain(SendPort ui) {
   final port = ReceivePort();
   ui.send(port.sendPort);
@@ -86,8 +90,15 @@ void _instrumentWorkerMain(SendPort ui) {
     final req = msg as List;
     final id = req[0] as int;
     try {
-      final result = instrumentAnalyze(
-          req[4] as String, req[1] as Uint8List, req[2] as int, req[3] as int);
+      var rgba = req[1] as Uint8List;
+      var w = req[2] as int;
+      var h = req[3] as int;
+      if (req[5] == true) {
+        rgba = downsample2x2(rgba, w, h);
+        w = w ~/ 2 > 0 ? w ~/ 2 : w;
+        h = h ~/ 2 > 0 ? h ~/ 2 : h;
+      }
+      final result = instrumentAnalyze(req[4] as String, rgba, w, h);
       ui.send([id, result]);
     } catch (e) {
       ui.send([id, 'error', e.toString()]);

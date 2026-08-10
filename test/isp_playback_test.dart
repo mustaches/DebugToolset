@@ -280,6 +280,47 @@ void main() {
       }
     });
 
+    test('视频经中间算子播放：常驻流水线 worker 出帧', () async {
+      // 依赖项目内置 ffmpeg；缺失时跳过。
+      if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
+      // 64x64 testsrc，4fps × 1s = 4 帧；链上插一个 gamma 算子后播放
+      // 不再走 videoDirect 直通，而是常驻 PipelineFrameRunner。
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final tmp = File('${Directory.systemTemp.path}/isp_pipe_$stamp.mp4');
+      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=4:duration=1',
+        '-pix_fmt', 'yuv420p', tmp.path,
+      ]);
+      expect(enc.exitCode, 0);
+      try {
+        final state = IspStudioState();
+        final prevId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'preview')
+            .key;
+        final srcId = state.graph.addNode('video_source', 0, 0);
+        final gammaId = state.graph.addNode('gamma', 0, 100);
+        expect(
+            state.graph.connect(srcId, 'out_rgb', gammaId, 'in'), isNull);
+        expect(state.graph.connect(gammaId, 'out', prevId, 'in'), isNull);
+        state.setParam(srcId, 'filePath', tmp.path);
+        await state.autoFillFromVideo(srcId);
+
+        final playing = state.togglePlayback();
+        final seen = <int>{};
+        state.addListener(() => seen.add(state.previewFrame));
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        state.stopPlayback();
+        await playing;
+        expect(seen.length, greaterThan(1), reason: '经流水线的播放应推进帧');
+        expect(state.previewImage, isNotNull);
+        expect(state.previewWidth, 64);
+        expect(state.previewHeight, 64);
+      } finally {
+        await tmp.delete();
+      }
+    });
+
     test('视频音频：解析音轨、抽取 WAV、MCI 播放控制', () async {
       if (!Platform.isWindows) return;
       if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
