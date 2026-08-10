@@ -81,7 +81,7 @@ class IspNodeWidget extends StatelessWidget {
             _buildTitleBar(state),
             for (var i = 0; i < rows; i++) _buildPortRow(state, i),
             if (type.typeId == 'preview') _buildPreviewExtra(state),
-            if (instrumentTypes.contains(type.typeId))
+            if (allInstrumentTypes.contains(type.typeId))
               _buildInstrumentExtra(state),
             if (type.typeId == 'image_output')
               _buildExportButton(
@@ -95,8 +95,8 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
-  /// 仪器节点附加区：直方图用 CustomPaint 绘制，
-  /// 波形/矢量示波器显示 state 里解码好的亮度图。
+  /// 仪器节点附加区：直方图与音频仪器（电平/波形/EQ）用 CustomPaint
+  /// 直绘 instrumentResults，波形/矢量示波器显示 state 里解码好的亮度图。
   /// 高度与预览节点共用同一套拖动调整机制（底部手柄 + 右下角控制点）。
   Widget _buildInstrumentExtra(IspStudioState state) {
     const hint =
@@ -173,6 +173,34 @@ class IspNodeWidget extends StatelessWidget {
           );
         },
       );
+    } else if (type.typeId == 'audio_level') {
+      final result = state.instrumentResults[node.id];
+      content = result == null
+          ? hint
+          : CustomPaint(
+              painter: _AudioLevelPainter(
+                  (result['left'] as num).toDouble(),
+                  (result['right'] as num).toDouble()),
+              child: const SizedBox.expand());
+    } else if (type.typeId == 'audio_waveform') {
+      final result = state.instrumentResults[node.id];
+      content = result == null
+          ? hint
+          : CustomPaint(
+              painter: _AudioWaveformPainter(
+                result['lMin'] as Float32List,
+                result['lMax'] as Float32List,
+                result['rMin'] as Float32List,
+                result['rMax'] as Float32List,
+              ),
+              child: const SizedBox.expand());
+    } else if (type.typeId == 'audio_eq') {
+      final result = state.instrumentResults[node.id];
+      content = result == null
+          ? hint
+          : CustomPaint(
+              painter: _AudioEqPainter(result['bands'] as Float64List),
+              child: const SizedBox.expand());
     } else {
       final image = state.instrumentImages[node.id];
       content =
@@ -264,7 +292,7 @@ class IspNodeWidget extends StatelessWidget {
           ),
           // 最大化/还原（仅有显示区的节点：预览/仪器）。
           if (type.typeId == 'preview' ||
-              instrumentTypes.contains(type.typeId))
+              allInstrumentTypes.contains(type.typeId))
             Tooltip(
               message:
                   state.maximizedNodeId == node.id ? '还原' : '最大化',
@@ -730,4 +758,131 @@ class VectorscopeGraticule extends CustomPainter {
 
   @override
   bool shouldRepaint(VectorscopeGraticule old) => false;
+}
+
+/// 立体声电平指示器：L/R 两条 LED 段式横条（上 L 下 R），
+/// 绿（≤-20dB）/ 黄（-20~-6dB）/ 红（>-6dB）三段配色。
+class _AudioLevelPainter extends CustomPainter {
+  final double left;
+  final double right;
+
+  _AudioLevelPainter(this.left, this.right);
+
+  static const _segments = 40;
+  static const _gap = 1.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF101010));
+    final barH = (size.height - 12) / 2;
+    if (barH <= 0) return;
+    _bar(canvas, Rect.fromLTWH(4, 4, size.width - 8, barH), left);
+    _bar(canvas, Rect.fromLTWH(4, 8 + barH, size.width - 8, barH), right);
+  }
+
+  void _bar(Canvas canvas, Rect rect, double value) {
+    final segW = (rect.width - (_segments - 1) * _gap) / _segments;
+    if (segW <= 0) return;
+    final lit = (value.clamp(0.0, 1.0) * _segments).round();
+    final paint = Paint();
+    for (var i = 0; i < _segments; i++) {
+      final t = (i + 1) / _segments;
+      paint.color = i >= lit
+          ? const Color(0xFF2A2A2A)
+          : t <= 0.66
+              ? const Color(0xFF50C050)
+              : t <= 0.9
+                  ? const Color(0xFFD0C040)
+                  : const Color(0xFFD04040);
+      canvas.drawRect(
+          Rect.fromLTWH(rect.left + i * (segW + _gap), rect.top, segW,
+              rect.height),
+          paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AudioLevelPainter old) =>
+      old.left != left || old.right != right;
+}
+
+/// 音频波形显示器：L/R 两行（上 L 绿、下 R 蓝），逐列画 min..max
+/// 竖线，中线为 0 电平。
+class _AudioWaveformPainter extends CustomPainter {
+  final Float32List lMin;
+  final Float32List lMax;
+  final Float32List rMin;
+  final Float32List rMax;
+
+  _AudioWaveformPainter(this.lMin, this.lMax, this.rMin, this.rMax);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF101010));
+    final rowH = size.height / 2;
+    if (rowH < 2) return;
+    _row(canvas, Rect.fromLTWH(0, 0, size.width, rowH), lMin, lMax,
+        const Color(0xFF50C080));
+    _row(canvas, Rect.fromLTWH(0, rowH, size.width, rowH), rMin, rMax,
+        const Color(0xFF5080C0));
+  }
+
+  void _row(Canvas canvas, Rect rect, Float32List mins, Float32List maxs,
+      Color color) {
+    final centerY = rect.top + rect.height / 2;
+    // 0 电平中线。
+    canvas.drawRect(
+        Rect.fromLTWH(rect.left, centerY - 0.5, rect.width, 1),
+        Paint()..color = const Color(0xFF3A3A3A));
+    final columns = mins.length;
+    if (columns == 0) return;
+    final amp = rect.height / 2 - 1;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = math.max(1, rect.width / columns - 1);
+    for (var c = 0; c < columns; c++) {
+      final x = rect.left + (c + 0.5) * rect.width / columns;
+      final y1 = centerY - maxs[c] * amp;
+      final y2 = centerY - mins[c] * amp;
+      canvas.drawLine(Offset(x, y1), Offset(x, y2), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AudioWaveformPainter old) => true;
+}
+
+/// 21 段音频 EQ 频谱：竖条自下而上，颜色随幅度绿→黄→红。
+class _AudioEqPainter extends CustomPainter {
+  final Float64List bands;
+
+  _AudioEqPainter(this.bands);
+
+  static const _gap = 2.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF101010));
+    final n = bands.length;
+    if (n == 0) return;
+    final barW = (size.width - (n - 1) * _gap) / n;
+    if (barW <= 0) return;
+    final paint = Paint();
+    for (var i = 0; i < n; i++) {
+      final v = bands[i].clamp(0.0, 1.0);
+      if (v <= 0) continue;
+      final bh = v * (size.height - 4);
+      paint.color = v <= 0.66
+          ? const Color(0xFF50C050)
+          : v <= 0.9
+              ? const Color(0xFFD0C040)
+              : const Color(0xFFD04040);
+      canvas.drawRect(
+          Rect.fromLTWH(i * (barW + _gap), size.height - 2 - bh, barW, bh),
+          paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AudioEqPainter old) => true;
 }

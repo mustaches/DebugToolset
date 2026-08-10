@@ -671,6 +671,33 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
       // 无参数：视频预览播放时含音轨即自动回放（MCI），该节点仅
       // 在流程图上表达音频流向。
     ),
+    'audio_level': IspNodeType(
+      typeId: 'audio_level',
+      displayName: '音频电平',
+      colorValue: 0xFF4E7E8E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.audio, label: 'Audio'),
+      ],
+      // 无参数：当前位置前 50ms 窗的各声道峰值电平（dB 刻度）。
+    ),
+    'audio_waveform': IspNodeType(
+      typeId: 'audio_waveform',
+      displayName: '音频波形',
+      colorValue: 0xFF5E5E9E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.audio, label: 'Audio'),
+      ],
+      // 无参数：当前位置前 ~92ms 窗的逐列 min/max 波形（L/R 两行）。
+    ),
+    'audio_eq': IspNodeType(
+      typeId: 'audio_eq',
+      displayName: '音频EQ频谱',
+      colorValue: 0xFF7E5E9E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.audio, label: 'Audio'),
+      ],
+      // 无参数：当前位置前 2048 样本 FFT，20Hz–20kHz 对数 21 段。
+    ),
     'video_output': IspNodeType(
       typeId: 'video_output',
       displayName: '视频输出 MP4',
@@ -730,11 +757,23 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
 /// 节点内嵌分析结果显示区。
 const instrumentTypes = {'histogram', 'waveform', 'vectorscope'};
 
-/// 透传汇点节点（不改变帧数据）：预览 / 仪器 / 图片输出 / 视频输出 /
-/// 音频输出。
+/// 音频类仪器节点（电平/波形/EQ 频谱）：数据来自视频音轨 PCM 而非
+/// 图像帧，走独立的刷新路径（isp_studio_state._runAudioInstruments）。
+const audioInstrumentTypes = {
+  'audio_level',
+  'audio_waveform',
+  'audio_eq',
+};
+
+/// 全部仪器类节点（图像仪器 + 音频仪器）：只进不出、内嵌显示区。
+const allInstrumentTypes = {...instrumentTypes, ...audioInstrumentTypes};
+
+/// 透传汇点节点（不改变帧数据）：预览 / 仪器 / 音频仪器 / 图片输出 /
+/// 视频输出 / 音频输出。
 const sinkNodeTypes = {
   'preview',
   ...instrumentTypes,
+  ...audioInstrumentTypes,
   'image_output',
   'video_output',
   'audio_output',

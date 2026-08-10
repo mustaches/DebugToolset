@@ -37,11 +37,14 @@ const _outputTypeIds = [
   'audio_output',
 ];
 
-/// 「Instrument」分组：仪器类分析节点。
+/// 「Instrument」分组：仪器类分析节点（图像仪器 + 音频仪器）。
 const _instrumentTypeIds = [
   'histogram',
   'waveform',
   'vectorscope',
+  'audio_level',
+  'audio_waveform',
+  'audio_eq',
 ];
 
 /// 节点工具栏：按 Source / Process / Output 分组列出全部节点类型

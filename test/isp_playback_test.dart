@@ -321,6 +321,57 @@ void main() {
       }
     });
 
+    test('音频仪器随播放刷新（电平/EQ）', () async {
+      if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
+      // 64x64 4fps × 2s + 440Hz 正弦音轨。
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final tmp =
+          File('${Directory.systemTemp.path}/isp_audio_instr_$stamp.mp4');
+      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=4:duration=2',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+        '-pix_fmt', 'yuv420p', '-c:a', 'aac', tmp.path,
+      ]);
+      expect(enc.exitCode, 0);
+      try {
+        final state = IspStudioState();
+        final prevId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'preview')
+            .key;
+        final srcId = state.graph.addNode('video_source', 0, 0);
+        expect(state.graph.connect(srcId, 'out_rgb', prevId, 'in'), isNull);
+        final levelId = state.graph.addNode('audio_level', 0, 200);
+        expect(
+            state.graph.connect(srcId, 'out_audio', levelId, 'in'), isNull);
+        final eqId = state.graph.addNode('audio_eq', 0, 400);
+        expect(state.graph.connect(srcId, 'out_audio', eqId, 'in'), isNull);
+        state.setParam(srcId, 'filePath', tmp.path);
+        await state.autoFillFromVideo(srcId);
+
+        final playing = state.togglePlayback();
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        state.stopPlayback();
+        await playing;
+
+        // 满幅 440Hz 正弦：电平接近满格；EQ 峰值在 440Hz 所在段。
+        final level = state.instrumentResults[levelId];
+        expect(level, isNotNull, reason: '音频电平应有分析结果');
+        expect(level!['left'] as double, greaterThan(0.5));
+        final eq = state.instrumentResults[eqId];
+        expect(eq, isNotNull, reason: 'EQ 频谱应有分析结果');
+        final bands = eq!['bands'] as Float64List;
+        expect(bands.length, 21);
+        var best = 0;
+        for (var i = 1; i < bands.length; i++) {
+          if (bands[i] > bands[best]) best = i;
+        }
+        expect(best, inInclusiveRange(8, 10)); // 440Hz 所在段
+      } finally {
+        await tmp.delete();
+      }
+    });
+
     test('视频音频：解析音轨、抽取 WAV、MCI 播放控制', () async {
       if (!Platform.isWindows) return;
       if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;

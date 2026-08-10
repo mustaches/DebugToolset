@@ -817,6 +817,41 @@ await Process.run(ffmpeg, [
 ]);
 ''';
 
+/// 音频仪器共用说明：输入为视频音轨 PCM（audio_analysis.dart 的
+/// [WavPcm]），分析取当前位置之前的一小段因果窗。
+const String _audioLevelCode = r'''
+// audio_analysis.dart — 立体声电平：当前位置前 50ms 窗的各声道峰值：
+for (var f = start; f < end; f++) {
+  peakL = max(peakL, samples[f * channels].abs());      // 左声道
+  peakR = max(peakR, samples[f * channels + 1].abs());  // 右声道
+}
+// 峰值 → dBFS（-60dB 起步）→ 0..1 显示值：
+final db = 20 * log10(peak / 32768);
+final value = ((db + 60) / 60).clamp(0.0, 1.0);
+''';
+
+/// 音频波形（audio_analysis.dart）。
+const String _audioWaveformCode = r'''
+// audio_analysis.dart — 当前位置前 ~92ms 窗（4096 样本），横轴压为
+// 256 列，每列取窗内样本 min/max（L/R 分两行显示）：
+for (var f = start; f < end; f++) {
+  final col = (f - start) * columns ~/ span;
+  lMin[col] = min(lMin[col], l); lMax[col] = max(lMax[col], l);
+  rMin[col] = min(rMin[col], r); rMax[col] = max(rMax[col], r);
+}
+''';
+
+/// 音频 EQ 频谱（audio_analysis.dart）。
+const String _audioEqCode = r'''
+// audio_analysis.dart — 当前位置前 2048 样本，混单声道 + Hann 窗：
+re[i] = (l + r) * 0.5 * (0.5 - 0.5 * cos(2 * pi * i / (N - 1)));
+// 迭代基-2 FFT 取幅度谱，20Hz–20kHz 对数等分 21 段取段内峰值：
+final ratio = pow(20000 / 20, 1 / 21); // 段中心等比
+for (var b = 0; b < 21; b++) {
+  bands[b] = maxMagnitude(binRange(b)); // dB 刻度映射到 0..1
+}
+''';
+
 /// 节点类型 id → 只读源码片段。注册表中的每种类型都必须有对应条目。
 const Map<String, String> nodeSourceCode = {
   'bayer_source': _bayerPatternCode + _rawUnpackCode,
@@ -840,6 +875,9 @@ const Map<String, String> nodeSourceCode = {
   'image_output': _imageOutputCode,
   'video_output': _videoOutputCode,
   'audio_output': _audioOutputCode,
+  'audio_level': _audioLevelCode,
+  'audio_waveform': _audioWaveformCode,
+  'audio_eq': _audioEqCode,
 };
 
 /// ---------------------------------------------------------------------------
@@ -963,7 +1001,17 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(
         name: 'pos', type: 'double', value: 'MCI 播放位置（秒，漂移修正依据）'),
   ],
+  'audio_level': _audioInstrumentInputs,
+  'audio_waveform': _audioInstrumentInputs,
+  'audio_eq': _audioInstrumentInputs,
 };
+
+/// 音频仪器共用输入（音轨 PCM + 分析位置）。
+const List<CodeVariable> _audioInstrumentInputs = [
+  CodeVariable(
+      name: 'pcm', type: 'WavPcm', value: '视频音轨（44.1kHz 立体声 s16）'),
+  CodeVariable(name: 'seconds', type: 'double', value: '当前播放位置（秒）'),
+];
 
 /// 节点类型 id → Output 变量（节点产出的数据）。
 const Map<String, List<CodeVariable>> nodeOutputVars = {
@@ -1037,6 +1085,23 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   ],
   'audio_output': [
     CodeVariable(name: 'playing', type: 'bool', value: '是否正在回放'),
+  ],
+  'audio_level': [
+    CodeVariable(name: 'left', type: 'double', value: '左声道峰值电平 0..1'),
+    CodeVariable(name: 'right', type: 'double', value: '右声道峰值电平 0..1'),
+  ],
+  'audio_waveform': [
+    CodeVariable(name: 'columns', type: 'int', value: '波形列数（256）'),
+    CodeVariable(
+        name: 'lMin/lMax', type: 'Float32List', value: '左声道逐列 min/max'),
+    CodeVariable(
+        name: 'rMin/rMax', type: 'Float32List', value: '右声道逐列 min/max'),
+  ],
+  'audio_eq': [
+    CodeVariable(
+        name: 'bands',
+        type: 'Float64List',
+        value: '21 段幅度 0..1（20Hz–20kHz 对数分布）'),
   ],
 };
 

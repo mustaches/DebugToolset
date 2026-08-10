@@ -238,6 +238,9 @@ void main() {
       '直方图',
       '示波器',
       '矢量示波器',
+      '音频电平',
+      '音频波形',
+      '音频EQ频谱',
     ]) {
       expect(find.descendant(of: palette, matching: find.text(name)),
           findsWidgets);

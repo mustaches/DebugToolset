@@ -375,6 +375,9 @@ Future<Uint8List> runChainFrame(
       case 'histogram':
       case 'waveform':
       case 'vectorscope':
+      case 'audio_level':
+      case 'audio_waveform':
+      case 'audio_eq':
       case 'image_output':
       case 'video_output':
       case 'audio_output':

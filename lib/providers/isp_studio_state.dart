@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 
 import '../modules/isp_studio/models/isp_graph.dart';
 import '../modules/isp_studio/models/isp_node.dart';
+import '../modules/isp_studio/pipeline/audio_analysis.dart';
 import '../modules/isp_studio/pipeline/audio_player.dart';
 import '../modules/isp_studio/pipeline/exporters.dart';
 import '../modules/isp_studio/pipeline/instrument_worker.dart';
@@ -447,15 +448,19 @@ class IspStudioState extends ChangeNotifier {
   }
 
   /// 对所有已连接输入的仪器节点并行执行分析（编译到该节点为止的链）。
+  /// 音频仪器（[audioInstrumentTypes]）不走帧流水线，由
+  /// [_runAudioInstruments] 按音轨 PCM 刷新。
   Future<void> _runInstruments(int frame, int token) async {
     final connected = <IspNode>[];
     for (final node in graph.nodes.values) {
-      if (!instrumentTypes.contains(node.typeId)) continue;
+      if (!allInstrumentTypes.contains(node.typeId)) continue;
       final type = IspNodeRegistry.byId(node.typeId)!;
       final hasInput =
           type.inputs.any((p) => graph.connectionAt(node.id, p.name) != null);
       if (hasInput) {
-        connected.add(node);
+        if (!audioInstrumentTypes.contains(node.typeId)) {
+          connected.add(node);
+        }
       } else {
         instrumentResults.remove(node.id);
         instrumentImages.remove(node.id)?.dispose();
@@ -468,23 +473,79 @@ class IspStudioState extends ChangeNotifier {
         instrumentImages.remove(id)?.dispose();
       }
     }
-    if (connected.isEmpty) return;
-    await Future.wait([
-      for (final node in connected)
-        () async {
-          try {
-            final chain = compileChain(graph, node.id);
-            final result = await compute(analyzeInstrumentInIsolate,
-                {'chain': chain, 'frameIndex': frame, 'kind': node.typeId});
-            if (token != _runToken) return;
-            instrumentResults[node.id] = result;
-            await _updateInstrumentImage(node.id, result);
-          } catch (_) {
-            // 链不完整等失败：保留旧结果，不影响预览。
-          }
-        }(),
-    ]);
+    // 音频仪器：数据来自音轨而非帧，与图像仪器并行刷新。
+    final audioFuture = _runAudioInstruments(frame, token);
+    if (connected.isNotEmpty) {
+      await Future.wait([
+        for (final node in connected)
+          () async {
+            try {
+              final chain = compileChain(graph, node.id);
+              final result = await compute(analyzeInstrumentInIsolate,
+                  {'chain': chain, 'frameIndex': frame, 'kind': node.typeId});
+              if (token != _runToken) return;
+              instrumentResults[node.id] = result;
+              await _updateInstrumentImage(node.id, result);
+            } catch (_) {
+              // 链不完整等失败：保留旧结果，不影响预览。
+            }
+          }(),
+      ]);
+    }
+    await audioFuture;
     if (token == _runToken) notifyListeners();
+  }
+
+  /// 音频仪器的 WAV PCM 缓存（WAV 路径 → 解析结果）。
+  final Map<String, WavPcm> _wavPcmCache = {};
+
+  /// 加载并缓存 WAV 的 PCM（电平/波形/EQ 分析共用）；失败返回 null。
+  Future<WavPcm?> _loadWavPcm(String wavPath) async {
+    final cached = _wavPcmCache[wavPath];
+    if (cached != null) return cached;
+    try {
+      final pcm = parseWavPcm(await File(wavPath).readAsBytes());
+      _wavPcmCache[wavPath] = pcm;
+      return pcm;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 刷新所有已连接的音频仪器（电平/波形/EQ 频谱）：分析位置为
+  /// [frame] 换算的秒（帧率取上游视频源的原生帧率）。分析是微秒级
+  /// 小计算，直接在 UI isolate 执行。无音轨/未连接时清除结果
+  /// （节点显示「未运行」）；其余失败静默（保留旧结果）。
+  Future<void> _runAudioInstruments(int frame, int token) async {
+    for (final node in graph.nodes.values) {
+      if (!audioInstrumentTypes.contains(node.typeId)) continue;
+      final conn = graph.connectionAt(node.id, 'in');
+      final src = conn == null ? null : graph.nodes[conn.fromNodeId];
+      if (src == null || src.typeId != 'video_source') {
+        instrumentResults.remove(node.id);
+        continue;
+      }
+      try {
+        final path = src.paramValues['filePath']?.toString() ?? '';
+        final ffmpegPath = src.paramValues['ffmpegPath']?.toString() ?? '';
+        final info = await videoFileInfo(path, ffmpegPath: ffmpegPath);
+        final wav = await ensureAudioWav(path, ffmpegPath: ffmpegPath);
+        final pcm = wav == null ? null : await _loadWavPcm(wav);
+        if (pcm == null) {
+          instrumentResults.remove(node.id); // 无音轨或抽取失败
+          continue;
+        }
+        if (token != _runToken) return;
+        final seconds = frame / info.fps;
+        instrumentResults[node.id] = switch (node.typeId) {
+          'audio_level' => audioLevels(pcm, seconds),
+          'audio_waveform' => audioWaveform(pcm, seconds),
+          _ => audioEqBands(pcm, seconds),
+        };
+      } catch (_) {
+        // 保留旧结果，不影响预览/播放。
+      }
+    }
   }
 
   /// 波形/矢量示波器：把计数表映射为亮度图并解码为显示图像。
@@ -503,7 +564,7 @@ class IspStudioState extends ChangeNotifier {
         bmp = _intensityRgba(result['counts'] as Uint32List, w, h,
             const (r: 70, g: 235, b: 70)); // 荧光绿，还原真实示波器显示
       default:
-        return; // 直方图由控件直接绘制，无需图像
+        return; // 直方图与音频仪器由控件直绘，无需图像
     }
     final completer = Completer<ui.Image>();
     ui.decodeImageFromPixels(
@@ -637,9 +698,11 @@ class IspStudioState extends ChangeNotifier {
         }
       }
       // 与预览同上游链的仪器：播放中直接用当前帧 RGBA 刷新（不重跑流水线）。
+      // 音频仪器不吃帧数据，走独立的音轨刷新（见播放循环内调用点）。
       final liveInstruments = <IspNode>[
         for (final node in graph.nodes.values)
-          if (instrumentTypes.contains(node.typeId) && _sharesUpstream(node, chain))
+          if (instrumentTypes.contains(node.typeId) &&
+              _sharesUpstream(node, chain))
             node,
       ];
       var frame = previewFrame.clamp(0, total - 1);
@@ -842,6 +905,8 @@ class IspStudioState extends ChangeNotifier {
           }
           // 仪器随播放刷新（后台分析，限频且不阻塞走帧）。
           _refreshInstrumentsFromFrame(rgba, w, h, liveInstruments, token);
+          // 音频仪器（电平/波形/EQ）随播放位置刷新（限频 ~15Hz）。
+          _refreshAudioInstrumentsFromPlayback(f, token);
           if (isVideo && videoDirect) {
             // 像素与仪器数据都已取走，流帧缓冲归还池。
             stream!.recycle(rgba);
@@ -931,6 +996,37 @@ class IspStudioState extends ChangeNotifier {
   /// 常驻仪器分析 isolate（随 state 生命周期，懒启动）。
   final InstrumentAnalyzer _instrumentAnalyzer = InstrumentAnalyzer();
 
+  /// 音频仪器播放刷新的限频与重入闸（同 _instrumentBusy 思路）。
+  bool _audioInstrumentBusy = false;
+  DateTime _lastAudioInstrumentRefresh =
+      DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 播放中：按当前帧位置刷新音频仪器（电平/波形/EQ）。限频 ~15Hz
+  /// （仪表类显示足够），分析本身是微秒级小计算；首次调用要抽取/
+  /// 解析音轨，异步执行不阻塞走帧。
+  void _refreshAudioInstrumentsFromPlayback(int frame, int token) {
+    if (_audioInstrumentBusy) return;
+    if (!graph.nodes.values
+        .any((n) => audioInstrumentTypes.contains(n.typeId))) {
+      return;
+    }
+    final now = DateTime.now();
+    if (now.difference(_lastAudioInstrumentRefresh) <
+        const Duration(milliseconds: 66)) {
+      return;
+    }
+    _lastAudioInstrumentRefresh = now;
+    _audioInstrumentBusy = true;
+    () async {
+      try {
+        await _runAudioInstruments(frame, token);
+        if (token == _runToken) notifyListeners();
+      } finally {
+        _audioInstrumentBusy = false;
+      }
+    }();
+  }
+
   void _refreshInstrumentsFromFrame(Uint8List rgba, int w, int h,
       List<IspNode> targets, int token) {
     if (_instrumentBusy || targets.isEmpty) return;
@@ -993,10 +1089,10 @@ class IspStudioState extends ChangeNotifier {
   /// 最大化前的几何备份：nodeId → (x, y, width, extraHeight)。
   final Map<String, (double, double, double, double)> _maximizeBackup = {};
 
-  /// 有显示区（可最大化）的节点：预览 + 仪器。
+  /// 有显示区（可最大化）的节点：预览 + 仪器（含音频仪器）。
   bool canMaximize(String nodeId) {
     final t = graph.nodes[nodeId]?.typeId;
-    return t == 'preview' || instrumentTypes.contains(t);
+    return t == 'preview' || allInstrumentTypes.contains(t);
   }
 
   /// 最大化/还原切换：最大化 = 节点铺满 [viewportCanvas]（画布坐标

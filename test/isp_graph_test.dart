@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 21 种节点类型', () {
+    test('包含全部 24 种节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -29,11 +29,14 @@ void main() {
         'image_output',
         'video_output',
         'audio_output',
+        'audio_level',
+        'audio_waveform',
+        'audio_eq',
       ];
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 21);
+      expect(IspNodeRegistry.types.length, 24);
     });
 
     test('端口类型符合预期', () {
@@ -68,6 +71,13 @@ void main() {
       expect(audioOut.inputPort('in')?.type, IspPortType.audio);
       expect(audioOut.outputs, isEmpty);
       expect(sinkNodeTypes.contains('audio_output'), isTrue);
+      // 音频仪器：audio 输入、无输出、属汇点。
+      for (final id in audioInstrumentTypes) {
+        final t = IspNodeRegistry.byId(id)!;
+        expect(t.inputPort('in')?.type, IspPortType.audio, reason: id);
+        expect(t.outputs, isEmpty, reason: id);
+        expect(sinkNodeTypes.contains(id), isTrue, reason: id);
+      }
     });
 
     test('IspNode.create 按默认值初始化参数', () {

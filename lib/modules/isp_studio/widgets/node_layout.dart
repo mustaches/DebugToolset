@@ -21,7 +21,7 @@ const double kPortRadius = 5;
 double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
   final rows = math.max(type.inputs.length, type.outputs.length);
   var h = kNodeTitleHeight + rows * kPortRowHeight + 8;
-  if (type.typeId == 'preview' || instrumentTypes.contains(type.typeId)) {
+  if (type.typeId == 'preview' || allInstrumentTypes.contains(type.typeId)) {
     h += previewExtraHeight;
   }
   if (type.typeId == 'image_output' || type.typeId == 'video_output') {
@@ -45,7 +45,7 @@ Offset outputPortPos(IspNode node, IspNodeType type, int index) {
   return Offset(node.x + node.width, _portRowCenterY(node, index));
 }
 
-/// 端口颜色：bayer 橙，rgb 绿，yuv 蓝，hsl 粉。
+/// 端口颜色：bayer 橙，rgb 绿，yuv 蓝，hsl 粉，audio 紫。
 Color portColor(IspPortType type) {
   return switch (type) {
     IspPortType.bayer => const Color(0xFFE0A050),
