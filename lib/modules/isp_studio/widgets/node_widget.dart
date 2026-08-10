@@ -334,14 +334,49 @@ class IspNodeWidget extends StatelessWidget {
             ),
           const Spacer(),
           if (hasOut)
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Text(type.outputs[index].label, style: labelStyle),
-            ),
-          if (hasOut)
-            _outputDot(state, type.outputs[index])
+            _outputArea(state, type.outputs[index], labelStyle)
           else
             const SizedBox(width: kPortRadius * 2),
+        ],
+      ),
+    );
+  }
+
+  /// 输出端口区：标签 + 圆点整体都是拉线命中区（比只点 10px 圆点
+  /// 成功率高得多）。命中区全在 Row 自身范围内——Row 只命中测试
+  /// 自身范围内的点，直接把圆点平移出节点边缘会让探出的那一半
+  /// 点不到；视觉圆点经 Align+平移保持圆心在节点右边缘。
+  Widget _outputArea(
+      IspStudioState state, IspPortSpec port, TextStyle labelStyle) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (d) => state.beginConnectionDrag(
+          node.id, port.name, globalToCanvas(d.globalPosition)),
+      onPanUpdate: (d) =>
+          state.updateConnectionDrag(globalToCanvas(d.globalPosition)),
+      onPanEnd: (_) => onConnectionDragEnd(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Text(port.label, style: labelStyle),
+          ),
+          SizedBox(
+            width: kPortRadius * 3,
+            height: kPortRowHeight,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Transform.translate(
+                offset: const Offset(kPortRadius, 0),
+                child: SizedBox(
+                  width: kPortRadius * 2,
+                  height: kPortRadius * 2,
+                  child: _dot(port, false),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -384,34 +419,6 @@ class IspNodeWidget extends StatelessWidget {
               width: kPortRadius * 2,
               height: kPortRadius * 2,
               child: _dot(port, connected),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 输出端口：圆心位于节点右边缘，从此拖出连线。
-  Widget _outputDot(IspStudioState state, IspPortSpec port) {
-    // 命中区处理同 _inputDot（行内 20x行高，圆心视觉在节点右边缘）。
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onPanStart: (d) => state.beginConnectionDrag(
-          node.id, port.name, globalToCanvas(d.globalPosition)),
-      onPanUpdate: (d) =>
-          state.updateConnectionDrag(globalToCanvas(d.globalPosition)),
-      onPanEnd: (_) => onConnectionDragEnd(),
-      child: SizedBox(
-        width: kPortRadius * 4,
-        height: kPortRowHeight,
-        child: Align(
-          alignment: Alignment.centerRight,
-          child: Transform.translate(
-            offset: const Offset(kPortRadius, 0),
-            child: SizedBox(
-              width: kPortRadius * 2,
-              height: kPortRadius * 2,
-              child: _dot(port, false),
             ),
           ),
         ),

@@ -309,6 +309,16 @@ void main() {
     expect(conn!.fromNodeId, v);
     expect(conn.fromPort, 'out_audio');
     expect(state.graph.connections.length, before + 1);
+
+    // 从端口标签区域（圆点左侧 25px）起拖也能连线——标签+圆点整体
+    // 都是拉线命中区。
+    state.graph.disconnectInput(a, 'in');
+    await tester.pumpAndSettle();
+    final fromLabel = toGlobal(fromCanvas + const Offset(-25, 0));
+    await tester.dragFrom(fromLabel, toGlobal(toCanvas) - fromLabel);
+    await tester.pumpAndSettle();
+    expect(state.graph.connectionAt(a, 'in')?.fromPort, 'out_audio',
+        reason: '从端口标签区域起拖也应连线');
   });
 
   testWidgets('右键拖动节点与画布，右键不再删除节点', (tester) async {
