@@ -29,6 +29,7 @@ class UiEvent {
     this.callback = '',
     this.targetPageId,
     this.timerMs = 1000,
+    this.transition = 'none',
   });
 
   UiEventType type;
@@ -43,12 +44,18 @@ class UiEvent {
   /// Period in milliseconds, only for [UiEventType.onTimer].
   int timerMs;
 
+  /// Page transition effect, used when [action] is [UiActionType.gotoPage]:
+  /// 'none' | 'slideLeft' | 'slideRight' | 'fade' | 'pushLeft' | 'cube'.
+  String transition;
+
   Map<String, dynamic> toJson() => {
         'type': type.name,
         'action': action.name,
         'callback': callback,
         if (targetPageId != null) 'targetPageId': targetPageId,
         if (type == UiEventType.onTimer) 'timerMs': timerMs,
+        if (action == UiActionType.gotoPage && transition != 'none')
+          'transition': transition,
       };
 
   factory UiEvent.fromJson(Map<String, dynamic> json) => UiEvent(
@@ -59,6 +66,7 @@ class UiEvent {
         callback: json['callback'] as String? ?? '',
         targetPageId: json['targetPageId'] as String?,
         timerMs: (json['timerMs'] as num?)?.toInt() ?? 1000,
+        transition: json['transition'] as String? ?? 'none',
       );
 
   UiEvent copy() => UiEvent(
@@ -67,5 +75,6 @@ class UiEvent {
         callback: callback,
         targetPageId: targetPageId,
         timerMs: timerMs,
+        transition: transition,
       );
 }

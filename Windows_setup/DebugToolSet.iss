@@ -48,6 +48,7 @@ Source: "G:\DebugToolSet\bussetup\*"; DestDir: "{app}\bussetup"; Flags: ignoreve
 Source: "G:\DebugToolSet\DeviceProtocol\*"; DestDir: "{app}\DeviceProtocol"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "G:\DebugToolSet\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "G:\DebugToolSet\waveform\*"; DestDir: "{app}\waveform"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "G:\DebugToolSet\tools\ffmpeg\*"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

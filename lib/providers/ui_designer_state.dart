@@ -12,6 +12,9 @@ import '../modules/ui_designer/models/ui_project.dart';
 import '../modules/ui_designer/models/ui_widget.dart';
 import '../modules/ui_designer/models/widget_registry.dart';
 
+/// Navigation direction for preview key handling (OSD remote model).
+enum UiNavDirection { up, down, left, right }
+
 /// State backing the UI designer module: project data, editing selection,
 /// undo/redo and the interactive preview simulation.
 class UiDesignerState extends ChangeNotifier {
@@ -146,6 +149,22 @@ class UiDesignerState extends ChangeNotifier {
     if (page == null) return;
     _snapshot();
     page.bgColor = color;
+    dirty = true;
+    notifyListeners();
+  }
+
+  /// Updates page background: [type] is 'color' | 'image' | 'video';
+  /// [assetId] for image backgrounds, [videoPath] for video backgrounds,
+  /// [anim] for image background animation ('none'|'kenburns'|'parallax').
+  void setPageBackground(String id, String type,
+      {String? assetId, String? videoPath, String? anim}) {
+    final page = project.pageById(id);
+    if (page == null) return;
+    _snapshot();
+    page.bgType = type;
+    if (assetId != null || type == 'image') page.bgAssetId = assetId;
+    if (videoPath != null || type == 'video') page.bgVideoPath = videoPath;
+    if (anim != null) page.bgAnim = anim;
     dirty = true;
     notifyListeners();
   }
@@ -465,6 +484,18 @@ class UiDesignerState extends ChangeNotifier {
   final List<String> callbackLog = [];
   Timer? _pageTimer;
 
+  // Page transition animation (preview).
+  UiPage? _transitionFrom;
+  String _transitionType = 'none';
+  double transitionT = 1.0; // 1.0 = finished
+  Timer? _transitionTimer;
+
+  /// The page being transitioned away from, null when idle.
+  UiPage? get transitionFrom => _transitionFrom;
+
+  /// The active transition type ('none' when idle).
+  String get transitionType => _transitionType;
+
   void enterPreview() {
     previewMode = true;
     selectedIds.clear();
@@ -484,6 +515,10 @@ class UiDesignerState extends ChangeNotifier {
     previewMode = false;
     _pageTimer?.cancel();
     _pageTimer = null;
+    _transitionTimer?.cancel();
+    _transitionFrom = null;
+    _transitionType = 'none';
+    transitionT = 1.0;
     notifyListeners();
   }
 
@@ -511,13 +546,38 @@ class UiDesignerState extends ChangeNotifier {
     } else if (e.action == UiActionType.gotoPage &&
         e.targetPageId != null &&
         project.pageById(e.targetPageId!) != null) {
+      final from = currentPage;
       _firePageEvent(UiEventType.onHide);
       currentPageId = e.targetPageId;
       focusedWidgetId = null;
       _log('跳转到页面「${project.pageById(e.targetPageId!)!.name}」');
       _firePageEvent(UiEventType.onShow);
       _restartPageTimer();
+      _startTransition(from, e.transition);
     }
+  }
+
+  void _startTransition(UiPage? from, String type) {
+    _transitionTimer?.cancel();
+    _transitionFrom = null;
+    _transitionType = 'none';
+    transitionT = 1.0;
+    if (from == null || type == 'none') return;
+    _transitionFrom = from;
+    _transitionType = type;
+    transitionT = 0;
+    const step = 16 / 280; // ~280ms at 60fps
+    _transitionTimer =
+        Timer.periodic(const Duration(milliseconds: 16), (timer) {
+      transitionT += step;
+      if (transitionT >= 1.0) {
+        transitionT = 1.0;
+        _transitionFrom = null;
+        _transitionType = 'none';
+        timer.cancel();
+      }
+      notifyListeners();
+    });
   }
 
   void _firePageEvent(UiEventType type) {
@@ -608,5 +668,181 @@ class UiDesignerState extends ChangeNotifier {
   void previewPressUp() {
     pressedWidgetId = null;
     notifyListeners();
+  }
+
+  // ------------------------------------------------------------------
+  // Preview key navigation (OSD remote model)
+  // ------------------------------------------------------------------
+
+  static const _adjustableTypes = {'value_item', 'option_item', 'slider'};
+
+  bool _isFocusable(UiWidgetModel w) {
+    final def = WidgetRegistry.of(w.type);
+    return def != null && def.events.isNotEmpty;
+  }
+
+  List<UiWidgetModel> get _focusableWidgets => [
+        for (final w in currentPage?.widgets ?? const <UiWidgetModel>[])
+          if (_isFocusable(w)) w,
+      ];
+
+  UiWidgetModel? get _focusedWidget =>
+      focusedWidgetId == null ? null : currentPage?.widgetById(focusedWidgetId!);
+
+  void _setFocus(UiWidgetModel w) {
+    if (focusedWidgetId == w.id) return;
+    focusedWidgetId = w.id;
+    for (final e in w.events.where((e) => e.type == UiEventType.onFocus)) {
+      _fireEvent(e, w);
+    }
+    _log('焦点移动 → ${w.name}');
+    notifyListeners();
+  }
+
+  /// Clears preview focus (Esc).
+  void previewClearFocus() {
+    if (focusedWidgetId == null) return;
+    focusedWidgetId = null;
+    notifyListeners();
+  }
+
+  /// Moves focus to the spatially nearest focusable widget in [dir];
+  /// wraps around to the opposite extreme when there is none.
+  void previewMoveFocus(UiNavDirection dir) {
+    final candidates = _focusableWidgets;
+    if (candidates.isEmpty) return;
+    final current = _focusedWidget;
+    if (current == null) {
+      _setFocus(candidates.first);
+      return;
+    }
+    final c = current.rect.center;
+    UiWidgetModel? best;
+    var bestScore = double.infinity;
+    for (final w in candidates) {
+      if (w.id == current.id) continue;
+      final p = w.rect.center;
+      final dx = p.dx - c.dx, dy = p.dy - c.dy;
+      final double primary, perp;
+      switch (dir) {
+        case UiNavDirection.up:
+          if (dy >= -0.5) continue;
+          primary = -dy;
+          perp = dx.abs();
+        case UiNavDirection.down:
+          if (dy <= 0.5) continue;
+          primary = dy;
+          perp = dx.abs();
+        case UiNavDirection.left:
+          if (dx >= -0.5) continue;
+          primary = -dx;
+          perp = dy.abs();
+        case UiNavDirection.right:
+          if (dx <= 0.5) continue;
+          primary = dx;
+          perp = dy.abs();
+      }
+      final score = primary + perp * 2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = w;
+      }
+    }
+    // Wrap around to the opposite extreme.
+    best ??= switch (dir) {
+      UiNavDirection.up => candidates.reduce(
+          (a, b) => a.rect.center.dy > b.rect.center.dy ? a : b),
+      UiNavDirection.down => candidates.reduce(
+          (a, b) => a.rect.center.dy < b.rect.center.dy ? a : b),
+      UiNavDirection.left => candidates.reduce(
+          (a, b) => a.rect.center.dx > b.rect.center.dx ? a : b),
+      UiNavDirection.right => candidates.reduce(
+          (a, b) => a.rect.center.dx < b.rect.center.dx ? a : b),
+    };
+    _setFocus(best);
+  }
+
+  /// Left/right adjustment of the focused value widget.
+  void previewAdjust(int delta) {
+    final w = _focusedWidget;
+    if (w == null) return;
+    switch (w.type) {
+      case 'value_item':
+        final step = (w.props['step'] as num?)?.toInt() ?? 1;
+        final min = (w.props['min'] as num?)?.toInt() ?? 0;
+        final max = (w.props['max'] as num?)?.toInt() ?? 100;
+        final cur = runtimeValueOf(w) as int? ?? 0;
+        previewSetValue(w, (cur + delta * step).clamp(min, max));
+      case 'option_item':
+        final options = (w.props['options'] as String? ?? '')
+            .split(',')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        if (options.isEmpty) return;
+        final cur = runtimeValueOf(w) as int? ?? 0;
+        previewSetValue(w, (cur + delta) % options.length);
+      case 'slider':
+        final min = (w.props['min'] as num?)?.toInt() ?? 0;
+        final max = (w.props['max'] as num?)?.toInt() ?? 100;
+        final cur = runtimeValueOf(w) as int? ?? 0;
+        previewSetValue(w, (cur + delta).clamp(min, max));
+    }
+  }
+
+  /// Up/down movement of the highlight inside a focused menu.
+  void previewMenuMove(int delta) {
+    final w = _focusedWidget;
+    if (w == null || w.type != 'menu') return;
+    final count = (w.props['items'] as String? ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .length;
+    if (count == 0) return;
+    final wrap = w.props['wrap'] as bool? ?? true;
+    final cur = (runtimeValueOf(w) as int? ?? 0).clamp(0, count - 1);
+    var next = cur + delta;
+    if (wrap) {
+      next = next % count;
+    } else {
+      next = next.clamp(0, count - 1);
+    }
+    previewSetValue(w, next);
+  }
+
+  /// Routes a navigation key in preview mode.
+  void previewNavKey(UiNavDirection dir) {
+    final w = _focusedWidget;
+    switch (dir) {
+      case UiNavDirection.up:
+      case UiNavDirection.down:
+        if (w != null && w.type == 'menu') {
+          previewMenuMove(dir == UiNavDirection.up ? -1 : 1);
+        } else {
+          previewMoveFocus(dir);
+        }
+      case UiNavDirection.left:
+      case UiNavDirection.right:
+        if (w != null && _adjustableTypes.contains(w.type)) {
+          previewAdjust(dir == UiNavDirection.left ? -1 : 1);
+        } else {
+          previewMoveFocus(dir);
+        }
+    }
+  }
+
+  /// OK key: activate the focused widget (focus + click + built-ins).
+  void previewActivate() {
+    final w = _focusedWidget;
+    if (w == null) return;
+    previewTap(w);
+  }
+
+  @override
+  void dispose() {
+    _pageTimer?.cancel();
+    _transitionTimer?.cancel();
+    super.dispose();
   }
 }

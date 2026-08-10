@@ -40,10 +40,11 @@
    - 这里需要将您指定的文件夹逐个添加进来。**请严格按照以下操作进行：**
    - 点击 **`Add folder...`** 按钮，在弹出的窗口中定位到 `G:\DebugToolSet\`，选中 `bussetup` 文件夹，点击确定。
    - 此时 Inno Setup 会弹窗询问："Should files in subdirectories of 'G:\DebugToolSet\bussetup' also be included?"（是否包含子目录中的文件？），**务必点击“是 (Yes)”**。
-   - 重复点击 `Add folder...` 的操作，依次将剩下的 3 个文件夹添加进来：
+   - 重复点击 `Add folder...` 的操作，依次将剩下的 4 个文件夹添加进来：
      - `G:\DebugToolSet\DeviceProtocol`
      - `G:\DebugToolSet\docs`
      - `G:\DebugToolSet\waveform`
+     - `G:\DebugToolSet\tools\ffmpeg`（ISP Studio 视频导出用的 ffmpeg.exe）
 
    > **⚠️ 关键修改说明**：
    > 在向导列表里，添加完文件夹后，它们的 `Destination` 默认会被放在 `{app}` 根目录，文件会被打散。
@@ -52,6 +53,7 @@
    > - `DeviceProtocol` 的条目，Destination subfolder 填入 `DeviceProtocol`
    > - `docs` 的条目，Destination subfolder 填入 `docs`
    > - `waveform` 的条目，Destination subfolder 填入 `waveform`
+   > - `tools\ffmpeg` 的条目，Destination subfolder 填入 `tools\ffmpeg`
 
 3. 点击 **Next**。
 
@@ -87,12 +89,13 @@ Source: "G:\DebugToolSet\build\windows\x64\runner\Release\debug_tool_set.exe"; D
 ; 包含了主程序运行必需的依赖库及 data 资源文件夹，直接放置在 {app} 根目录
 Source: "G:\DebugToolSet\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; 以下是您添加的 4 个特殊文件夹
+; 以下是您添加的 5 个特殊文件夹
 ; 注意 DestDir 后面的路径必须带有对应的子文件夹名称，否则文件会全部散落到根目录
 Source: "G:\DebugToolSet\bussetup\*"; DestDir: "{app}\bussetup"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "G:\DebugToolSet\DeviceProtocol\*"; DestDir: "{app}\DeviceProtocol"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "G:\DebugToolSet\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "G:\DebugToolSet\waveform\*"; DestDir: "{app}\waveform"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "G:\DebugToolSet\tools\ffmpeg\*"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion recursesubdirs createallsubdirs
 ```
 
 

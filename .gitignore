@@ -43,3 +43,12 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# 打包用的 ffmpeg 二进制（约 100MB，不入库；缺失时重新放入 tools/ffmpeg/ 即可）
+/tools/ffmpeg/*.exe
+
+# 大体积 RAW 图像测试素材（约 950MB，不入库）
+/BayerRGGB/
+
+# ISP 冒烟测试输出
+/scratch/isp_smoke_out/

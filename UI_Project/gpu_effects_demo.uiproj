@@ -1,0 +1,427 @@
+{
+  "version": 1,
+  "name": "gpu_effects_demo",
+  "screenWidth": 480,
+  "screenHeight": 272,
+  "pages": [
+    {
+      "id": "page_home",
+      "name": "主界面",
+      "bgColor": 4278848020,
+      "widgets": [
+        {
+          "id": "w_title",
+          "type": "label",
+          "name": "title",
+          "x": 16.0,
+          "y": 10.0,
+          "width": 240.0,
+          "height": 26.0,
+          "props": {
+            "text": "GPU 特效演示",
+            "fontSize": 20,
+            "color": 4294967295,
+            "align": "left",
+            "bold": true,
+            "opacity": 90
+          },
+          "events": []
+        },
+        {
+          "id": "w_badge",
+          "type": "image",
+          "name": "badge",
+          "x": 410.0,
+          "y": 8.0,
+          "width": 48.0,
+          "height": 48.0,
+          "props": {
+            "asset": null,
+            "scaleMode": "fit",
+            "rotate": 30,
+            "scale": 120,
+            "opacity": 85
+          },
+          "events": []
+        },
+        {
+          "id": "w_menu",
+          "type": "menu",
+          "name": "main_menu",
+          "x": 24.0,
+          "y": 52.0,
+          "width": 200.0,
+          "height": 180.0,
+          "props": {
+            "items": "相机预览,参数设置,特效切换,系统信息,关于",
+            "selectedIndex": 0,
+            "itemExtent": 34,
+            "fontSize": 15,
+            "textColor": 4294967295,
+            "highlightColor": 4278217052,
+            "wrap": true
+          },
+          "events": [
+            {
+              "type": "onValueChange",
+              "action": "callback",
+              "callback": "on_menu_highlight"
+            },
+            {
+              "type": "onClick",
+              "action": "gotoPage",
+              "callback": "",
+              "targetPageId": "page_settings",
+              "transition": "slideLeft"
+            }
+          ]
+        },
+        {
+          "id": "w_progress",
+          "type": "progress",
+          "name": "progress",
+          "x": 248.0,
+          "y": 60.0,
+          "width": 208.0,
+          "height": 34.0,
+          "props": {
+            "value": 65,
+            "max": 100,
+            "text": "固件下载",
+            "fontSize": 12,
+            "color": 4278225275,
+            "stripeColor": 4283283116,
+            "bgColor": 4282532418,
+            "radius": 4
+          },
+          "events": []
+        },
+        {
+          "id": "w_btn_fx",
+          "type": "button",
+          "name": "btn_fx",
+          "x": 248.0,
+          "y": 116.0,
+          "width": 96.0,
+          "height": 34.0,
+          "props": {
+            "text": "特效页",
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "bgColor": 4278217052,
+            "pressedColor": 4279060385,
+            "radius": 8
+          },
+          "events": [
+            {
+              "type": "onClick",
+              "action": "gotoPage",
+              "callback": "",
+              "targetPageId": "page_settings",
+              "transition": "cube"
+            }
+          ]
+        },
+        {
+          "id": "w_btn_about",
+          "type": "button",
+          "name": "btn_about",
+          "x": 356.0,
+          "y": 116.0,
+          "width": 96.0,
+          "height": 34.0,
+          "props": {
+            "text": "关于",
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "bgColor": 4281812815,
+            "pressedColor": 4279060385,
+            "radius": 8
+          },
+          "events": [
+            {
+              "type": "onClick",
+              "action": "gotoPage",
+              "callback": "",
+              "targetPageId": "page_about",
+              "transition": "fade"
+            }
+          ]
+        },
+        {
+          "id": "w_hint",
+          "type": "label",
+          "name": "hint",
+          "x": 24.0,
+          "y": 240.0,
+          "width": 432.0,
+          "height": 16.0,
+          "props": {
+            "text": "方向键移动焦点 · 上下键操作菜单 · OK 进入 · 注意转场与动效",
+            "fontSize": 10,
+            "color": 4284448665,
+            "align": "left",
+            "bold": false
+          },
+          "events": []
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "page_settings",
+      "name": "参数设置",
+      "bgColor": 4279244832,
+      "widgets": [
+        {
+          "id": "w_stitle",
+          "type": "label",
+          "name": "settings_title",
+          "x": 16.0,
+          "y": 10.0,
+          "width": 240.0,
+          "height": 26.0,
+          "props": {
+            "text": "参数设置",
+            "fontSize": 20,
+            "color": 4294967295,
+            "align": "left",
+            "bold": true
+          },
+          "events": []
+        },
+        {
+          "id": "w_exposure",
+          "type": "value_item",
+          "name": "exposure",
+          "x": 32.0,
+          "y": 56.0,
+          "width": 240.0,
+          "height": 28.0,
+          "props": {
+            "text": "曝光补偿",
+            "value": 50,
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "valueColor": 4283417591
+          },
+          "events": [
+            {
+              "type": "onValueChange",
+              "action": "callback",
+              "callback": "on_exposure"
+            }
+          ]
+        },
+        {
+          "id": "w_iso",
+          "type": "value_item",
+          "name": "iso",
+          "x": 32.0,
+          "y": 92.0,
+          "width": 240.0,
+          "height": 28.0,
+          "props": {
+            "text": "ISO",
+            "value": 200,
+            "min": 100,
+            "max": 6400,
+            "step": 100,
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "valueColor": 4283417591
+          },
+          "events": []
+        },
+        {
+          "id": "w_wb",
+          "type": "option_item",
+          "name": "white_balance",
+          "x": 32.0,
+          "y": 128.0,
+          "width": 240.0,
+          "height": 28.0,
+          "props": {
+            "text": "白平衡",
+            "options": "自动,日光,阴天,白炽灯,荧光灯",
+            "selectedIndex": 0,
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "valueColor": 4283417591
+          },
+          "events": []
+        },
+        {
+          "id": "w_res",
+          "type": "option_item",
+          "name": "resolution",
+          "x": 32.0,
+          "y": 164.0,
+          "width": 240.0,
+          "height": 28.0,
+          "props": {
+            "text": "分辨率",
+            "options": "4K,1080P,720P",
+            "selectedIndex": 1,
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "valueColor": 4283417591
+          },
+          "events": []
+        },
+        {
+          "id": "w_btn_back",
+          "type": "button",
+          "name": "btn_back",
+          "x": 320.0,
+          "y": 220.0,
+          "width": 120.0,
+          "height": 36.0,
+          "props": {
+            "text": "返回",
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "bgColor": 4281812815,
+            "pressedColor": 4279060385,
+            "radius": 8
+          },
+          "events": [
+            {
+              "type": "onClick",
+              "action": "gotoPage",
+              "callback": "",
+              "targetPageId": "page_home",
+              "transition": "slideRight"
+            }
+          ]
+        },
+        {
+          "id": "w_shint",
+          "type": "label",
+          "name": "settings_hint",
+          "x": 32.0,
+          "y": 232.0,
+          "width": 260.0,
+          "height": 16.0,
+          "props": {
+            "text": "左右键调值/切换选项 · OK 确认",
+            "fontSize": 10,
+            "color": 4284448665,
+            "align": "left",
+            "bold": false
+          },
+          "events": []
+        }
+      ],
+      "events": []
+    },
+    {
+      "id": "page_about",
+      "name": "关于",
+      "bgColor": 4278190080,
+      "bgType": "video",
+      "bgVideoPath": "camera_preview.mp4",
+      "widgets": [
+        {
+          "id": "w_atitle",
+          "type": "label",
+          "name": "about_title",
+          "x": 16.0,
+          "y": 10.0,
+          "width": 240.0,
+          "height": 26.0,
+          "props": {
+            "text": "关于(视频背景 OSD)",
+            "fontSize": 20,
+            "color": 4294967295,
+            "align": "left",
+            "bold": true
+          },
+          "events": []
+        },
+        {
+          "id": "w_aver",
+          "type": "label",
+          "name": "about_ver",
+          "x": 16.0,
+          "y": 48.0,
+          "width": 300.0,
+          "height": 20.0,
+          "props": {
+            "text": "GPU Effects Demo v1.0 · Mali MP2",
+            "fontSize": 13,
+            "color": 4288463845,
+            "align": "left",
+            "bold": false
+          },
+          "events": []
+        },
+        {
+          "id": "w_apanel",
+          "type": "panel",
+          "name": "about_panel",
+          "x": 16.0,
+          "y": 80.0,
+          "width": 240.0,
+          "height": 80.0,
+          "props": {
+            "bgColor": 2147483648,
+            "radius": 8,
+            "borderColor": 0,
+            "borderWidth": 0,
+            "opacity": 90
+          },
+          "events": []
+        },
+        {
+          "id": "w_anote",
+          "type": "label",
+          "name": "about_note",
+          "x": 28.0,
+          "y": 92.0,
+          "width": 220.0,
+          "height": 56.0,
+          "props": {
+            "text": "视频背景下控件直接叠加在实时画面上",
+            "fontSize": 12,
+            "color": 4294967295,
+            "align": "left",
+            "bold": false
+          },
+          "events": []
+        },
+        {
+          "id": "w_btn_aback",
+          "type": "button",
+          "name": "btn_aback",
+          "x": 340.0,
+          "y": 220.0,
+          "width": 120.0,
+          "height": 36.0,
+          "props": {
+            "text": "返回",
+            "fontSize": 14,
+            "textColor": 4294967295,
+            "bgColor": 4280191205,
+            "pressedColor": 4279060385,
+            "radius": 8
+          },
+          "events": [
+            {
+              "type": "onClick",
+              "action": "gotoPage",
+              "callback": "",
+              "targetPageId": "page_home",
+              "transition": "pushLeft"
+            }
+          ]
+        }
+      ],
+      "events": []
+    }
+  ],
+  "assets": []
+}

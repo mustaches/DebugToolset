@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "ui_runtime.h" /* ui_page_t for the transition hook */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,6 +32,28 @@ void ui_port_draw_image(int16_t x, int16_t y, int16_t w, int16_t h,
 /* Milliseconds since boot, for ui_tick timing if you prefer to let the
  * port supply time (optional; you may also track time yourself). */
 uint32_t ui_port_millis(void);
+
+/* Optional GPU hook: animate a page transition (slide/fade/cube...).
+ * Return true when the port handles the animation; it MUST call
+ * ui_set_page(to) when the animation finishes. The weak default returns
+ * false and the runtime switches pages instantly. */
+bool ui_port_page_transition(const ui_page_t* from, const ui_page_t* to,
+                             uint8_t type);
+
+/* Optional GPU hook: brackets drawing of a widget with a non-identity
+ * transform (rotation in degrees, scale/opacity in percent). The weak
+ * defaults do nothing and the widget is drawn untransformed. */
+void ui_port_begin_transform(int16_t widget_id, int16_t cx, int16_t cy,
+                             uint8_t rotation, uint8_t scale,
+                             uint8_t opacity);
+void ui_port_end_transform(int16_t widget_id);
+
+/* Optional GPU hook: draw one frame of an animated image background
+ * (anim: 1 kenburns, 2 parallax; ms = running animation clock).
+ * Return true when the port drew the background; the weak default
+ * returns false and the runtime draws the static image. */
+bool ui_port_bg_anim_frame(const ui_page_t* page, uint8_t anim,
+                           uint32_t ms);
 
 #ifdef __cplusplus
 }

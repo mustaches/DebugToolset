@@ -32,7 +32,10 @@ typedef enum {
   UI_W_RADIO,
   UI_W_DROPDOWN,
   UI_W_TEXTFIELD,
-  UI_W_LIST
+  UI_W_LIST,
+  UI_W_MENU,
+  UI_W_VALUE_ITEM,
+  UI_W_OPTION_ITEM
 } ui_widget_type_t;
 
 typedef enum {
@@ -49,6 +52,25 @@ typedef enum {
   UI_ACT_GOTO_PAGE
 } ui_action_type_t;
 
+/* Page transition effects (ui_event_t.transition). */
+enum {
+  UI_TRANS_NONE = 0,
+  UI_TRANS_SLIDE_LEFT,
+  UI_TRANS_SLIDE_RIGHT,
+  UI_TRANS_FADE,
+  UI_TRANS_PUSH_LEFT,
+  UI_TRANS_CUBE
+};
+
+/* Keypad / remote keys for OSD focus navigation. */
+typedef enum {
+  UI_KEY_UP = 0,
+  UI_KEY_DOWN,
+  UI_KEY_LEFT,
+  UI_KEY_RIGHT,
+  UI_KEY_OK
+} ui_key_t;
+
 /* All generated callbacks share this signature:
  * widget_id = index of the widget in its page (or -1 for page events),
  * value     = current widget value (0 when not applicable). */
@@ -60,6 +82,7 @@ typedef struct {
   ui_callback_t callback;  /* used when action == UI_ACT_CALLBACK */
   const void* target_page; /* const ui_page_t*, used when action == UI_ACT_GOTO_PAGE */
   uint32_t timer_ms;       /* period, only for UI_EV_TIMER */
+  uint8_t transition;      /* UI_TRANS_*, only for UI_ACT_GOTO_PAGE */
 } ui_event_t;
 
 typedef struct {
@@ -90,6 +113,9 @@ typedef struct {
   ui_props_t props;
   const ui_event_t* events;
   uint8_t event_count;
+  uint8_t rotation;        /* degrees, 0 = none */
+  uint8_t scale;           /* percent, 100 = none */
+  uint8_t opacity;         /* percent, 100 = opaque */
 } ui_widget_t;
 
 typedef struct {
@@ -99,6 +125,12 @@ typedef struct {
   uint16_t widget_count;
   const ui_event_t* events;   /* UI_EV_SHOW / UI_EV_HIDE / UI_EV_TIMER */
   uint8_t event_count;
+  uint8_t bg_type;         /* 0 color, 1 image, 2 video (OSD over stream) */
+  const uint8_t* bg_image; /* raw pixel data when bg_type == 1 */
+  uint16_t bg_image_w;
+  uint16_t bg_image_h;
+  uint8_t bg_image_format; /* same encoding as ui_props_t.image_format */
+  uint8_t bg_anim;         /* 0 none, 1 kenburns, 2 parallax */
 } ui_page_t;
 
 void ui_init(const ui_page_t* start_page);
@@ -112,6 +144,12 @@ void ui_draw(void);
 bool ui_touch_down(uint16_t x, uint16_t y);
 bool ui_touch_up(uint16_t x, uint16_t y);
 bool ui_touch_move(uint16_t x, uint16_t y);
+
+/* Keypad/remote input: OSD focus navigation (up/down/left/right/ok). */
+void ui_key(ui_key_t key);
+
+/* Currently focused widget id, -1 when none. */
+int ui_focused_widget(void);
 
 /* Call periodically with elapsed milliseconds; drives UI_EV_TIMER. */
 void ui_tick(uint32_t elapsed_ms);
@@ -134,6 +172,8 @@ void ui_set_widget_value(uint16_t widget_id, int32_t value);
 
 #include <stdint.h>
 #include <stdbool.h>
+
+#include "ui_runtime.h" /* ui_page_t for the transition hook */
 
 #ifdef __cplusplus
 extern "C" {
@@ -162,6 +202,28 @@ void ui_port_draw_image(int16_t x, int16_t y, int16_t w, int16_t h,
  * port supply time (optional; you may also track time yourself). */
 uint32_t ui_port_millis(void);
 
+/* Optional GPU hook: animate a page transition (slide/fade/cube...).
+ * Return true when the port handles the animation; it MUST call
+ * ui_set_page(to) when the animation finishes. The weak default returns
+ * false and the runtime switches pages instantly. */
+bool ui_port_page_transition(const ui_page_t* from, const ui_page_t* to,
+                             uint8_t type);
+
+/* Optional GPU hook: brackets drawing of a widget with a non-identity
+ * transform (rotation in degrees, scale/opacity in percent). The weak
+ * defaults do nothing and the widget is drawn untransformed. */
+void ui_port_begin_transform(int16_t widget_id, int16_t cx, int16_t cy,
+                             uint8_t rotation, uint8_t scale,
+                             uint8_t opacity);
+void ui_port_end_transform(int16_t widget_id);
+
+/* Optional GPU hook: draw one frame of an animated image background
+ * (anim: 1 kenburns, 2 parallax; ms = running animation clock).
+ * Return true when the port drew the background; the weak default
+ * returns false and the runtime draws the static image. */
+bool ui_port_bg_anim_frame(const ui_page_t* page, uint8_t anim,
+                           uint32_t ms);
+
 #ifdef __cplusplus
 }
 #endif
@@ -175,11 +237,56 @@ uint32_t ui_port_millis(void);
 
 #include <string.h>
 
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+bool ui_port_page_transition(const ui_page_t* from, const ui_page_t* to,
+                             uint8_t type) {
+  (void)from;
+  (void)to;
+  (void)type;
+  return false; /* weak default: instant page switch */
+}
+
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+void ui_port_begin_transform(int16_t widget_id, int16_t cx, int16_t cy,
+                             uint8_t rotation, uint8_t scale,
+                             uint8_t opacity) {
+  (void)widget_id;
+  (void)cx;
+  (void)cy;
+  (void)rotation;
+  (void)scale;
+  (void)opacity;
+}
+
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+void ui_port_end_transform(int16_t widget_id) {
+  (void)widget_id;
+}
+
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+bool ui_port_bg_anim_frame(const ui_page_t* page, uint8_t anim,
+                           uint32_t ms) {
+  (void)page;
+  (void)anim;
+  (void)ms;
+  return false; /* weak default: static background */
+}
+
 static const ui_page_t* s_page = 0;
 static int32_t s_values[UI_RUNTIME_MAX_WIDGETS];
 static int s_focused = -1;
 static int s_pressed = -1;
 static uint32_t s_timer_acc = 0;
+static uint32_t s_anim_ms = 0;
+static bool s_anim_active = false; /* page contains animated widgets */
 
 static uint16_t widget_count(void) {
   return s_page ? s_page->widget_count : 0;
@@ -189,7 +296,13 @@ static void fire_event(const ui_event_t* ev, int32_t widget_id, int32_t value) {
   if (ev->action == UI_ACT_CALLBACK && ev->callback) {
     ev->callback(widget_id, value);
   } else if (ev->action == UI_ACT_GOTO_PAGE && ev->target_page) {
-    ui_set_page((const ui_page_t*)ev->target_page);
+    const ui_page_t* to = (const ui_page_t*)ev->target_page;
+    if (ev->transition != UI_TRANS_NONE &&
+        ui_port_page_transition(s_page, to, ev->transition)) {
+      /* The port is animating the transition; it calls ui_set_page(to). */
+    } else {
+      ui_set_page(to);
+    }
   }
 }
 
@@ -223,6 +336,9 @@ static void init_values(void) {
       case UI_W_PROGRESS:
       case UI_W_DROPDOWN:
       case UI_W_LIST:
+      case UI_W_MENU:
+      case UI_W_VALUE_ITEM:
+      case UI_W_OPTION_ITEM:
         s_values[i] = w->props.value;
         break;
       case UI_W_CHECKBOX:
@@ -248,6 +364,7 @@ void ui_init(const ui_page_t* start_page) {
 }
 
 void ui_set_page(const ui_page_t* page) {
+  uint16_t i;
   if (s_page) {
     fire_page_events(UI_EV_HIDE);
   }
@@ -255,6 +372,18 @@ void ui_set_page(const ui_page_t* page) {
   s_focused = -1;
   s_pressed = -1;
   s_timer_acc = 0;
+  s_anim_active = false;
+  if (page) {
+    for (i = 0; i < page->widget_count; i++) {
+      if (page->widgets[i].type == UI_W_PROGRESS) {
+        s_anim_active = true; /* flowing stripes need redraws on tick */
+        break;
+      }
+    }
+    if (page->bg_type == 1 && page->bg_anim != 0) {
+      s_anim_active = true; /* animated background needs redraws too */
+    }
+  }
   init_values();
   fire_page_events(UI_EV_SHOW);
   ui_draw();
@@ -274,6 +403,23 @@ static void stroke_rect(int16_t x, int16_t y, int16_t w, int16_t h,
   ui_port_fill_rect(x, y + h - t, w, t, color);
   ui_port_fill_rect(x, y, t, h, color);
   ui_port_fill_rect(x + w - t, y, t, h, color);
+}
+
+/* Minimal signed itoa (avoids stdio on small targets). */
+static void int_to_str(int32_t v, char* buf, int buf_size) {
+  char tmp[12];
+  int n = 0, i = 0;
+  uint32_t u;
+  bool neg = v < 0;
+  if (buf_size < 2) return;
+  u = neg ? (uint32_t)(-(v + 1)) + 1u : (uint32_t)v;
+  do {
+    tmp[n++] = (char)('0' + (u % 10u));
+    u /= 10u;
+  } while (u && n < (int)sizeof(tmp));
+  if (neg && i < buf_size - 1) buf[i++] = '-';
+  while (n > 0 && i < buf_size - 1) buf[i++] = tmp[--n];
+  buf[i] = '\0';
 }
 
 /* Number of entries in a comma-separated list ("" -> 0). */
@@ -368,11 +514,56 @@ static void draw_widget(const ui_widget_t* w, int16_t id) {
       }
       break;
     case UI_W_PROGRESS: {
+      /* Striped bar: color = bar, color2 = background, border_color =
+         stripes; info text + percentage above the bar. */
       int32_t max = p->value_max > 0 ? p->value_max : 100;
-      int32_t frac_w = (int32_t)w->w * value / max;
-      ui_port_fill_rect(w->x, w->y, w->w, w->h, p->color2);
+      int16_t text_h = (int16_t)(p->font_size + 4);
+      int16_t bar_y = (int16_t)(w->y + text_h);
+      int16_t bar_h = (int16_t)(w->h - text_h);
+      int32_t frac_w;
+      int16_t yy;
+      char num[12];
+      char pct[16];
+      if (bar_h < 2) {
+        bar_y = w->y;
+        bar_h = w->h;
+        text_h = 0;
+      }
+      frac_w = (int32_t)w->w * value / max;
+      if (text_h > 0) {
+        int_to_str((int32_t)(value * 100 / max), num, (int)sizeof(num));
+        pct[0] = '\0';
+        {
+          int i = 0, j = 0;
+          while (num[i] && j < (int)sizeof(pct) - 2) pct[j++] = num[i++];
+          pct[j++] = '%';
+          pct[j] = '\0';
+        }
+        ui_port_draw_text(w->x, w->y, p->text, p->font_size, 0xFFFF, 0,
+                          (int16_t)(w->w / 2));
+        ui_port_draw_text((int16_t)(w->x + w->w / 2), w->y, pct,
+                          p->font_size, 0xFFFF, 2,
+                          (int16_t)(w->w / 2));
+      }
+      ui_port_fill_rect(w->x, bar_y, w->w, bar_h, p->color2);
       if (frac_w > 0) {
-        ui_port_fill_rect(w->x, w->y, (int16_t)frac_w, w->h, p->color);
+        /* 45-degree stripes: stripe color where (x + yy + off) % 12 < 6;
+           off flows with the animation clock. */
+        int16_t off = (int16_t)((s_anim_ms / 50u) % 12u);
+        ui_port_fill_rect(w->x, bar_y, (int16_t)frac_w, bar_h, p->color);
+        for (yy = 0; yy < bar_h; yy++) {
+          int16_t xx;
+          for (xx = (int16_t)(-yy - off); xx < frac_w; xx += 12) {
+            int16_t sx = xx < 0 ? 0 : xx;
+            int16_t ex = (int16_t)(xx + 6);
+            if (ex > frac_w) ex = (int16_t)frac_w;
+            if (ex > sx) {
+              ui_port_fill_rect((int16_t)(w->x + sx),
+                                (int16_t)(bar_y + yy),
+                                (int16_t)(ex - sx), 1, p->border_color);
+            }
+          }
+        }
       }
       break;
     }
@@ -460,6 +651,78 @@ static void draw_widget(const ui_widget_t* w, int16_t id) {
       }
       break;
     }
+    case UI_W_MENU: {
+      /* items csv in text2; value = highlight index; radius = item
+         extent; flags bit2: wrap; color = text, color2 = highlight */
+      int16_t step = p->radius > 0 ? p->radius : 1;
+      int count = csv_count(p->text2);
+      int visible, start, slot;
+      int sel = (int)value;
+      if (count == 0) break;
+      if (sel < 0) sel = 0;
+      if (sel > count - 1) sel = count - 1;
+      list_window(w, sel, count, &visible, &start);
+      for (slot = 0; slot < visible; slot++) {
+        int idx = start + slot;
+        char buf[48];
+        int16_t iy = (int16_t)(w->y + slot * step);
+        if (!csv_item(p->text2, idx, buf, (int)sizeof(buf))) break;
+        if (idx == sel) {
+          ui_port_fill_rect(w->x, iy, w->w, step, p->color2);
+        }
+        ui_port_draw_text((int16_t)(w->x + 8),
+                          (int16_t)(iy + (step - p->font_size) / 2),
+                          buf, p->font_size, p->color, 0,
+                          (int16_t)(w->w - 8));
+      }
+      break;
+    }
+    case UI_W_VALUE_ITEM: {
+      /* text = label; value in [value_min, value_max]; radius = step;
+         color = label, color2 = value */
+      char num[12];
+      int_to_str(value, num, (int)sizeof(num));
+      ui_port_draw_text((int16_t)(w->x + 4),
+                        (int16_t)(w->y + (w->h - p->font_size) / 2),
+                        p->text, p->font_size, p->color, 0,
+                        (int16_t)(w->w / 2));
+      ui_port_draw_text((int16_t)(w->x + w->w / 2),
+                        (int16_t)(w->y + (w->h - p->font_size) / 2),
+                        num, p->font_size, p->color2, 2,
+                        (int16_t)(w->w / 2 - 4));
+      break;
+    }
+    case UI_W_OPTION_ITEM: {
+      /* text = label; text2 = options csv; value = selected index;
+         color = label, color2 = option */
+      char buf[52] = "< ";
+      int len = 2;
+      char item[44];
+      int count = csv_count(p->text2);
+      int sel = (int)value;
+      if (count > 0) {
+        if (sel < 0) sel = 0;
+        if (sel > count - 1) sel = count - 1;
+        if (csv_item(p->text2, sel, item, (int)sizeof(item))) {
+          int i = 0;
+          while (item[i] && len < (int)sizeof(buf) - 3) {
+            buf[len++] = item[i++];
+          }
+        }
+      }
+      buf[len++] = ' ';
+      buf[len++] = '>';
+      buf[len] = '\0';
+      ui_port_draw_text((int16_t)(w->x + 4),
+                        (int16_t)(w->y + (w->h - p->font_size) / 2),
+                        p->text, p->font_size, p->color, 0,
+                        (int16_t)(w->w / 2));
+      ui_port_draw_text((int16_t)(w->x + w->w / 2),
+                        (int16_t)(w->y + (w->h - p->font_size) / 2),
+                        buf, p->font_size, p->color2, 2,
+                        (int16_t)(w->w / 2 - 4));
+      break;
+    }
     default:
       break;
   }
@@ -469,12 +732,47 @@ void ui_draw(void) {
   uint16_t i;
   if (!s_page) return;
 #ifdef UI_SCREEN_WIDTH
-  ui_port_fill_rect(0, 0, UI_SCREEN_WIDTH, UI_SCREEN_HEIGHT, s_page->bg_color);
+  if (s_page->bg_type == 2) {
+    /* Video background: leave the live stream untouched, draw OSD only. */
+  } else if (s_page->bg_type == 1 && s_page->bg_image) {
+    if (s_page->bg_anim != 0 &&
+        ui_port_bg_anim_frame(s_page, s_page->bg_anim, s_anim_ms)) {
+      /* The port drew the animated background frame. */
+    } else {
+      ui_port_draw_image(0, 0, UI_SCREEN_WIDTH, UI_SCREEN_HEIGHT,
+                         s_page->bg_image, s_page->bg_image_w,
+                         s_page->bg_image_h, s_page->bg_image_format,
+                         2 /* stretch to screen */);
+    }
+  } else {
+    ui_port_fill_rect(0, 0, UI_SCREEN_WIDTH, UI_SCREEN_HEIGHT,
+                      s_page->bg_color);
+  }
 #else
   ui_port_fill_rect(0, 0, 320, 240, s_page->bg_color);
 #endif
   for (i = 0; i < s_page->widget_count; i++) {
-    draw_widget(&s_page->widgets[i], (int16_t)i);
+    const ui_widget_t* w = &s_page->widgets[i];
+    uint8_t scale = w->scale;
+    if (s_pressed == (int)i) {
+      scale = (uint8_t)((uint16_t)scale * 92u / 100u); /* press bounce */
+    }
+    if (w->rotation != 0 || scale != 100 || w->opacity != 100) {
+      ui_port_begin_transform((int16_t)i, (int16_t)(w->x + w->w / 2),
+                              (int16_t)(w->y + w->h / 2), w->rotation,
+                              scale, w->opacity);
+      draw_widget(w, (int16_t)i);
+      ui_port_end_transform((int16_t)i);
+    } else {
+      draw_widget(w, (int16_t)i);
+    }
+  }
+  /* Focus ring for key navigation. */
+  if (s_focused >= 0 && s_focused < (int)s_page->widget_count) {
+    const ui_widget_t* fw = &s_page->widgets[s_focused];
+    stroke_rect((int16_t)(fw->x - 1), (int16_t)(fw->y - 1),
+                (int16_t)(fw->w + 2), (int16_t)(fw->h + 2), 1,
+                0x07FF /* cyan */);
   }
 }
 
@@ -503,6 +801,180 @@ static void slider_set_from_x(const ui_widget_t* w, int16_t id, uint16_t x) {
   ui_set_widget_value((uint16_t)id, v);
 }
 
+/* ------------------------------------------------------------------ */
+/* Key navigation (OSD remote model)                                   */
+/* ------------------------------------------------------------------ */
+
+/* Purely visual widgets (line, progress) cannot take focus; matches the
+ * designer rule "widget type with no events is not focusable". */
+static bool key_focusable(const ui_widget_t* w) {
+  return w->type != UI_W_LINE && w->type != UI_W_PROGRESS;
+}
+
+/* Built-in activation shared by touch-up and UI_KEY_OK: toggles value
+ * widgets. The click event is fired by the caller. */
+static void activate_builtin(const ui_widget_t* w, int id) {
+  switch (w->type) {
+    case UI_W_CHECKBOX:
+    case UI_W_SWITCH:
+      ui_set_widget_value((uint16_t)id, s_values[id] ? 0 : 1);
+      break;
+    case UI_W_RADIO:
+      ui_set_widget_value((uint16_t)id, 1);
+      break;
+    case UI_W_DROPDOWN: {
+      int count = csv_count(w->props.text2);
+      if (count > 0) {
+        ui_set_widget_value((uint16_t)id,
+                            (int32_t)((s_values[id] + 1) % count));
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+static void set_focus(int id) {
+  if (id == s_focused) return;
+  s_focused = id;
+  if (id >= 0 && id < (int)widget_count()) {
+    fire_widget_events(&s_page->widgets[id], UI_EV_FOCUS, (int32_t)id,
+                       s_values[id]);
+  }
+}
+
+/* Spatial nearest-neighbour focus move. dir: 0 up, 1 down, 2 left,
+ * 3 right. Wraps to the opposite extreme when no candidate. */
+static int focus_move(uint8_t dir) {
+  int i, best = -1;
+  int32_t best_score = 0;
+  int32_t cx, cy;
+  int n = (int)widget_count();
+  if (n == 0) return -1;
+  if (s_focused < 0 || s_focused >= n) {
+    for (i = 0; i < n; i++) {
+      if (key_focusable(&s_page->widgets[i])) return i;
+    }
+    return -1;
+  }
+  cx = s_page->widgets[s_focused].x + s_page->widgets[s_focused].w / 2;
+  cy = s_page->widgets[s_focused].y + s_page->widgets[s_focused].h / 2;
+  for (i = 0; i < n; i++) {
+    const ui_widget_t* w;
+    int32_t dx, dy, primary, perp, score;
+    if (i == s_focused) continue;
+    w = &s_page->widgets[i];
+    if (!key_focusable(w)) continue;
+    dx = w->x + w->w / 2 - cx;
+    dy = w->y + w->h / 2 - cy;
+    switch (dir) {
+      case 0:
+        if (dy >= 0) continue;
+        primary = -dy;
+        perp = dx < 0 ? -dx : dx;
+        break;
+      case 1:
+        if (dy <= 0) continue;
+        primary = dy;
+        perp = dx < 0 ? -dx : dx;
+        break;
+      case 2:
+        if (dx >= 0) continue;
+        primary = -dx;
+        perp = dy < 0 ? -dy : dy;
+        break;
+      default:
+        if (dx <= 0) continue;
+        primary = dx;
+        perp = dy < 0 ? -dy : dy;
+        break;
+    }
+    score = primary + perp * 2;
+    if (best < 0 || score < best_score) {
+      best_score = score;
+      best = i;
+    }
+  }
+  if (best < 0) {
+    /* Wrap around: up/left -> max coordinate, down/right -> min. */
+    bool want_max = (dir == 0 || dir == 2);
+    for (i = 0; i < n; i++) {
+      const ui_widget_t* w = &s_page->widgets[i];
+      int32_t v;
+      if (!key_focusable(w)) continue;
+      v = (dir < 2) ? (int32_t)w->y + w->h / 2 : (int32_t)w->x + w->w / 2;
+      if (best < 0 || (want_max && v > best_score) ||
+          (!want_max && v < best_score)) {
+        best_score = v;
+        best = i;
+      }
+    }
+  }
+  return best;
+}
+
+int ui_focused_widget(void) {
+  return s_focused;
+}
+
+void ui_key(ui_key_t key) {
+  const ui_widget_t* w;
+  if (!s_page) return;
+  w = (s_focused >= 0 && s_focused < (int)widget_count())
+          ? &s_page->widgets[s_focused]
+          : 0;
+  if (key == UI_KEY_UP || key == UI_KEY_DOWN) {
+    if (w && w->type == UI_W_MENU) {
+      /* Up/down move the menu highlight instead of the focus. */
+      int count = csv_count(w->props.text2);
+      if (count > 0) {
+        int32_t next = s_values[s_focused] + (key == UI_KEY_UP ? -1 : 1);
+        if (w->props.flags & 0x04) { /* wrap */
+          next = ((next % count) + count) % count;
+        } else {
+          if (next < 0) next = 0;
+          if (next > count - 1) next = count - 1;
+        }
+        ui_set_widget_value((uint16_t)s_focused, next);
+      }
+    } else {
+      set_focus(focus_move(key == UI_KEY_UP ? 0 : 1));
+    }
+  } else if (key == UI_KEY_LEFT || key == UI_KEY_RIGHT) {
+    int32_t delta = (key == UI_KEY_LEFT) ? -1 : 1;
+    if (w && w->type == UI_W_VALUE_ITEM) {
+      /* radius carries the step. */
+      int32_t step = w->props.radius > 0 ? w->props.radius : 1;
+      int32_t v = s_values[s_focused] + delta * step;
+      if (v < w->props.value_min) v = w->props.value_min;
+      if (v > w->props.value_max) v = w->props.value_max;
+      ui_set_widget_value((uint16_t)s_focused, v);
+    } else if (w && w->type == UI_W_OPTION_ITEM) {
+      int count = csv_count(w->props.text2);
+      if (count > 0) {
+        int32_t v = ((s_values[s_focused] + delta) % count + count) % count;
+        ui_set_widget_value((uint16_t)s_focused, v);
+      }
+    } else if (w && w->type == UI_W_SLIDER) {
+      int32_t min = w->props.value_min;
+      int32_t max = w->props.value_max > min ? w->props.value_max : min + 1;
+      int32_t v = s_values[s_focused] + delta;
+      if (v < min) v = min;
+      if (v > max) v = max;
+      ui_set_widget_value((uint16_t)s_focused, v);
+    } else {
+      set_focus(focus_move(key == UI_KEY_LEFT ? 2 : 3));
+    }
+  } else if (key == UI_KEY_OK) {
+    if (w) {
+      activate_builtin(w, s_focused);
+      fire_widget_events(w, UI_EV_CLICK, s_focused, s_values[s_focused]);
+    }
+  }
+  ui_draw();
+}
+
 bool ui_touch_down(uint16_t x, uint16_t y) {
   int id = hit_test(x, y);
   if (id < 0) return false;
@@ -520,6 +992,7 @@ bool ui_touch_down(uint16_t x, uint16_t y) {
 }
 
 bool ui_touch_move(uint16_t x, uint16_t y) {
+  (void)y;
   if (s_pressed < 0 || !s_page) return false;
   const ui_widget_t* w = &s_page->widgets[s_pressed];
   if (w->type == UI_W_SLIDER) {
@@ -543,26 +1016,6 @@ bool ui_touch_up(uint16_t x, uint16_t y) {
     return false;
   }
   switch (w->type) {
-    case UI_W_CHECKBOX:
-    case UI_W_SWITCH:
-      ui_set_widget_value((uint16_t)id, s_values[id] ? 0 : 1);
-      break;
-    case UI_W_RADIO:
-      ui_set_widget_value((uint16_t)id, 1);
-      break;
-    case UI_W_DROPDOWN: {
-      /* options are a csv in text2; count commas to wrap around */
-      int count = 1;
-      const char* s = w->props.text2;
-      if (s) {
-        while (*s) {
-          if (*s == ',') count++;
-          s++;
-        }
-      }
-      ui_set_widget_value((uint16_t)id, (s_values[id] + 1) % count);
-      break;
-    }
     case UI_W_LIST: {
       /* tap selects the item under the finger */
       int16_t step = (int16_t)(w->props.radius + w->props.border_width);
@@ -580,6 +1033,7 @@ bool ui_touch_up(uint16_t x, uint16_t y) {
       break;
     }
     default:
+      activate_builtin(w, id);
       break;
   }
   fire_widget_events(w, UI_EV_CLICK, id, s_values[id]);
@@ -595,6 +1049,7 @@ void ui_tick(uint32_t elapsed_ms) {
   uint8_t i;
   if (!s_page) return;
   s_timer_acc += elapsed_ms;
+  s_anim_ms += elapsed_ms;
   for (i = 0; i < s_page->event_count; i++) {
     const ui_event_t* ev = &s_page->events[i];
     if (ev->type == UI_EV_TIMER && ev->timer_ms > 0 &&
@@ -602,6 +1057,9 @@ void ui_tick(uint32_t elapsed_ms) {
       s_timer_acc = 0;
       fire_event(ev, -1, 0);
     }
+  }
+  if (s_anim_active) {
+    ui_draw(); /* drive micro-animations (progress stripe flow) */
   }
 }
 

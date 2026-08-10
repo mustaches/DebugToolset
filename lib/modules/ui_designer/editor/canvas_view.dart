@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import '../../../providers/ui_designer_state.dart';
@@ -23,6 +25,11 @@ class CanvasView extends StatefulWidget {
 class _CanvasViewState extends State<CanvasView> {
   final FocusNode _keyFocus = FocusNode();
 
+  // 显式滚动控制器：水平滚动视图不会注册为 PrimaryScrollController，
+  // 不给 Scrollbar 显式控制器时，底部水平滚动条只能显示、不能拖动。
+  final ScrollController _hScrollController = ScrollController();
+  final ScrollController _vScrollController = ScrollController();
+
   // Marquee selection.
   Offset? _marqueeStart;
   Offset? _marqueeCurrent;
@@ -35,10 +42,13 @@ class _CanvasViewState extends State<CanvasView> {
   String? _resizeId;
   int _resizeHandle = -1;
   Rect _resizeOrigin = Rect.zero;
+  Offset _resizeDelta = Offset.zero;
 
   @override
   void dispose() {
     _keyFocus.dispose();
+    _hScrollController.dispose();
+    _vScrollController.dispose();
     super.dispose();
   }
 
@@ -63,13 +73,19 @@ class _CanvasViewState extends State<CanvasView> {
         final canvas = SizedBox(
           width: logicalW * scale,
           height: logicalH * scale,
-          child: Transform.scale(
-            scale: scale,
+          // 松开 SizedBox 的紧约束，让画布表面保持逻辑尺寸；
+          // 否则表面先被拉伸到 scale 倍，再被 Transform 放大一次，
+          // 视觉上变成 scale²，右侧和下方溢出工作区。
+          // 用 OverflowBox 而非 UnconstrainedBox：scale < 1 时逻辑
+          // 表面比占位盒大，UnconstrainedBox 会报溢出错误。
+          child: OverflowBox(
             alignment: Alignment.topLeft,
-            // 松开 SizedBox 的紧约束，让画布表面保持逻辑尺寸；
-            // 否则表面先被拉伸到 scale 倍，再被 Transform 放大一次，
-            // 视觉上变成 scale²，右侧和下方溢出工作区。
-            child: UnconstrainedBox(
+            minWidth: 0,
+            maxWidth: double.infinity,
+            minHeight: 0,
+            maxHeight: double.infinity,
+            child: Transform.scale(
+              scale: scale,
               alignment: Alignment.topLeft,
               child:
                   _buildCanvasSurface(state, page, logicalW, logicalH, scale),
@@ -79,20 +95,48 @@ class _CanvasViewState extends State<CanvasView> {
 
         return Container(
           color: const Color(0xFF1B1B1B),
-          child: Scrollbar(
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Scrollbar(
-                thumbVisibility: true,
+          // 滚动条钉在视口右/下边缘，且作为 Stack 后绘制的兄弟节点，
+          // 拖动手势在竞技场中优先于画布的框选/拖动。
+          child: Stack(
+            children: [
+              SingleChildScrollView(
+                controller: _vScrollController,
                 child: SingleChildScrollView(
+                  controller: _hScrollController,
+                  scrollDirection: Axis.horizontal,
                   child: Padding(
                     padding: const EdgeInsets.all(20),
                     child: canvas,
                   ),
                 ),
               ),
-            ),
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: SizedBox(
+                  width: 8,
+                  child: _CanvasScrollBar(
+                    key: const Key('canvas_v_scrollbar'),
+                    controller: _vScrollController,
+                    axis: Axis.vertical,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: SizedBox(
+                  height: 8,
+                  child: _CanvasScrollBar(
+                    key: const Key('canvas_h_scrollbar'),
+                    controller: _hScrollController,
+                    axis: Axis.horizontal,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -101,7 +145,6 @@ class _CanvasViewState extends State<CanvasView> {
 
   Widget _buildCanvasSurface(UiDesignerState state, UiPage page, double w,
       double h, double scale) {
-    final pageBg = Color(page.bgColor);
     return Focus(
       focusNode: _keyFocus,
       autofocus: true,
@@ -116,19 +159,24 @@ class _CanvasViewState extends State<CanvasView> {
           width: w,
           height: h,
           decoration: BoxDecoration(
-            color: pageBg,
             border: Border.all(color: Colors.grey.shade700),
           ),
           child: ClipRect(
             child: Stack(
               children: [
+                Positioned.fill(
+                    child: _buildPageBackground(state, page)),
                 if (!state.previewMode && state.snapEnabled)
                   CustomPaint(
                     size: Size(w, h),
                     painter: _GridPainter(state.gridSize.toDouble()),
                   ),
-                for (final widget in page.widgets)
-                  _buildWidgetWrapper(state, widget, scale),
+                if (state.previewMode && state.transitionFrom != null)
+                  _buildTransition(
+                      state, state.transitionFrom!, page, w, h)
+                else
+                  for (final widget in page.widgets)
+                    _buildWidgetWrapper(state, widget, scale),
                 if (!state.previewMode)
                   for (final id in state.selectedIds)
                     if (page.widgetById(id) != null)
@@ -153,6 +201,135 @@ class _CanvasViewState extends State<CanvasView> {
     );
   }
 
+  /// Page background: solid color, a screen-size image asset, or a video
+  /// placeholder (the designer does not play video; on firmware the OSD
+  /// is drawn over the live stream).
+  Widget _buildPageBackground(UiDesignerState state, UiPage page) {
+    switch (page.bgType) {
+      case 'image':
+        final asset = page.bgAssetId == null
+            ? null
+            : state.project.assetById(page.bgAssetId!);
+        final path = asset == null ? null : state.resolveAssetPath(asset);
+        if (path != null && File(path).existsSync()) {
+          final image = Image.file(
+            File(path),
+            fit: BoxFit.fill,
+            errorBuilder: (_, _, _) => _bgFallback(page, '背景图片加载失败'),
+          );
+          if (page.bgAnim != 'none') {
+            return _AnimatedBg(mode: page.bgAnim, child: image);
+          }
+          return image;
+        }
+        return _bgFallback(page, '未设置背景图片', icon: Icons.image);
+      case 'video':
+        return _bgFallback(
+          page,
+          page.bgVideoPath == null
+              ? '未设置背景视频'
+              : '视频背景: ${p.basename(page.bgVideoPath!)}',
+          icon: Icons.play_circle_outline,
+        );
+      default:
+        return Container(color: Color(page.bgColor));
+    }
+  }
+
+  Widget _bgFallback(UiPage page, String hint, {IconData? icon}) {
+    return Container(
+      color: Color(page.bgColor),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null)
+              Icon(icon, color: Colors.grey, size: 32),
+            Text(hint,
+                style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // Page transitions (preview)
+  // ------------------------------------------------------------------
+
+  /// Static (non-interactive) render of a page, used by transitions.
+  Widget _buildStaticPage(
+      UiDesignerState state, UiPage page, double w, double h) {
+    return SizedBox(
+      width: w,
+      height: h,
+      child: Stack(
+        children: [
+          Positioned.fill(child: _buildPageBackground(state, page)),
+          for (final widget in page.widgets)
+            Positioned.fromRect(
+              rect: widget.rect,
+              child: IgnorePointer(
+                child: UiWidgetContent(
+                  model: widget,
+                  preview: true,
+                  runtimeValue: state.runtimeValues[widget.id],
+                  pressed: state.pressedWidgetId == widget.id,
+                  focused: state.focusedWidgetId == widget.id,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Both pages composited with the active transition effect.
+  Widget _buildTransition(UiDesignerState state, UiPage from, UiPage to,
+      double w, double h) {
+    final t = Curves.easeInOut.transform(state.transitionT);
+    final fromPage = _buildStaticPage(state, from, w, h);
+    final toPage = _buildStaticPage(state, to, w, h);
+    switch (state.transitionType) {
+      case 'slideLeft':
+        return Stack(children: [
+          Transform.translate(offset: Offset(-w * t, 0), child: fromPage),
+          Transform.translate(offset: Offset(w * (1 - t), 0), child: toPage),
+        ]);
+      case 'slideRight':
+        return Stack(children: [
+          Transform.translate(offset: Offset(w * t, 0), child: fromPage),
+          Transform.translate(offset: Offset(-w * (1 - t), 0), child: toPage),
+        ]);
+      case 'pushLeft':
+        return Stack(children: [
+          fromPage,
+          Transform.translate(offset: Offset(w * (1 - t), 0), child: toPage),
+        ]);
+      case 'fade':
+        return Stack(children: [
+          fromPage,
+          Opacity(opacity: t, child: toPage),
+        ]);
+      case 'cube':
+        final persp = Matrix4.identity()..setEntry(3, 2, 0.0012);
+        return Stack(children: [
+          Transform(
+            transform: persp.clone()..rotateY(-math.pi / 2 * t),
+            alignment: Alignment.center,
+            child: fromPage,
+          ),
+          Transform(
+            transform: persp.clone()..rotateY(math.pi / 2 * (1 - t)),
+            alignment: Alignment.center,
+            child: toPage,
+          ),
+        ]);
+      default:
+        return toPage;
+    }
+  }
+
   // ------------------------------------------------------------------
   // Widget wrappers
   // ------------------------------------------------------------------
@@ -171,14 +348,18 @@ class _CanvasViewState extends State<CanvasView> {
           onTapCancel: () => state.previewPressUp(),
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
-            child: UiWidgetContent(
-              model: w,
-              preview: true,
-              runtimeValue: state.runtimeValues[w.id],
-              pressed: state.pressedWidgetId == w.id,
-              focused: state.focusedWidgetId == w.id,
-              onSliderChanged: (v) => state.previewSetValue(w, v.round()),
-              onListSelected: (i) => state.previewSetValue(w, i),
+            child: AnimatedScale(
+              scale: state.pressedWidgetId == w.id ? 0.92 : 1.0,
+              duration: const Duration(milliseconds: 120),
+              child: UiWidgetContent(
+                model: w,
+                preview: true,
+                runtimeValue: state.runtimeValues[w.id],
+                pressed: state.pressedWidgetId == w.id,
+                focused: state.focusedWidgetId == w.id,
+                onSliderChanged: (v) => state.previewSetValue(w, v.round()),
+                onListSelected: (i) => state.previewSetValue(w, i),
+              ),
             ),
           ),
         ),
@@ -240,9 +421,16 @@ class _CanvasViewState extends State<CanvasView> {
             height: handleSize,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onPanStart: (_) => _startResize(w, i),
+              onPanStart: (_) {
+                debugPrint('[resize] start handle=$i');
+                _startResize(w, i);
+              },
               onPanUpdate: (d) => _updateResize(state, d.delta),
-              onPanEnd: (_) => _endResize(state),
+              onPanEnd: (_) {
+                debugPrint('[resize] end handle=$i');
+                _endResize(state);
+              },
+              onPanCancel: () => debugPrint('[resize] CANCEL handle=$i'),
               child: MouseRegion(
                 cursor: _handleCursor(i),
                 child: Container(
@@ -327,13 +515,21 @@ class _CanvasViewState extends State<CanvasView> {
     _resizeId = w.id;
     _resizeHandle = handle;
     _resizeOrigin = w.rect;
+    _resizeDelta = Offset.zero;
   }
 
   void _updateResize(UiDesignerState state, Offset delta) {
     final id = _resizeId;
-    if (id == null) return;
+    if (id == null) {
+      debugPrint('[resize] update arrived with null id (state lost)');
+      return;
+    }
     final w = state.currentPage?.widgetById(id);
     if (w == null) return;
+    // onPanUpdate 的 delta 是单帧增量，必须累加后再作用于起始矩形，
+    // 否则矩形每帧只移动一个增量、无法跟随鼠标。
+    _resizeDelta += delta;
+    delta = _resizeDelta;
     var l = _resizeOrigin.left, t = _resizeOrigin.top;
     var r = _resizeOrigin.right, b = _resizeOrigin.bottom;
     final i = _resizeHandle;
@@ -362,6 +558,7 @@ class _CanvasViewState extends State<CanvasView> {
 
   void _endResize(UiDesignerState state) {
     _resizeId = null;
+    _resizeDelta = Offset.zero;
     state.commitMove();
   }
 
@@ -437,7 +634,31 @@ class _CanvasViewState extends State<CanvasView> {
       return KeyEventResult.ignored;
     }
     final state = context.read<UiDesignerState>();
-    if (state.previewMode) return KeyEventResult.ignored;
+    // Preview mode: OSD remote keys — arrows move focus / adjust values,
+    // Enter/Space activates, Esc clears focus.
+    if (state.previewMode) {
+      final dir = switch (event.logicalKey) {
+        LogicalKeyboardKey.arrowUp => UiNavDirection.up,
+        LogicalKeyboardKey.arrowDown => UiNavDirection.down,
+        LogicalKeyboardKey.arrowLeft => UiNavDirection.left,
+        LogicalKeyboardKey.arrowRight => UiNavDirection.right,
+        _ => null,
+      };
+      if (dir != null) {
+        state.previewNavKey(dir);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.enter ||
+          event.logicalKey == LogicalKeyboardKey.space) {
+        state.previewActivate();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        state.previewClearFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
     final ctrl = HardwareKeyboard.instance.isControlPressed;
 
     if (ctrl && event.logicalKey == LogicalKeyboardKey.keyZ) {
@@ -482,8 +703,148 @@ class _CanvasViewState extends State<CanvasView> {
   }
 }
 
-class _GridPainter extends CustomPainter {
-  _GridPainter(this.grid);
+/// A thin scrollbar strip pinned to a viewport edge.
+///
+/// The framework [Scrollbar] does not work for this 2D canvas: as an
+/// ancestor of the scrollables its drag recognizer loses the gesture
+/// arena to the canvas pan gestures (first member wins), and detached
+/// from the scrollable it never receives scroll metrics. This widget
+/// reads the [ScrollController] position directly and scrolls on drag.
+class _CanvasScrollBar extends StatelessWidget {
+  const _CanvasScrollBar({
+    super.key,
+    required this.controller,
+    required this.axis,
+  });
+
+  final ScrollController controller;
+  final Axis axis;
+
+  bool get _horizontal => axis == Axis.horizontal;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final track =
+                _horizontal ? constraints.maxWidth : constraints.maxHeight;
+            final pos = controller.hasClients ? controller.position : null;
+            final ready = pos != null &&
+                pos.hasViewportDimension &&
+                pos.hasContentDimensions &&
+                pos.maxScrollExtent > 0 &&
+                track > 0;
+
+            var thumbLen = track;
+            var thumbOffset = 0.0;
+            var ratio = 1.0;
+            if (ready) {
+              final content = pos.maxScrollExtent + pos.viewportDimension;
+              thumbLen = (track * pos.viewportDimension / content)
+                  .clamp(24.0, track);
+              final movable = track - thumbLen;
+              thumbOffset =
+                  movable * (pos.pixels / pos.maxScrollExtent).clamp(0.0, 1.0);
+              ratio = movable > 0 ? pos.maxScrollExtent / movable : 1.0;
+            }
+
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragUpdate: _horizontal && ready
+                  ? (d) => _dragBy(d.delta.dx * ratio)
+                  : null,
+              onVerticalDragUpdate: !_horizontal && ready
+                  ? (d) => _dragBy(d.delta.dy * ratio)
+                  : null,
+              child: Stack(
+                children: [
+                  Positioned(
+                    left: _horizontal ? thumbOffset : 0,
+                    top: _horizontal ? 0 : thumbOffset,
+                    right: _horizontal ? null : 0,
+                    bottom: _horizontal ? 0 : null,
+                    width: _horizontal ? thumbLen : null,
+                    height: _horizontal ? null : thumbLen,
+                    child: Container(
+                      margin: const EdgeInsets.all(1),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade600,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _dragBy(double scrollDelta) {
+    if (!controller.hasClients) return;
+    final pos = controller.position;
+    pos.jumpTo((pos.pixels + scrollDelta).clamp(0.0, pos.maxScrollExtent));
+  }
+}
+
+/// Animated image background: 'kenburns' = slow push-in/pan loop,
+/// 'parallax' = gentle horizontal drift.
+class _AnimatedBg extends StatefulWidget {
+  const _AnimatedBg({required this.mode, required this.child});
+
+  final String mode;
+  final Widget child;
+
+  @override
+  State<_AnimatedBg> createState() => _AnimatedBgState();
+}
+
+class _AnimatedBgState extends State<_AnimatedBg>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: Duration(seconds: widget.mode == 'kenburns' ? 12 : 8),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        final t = Curves.easeInOut.transform(_ctrl.value);
+        if (widget.mode == 'kenburns') {
+          return Transform.scale(
+            scale: 1.0 + 0.18 * t,
+            alignment: Alignment.lerp(
+                Alignment.topLeft, Alignment.bottomRight, t)!,
+            child: widget.child,
+          );
+        }
+        // Parallax: slight overscan + horizontal drift.
+        return Transform.scale(
+          scale: 1.12,
+          child: Transform.translate(
+            offset: Offset((t * 2 - 1) * 18, 0),
+            child: widget.child,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GridPainter extends CustomPainter {  _GridPainter(this.grid);
 
   final double grid;
 

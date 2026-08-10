@@ -132,7 +132,7 @@ void main() {
       expect(result.source, contains('on_ok_click'));
       expect(result.source, contains('UI_ACT_GOTO_PAGE'));
       expect(result.source, contains('UI_EV_TIMER'));
-      expect(result.source, contains(', 500 },'));
+      expect(result.source, contains(', 500, 0 },'));
       expect(result.callbacks, containsAll(['on_ok_click', 'tick_update']));
     });
 

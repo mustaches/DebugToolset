@@ -25,7 +25,10 @@ typedef enum {
   UI_W_RADIO,
   UI_W_DROPDOWN,
   UI_W_TEXTFIELD,
-  UI_W_LIST
+  UI_W_LIST,
+  UI_W_MENU,
+  UI_W_VALUE_ITEM,
+  UI_W_OPTION_ITEM
 } ui_widget_type_t;
 
 typedef enum {
@@ -42,6 +45,25 @@ typedef enum {
   UI_ACT_GOTO_PAGE
 } ui_action_type_t;
 
+/* Page transition effects (ui_event_t.transition). */
+enum {
+  UI_TRANS_NONE = 0,
+  UI_TRANS_SLIDE_LEFT,
+  UI_TRANS_SLIDE_RIGHT,
+  UI_TRANS_FADE,
+  UI_TRANS_PUSH_LEFT,
+  UI_TRANS_CUBE
+};
+
+/* Keypad / remote keys for OSD focus navigation. */
+typedef enum {
+  UI_KEY_UP = 0,
+  UI_KEY_DOWN,
+  UI_KEY_LEFT,
+  UI_KEY_RIGHT,
+  UI_KEY_OK
+} ui_key_t;
+
 /* All generated callbacks share this signature:
  * widget_id = index of the widget in its page (or -1 for page events),
  * value     = current widget value (0 when not applicable). */
@@ -53,6 +75,7 @@ typedef struct {
   ui_callback_t callback;  /* used when action == UI_ACT_CALLBACK */
   const void* target_page; /* const ui_page_t*, used when action == UI_ACT_GOTO_PAGE */
   uint32_t timer_ms;       /* period, only for UI_EV_TIMER */
+  uint8_t transition;      /* UI_TRANS_*, only for UI_ACT_GOTO_PAGE */
 } ui_event_t;
 
 typedef struct {
@@ -83,6 +106,9 @@ typedef struct {
   ui_props_t props;
   const ui_event_t* events;
   uint8_t event_count;
+  uint8_t rotation;        /* degrees, 0 = none */
+  uint8_t scale;           /* percent, 100 = none */
+  uint8_t opacity;         /* percent, 100 = opaque */
 } ui_widget_t;
 
 typedef struct {
@@ -92,6 +118,12 @@ typedef struct {
   uint16_t widget_count;
   const ui_event_t* events;   /* UI_EV_SHOW / UI_EV_HIDE / UI_EV_TIMER */
   uint8_t event_count;
+  uint8_t bg_type;         /* 0 color, 1 image, 2 video (OSD over stream) */
+  const uint8_t* bg_image; /* raw pixel data when bg_type == 1 */
+  uint16_t bg_image_w;
+  uint16_t bg_image_h;
+  uint8_t bg_image_format; /* same encoding as ui_props_t.image_format */
+  uint8_t bg_anim;         /* 0 none, 1 kenburns, 2 parallax */
 } ui_page_t;
 
 void ui_init(const ui_page_t* start_page);
@@ -105,6 +137,12 @@ void ui_draw(void);
 bool ui_touch_down(uint16_t x, uint16_t y);
 bool ui_touch_up(uint16_t x, uint16_t y);
 bool ui_touch_move(uint16_t x, uint16_t y);
+
+/* Keypad/remote input: OSD focus navigation (up/down/left/right/ok). */
+void ui_key(ui_key_t key);
+
+/* Currently focused widget id, -1 when none. */
+int ui_focused_widget(void);
 
 /* Call periodically with elapsed milliseconds; drives UI_EV_TIMER. */
 void ui_tick(uint32_t elapsed_ms);

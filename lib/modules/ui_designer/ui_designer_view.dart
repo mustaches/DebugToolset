@@ -33,7 +33,8 @@ class UiDesignerView extends StatelessWidget {
             children: [
               if (!state.previewMode)
                 SizedBox(
-                  width: 170,
+                  // 108 = 左右各6 + 30px按钮x3 + 3px间距x2
+                  width: 108,
                   child: Column(
                     children: const [
                       Expanded(flex: 3, child: WidgetPalette()),

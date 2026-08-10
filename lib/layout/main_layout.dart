@@ -8,6 +8,7 @@ import '../modules/hex_editor/hex_editor_view.dart';
 import '../modules/text_editor/text_editor_view.dart';
 import '../modules/font_extractor/font_extractor_view.dart';
 import '../modules/ui_designer/ui_designer_view.dart';
+import '../modules/isp_studio/isp_studio_view.dart';
 
 class MainLayout extends StatelessWidget {
   const MainLayout({super.key});
@@ -77,6 +78,12 @@ class MainLayout extends StatelessWidget {
             isSelected: appState.selectedModuleIndex == 5,
             onTap: () => appState.setModuleIndex(5),
           ),
+          _SidebarIcon(
+            icon: Icons.hub,
+            tooltip: 'ISP Studio',
+            isSelected: appState.selectedModuleIndex == 6,
+            onTap: () => appState.setModuleIndex(6),
+          ),
           const Spacer(),
           const SizedBox(height: 10),
         ],
@@ -107,6 +114,9 @@ class MainLayout extends StatelessWidget {
         break;
       case 5:
         activeModule = const UiDesignerView();
+        break;
+      case 6:
+        activeModule = const IspStudioView();
         break;
       default:
         activeModule = const Center(child: Text('未知模块'));

@@ -1,6 +1,7 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import '../../../providers/ui_designer_state.dart';
@@ -99,11 +100,18 @@ class _ProjectPageSettingsState extends State<_ProjectPageSettings> {
         ),
         const SizedBox(height: 12),
         const _PanelTitle('页面'),
-        _row('背景颜色', _colorSwatch(
-          context,
-          page.bgColor,
-          (c) => state.setPageBgColor(page.id, c),
-        )),
+        _row('背景类型', _bgTypeDropdown(state, page)),
+        if (page.bgType == 'color')
+          _row('背景颜色', _colorSwatch(
+            context,
+            page.bgColor,
+            (c) => state.setPageBgColor(page.id, c),
+          )),
+        if (page.bgType == 'image') ...[
+          _row('背景图片', _bgAssetPicker(state, page)),
+          _row('背景动画', _bgAnimDropdown(state, page)),
+        ],
+        if (page.bgType == 'video') _row('背景视频', _bgVideoPicker(state, page)),
         const SizedBox(height: 12),
         const _PanelTitle('页面事件'),
         _PageEventsEditor(state: state, page: page),
@@ -115,6 +123,123 @@ class _ProjectPageSettingsState extends State<_ProjectPageSettings> {
     final w = int.tryParse(_wCtrl.text);
     final h = int.tryParse(_hCtrl.text);
     if (w != null && h != null) widget.state.setScreenSize(w, h);
+  }
+
+  Widget _bgTypeDropdown(UiDesignerState state, UiPage page) {
+    return DropdownButton<String>(
+      value: page.bgType,
+      isDense: true,
+      style: const TextStyle(fontSize: 12),
+      items: const [
+        DropdownMenuItem(value: 'color', child: Text('纯色')),
+        DropdownMenuItem(value: 'image', child: Text('图片')),
+        DropdownMenuItem(value: 'video', child: Text('视频')),
+      ],
+      onChanged: (v) {
+        if (v != null) state.setPageBackground(page.id, v);
+      },
+    );
+  }
+
+  Widget _bgAssetPicker(UiDesignerState state, UiPage page) {
+    final currentId = page.bgAssetId;
+    return Row(
+      children: [
+        // Expanded + isExpanded: long asset names ellipsize instead of
+        // pushing the import button out of the panel.
+        Expanded(
+          child: DropdownButton<String>(
+            value: state.project.assets.any((a) => a.id == currentId)
+                ? currentId
+                : null,
+            hint: const Text('未选择',
+                style: TextStyle(fontSize: 12),
+                overflow: TextOverflow.ellipsis),
+            isDense: true,
+            isExpanded: true,
+            style: const TextStyle(fontSize: 12),
+            items: [
+              for (final a in state.project.assets)
+                DropdownMenuItem(
+                    value: a.id,
+                    child: Text(a.name, overflow: TextOverflow.ellipsis)),
+            ],
+            onChanged: (v) => state.setPageBackground(page.id, 'image',
+                assetId: v),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.add_photo_alternate,
+              size: 16, color: Colors.cyanAccent),
+          tooltip: '导入图片',
+          onPressed: () async {
+            final file = await openFile(
+              acceptedTypeGroups: const [
+                XTypeGroup(label: '图片', extensions: ['png', 'jpg', 'bmp'])
+              ],
+            );
+            if (file == null) return;
+            final asset = state.importAsset(file.path);
+            state.setPageBackground(page.id, 'image', assetId: asset.id);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _bgAnimDropdown(UiDesignerState state, UiPage page) {
+    return DropdownButton<String>(
+      value: page.bgAnim,
+      isDense: true,
+      isExpanded: true,
+      style: const TextStyle(fontSize: 12),
+      items: const [
+        DropdownMenuItem(
+            value: 'none',
+            child: Text('无', overflow: TextOverflow.ellipsis)),
+        DropdownMenuItem(
+            value: 'kenburns',
+            child: Text('Ken Burns 缓推', overflow: TextOverflow.ellipsis)),
+        DropdownMenuItem(
+            value: 'parallax',
+            child: Text('视差滚动', overflow: TextOverflow.ellipsis)),
+      ],
+      onChanged: (v) {
+        if (v != null) {
+          state.setPageBackground(page.id, 'image', anim: v);
+        }
+      },
+    );
+  }
+
+  Widget _bgVideoPicker(UiDesignerState state, UiPage page) {    final path = page.bgVideoPath;
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            path == null ? '未选择' : p.basename(path),
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.video_file,
+              size: 16, color: Colors.cyanAccent),
+          tooltip: '选择视频文件',
+          onPressed: () async {
+            final file = await openFile(
+              acceptedTypeGroups: const [
+                XTypeGroup(
+                    label: '视频',
+                    extensions: ['mp4', 'avi', 'mkv', 'mov', 'ts'])
+              ],
+            );
+            if (file == null) return;
+            state.setPageBackground(page.id, 'video', videoPath: file.path);
+          },
+        ),
+      ],
+    );
   }
 }
 
@@ -183,6 +308,32 @@ class _SingleWidgetInspector extends StatelessWidget {
             Expanded(child: _intInput('宽', w.width, (v) => _setRect(state, w, width: v))),
             const SizedBox(width: 6),
             Expanded(child: _intInput('高', w.height, (v) => _setRect(state, w, height: v))),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const _PanelTitle('变换'),
+        Row(
+          children: [
+            Expanded(
+                child: _intInput(
+                    '旋转°',
+                    (w.props['rotate'] as num?)?.toDouble() ?? 0,
+                    (v) => state.updateWidgetProps(
+                        w.id, {'rotate': v.round().clamp(0, 359)}))),
+            const SizedBox(width: 6),
+            Expanded(
+                child: _intInput(
+                    '缩放%',
+                    (w.props['scale'] as num?)?.toDouble() ?? 100,
+                    (v) => state.updateWidgetProps(
+                        w.id, {'scale': v.round().clamp(10, 400)}))),
+            const SizedBox(width: 6),
+            Expanded(
+                child: _intInput(
+                    '不透明%',
+                    (w.props['opacity'] as num?)?.toDouble() ?? 100,
+                    (v) => state.updateWidgetProps(
+                        w.id, {'opacity': v.round().clamp(0, 100)}))),
           ],
         ),
         if (def != null) ...[
@@ -312,21 +463,27 @@ class _PropEditor extends StatelessWidget {
   Widget _assetPicker(BuildContext context) {
     final currentId = widget.props['asset'] as String?;
     return Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        DropdownButton<String>(
-          value: state.project.assets.any((a) => a.id == currentId)
-              ? currentId
-              : null,
-          hint: const Text('未选择', style: TextStyle(fontSize: 12)),
-          isDense: true,
-          style: const TextStyle(fontSize: 12),
-          items: [
-            for (final a in state.project.assets)
-              DropdownMenuItem(value: a.id, child: Text(a.name)),
-          ],
-          onChanged: (v) =>
-              state.updateWidgetProps(widget.id, {'asset': v}),
+        Expanded(
+          child: DropdownButton<String>(
+            value: state.project.assets.any((a) => a.id == currentId)
+                ? currentId
+                : null,
+            hint: const Text('未选择',
+                style: TextStyle(fontSize: 12),
+                overflow: TextOverflow.ellipsis),
+            isDense: true,
+            isExpanded: true,
+            style: const TextStyle(fontSize: 12),
+            items: [
+              for (final a in state.project.assets)
+                DropdownMenuItem(
+                    value: a.id,
+                    child: Text(a.name, overflow: TextOverflow.ellipsis)),
+            ],
+            onChanged: (v) =>
+                state.updateWidgetProps(widget.id, {'asset': v}),
+          ),
         ),
         IconButton(
           icon: const Icon(Icons.add_photo_alternate,
@@ -450,25 +607,75 @@ class _EventRow extends StatelessWidget {
                         ],
                       ],
                     )
-                  : DropdownButton<String>(
-                      value: state.project.pages
-                              .any((p) => p.id == existing.targetPageId)
-                          ? existing.targetPageId
-                          : null,
-                      hint: const Text('选择目标页面',
-                          style: TextStyle(fontSize: 12)),
-                      isDense: true,
-                      style: const TextStyle(fontSize: 12),
-                      items: [
-                        for (final p in state.project.pages)
-                          DropdownMenuItem(value: p.id, child: Text(p.name)),
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DropdownButton<String>(
+                          value: state.project.pages
+                                  .any((p) => p.id == existing.targetPageId)
+                              ? existing.targetPageId
+                              : null,
+                          hint: const Text('选择目标页面',
+                              style: TextStyle(fontSize: 12)),
+                          isDense: true,
+                          style: const TextStyle(fontSize: 12),
+                          items: [
+                            for (final p in state.project.pages)
+                              DropdownMenuItem(
+                                  value: p.id, child: Text(p.name)),
+                          ],
+                          onChanged: (v) {
+                            final next =
+                                events.map((e) => e.copy()).toList();
+                            next
+                                .firstWhere((e) => e.type == type)
+                                .targetPageId = v;
+                            onChanged(next);
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Text('切换特效',
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.grey)),
+                            const SizedBox(width: 8),
+                            DropdownButton<String>(
+                              value: existing.transition,
+                              isDense: true,
+                              style: const TextStyle(fontSize: 12),
+                              items: const [
+                                DropdownMenuItem(
+                                    value: 'none', child: Text('无')),
+                                DropdownMenuItem(
+                                    value: 'slideLeft',
+                                    child: Text('左滑入')),
+                                DropdownMenuItem(
+                                    value: 'slideRight',
+                                    child: Text('右滑入')),
+                                DropdownMenuItem(
+                                    value: 'fade',
+                                    child: Text('淡入淡出')),
+                                DropdownMenuItem(
+                                    value: 'pushLeft',
+                                    child: Text('推入覆盖')),
+                                DropdownMenuItem(
+                                    value: 'cube',
+                                    child: Text('立方体翻转')),
+                              ],
+                              onChanged: (v) {
+                                if (v == null) return;
+                                final next =
+                                    events.map((e) => e.copy()).toList();
+                                next
+                                    .firstWhere((e) => e.type == type)
+                                    .transition = v;
+                                onChanged(next);
+                              },
+                            ),
+                          ],
+                        ),
                       ],
-                      onChanged: (v) {
-                        final next = events.map((e) => e.copy()).toList();
-                        next.firstWhere((e) => e.type == type).targetPageId =
-                            v;
-                        onChanged(next);
-                      },
                     ),
             ),
         ],

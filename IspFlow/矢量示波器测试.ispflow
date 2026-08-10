@@ -1,0 +1,160 @@
+{
+  "name": "矢量示波器测试",
+  "nodes": [
+    {
+      "id": "n2",
+      "typeId": "black_level",
+      "x": 330.0,
+      "y": 100.0,
+      "width": 190.0,
+      "params": {
+        "r": 0.0,
+        "gr": 0.0,
+        "gb": 0.0,
+        "b": 0.0
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "demosaic",
+      "x": 560.0,
+      "y": 100.0,
+      "width": 190.0,
+      "params": {
+        "algorithm": "bilinear"
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "white_balance",
+      "x": 790.0,
+      "y": 100.0,
+      "width": 190.0,
+      "params": {
+        "mode": "auto",
+        "rGain": 1.0,
+        "bGain": 1.0
+      }
+    },
+    {
+      "id": "n8",
+      "typeId": "ccm",
+      "x": 1020.0,
+      "y": 100.0,
+      "width": 190.0,
+      "params": {
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "n10",
+      "typeId": "gamma",
+      "x": 1250.0,
+      "y": 100.0,
+      "width": 190.0,
+      "params": {
+        "gamma": 2.2,
+        "brightness": 0.0,
+        "contrast": 1.0
+      }
+    },
+    {
+      "id": "n12",
+      "typeId": "preview",
+      "x": 1480.0,
+      "y": 100.0,
+      "width": 190.0,
+      "params": {
+        "fps": 24,
+        "frameCount": 10
+      }
+    },
+    {
+      "id": "n25",
+      "typeId": "vectorscope",
+      "x": 1761.834997414093,
+      "y": 100.92517055727413,
+      "width": 800.0,
+      "params": {}
+    },
+    {
+      "id": "n27",
+      "typeId": "cis_bayer_rggb",
+      "x": 94.4353974714015,
+      "y": 101.859135232938,
+      "width": 190.0,
+      "params": {
+        "filePath": "G:\\DebugToolSet\\BayerRGGB\\RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
+        "width": 3840,
+        "height": 2160,
+        "bitDepth": "10",
+        "packing": "unpacked_lsb",
+        "littleEndian": true,
+        "frameIndex": 0,
+        "bayerPattern": "RGGB"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c5",
+      "from": "n2",
+      "fromPort": "out",
+      "to": "n4",
+      "toPort": "in"
+    },
+    {
+      "id": "c7",
+      "from": "n4",
+      "fromPort": "out",
+      "to": "n6",
+      "toPort": "in"
+    },
+    {
+      "id": "c9",
+      "from": "n6",
+      "fromPort": "out",
+      "to": "n8",
+      "toPort": "in"
+    },
+    {
+      "id": "c11",
+      "from": "n8",
+      "fromPort": "out",
+      "to": "n10",
+      "toPort": "in"
+    },
+    {
+      "id": "c13",
+      "from": "n10",
+      "fromPort": "out",
+      "to": "n12",
+      "toPort": "in"
+    },
+    {
+      "id": "c26",
+      "from": "n12",
+      "fromPort": "out",
+      "to": "n25",
+      "toPort": "in"
+    },
+    {
+      "id": "c28",
+      "from": "n27",
+      "fromPort": "out",
+      "to": "n2",
+      "toPort": "in"
+    }
+  ],
+  "nextId": 29
+}

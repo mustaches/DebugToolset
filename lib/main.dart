@@ -11,6 +11,7 @@ import 'providers/oscilloscope_state.dart';
 import 'providers/hex_editor_state.dart';
 import 'providers/text_editor_state.dart';
 import 'providers/ui_designer_state.dart';
+import 'providers/isp_studio_state.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
@@ -48,6 +49,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => TextEditorState()),
         ChangeNotifierProvider(create: (_) => FontExtractorState()),
         ChangeNotifierProvider(create: (_) => UiDesignerState()),
+        ChangeNotifierProvider(create: (_) => IspStudioState()),
       ],
       child: const DebugToolSetApp(),
     ),
