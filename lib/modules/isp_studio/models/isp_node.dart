@@ -17,7 +17,53 @@ enum IspPortType {
 
   /// 音频流（视频音轨，预览播放时经 MCI 回放）。
   audio,
+
+  /// 单通道 R (Red)。
+  r,
+
+  /// 单通道 G (Green)。
+  g,
+
+  /// 单通道 B (Blue)。
+  b,
+
+  /// 单通道 Y (Luma)。
+  y,
+
+  /// 单通道 U (Chroma U)。
+  u,
+
+  /// 单通道 V (Chroma V)。
+  v,
+
+  /// 单通道 H (Hue)。
+  h,
+
+  /// 单通道 S (Saturation)。
+  s,
+
+  /// 单通道 L (Lightness)。
+  l,
+
+  /// 通用 Mono 单通道端口。
+  mono,
 }
+
+/// 是否为单通道端口类型（R/G/B/Y/U/V/H/S/L/Mono）。
+bool isSingleChannelPort(IspPortType type) => switch (type) {
+      IspPortType.r ||
+      IspPortType.g ||
+      IspPortType.b ||
+      IspPortType.y ||
+      IspPortType.u ||
+      IspPortType.v ||
+      IspPortType.h ||
+      IspPortType.s ||
+      IspPortType.l ||
+      IspPortType.mono =>
+        true,
+      _ => false,
+    };
 
 /// 参数类型。
 enum IspParamType {
@@ -86,6 +132,14 @@ class IspNodeType {
     required this.colorValue,
   });
 
+  /// 视频格式输入组（RGB/YUV/HSL/Mono）的端口名：同组互斥，只允许一路接入。
+  static const videoInputGroupPorts = {'in', 'in_yuv', 'in_hsl', 'in_mono'};
+
+  /// 是否带视频格式输入组（具备该组两个及以上端口，如仪器/预览/
+  /// 输出节点）。同组端口互斥：接入一路后其余置灰、不允许再连。
+  bool get hasVideoInputGroup =>
+      inputs.where((p) => videoInputGroupPorts.contains(p.name)).length > 1;
+
   IspPortSpec? inputPort(String name) {
     for (final p in inputs) {
       if (p.name == name) return p;
@@ -104,6 +158,9 @@ class IspNodeType {
 /// 节点卡片默认宽度。
 const double kNodeWidth = 190;
 
+/// 预览/仪器节点附加显示区默认高度（画布坐标）。
+const double kDefaultNodeExtraHeight = 160;
+
 /// 图中的节点实例。
 class IspNode {
   final String id;
@@ -112,8 +169,12 @@ class IspNode {
   double y;
 
   /// 节点卡片宽度（画布坐标）。预览节点可通过右下角控制点调宽，
-  /// 输出端口与连线几何以该值为准。
+  /// 输出端口与连线几何以该值为准。随流程保存。
   double width;
+
+  /// 预览/仪器节点附加显示区高度（画布坐标），可通过底部手柄或
+  /// 右下角控制点调整。随流程保存。
+  double extraHeight;
   final Map<String, Object?> paramValues;
 
   IspNode({
@@ -122,6 +183,7 @@ class IspNode {
     required this.x,
     required this.y,
     this.width = kNodeWidth,
+    this.extraHeight = kDefaultNodeExtraHeight,
     required this.paramValues,
   });
 
@@ -136,7 +198,8 @@ class IspNode {
 }
 
 /// 节点类型注册表。
-abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（文件/分辨率/位深/打包/端序/起始帧）。
+abstract final class IspNodeRegistry {
+  /// CIS RAW 源节点的公共参数（文件/分辨率/位深/打包/端序/起始帧）。
   static List<IspParamSpec> _rawSourceParams(
           [List<IspParamSpec> extra = const []]) =>
       [
@@ -371,8 +434,8 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
-        // 音轨输出：接到「音频输出」节点仅作流程示意；预览播放时
-        // 含音轨即自动回放（不依赖该连接）。
+        // 音轨输出：接到音频仪器（电平/波形/EQ）表达音频流向；
+        // 预览播放时含音轨即自动回放（不依赖该连接）。
         IspPortSpec(name: 'out_audio', type: IspPortType.audio, label: 'Audio'),
       ],
       params: [
@@ -563,12 +626,14 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
       outputs: [
-        // 透传节点：三个输出端口送出的是同一帧，格式与输入一致。
+        // 透传节点：四个输出端口送出的是同一帧，格式与输入一致。
         IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
       ],
       params: [
         IspParamSpec(
@@ -599,6 +664,7 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
     ),
     'waveform': IspNodeType(
@@ -609,6 +675,7 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
     ),
     'vectorscope': IspNodeType(
@@ -619,6 +686,7 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
     ),
     'image_output': IspNodeType(
@@ -629,6 +697,7 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
       params: [
         IspParamSpec(
@@ -661,16 +730,6 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         ),
       ],
     ),
-    'audio_output': IspNodeType(
-      typeId: 'audio_output',
-      displayName: '音频输出',
-      colorValue: 0xFF6E5E8E,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.audio, label: 'Audio'),
-      ],
-      // 无参数：视频预览播放时含音轨即自动回放（MCI），该节点仅
-      // 在流程图上表达音频流向。
-    ),
     'audio_level': IspNodeType(
       typeId: 'audio_level',
       displayName: '音频电平',
@@ -696,16 +755,18 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
       inputs: [
         IspPortSpec(name: 'in', type: IspPortType.audio, label: 'Audio'),
       ],
-      // 无参数：当前位置前 2048 样本 FFT，20Hz–20kHz 对数 21 段。
+      // 无参数：当前位置前 2048 样本 FFT，左右 L/R 两组各 31 段
+      // （20Hz–20kHz 1/3 倍频程），每段下方标注中心频率。
     ),
     'video_output': IspNodeType(
       typeId: 'video_output',
-      displayName: '视频输出 MP4',
+      displayName: '视频输出',
       colorValue: 0xFF3E5E6E,
       inputs: [
         IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
         IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
       params: [
         IspParamSpec(
@@ -748,6 +809,85 @@ abstract final class IspNodeRegistry {  /// CIS RAW 源节点的公共参数（�
         ),
       ],
     ),
+    // ---- Datapath 分路器 & 合路器 ----
+    'rgb_splitter': IspNodeType(
+      typeId: 'rgb_splitter',
+      displayName: 'RGB 分路器',
+      colorValue: 0xFF3E6E5E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_r', type: IspPortType.r, label: 'R'),
+        IspPortSpec(name: 'out_g', type: IspPortType.g, label: 'G'),
+        IspPortSpec(name: 'out_b', type: IspPortType.b, label: 'B'),
+      ],
+    ),
+    'yuv_splitter': IspNodeType(
+      typeId: 'yuv_splitter',
+      displayName: 'YUV 分路器',
+      colorValue: 0xFF3E5E7E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_y', type: IspPortType.y, label: 'Y'),
+        IspPortSpec(name: 'out_u', type: IspPortType.u, label: 'U'),
+        IspPortSpec(name: 'out_v', type: IspPortType.v, label: 'V'),
+      ],
+    ),
+    'hsl_splitter': IspNodeType(
+      typeId: 'hsl_splitter',
+      displayName: 'HSL 分路器',
+      colorValue: 0xFF7E3E5E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_h', type: IspPortType.h, label: 'H'),
+        IspPortSpec(name: 'out_s', type: IspPortType.s, label: 'S'),
+        IspPortSpec(name: 'out_l', type: IspPortType.l, label: 'L'),
+      ],
+    ),
+    'rgb_combiner': IspNodeType(
+      typeId: 'rgb_combiner',
+      displayName: 'RGB 合路器',
+      colorValue: 0xFF4E7E6E,
+      inputs: [
+        IspPortSpec(name: 'in_r', type: IspPortType.r, label: 'R'),
+        IspPortSpec(name: 'in_g', type: IspPortType.g, label: 'G'),
+        IspPortSpec(name: 'in_b', type: IspPortType.b, label: 'B'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+      ],
+    ),
+    'yuv_combiner': IspNodeType(
+      typeId: 'yuv_combiner',
+      displayName: 'YUV 合路器',
+      colorValue: 0xFF4E6E7E,
+      inputs: [
+        IspPortSpec(name: 'in_y', type: IspPortType.y, label: 'Y'),
+        IspPortSpec(name: 'in_u', type: IspPortType.u, label: 'U'),
+        IspPortSpec(name: 'in_v', type: IspPortType.v, label: 'V'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV'),
+      ],
+    ),
+    'hsl_combiner': IspNodeType(
+      typeId: 'hsl_combiner',
+      displayName: 'HSL 合路器',
+      colorValue: 0xFF7E4E6E,
+      inputs: [
+        IspPortSpec(name: 'in_h', type: IspPortType.h, label: 'H'),
+        IspPortSpec(name: 'in_s', type: IspPortType.s, label: 'S'),
+        IspPortSpec(name: 'in_l', type: IspPortType.l, label: 'L'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
+      ],
+    ),
   };
 
   static IspNodeType? byId(String typeId) => types[typeId];
@@ -769,12 +909,11 @@ const audioInstrumentTypes = {
 const allInstrumentTypes = {...instrumentTypes, ...audioInstrumentTypes};
 
 /// 透传汇点节点（不改变帧数据）：预览 / 仪器 / 音频仪器 / 图片输出 /
-/// 视频输出 / 音频输出。
+/// 视频输出。
 const sinkNodeTypes = {
   'preview',
   ...instrumentTypes,
   ...audioInstrumentTypes,
   'image_output',
   'video_output',
-  'audio_output',
 };

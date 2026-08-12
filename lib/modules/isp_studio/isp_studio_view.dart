@@ -6,9 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/isp_studio_state.dart';
+import 'models/isp_align_mode.dart';
+import 'models/isp_node.dart';
 import 'widgets/editor_tab_bar.dart';
 import 'widgets/node_canvas.dart';
 import 'widgets/node_code_page.dart';
+import 'widgets/node_layout.dart';
 import 'widgets/node_palette.dart';
 import 'widgets/node_property_panel.dart';
 
@@ -81,8 +84,16 @@ class IspStudioView extends StatelessWidget {
             ],
           ),
         ),
-        _buildStatusBar(context, state),
       ],
+    );
+  }
+
+  Widget _buildDivider() {
+    return Container(
+      height: 18,
+      width: 1,
+      margin: const EdgeInsets.symmetric(horizontal: 6),
+      color: Colors.white24,
     );
   }
 
@@ -96,87 +107,170 @@ class IspStudioView extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          TextButton.icon(
-            icon: const Icon(Icons.file_open, size: 16),
-            label: const Text('打开流程', style: TextStyle(fontSize: 12)),
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
+          // 组1：文件操作
+          IconButton(
+            icon: const Icon(Icons.file_open, size: 18),
+            tooltip: '打开流程 (.ispflow)',
+            color: Colors.white,
             onPressed: () => _importFlow(state),
           ),
-          TextButton.icon(
-            icon: const Icon(Icons.save, size: 16),
-            label: const Text('保存流程', style: TextStyle(fontSize: 12)),
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
+          IconButton(
+            icon: const Icon(Icons.save, size: 18),
+            tooltip: '保存流程 (.ispflow)',
+            color: Colors.white,
             onPressed: () => _saveFlow(state),
           ),
-          const SizedBox(width: 8),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.play_arrow, size: 16),
-            label: const Text('运行预览', style: TextStyle(fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              minimumSize: const Size(0, 30),
-            ),
+          _buildDivider(),
+
+          // 组2：执行与视图
+          IconButton(
+            icon: const Icon(Icons.play_arrow, size: 20),
+            tooltip: '运行预览',
+            color: state.isProcessing ? Colors.white38 : const Color(0xFF4CAF50),
             onPressed: state.isProcessing ? null : () => state.runPreview(),
           ),
-          const SizedBox(width: 8),
-          TextButton.icon(
-            icon: const Icon(Icons.center_focus_strong, size: 16),
-            label: const Text('重置视图', style: TextStyle(fontSize: 12)),
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
+          IconButton(
+            icon: const Icon(Icons.center_focus_strong, size: 18),
+            tooltip: '适配全屏',
+            color: Colors.white,
             onPressed: () => state.resetView(),
           ),
+          _buildDivider(),
+
+          // 组3：水平对齐
+          IconButton(
+            icon: const Icon(Icons.align_horizontal_left, size: 18),
+            tooltip: '左对齐',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.left),
+          ),
+          IconButton(
+            icon: const Icon(Icons.align_horizontal_center, size: 18),
+            tooltip: '水平居中',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.horizontalCenter),
+          ),
+          IconButton(
+            icon: const Icon(Icons.align_horizontal_right, size: 18),
+            tooltip: '右对齐',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.right),
+          ),
+          _buildDivider(),
+
+          // 组4：垂直对齐
+          IconButton(
+            icon: const Icon(Icons.align_vertical_top, size: 18),
+            tooltip: '顶对齐',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.top),
+          ),
+          IconButton(
+            icon: const Icon(Icons.align_vertical_center, size: 18),
+            tooltip: '垂直居中',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.verticalCenter),
+          ),
+          IconButton(
+            icon: const Icon(Icons.align_vertical_bottom, size: 18),
+            tooltip: '底对齐',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.bottom),
+          ),
+          _buildDivider(),
+
+          // 组5：等间距与尺寸控制
+          IconButton(
+            icon: const Icon(Icons.horizontal_distribute, size: 18),
+            tooltip: '水平等间距分布',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.distributeHorizontal),
+          ),
+          IconButton(
+            icon: const Icon(Icons.vertical_distribute, size: 18),
+            tooltip: '垂直等间距分布',
+            color: Colors.white,
+            onPressed: () => state.alignNodes(IspAlignMode.distributeVertical),
+          ),
+          IconButton(
+            icon: const Icon(Icons.swap_horiz, size: 18),
+            tooltip: '统一为首选节点宽度 (黄框)',
+            color: state.selectedNodeIds.length >= 2
+                ? const Color(0xFFFFC107)
+                : Colors.white38,
+            onPressed: state.selectedNodeIds.length >= 2
+                ? () => state.matchSelectedNodesWidth()
+                : null,
+          ),
+          IconButton(
+            icon: const Icon(Icons.swap_vert, size: 18),
+            tooltip: '统一为首选节点高度 (黄框)',
+            color: state.selectedNodeIds.length >= 2
+                ? const Color(0xFFFFC107)
+                : Colors.white38,
+            onPressed: state.selectedNodeIds.length >= 2
+                ? () => state.matchSelectedNodesHeight()
+                : null,
+          ),
+          IconButton(
+            icon: const Icon(Icons.aspect_ratio, size: 18),
+            tooltip: '统一为首选节点尺寸 (黄框)',
+            color: state.selectedNodeIds.length >= 2
+                ? const Color(0xFFFFC107)
+                : Colors.white38,
+            onPressed: state.selectedNodeIds.length >= 2
+                ? () => state.matchSelectedNodesSize()
+                : null,
+          ),
+
           const Spacer(),
+          if (state.primarySelectedNode != null) ...[
+            Builder(builder: (context) {
+              final node = state.primarySelectedNode!;
+              final type = IspNodeRegistry.byId(node.typeId);
+              final h = type == null
+                  ? 0.0
+                  : nodeHeight(type, previewExtraHeight: node.extraHeight);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFC107).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                      color: const Color(0xFFFFC107).withValues(alpha: 0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.straighten,
+                        size: 13, color: Color(0xFFFFC107)),
+                    const SizedBox(width: 4),
+                    Text(
+                      'W:${node.width.toInt()} × H:${h.toInt()}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFFFFC107),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(width: 8),
+          ],
           if (state.isProcessing) ...[
             const SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            TextButton(
+            IconButton(
+              icon: const Icon(Icons.stop, size: 18, color: Color(0xFFCF6679)),
+              tooltip: '取消处理',
               onPressed: () => state.cancelProcessing(),
-              child: const Text('取消', style: TextStyle(fontSize: 12)),
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusBar(BuildContext context, IspStudioState state) {
-    return Container(
-      height: 26,
-      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Flexible(
-            child: Text(
-              state.statusMessage,
-              style: const TextStyle(fontSize: 11, color: Colors.white),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (state.errors.isNotEmpty) ...[
-            const SizedBox(width: 12),
-            Flexible(
-              child: Tooltip(
-                message: state.errors.join('\n'),
-                child: Text(
-                  state.errors.first,
-                  style: const TextStyle(
-                      fontSize: 11, color: Color(0xFFCF6679)),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ),
-          ],
-          const Spacer(),
-          if (state.isProcessing)
-            Text(
-              '${(state.progress * 100).toStringAsFixed(0)}%',
-              style: const TextStyle(fontSize: 11, color: Colors.white),
-            ),
         ],
       ),
     );

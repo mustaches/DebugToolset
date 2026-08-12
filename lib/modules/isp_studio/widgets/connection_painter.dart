@@ -106,6 +106,13 @@ String? hitTestWire(IspGraph graph, Offset pos, double tolerance) {
   return bestId;
 }
 
+/// 颜色的补色（HSL 色相旋转 180°，饱和度/亮度不变）：
+/// 选中连线的高亮色（橙↔蓝、绿↔品红等）。
+Color complementaryColor(Color color) {
+  final hsl = HSLColor.fromColor(color);
+  return hsl.withHue((hsl.hue + 180) % 360).toColor();
+}
+
 /// 绘制已建立的连线与正在拖拽中的临时连线。
 /// 该 painter 被放置在与节点相同的 Transform 内，直接使用画布坐标。
 class IspConnectionPainter extends CustomPainter {
@@ -120,13 +127,14 @@ class IspConnectionPainter extends CustomPainter {
       if (geo == null) continue;
       final selected = conn.id == state.selectedConnectionId;
       if (selected) {
-        _drawWire(canvas, geo.start, geo.end, Colors.white, 0.35,
-            width: 5.5);
-      }
-      _drawWire(canvas, geo.start, geo.end, geo.color, 1.0);
-      if (selected) {
+        // 选中高亮：补色宽底光 + 补色主线。
+        final hi = complementaryColor(geo.color);
+        _drawWire(canvas, geo.start, geo.end, hi, 0.35, width: 5.5);
+        _drawWire(canvas, geo.start, geo.end, hi, 1.0);
         _drawDeleteControl(
             canvas, wireMidpoint(geo.start, geo.end));
+      } else {
+        _drawWire(canvas, geo.start, geo.end, geo.color, 1.0);
       }
     }
 

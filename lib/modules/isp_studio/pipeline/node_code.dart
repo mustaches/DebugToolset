@@ -697,35 +697,46 @@ Future<void> exportMp4({
 
 /// 仪器节点共用的输入：链末端色调映射后的 RGBA8888 显示帧。
 const String _instrumentCode = r'''
-/// RGB 直方图：返回 (R, G, B) 三个 256 桶计数。
-(Uint32List, Uint32List, Uint32List) histogramRgb(Uint8List rgba) {
+/// RGB+Y 直方图：返回 (R, G, B, Y) 四个 256 桶计数（Y 为 BT.601 亮度，
+/// 与波形监视器同一定义）。
+(Uint32List, Uint32List, Uint32List, Uint32List) histogramRgb(
+    Uint8List rgba) {
   final r = Uint32List(256);
   final g = Uint32List(256);
   final b = Uint32List(256);
+  final y = Uint32List(256);
   for (var i = 0; i + 2 < rgba.length; i += 4) {
     r[rgba[i]]++;
     g[rgba[i + 1]]++;
     b[rgba[i + 2]]++;
+    y[(77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8]++;
   }
-  return (r, g, b);
+  return (r, g, b, y);
 }
 
-/// 亮度波形监视器：横轴为图像列（降采样到 maxCols），纵轴为亮度级
-/// （BT.601 Y，0 在底）。计数表按 级*列数+列 排列。
-(Uint32List, int) waveformLuma(Uint8List rgba, int width, int height,
-    {int maxCols = 512}) {
+/// RGB+Y 波形监视器：横轴为图像列（降采样到 maxCols），纵轴为各通道
+/// 级（Y 为 BT.601 亮度，0 在底）。返回 (R, G, B, Y, 列数)，
+/// 计数表按 级*列数+列 排列。
+(Uint32List, Uint32List, Uint32List, Uint32List, int) waveformRgb(
+    Uint8List rgba, int width, int height, {int maxCols = 512}) {
   final cols = width < maxCols ? width : maxCols;
-  final counts = Uint32List(cols * 256);
-  for (var y = 0; y < height; y++) {
-    var i = y * width * 4;
+  final r = Uint32List(cols * 256);
+  final g = Uint32List(cols * 256);
+  final b = Uint32List(cols * 256);
+  final y = Uint32List(cols * 256);
+  for (var yy = 0; yy < height; yy++) {
+    var i = yy * width * 4;
     for (var x = 0; x < width; x++, i += 4) {
+      final col = x * cols ~/ width;
+      r[rgba[i] * cols + col]++;
+      g[rgba[i + 1] * cols + col]++;
+      b[rgba[i + 2] * cols + col]++;
       final luma =
           (77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8;
-      final col = x * cols ~/ width;
-      counts[luma * cols + col]++;
+      y[luma * cols + col]++;
     }
   }
-  return (counts, cols);
+  return (r, g, b, y, cols);
 }
 
 /// 矢量示波器：BT.601 Cb/Cr 在 512x512 网格上的计数（Cb/Cr 各 256
@@ -798,25 +809,6 @@ void aaSegment(Uint32List counts, int x0, int y0, int x1, int y1) {
 }
 ''';
 
-/// 音频输出（audio_player.dart — 视频预览的音轨回放；含音轨即自动
-/// 回放，不依赖图上的连接，连接仅表达音频流向）。
-const String _audioOutputCode = r'''
-// isp_studio_state.dart — 播放循环在视频含音轨时自动回放：
-final wav = await ensureAudioWav(videoPath, ffmpegPath: ffmpegPath);
-audio.open(wav);              // MCI waveaudio 设备（winmm.dll）
-audio.playFrom(frame / fps);  // 首帧上屏时起播，与视频起点对齐
-
-// 漂移修正：每 20 帧对比 MCI 播放位置与当前帧时刻，超 120ms 重新 seek：
-final pos = audio.positionSeconds(); // status <alias> position
-if ((videoT - pos).abs() > 0.12) audio.playFrom(videoT);
-
-// audio_player.dart — ffmpeg 抽取音轨为临时 WAV（pcm_s16le 44.1kHz 立体声）：
-await Process.run(ffmpeg, [
-  '-i', videoPath, '-vn',
-  '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', wavPath,
-]);
-''';
-
 /// 音频仪器共用说明：输入为视频音轨 PCM（audio_analysis.dart 的
 /// [WavPcm]），分析取当前位置之前的一小段因果窗。
 const String _audioLevelCode = r'''
@@ -832,22 +824,23 @@ final value = ((db + 60) / 60).clamp(0.0, 1.0);
 
 /// 音频波形（audio_analysis.dart）。
 const String _audioWaveformCode = r'''
-// audio_analysis.dart — 当前位置前 ~92ms 窗（4096 样本），横轴压为
-// 256 列，每列取窗内样本 min/max（L/R 分两行显示）：
-for (var f = start; f < end; f++) {
-  final col = (f - start) * columns ~/ span;
-  lMin[col] = min(lMin[col], l); lMax[col] = max(lMax[col], l);
-  rMin[col] = min(rMin[col], r); rMax[col] = max(rMax[col], r);
+// audio_analysis.dart — 当前位置前 ~92ms 窗，等距抽取 512 个采样点
+//（每段取中点样本），控件把采样点光滑连线成示波器式迹线：
+for (var i = 0; i < n; i++) {
+  final f = start + ((i + 0.5) * span / n).floor();
+  l[i] = samples[f * channels] / 32768;      // 左声道
+  r[i] = samples[f * channels + 1] / 32768;  // 右声道
 }
 ''';
 
 /// 音频 EQ 频谱（audio_analysis.dart）。
 const String _audioEqCode = r'''
-// audio_analysis.dart — 当前位置前 2048 样本，混单声道 + Hann 窗：
-re[i] = (l + r) * 0.5 * (0.5 - 0.5 * cos(2 * pi * i / (N - 1)));
-// 迭代基-2 FFT 取幅度谱，20Hz–20kHz 对数等分 21 段取段内峰值：
-final ratio = pow(20000 / 20, 1 / 21); // 段中心等比
-for (var b = 0; b < 21; b++) {
+// audio_analysis.dart — 当前位置前 2048 样本，左右声道各自加 Hann 窗：
+re[i] = s * (0.5 - 0.5 * cos(2 * pi * i / (N - 1))); // s = 该声道样本
+// 迭代基-2 FFT 取幅度谱，20Hz–20kHz 按 1/3 倍频程等距分 31 段取段内峰值，
+// L/R 两通道独立计算：
+final ratio = pow(20000 / 20, 1 / 30); // 段中心等比（×10^0.1，含端点）
+for (var b = 0; b < 31; b++) {
   bands[b] = maxMagnitude(binRange(b)); // dB 刻度映射到 0..1
 }
 ''';
@@ -874,7 +867,6 @@ const Map<String, String> nodeSourceCode = {
   'vectorscope': _instrumentCode,
   'image_output': _imageOutputCode,
   'video_output': _videoOutputCode,
-  'audio_output': _audioOutputCode,
   'audio_level': _audioLevelCode,
   'audio_waveform': _audioWaveformCode,
   'audio_eq': _audioEqCode,
@@ -994,13 +986,6 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'fps', type: 'int', value: '帧率（节点参数）'),
     CodeVariable(name: 'crf', type: 'int', value: 'x264 质量 0-51'),
   ],
-  'audio_output': [
-    CodeVariable(name: 'wav', type: 'String', value: 'ffmpeg 抽取的临时 WAV 路径'),
-    CodeVariable(
-        name: 'videoT', type: 'double', value: '当前帧时刻（秒，帧号/帧率）'),
-    CodeVariable(
-        name: 'pos', type: 'double', value: 'MCI 播放位置（秒，漂移修正依据）'),
-  ],
   'audio_level': _audioInstrumentInputs,
   'audio_waveform': _audioInstrumentInputs,
   'audio_eq': _audioInstrumentInputs,
@@ -1065,10 +1050,13 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(name: 'r', type: 'Uint32List', value: 'R 直方图（256 桶）'),
     CodeVariable(name: 'g', type: 'Uint32List', value: 'G 直方图（256 桶）'),
     CodeVariable(name: 'b', type: 'Uint32List', value: 'B 直方图（256 桶）'),
+    CodeVariable(name: 'y', type: 'Uint32List', value: 'Y 直方图（256 桶）'),
   ],
   'waveform': [
     CodeVariable(
-        name: 'counts', type: 'Uint32List', value: '亮度波形计数（级*列数+列）'),
+        name: 'r/g/b/y',
+        type: 'Uint32List',
+        value: 'RGB+Y 波形计数（级*列数+列）'),
     CodeVariable(name: 'columns', type: 'int', value: '降采样后的列数'),
   ],
   'vectorscope': [
@@ -1083,25 +1071,25 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(
         name: 'outputPath', type: 'String', value: '写出的 MP4 文件'),
   ],
-  'audio_output': [
-    CodeVariable(name: 'playing', type: 'bool', value: '是否正在回放'),
-  ],
   'audio_level': [
     CodeVariable(name: 'left', type: 'double', value: '左声道峰值电平 0..1'),
     CodeVariable(name: 'right', type: 'double', value: '右声道峰值电平 0..1'),
   ],
   'audio_waveform': [
-    CodeVariable(name: 'columns', type: 'int', value: '波形列数（256）'),
-    CodeVariable(
-        name: 'lMin/lMax', type: 'Float32List', value: '左声道逐列 min/max'),
-    CodeVariable(
-        name: 'rMin/rMax', type: 'Float32List', value: '右声道逐列 min/max'),
+    CodeVariable(name: 'l', type: 'Float32List', value: '左声道降采样点 -1..1'),
+    CodeVariable(name: 'r', type: 'Float32List', value: '右声道降采样点 -1..1'),
+    CodeVariable(name: 'sampleRate', type: 'int', value: '采样率（Hz）'),
+    CodeVariable(name: 'bits', type: 'int', value: '采样深度（位）'),
   ],
   'audio_eq': [
     CodeVariable(
-        name: 'bands',
+        name: 'left',
         type: 'Float64List',
-        value: '21 段幅度 0..1（20Hz–20kHz 对数分布）'),
+        value: '左声道 31 段幅度 0..1（20Hz–20kHz 1/3 倍频程等距分布）'),
+    CodeVariable(
+        name: 'right',
+        type: 'Float64List',
+        value: '右声道 31 段幅度 0..1（20Hz–20kHz 1/3 倍频程等距分布）'),
   ],
 };
 

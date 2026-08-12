@@ -73,8 +73,14 @@ class IspGraph {
     if (outSpec == null || inSpec == null) {
       return '端口不存在';
     }
-    if (outSpec.type != inSpec.type) {
+    final sameType = outSpec.type == inSpec.type;
+    final bothSingleChannel =
+        isSingleChannelPort(outSpec.type) && isSingleChannelPort(inSpec.type);
+    if (!sameType && !bothSingleChannel) {
       return '端口类型不匹配';
+    }
+    if (!videoInputPortAvailable(toNodeId, toPort)) {
+      return 'RGB/YUV/HSL/Mono 输入只能接入一路，请先断开已有连接';
     }
     if (_wouldCreateCycle(fromNodeId, toNodeId)) {
       return '不允许形成环路';
@@ -107,6 +113,27 @@ class IspGraph {
       if (c.toNodeId == nodeId && c.toPort == inputPort) return c;
     }
     return null;
+  }
+
+  /// 视频格式输入组（RGB/YUV/HSL）端口当前是否还可接入：同组已有
+  /// 其他端口接入时返回 false（对应端口界面上置灰）。不在互斥组
+  /// 的端口恒 true。同端口重连（替换旧连接）不受限。
+  bool videoInputPortAvailable(String nodeId, String port) {
+    final node = nodes[nodeId];
+    final type = node == null ? null : IspNodeRegistry.byId(node.typeId);
+    if (type == null ||
+        !type.hasVideoInputGroup ||
+        !IspNodeType.videoInputGroupPorts.contains(port)) {
+      return true;
+    }
+    for (final p in type.inputs) {
+      if (p.name == port ||
+          !IspNodeType.videoInputGroupPorts.contains(p.name)) {
+        continue;
+      }
+      if (connectionAt(nodeId, p.name) != null) return false;
+    }
+    return true;
   }
 
   /// 对所有节点做 Kahn 拓扑排序（含无连接的孤立节点）。
@@ -165,6 +192,7 @@ class IspGraph {
               'x': n.x,
               'y': n.y,
               'width': n.width,
+              'extraHeight': n.extraHeight,
               'params': n.paramValues,
             },
         ],
@@ -198,6 +226,8 @@ class IspGraph {
         x: (m['x'] as num).toDouble(),
         y: (m['y'] as num).toDouble(),
         width: (m['width'] as num?)?.toDouble() ?? kNodeWidth,
+        extraHeight:
+            (m['extraHeight'] as num?)?.toDouble() ?? kDefaultNodeExtraHeight,
         paramValues: Map<String, Object?>.from(m['params'] as Map? ?? const {}),
       );
     }

@@ -7,6 +7,7 @@
 /// 两侧时钟渐偏）。
 library;
 
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -116,23 +117,70 @@ final Map<String, String> _wavCache = {};
 
 /// 确保 [videoPath] 的音轨已抽取为 WAV，返回 WAV 路径。
 /// 无音轨、ffmpeg 不可用或抽取失败返回 null（调用方安静跳过音频）。
-Future<String?> ensureAudioWav(String videoPath,
-    {String ffmpegPath = ''}) async {
+/// [onProgress] 回调 0.0~1.0 之间的抽取进度（基于视频时长）。
+Future<String?> ensureAudioWav(
+  String videoPath, {
+  String ffmpegPath = '',
+  void Function(double progress)? onProgress,
+}) async {
   final cached = _wavCache[videoPath];
-  if (cached != null && await File(cached).exists()) return cached;
+  if (cached != null && await File(cached).exists()) {
+    onProgress?.call(1.0);
+    return cached;
+  }
   final info = await videoFileInfo(videoPath, ffmpegPath: ffmpegPath);
   if (!info.hasAudio) return null;
   final ffmpeg = await findFfmpeg(overridePath: ffmpegPath);
   if (ffmpeg == null) return null;
   final wav =
       '${Directory.systemTemp.path}${Platform.pathSeparator}isp_audio_${videoPath.hashCode}.wav';
-  final result = await Process.run(ffmpeg, [
-    '-y', '-hide_banner', '-loglevel', 'error',
-    '-i', videoPath, '-vn',
-    '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
+
+  onProgress?.call(0.0);
+
+  final totalUs = (info.frameCount / info.fps) * 1000000;
+
+  final process = await Process.start(ffmpeg, [
+    '-y',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-progress',
+    'pipe:1',
+    '-i',
+    videoPath,
+    '-vn',
+    '-acodec',
+    'pcm_s16le',
+    '-ar',
+    '44100',
+    '-ac',
+    '2',
     wav,
   ]);
-  if (result.exitCode != 0 || !await File(wav).exists()) return null;
+
+  process.stderr
+      .transform(const Utf8Decoder())
+      .transform(const LineSplitter())
+      .drain<void>();
+
+  final stdoutSub = process.stdout
+      .transform(const Utf8Decoder())
+      .transform(const LineSplitter())
+      .listen((line) {
+    if (line.startsWith('out_time_us=')) {
+      final us = double.tryParse(line.substring('out_time_us='.length));
+      if (us != null && totalUs > 0) {
+        final p = (us / totalUs).clamp(0.0, 1.0);
+        onProgress?.call(p);
+      }
+    }
+  });
+
+  final exitCode = await process.exitCode;
+  await stdoutSub.cancel();
+
+  if (exitCode != 0 || !await File(wav).exists()) return null;
+  onProgress?.call(1.0);
   _wavCache[videoPath] = wav;
   return wav;
 }

@@ -29,12 +29,21 @@ const _processTypeIds = [
   'gamma',
 ];
 
+/// 「Datapath」分组：分路器与合路器。
+const _datapathTypeIds = [
+  'rgb_splitter',
+  'yuv_splitter',
+  'hsl_splitter',
+  'rgb_combiner',
+  'yuv_combiner',
+  'hsl_combiner',
+];
+
 /// 「Output」分组：预览与导出汇点。
 const _outputTypeIds = [
   'preview',
   'image_output',
   'video_output',
-  'audio_output',
 ];
 
 /// 「Instrument」分组：仪器类分析节点（图像仪器 + 音频仪器）。
@@ -47,7 +56,7 @@ const _instrumentTypeIds = [
   'audio_eq',
 ];
 
-/// 节点工具栏：按 Source / Process / Output 分组列出全部节点类型
+/// 节点工具栏：按 Source / Process / Datapath / Output / Instrument 分组列出全部节点类型
 /// （类型色点 + 名称），点击后把节点添加到视口中心
 /// （[onPickCenter] 由视图/画布计算）。
 /// 注：bayer_source 不在工具栏提供——与 CIS Src → Bayer RGGB 重复
@@ -82,6 +91,9 @@ class IspNodePalette extends StatelessWidget {
             ]),
             _expansionGroup('Process', [
               for (final id in _processTypeIds) _item(state, id),
+            ]),
+            _expansionGroup('Datapath', [
+              for (final id in _datapathTypeIds) _item(state, id),
             ]),
             _expansionGroup('Output', [
               for (final id in _outputTypeIds) _item(state, id),

@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'pipeline_runner.dart' show runChainFrame;
@@ -22,26 +23,39 @@ class PipelineFrameRunner {
   StreamSubscription<Object?>? _sub;
   final Map<int, Completer<Uint8List>> _pending = {};
   var _reqId = 0;
-  var _started = false;
+  Completer<void>? _startCompleter;
 
   /// 执行一帧流水线（[chain] 见 pipeline_runner），返回 RGBA8888。
-  /// [sourceRgba] 为视频源流帧（随消息拷贝进 worker，原缓冲不受影响）。
+  /// [sourceRgba] 为视频源流帧（随消息送入 worker）。
   /// 执行失败抛 [StateError]。
   Future<Uint8List> run(List<Map<String, Object?>> chain, int frameIndex,
-      {Uint8List? sourceRgba, int? sourceWidth, int? sourceHeight}) async {
+      {Uint8List? sourceRgba,
+      int? sourceWidth,
+      int? sourceHeight}) async {
     await _ensureStarted();
+    final worker = _worker;
+    if (worker == null) {
+      throw StateError('流水线 worker 启动失败');
+    }
     final id = _reqId++;
     final c = Completer<Uint8List>();
     _pending[id] = c;
-    _worker!.send([id, chain, frameIndex, sourceRgba, sourceWidth, sourceHeight]);
+    final payload = sourceRgba != null
+        ? TransferableTypedData.fromList([sourceRgba])
+        : null;
+    worker.send([id, chain, frameIndex, payload, sourceWidth, sourceHeight]);
     return c.future;
   }
 
   Future<void> _ensureStarted() async {
-    if (_started) return;
-    _started = true;
-    final port = ReceivePort();
+    if (_worker != null) return;
+    if (_startCompleter != null) {
+      await _startCompleter!.future;
+      return;
+    }
     final ready = Completer<void>();
+    _startCompleter = ready;
+    final port = ReceivePort();
     _port = port;
     _sub = port.listen((msg) {
       if (msg is SendPort) {
@@ -71,16 +85,69 @@ class PipelineFrameRunner {
     _port?.close();
     _port = null;
     _worker = null;
-    _started = false;
+    _startCompleter = null;
     for (final c in _pending.values) {
-      c.completeError(StateError('流水线 worker 已终止'));
+      if (!c.isCompleted) {
+        c.completeError(StateError('流水线 worker 已终止'));
+      }
     }
     _pending.clear();
   }
 }
 
+/// 多 CPU 核心 Isolate 流水线并行执行池。
+///
+/// 当流程图中存在多路预览（如 5 路 YUV/RGB 独立预览链）时，
+/// 将各节点的算子链并行分配到线程池中多个独立的 Isolate Worker 上
+/// 同时计算，充分利用多核 CPU 性能，解决单核串行排队造成的帧率卡顿。
+class PipelineWorkerPool {
+  final List<PipelineFrameRunner> _workers;
+
+  PipelineWorkerPool({int count = 4})
+      : _workers = List.generate(
+            math.max(1, count), (_) => PipelineFrameRunner());
+
+  /// 并行执行多条预览链，返回 `Map<String, Uint8List>`。
+  Future<Map<String, Uint8List>> runParallel(
+    Map<String, List<Map<String, Object?>>> validChains,
+    int frameIndex, {
+    Uint8List? sourceRgba,
+    int? sourceWidth,
+    int? sourceHeight,
+  }) async {
+    final results = <String, Uint8List>{};
+    final entries = validChains.entries.toList();
+    await Future.wait([
+      for (var i = 0; i < entries.length; i++)
+        () async {
+          final nodeId = entries[i].key;
+          final chain = entries[i].value;
+          final worker = _workers[i % _workers.length];
+          final rgba = await worker.run(
+            chain,
+            frameIndex,
+            sourceRgba: sourceRgba,
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight,
+          );
+          results[nodeId] = rgba;
+        }(),
+    ]);
+    return results;
+  }
+
+  /// 释放线程池中的所有 worker isolate。
+  void dispose() {
+    for (final worker in _workers) {
+      worker.dispose();
+    }
+    _workers.clear();
+  }
+}
+
 /// worker 入口：逐条处理 [id, chain, frameIndex, sourceRgba, 宽, 高]，
 /// 回 [id, TransferableTypedData(rgba)]，失败回 [id, 'error', 消息]。
+@pragma('vm:entry-point')
 Future<void> _pipelineWorkerMain(SendPort ui) async {
   final port = ReceivePort();
   ui.send(port.sendPort);
@@ -88,14 +155,18 @@ Future<void> _pipelineWorkerMain(SendPort ui) async {
     final req = msg as List;
     final id = req[0] as int;
     try {
+      final rawSource = req[3];
+      final Uint8List? sourceRgba = rawSource is TransferableTypedData
+          ? rawSource.materialize().asUint8List()
+          : rawSource as Uint8List?;
       final rgba = await runChainFrame(
           (req[1] as List).cast<Map<String, Object?>>(), req[2] as int,
-          sourceRgba: req[3] as Uint8List?,
+          sourceRgba: sourceRgba,
           sourceWidth: req[4] as int?,
           sourceHeight: req[5] as int?);
       ui.send([id, TransferableTypedData.fromList([rgba])]);
-    } catch (e) {
-      ui.send([id, 'error', e.toString()]);
+    } catch (e, st) {
+      ui.send([id, 'error', '$e\n$st']);
     }
   }
 }

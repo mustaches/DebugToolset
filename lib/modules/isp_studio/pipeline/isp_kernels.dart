@@ -720,34 +720,59 @@ Uint16List monoToRgb(Uint16List mosaic) {
 /// YUV / HSL 色彩空间转换（16 位量级，与 RGB 中间格式同为三通道交织）。
 /// ---------------------------------------------------------------------------
 
-/// RGB → YUV（BT.601 全范围）：Y∈[0,maxValue]，U/V 以 maxValue/2 为零点。
+/// RGB → YUV（BT.601 全范围，16 位定点整数移位加速）：Y∈[0,maxValue]，U/V 以 maxValue/2 为零点。
 Uint16List rgbToYuv(Uint16List rgb, {required int maxValue}) {
   final out = Uint16List(rgb.length);
-  final half = maxValue / 2;
+  final half = maxValue >> 1;
+  const cyR = 19595; // 0.299 * 65536
+  const cyG = 38470; // 0.587 * 65536
+  const cyB = 7471;  // 0.114 * 65536
+
+  const cuR = -11058; // -0.168736 * 65536
+  const cuG = -21710; // -0.331264 * 65536
+  const cuB = 32768;  // 0.5 * 65536
+
+  const cvR = 32768;  // 0.5 * 65536
+  const cvG = -27439; // -0.418688 * 65536
+  const cvB = -5329;  // -0.081312 * 65536
+
   for (var i = 0; i < rgb.length; i += 3) {
-    final r = rgb[i].toDouble();
-    final g = rgb[i + 1].toDouble();
-    final b = rgb[i + 2].toDouble();
-    out[i] = _clampTo(0.299 * r + 0.587 * g + 0.114 * b, maxValue);
-    out[i + 1] =
-        _clampTo(-0.168736 * r - 0.331264 * g + 0.5 * b + half, maxValue);
-    out[i + 2] =
-        _clampTo(0.5 * r - 0.418688 * g - 0.081312 * b + half, maxValue);
+    final r = rgb[i];
+    final g = rgb[i + 1];
+    final b = rgb[i + 2];
+
+    final y = (cyR * r + cyG * g + cyB * b + 32768) >> 16;
+    final u = ((cuR * r + cuG * g + cuB * b + 32768) >> 16) + half;
+    final v = ((cvR * r + cvG * g + cvB * b + 32768) >> 16) + half;
+
+    out[i] = y < 0 ? 0 : (y > maxValue ? maxValue : y);
+    out[i + 1] = u < 0 ? 0 : (u > maxValue ? maxValue : u);
+    out[i + 2] = v < 0 ? 0 : (v > maxValue ? maxValue : v);
   }
   return out;
 }
 
-/// YUV → RGB（[rgbToYuv] 的逆变换）。
+/// YUV → RGB（[rgbToYuv] 的逆变换，16 位定点整数移位加速）。
 Uint16List yuvToRgb(Uint16List yuv, {required int maxValue}) {
   final out = Uint16List(yuv.length);
-  final half = maxValue / 2;
+  final half = maxValue >> 1;
+  const crV = 91881;  // 1.402 * 65536
+  const cgU = -22553; // -0.344136 * 65536
+  const cgV = -46801; // -0.714136 * 65536
+  const cbU = 116130; // 1.772 * 65536
+
   for (var i = 0; i < yuv.length; i += 3) {
-    final y = yuv[i].toDouble();
+    final y = yuv[i];
     final u = yuv[i + 1] - half;
     final v = yuv[i + 2] - half;
-    out[i] = _clampTo(y + 1.402 * v, maxValue);
-    out[i + 1] = _clampTo(y - 0.344136 * u - 0.714136 * v, maxValue);
-    out[i + 2] = _clampTo(y + 1.772 * u, maxValue);
+
+    final r = y + ((crV * v + 32768) >> 16);
+    final g = y + ((cgU * u + cgV * v + 32768) >> 16);
+    final b = y + ((cbU * u + 32768) >> 16);
+
+    out[i] = r < 0 ? 0 : (r > maxValue ? maxValue : r);
+    out[i + 1] = g < 0 ? 0 : (g > maxValue ? maxValue : g);
+    out[i + 2] = b < 0 ? 0 : (b > maxValue ? maxValue : b);
   }
   return out;
 }

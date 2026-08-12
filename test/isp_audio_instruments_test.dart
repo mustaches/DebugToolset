@@ -101,47 +101,75 @@ void main() {
   });
 
   group('audioWaveform', () {
-    test('正弦波形的列 min/max 覆盖正负摆幅', () {
+    test('正弦波形的采样点覆盖正负摆幅，带格式信息', () {
       final pcm = sinePcm(440, 440, amp: 0.8);
-      final r = audioWaveform(pcm, 0.5, columns: 64);
+      final r = audioWaveform(pcm, 0.5, points: 64);
       expect(r['kind'], 'audio_waveform');
-      expect(r['columns'], 64);
-      final lMin = r['lMin'] as Float32List;
-      final lMax = r['lMax'] as Float32List;
-      expect(lMin.length, 64);
-      // 92ms 窗内有约 40 个周期：列极值应接近 ±0.8。
-      expect(lMax.reduce(math.max), closeTo(0.8, 0.05));
-      expect(lMin.reduce(math.min), closeTo(-0.8, 0.05));
-      // 每列 min <= max。
-      for (var c = 0; c < 64; c++) {
-        expect(lMin[c], lessThanOrEqualTo(lMax[c]));
-      }
+      expect(r['sampleRate'], 44100);
+      expect(r['bits'], 16);
+      final l = r['l'] as Float32List;
+      // 92ms 窗内约 4055 个样本，降为 64 个等距采样点。
+      expect(l.length, 64);
+      // 窗内有约 40 个周期：采样点整体应接近 ±0.8。
+      expect(l.reduce(math.max), closeTo(0.8, 0.1));
+      expect(l.reduce(math.min), closeTo(-0.8, 0.1));
+      // 静音：全 0。
+      final silent = audioWaveform(sinePcm(0, 0), 0.5)['l'] as Float32List;
+      expect(silent.every((v) => v == 0), isTrue);
+    });
+
+    test('单声道左右相同；起点之前无样本为空（因果窗）', () {
+      final stereo = sinePcm(440, 0, amp: 0.8);
+      final pcm = WavPcm(stereo.sampleRate, 1,
+          Int16List.fromList([
+            for (var f = 0; f < stereo.frames; f++) stereo.samples[f * 2]
+          ]));
+      final r = audioWaveform(pcm, 0.5, points: 64);
+      expect(r['l'], r['r']);
+      // 位置 0：窗内无样本。
+      final at0 = audioWaveform(pcm, 0.0);
+      expect((at0['l'] as Float32List), isEmpty);
     });
   });
 
   group('audioEqBands', () {
-    test('21 段，正弦峰值落在对应频段', () {
+    test('31 段，正弦峰值落在对应频段', () {
       final pcm = sinePcm(440, 440);
       final r = audioEqBands(pcm, 0.5);
       expect(r['kind'], 'audio_eq');
-      final bands = r['bands'] as Float64List;
+      final bands = r['left'] as Float64List;
       expect(bands.length, kAudioEqBands);
-      // 440Hz 落在第 9 段（20Hz 起对数等分，段中心 ~386Hz，
-      // 覆盖 ~328–456Hz）；允许相邻一段的泄漏容差。
-      expect(argmax(bands), inInclusiveRange(8, 10));
+      // 440Hz 落在第 13 段（1/3 倍频程，段中心 20×10^1.3 ≈ 399Hz，
+      // 相邻段中心 317/502Hz）；允许相邻一段的泄漏容差。
+      expect(argmax(bands), inInclusiveRange(12, 14));
       // 峰值段接近满幅（Hann 还原后 ≈0.8 → -1.9dB）。
       expect(bands[argmax(bands)], greaterThan(0.8));
     });
 
+    test('左右声道独立：440Hz 只在左，2kHz 只在右', () {
+      final r = audioEqBands(sinePcm(440, 2000), 0.5);
+      final left = r['left'] as Float64List;
+      final right = r['right'] as Float64List;
+      // 440Hz → 第 13 段；2kHz → 第 20 段（中心 20×10^2.0 = 2000Hz）。
+      expect(argmax(left), inInclusiveRange(12, 14));
+      expect(argmax(right), inInclusiveRange(19, 21));
+      // 对侧声道在该频段基本为零（<-40dB）。
+      expect(left[argmax(right)], lessThan(0.35));
+      expect(right[argmax(left)], lessThan(0.35));
+    });
+
     test('高低频分辨：100Hz 在低段，5kHz 在高段', () {
-      final low = audioEqBands(sinePcm(100, 100), 0.5)['bands'] as Float64List;
+      final low =
+          audioEqBands(sinePcm(100, 100), 0.5)['left'] as Float64List;
       final high =
-          audioEqBands(sinePcm(5000, 5000), 0.5)['bands'] as Float64List;
-      // 100Hz → 第 5 段（覆盖 ~88–122Hz）；5kHz → 第 16/17 段。
-      expect(argmax(low), inInclusiveRange(4, 6));
-      expect(argmax(high), inInclusiveRange(15, 18));
+          audioEqBands(sinePcm(5000, 5000), 0.5)['left'] as Float64List;
+      // 100Hz → 第 7 段（中心 20×10^0.7 ≈ 100Hz）；5kHz → 第 24 段
+      // （中心 20×10^2.4 ≈ 5024Hz）。
+      expect(argmax(low), inInclusiveRange(6, 8));
+      expect(argmax(high), inInclusiveRange(23, 25));
       // 静音：全 0。
-      final silent = audioEqBands(sinePcm(0, 0), 0.5)['bands'] as Float64List;
+      final silent =
+          audioEqBands(sinePcm(0, 0), 0.5)['left'] as Float64List;
       expect(silent.every((v) => v == 0), isTrue);
     });
   });

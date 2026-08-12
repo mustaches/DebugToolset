@@ -86,15 +86,19 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
       if (ctx == null) continue;
       final box = ctx.findRenderObject();
       if (box is! RenderBox || !box.attached) continue;
+      final sep = entry.key.indexOf(':');
+      final nodeId = entry.key.substring(0, sep);
+      final port = entry.key.substring(sep + 1);
+      // 视频输入组互斥置灰的端口不作为落点。
+      if (!state.graph.videoInputPortAvailable(nodeId, port)) continue;
       // localToGlobal 会叠加端口控件自身的 Transform.translate 与画布变换。
       final centerGlobal =
           box.localToGlobal(box.size.center(Offset.zero));
       final dist = (globalToCanvas(centerGlobal) - pos).distance;
       if (dist < bestDist) {
         bestDist = dist;
-        final sep = entry.key.indexOf(':');
-        bestNodeId = entry.key.substring(0, sep);
-        bestPort = entry.key.substring(sep + 1);
+        bestNodeId = nodeId;
+        bestPort = port;
       }
     }
     final error = state.endConnectionDrag(bestNodeId, bestPort);
@@ -133,16 +137,32 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
     }
   }
 
-  /// 右键拖拽的目标节点 id；null 表示拖动画布。
-  String? _rightDragNodeId;
+  /// 左键拖拽的目标节点 id；null 表示拖动画布或框选。
+  String? _dragNodeId;
 
-  /// 画布坐标下的节点命中（后绘制者优先）。
+  /// 画布坐标下的框选起点；null 表示当前未进行框选。
+  Offset? _boxSelectStartCanvasPos;
+
+  /// 画布坐标下的节点标题栏命中（后绘制者优先）：左键点住标题栏拖动节点。
   String? _nodeAt(IspStudioState state, Offset canvasPos) {
     for (final node in state.graph.nodes.values.toList().reversed) {
+      if (canvasPos.dx >= node.x &&
+          canvasPos.dx <= node.x + node.width &&
+          canvasPos.dy >= node.y &&
+          canvasPos.dy <= node.y + kNodeTitleHeight) {
+        return node.id;
+      }
+    }
+    return null;
+  }
+
+  /// 画布坐标下的节点整体区域命中检测（包含卡片主干、操作按钮与控制点）。
+  String? _nodeCardAt(IspStudioState state, Offset canvasPos) {
+    for (final node in state.graph.nodes.values.toList().reversed) {
       final type = IspNodeRegistry.byId(node.typeId);
-      if (type == null) continue;
-      final h = nodeHeight(type,
-          previewExtraHeight: state.previewExtraHeight(node.id));
+      final h = type == null
+          ? 0.0
+          : nodeHeight(type, previewExtraHeight: node.extraHeight);
       if (canvasPos.dx >= node.x &&
           canvasPos.dx <= node.x + node.width &&
           canvasPos.dy >= node.y &&
@@ -170,7 +190,12 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
     _portKeys.removeWhere(
         (name, _) => !state.graph.nodes.containsKey(name.split(':').first));
 
-    return Focus(
+    return LayoutBuilder(
+      // 把视口尺寸同步给 state（「适配全屏」整体适配用）；纯字段，
+      // 不触发重建。
+      builder: (context, constraints) {
+        state.canvasViewport = constraints.biggest;
+        return Focus(
       focusNode: _canvasFocusNode,
       autofocus: true,
       onKeyEvent: _onKeyEvent,
@@ -185,22 +210,63 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
           // 夺回键盘焦点：否则点过运行按钮/文件对话框后 Delete 不再
           // 到达画布，选中节点无法删除。
           _canvasFocusNode.requestFocus();
-          // 右键拖拽：按下点命中节点则拖动节点，否则拖动画布。
-          if (event.buttons & kSecondaryButton != 0) {
-            _rightDragNodeId = _nodeAt(state, globalToCanvas(event.position));
+          if (event.buttons & kPrimaryButton != 0) {
+            final canvasPos = globalToCanvas(event.position);
+            final titleNodeId = _nodeAt(state, canvasPos);
+            _dragNodeId = titleNodeId;
+            if (titleNodeId != null) {
+              state.beginNodeDrag(titleNodeId);
+              _boxSelectStartCanvasPos = null;
+            } else {
+              final cardNodeId = _nodeCardAt(state, canvasPos);
+              if (cardNodeId == null) {
+                _boxSelectStartCanvasPos = canvasPos;
+              } else {
+                _boxSelectStartCanvasPos = null;
+              }
+            }
+          } else {
+            _dragNodeId = null;
+            _boxSelectStartCanvasPos = null;
           }
         },
         onPointerMove: (event) {
-          if (event.buttons & kSecondaryButton == 0) return;
-          final id = _rightDragNodeId;
-          if (id != null) {
-            state.moveNode(id, event.delta / state.canvasZoom);
-          } else {
+          if (event.buttons & kPrimaryButton != 0) {
+            final id = _dragNodeId;
+            if (id != null) {
+              state.moveNode(id, event.delta / state.canvasZoom);
+            } else if (_boxSelectStartCanvasPos != null) {
+              final isMulti = HardwareKeyboard.instance.isShiftPressed ||
+                  HardwareKeyboard.instance.isControlPressed ||
+                  HardwareKeyboard.instance.isMetaPressed;
+              final currentPos = globalToCanvas(event.position);
+              state.updateBoxSelection(_boxSelectStartCanvasPos!, currentPos,
+                  multiSelect: isMulti);
+            }
+          } else if (event.buttons & kSecondaryButton != 0) {
             state.panBy(event.delta);
           }
         },
-        onPointerUp: (_) => _rightDragNodeId = null,
-        onPointerCancel: (_) => _rightDragNodeId = null,
+        onPointerUp: (_) {
+          if (_dragNodeId != null) {
+            state.endNodeDrag();
+            _dragNodeId = null;
+          }
+          if (_boxSelectStartCanvasPos != null) {
+            state.endBoxSelection();
+            _boxSelectStartCanvasPos = null;
+          }
+        },
+        onPointerCancel: (_) {
+          if (_dragNodeId != null) {
+            state.endNodeDrag();
+            _dragNodeId = null;
+          }
+          if (_boxSelectStartCanvasPos != null) {
+            state.endBoxSelection();
+            _boxSelectStartCanvasPos = null;
+          }
+        },
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           // 左键只做选中/连线/按钮，不再拖动画布。
@@ -230,6 +296,13 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
                             painter: IspConnectionPainter(state),
                             child: const SizedBox.expand(),
                           ),
+                          if (state.selectionBoxRect != null)
+                            Positioned.fill(
+                              child: CustomPaint(
+                                painter:
+                                    _SelectionBoxPainter(state.selectionBoxRect),
+                              ),
+                            ),
                           // 最大化的节点排在最后渲染（置顶显示）。
                           for (final node in [
                             ...state.graph.nodes.values.where(
@@ -243,7 +316,7 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
                               child: IspNodeWidget(
                                 node: node,
                                 type: IspNodeRegistry.byId(node.typeId)!,
-                                selected: node.id == state.selectedNodeId,
+                                selected: state.selectedNodeIds.contains(node.id),
                                 globalToCanvas: globalToCanvas,
                                 onConnectionDragEnd: endDrag,
                                 onToggleMaximize: () =>
@@ -262,6 +335,8 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
           ),
         ),
       ),
+        );
+      },
     );
   }
 }
@@ -305,7 +380,7 @@ class _UnboundedHitRenderStack extends RenderStack {
   }
 }
 
-/// 屏幕空间点阵背景，间距 24 逻辑像素，随平移缩放变化。
+/// 屏幕空间点阵背景，基础间距 10 画布逻辑像素，每 10 个点（100px 间隔）高亮显示亮白灰点。
 class _DotGridPainter extends CustomPainter {
   final Offset offset;
   final double zoom;
@@ -314,13 +389,30 @@ class _DotGridPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final spacing = 24 * zoom;
-    final paint = Paint()..color = Colors.white.withValues(alpha: 0.06);
-    final startX = offset.dx % spacing;
-    final startY = offset.dy % spacing;
-    for (var x = startX; x < size.width; x += spacing) {
-      for (var y = startY; y < size.height; y += spacing) {
-        canvas.drawCircle(Offset(x, y), 1, paint);
+    final gridSpacing = IspStudioState.kGridSize; // 10.0
+    final spacing = gridSpacing * zoom;
+    if (spacing <= 2) return;
+
+    final minorPaint = Paint()..color = Colors.white.withValues(alpha: 0.08);
+    final majorPaint = Paint()..color = Colors.white.withValues(alpha: 0.38);
+
+    final startGridX = (-offset.dx / spacing).floor();
+    final endGridX = ((size.width - offset.dx) / spacing).ceil();
+    final startGridY = (-offset.dy / spacing).floor();
+    final endGridY = ((size.height - offset.dy) / spacing).ceil();
+
+    for (var gx = startGridX; gx <= endGridX; gx++) {
+      final x = offset.dx + gx * spacing;
+      final isMajorX = (gx % 10 == 0);
+      for (var gy = startGridY; gy <= endGridY; gy++) {
+        final y = offset.dy + gy * spacing;
+        final isMajorY = (gy % 10 == 0);
+        final isMajor = isMajorX && isMajorY;
+        canvas.drawCircle(
+          Offset(x, y),
+          1.0,
+          isMajor ? majorPaint : minorPaint,
+        );
       }
     }
   }
@@ -328,4 +420,30 @@ class _DotGridPainter extends CustomPainter {
   @override
   bool shouldRepaint(_DotGridPainter oldDelegate) =>
       oldDelegate.offset != offset || oldDelegate.zoom != zoom;
+}
+
+/// 画布坐标系下的框选矩形绘制（半透明蓝色填充 + 蓝边）。
+class _SelectionBoxPainter extends CustomPainter {
+  final Rect? rect;
+
+  _SelectionBoxPainter(this.rect);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = rect;
+    if (r == null) return;
+    final fillPaint = Paint()
+      ..color = const Color(0x252196F3)
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = const Color(0xFF2196F3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    canvas.drawRect(r, fillPaint);
+    canvas.drawRect(r, borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(_SelectionBoxPainter oldDelegate) => oldDelegate.rect != rect;
 }

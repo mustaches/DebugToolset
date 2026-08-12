@@ -1,0 +1,258 @@
+{
+  "name": "YUV多路视频预览",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": -100.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 194761
+      }
+    },
+    {
+      "id": "n3",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": 510.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 194761
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": 1120.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 194761
+      }
+    },
+    {
+      "id": "n15",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": 1120.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n18",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": 510.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n20",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": -100.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n36",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": -720.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n38",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": -720.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n41",
+      "typeId": "yuv_splitter",
+      "x": 760.0,
+      "y": 550.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {}
+    },
+    {
+      "id": "n47",
+      "typeId": "yuv_combiner",
+      "x": 2840.0,
+      "y": 550.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {}
+    },
+    {
+      "id": "n51",
+      "typeId": "preview",
+      "x": 3200.0,
+      "y": -40.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 194761
+      }
+    },
+    {
+      "id": "n53",
+      "typeId": "vectorscope",
+      "x": 3120.0,
+      "y": 630.0,
+      "width": 800.0,
+      "extraHeight": 800.0,
+      "params": {}
+    },
+    {
+      "id": "n55",
+      "typeId": "video_source",
+      "x": 450.0,
+      "y": 530.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "filePath": "K:\\AI网剧\\都市甜宠.mp4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n59",
+      "typeId": "audio_eq",
+      "x": 160.0,
+      "y": 820.0,
+      "width": 800.0,
+      "extraHeight": 380.0,
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "c21",
+      "from": "n1",
+      "fromPort": "out_mono",
+      "to": "n20",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c22",
+      "from": "n3",
+      "fromPort": "out_mono",
+      "to": "n18",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c23",
+      "from": "n4",
+      "fromPort": "out_mono",
+      "to": "n15",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c44",
+      "from": "n41",
+      "fromPort": "out_y",
+      "to": "n1",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c45",
+      "from": "n41",
+      "fromPort": "out_u",
+      "to": "n3",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c46",
+      "from": "n41",
+      "fromPort": "out_v",
+      "to": "n4",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c48",
+      "from": "n1",
+      "fromPort": "out_mono",
+      "to": "n47",
+      "toPort": "in_y"
+    },
+    {
+      "id": "c49",
+      "from": "n3",
+      "fromPort": "out_mono",
+      "to": "n47",
+      "toPort": "in_u"
+    },
+    {
+      "id": "c50",
+      "from": "n4",
+      "fromPort": "out_mono",
+      "to": "n47",
+      "toPort": "in_v"
+    },
+    {
+      "id": "c52",
+      "from": "n47",
+      "fromPort": "out",
+      "to": "n51",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c54",
+      "from": "n47",
+      "fromPort": "out",
+      "to": "n53",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c56",
+      "from": "n55",
+      "fromPort": "out_yuv",
+      "to": "n41",
+      "toPort": "in"
+    },
+    {
+      "id": "c57",
+      "from": "n55",
+      "fromPort": "out_yuv",
+      "to": "n38",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c58",
+      "from": "n38",
+      "fromPort": "out_yuv",
+      "to": "n36",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c60",
+      "from": "n55",
+      "fromPort": "out_audio",
+      "to": "n59",
+      "toPort": "in"
+    }
+  ],
+  "nextId": 61
+}

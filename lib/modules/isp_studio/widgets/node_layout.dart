@@ -45,7 +45,7 @@ Offset outputPortPos(IspNode node, IspNodeType type, int index) {
   return Offset(node.x + node.width, _portRowCenterY(node, index));
 }
 
-/// 端口颜色：bayer 橙，rgb 绿，yuv 蓝，hsl 粉，audio 紫。
+/// 端口颜色：bayer 橙，rgb 绿，yuv 蓝，hsl 粉，audio 紫，单通道各色。
 Color portColor(IspPortType type) {
   return switch (type) {
     IspPortType.bayer => const Color(0xFFE0A050),
@@ -53,5 +53,15 @@ Color portColor(IspPortType type) {
     IspPortType.yuv => const Color(0xFF5078C0),
     IspPortType.hsl => const Color(0xFFC05078),
     IspPortType.audio => const Color(0xFF9E8ED0),
+    IspPortType.r => const Color(0xFFE55353),
+    IspPortType.g => const Color(0xFF53E553),
+    IspPortType.b => const Color(0xFF5383E5),
+    IspPortType.y => const Color(0xFFE5E553),
+    IspPortType.u => const Color(0xFF53E5E5),
+    IspPortType.v => const Color(0xFFE553E5),
+    IspPortType.h => const Color(0xFFE58053),
+    IspPortType.s => const Color(0xFFB553E5),
+    IspPortType.l => const Color(0xFFD0D8E8),
+    IspPortType.mono => const Color(0xFF50A0B0),
   };
 }

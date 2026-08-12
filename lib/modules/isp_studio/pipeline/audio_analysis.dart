@@ -1,4 +1,4 @@
-/// 音频类仪器（立体声电平/音频波形/21 段 EQ 频谱）的分析计算。
+/// 音频类仪器（立体声电平/音频波形/31 段 EQ 频谱）的分析计算。
 ///
 /// 输入为视频音轨抽取的 16 位 PCM（见 audio_player.dart 的
 /// ensureAudioWav），分析围绕当前播放位置取一小段窗（因果窗：
@@ -20,7 +20,11 @@ class WavPcm {
   /// 交织样本（LRLR…；单声道即顺序样本）。
   final Int16List samples;
 
-  const WavPcm(this.sampleRate, this.channels, this.samples);
+  /// 采样深度（位；当前仅支持 16 位 PCM）。
+  final int bits;
+
+  const WavPcm(this.sampleRate, this.channels, this.samples,
+      {this.bits = 16});
 
   /// 帧数（一帧 = 所有声道各一个样本）。
   int get frames => samples.length ~/ channels;
@@ -72,7 +76,7 @@ WavPcm parseWavPcm(Uint8List bytes) {
   if (channels < 1 || sampleRate <= 0 || samples == null) {
     throw StateError('WAV 缺少 fmt/data 块');
   }
-  return WavPcm(sampleRate, channels, samples);
+  return WavPcm(sampleRate, channels, samples, bits: bits);
 }
 
 /// 电平刻度的下限（dBFS），低于它显示为 0。
@@ -114,46 +118,39 @@ Map<String, Object?> audioLevels(WavPcm pcm, double seconds,
   };
 }
 
-/// 音频波形：位置 [seconds] 之前约 [windowMs] 毫秒窗，横轴压为
-/// [columns] 列，每列取窗内样本的 min/max（-1..1）。返回
-/// `{'kind': 'audio_waveform', 'columns': n, 'lMin/lMax/rMin/rMax': Float32List}`。
+/// 音频波形：位置 [seconds] 之前约 [windowMs] 毫秒窗，等距抽取
+/// [points] 个采样点（-1..1；控件把采样点光滑连线成示波器式迹线）。
+/// 窗内样本不足 [points] 时逐样本全取。返回
+/// `{'kind': 'audio_waveform', 'l'/'r': Float32List,
+/// 'sampleRate': Hz, 'bits': 采样深度}`。
 Map<String, Object?> audioWaveform(WavPcm pcm, double seconds,
-    {int columns = 256, double windowMs = 92}) {
+    {int points = 512, double windowMs = 92}) {
   final win = (pcm.sampleRate * windowMs / 1000).round();
   final (start, end) = _window(pcm, seconds, win);
-  final lMin = Float32List(columns)..fillRange(0, columns, 1);
-  final lMax = Float32List(columns)..fillRange(0, columns, -1);
-  final rMin = Float32List(columns)..fillRange(0, columns, 1);
-  final rMax = Float32List(columns)..fillRange(0, columns, -1);
   final span = end - start;
-  for (var f = start; f < end; f++) {
-    final col = span <= 0 ? 0 : (f - start) * columns ~/ span;
-    final l = pcm.samples[f * pcm.channels] / 32768;
-    final r = pcm.channels > 1
+  final n = span <= 0 ? 0 : math.min(points, span);
+  final l = Float32List(n);
+  final r = Float32List(n);
+  for (var i = 0; i < n; i++) {
+    // 每段取中点样本（最近邻抽取）。
+    final f = start + ((i + 0.5) * span / n).floor();
+    final lv = pcm.samples[f * pcm.channels] / 32768;
+    l[i] = lv;
+    r[i] = pcm.channels > 1
         ? pcm.samples[f * pcm.channels + 1] / 32768
-        : l;
-    if (l < lMin[col]) lMin[col] = l;
-    if (l > lMax[col]) lMax[col] = l;
-    if (r < rMin[col]) rMin[col] = r;
-    if (r > rMax[col]) rMax[col] = r;
-  }
-  // 无样本的列（窗越界）收拢到 0 线。
-  for (var c = 0; c < columns; c++) {
-    if (lMin[c] > lMax[c]) lMin[c] = lMax[c] = 0;
-    if (rMin[c] > rMax[c]) rMin[c] = rMax[c] = 0;
+        : lv;
   }
   return {
     'kind': 'audio_waveform',
-    'columns': columns,
-    'lMin': lMin,
-    'lMax': lMax,
-    'rMin': rMin,
-    'rMax': rMax,
+    'l': l,
+    'r': r,
+    'sampleRate': pcm.sampleRate,
+    'bits': pcm.bits,
   };
 }
 
-/// EQ 频谱段数。
-const int kAudioEqBands = 21;
+/// EQ 频谱段数（1/3 倍频程：20Hz–20kHz 共 30 个间隔，31 段）。
+const int kAudioEqBands = 31;
 
 /// EQ 频谱下限频率（Hz）。
 const double kAudioEqMinHz = 20;
@@ -161,43 +158,57 @@ const double kAudioEqMinHz = 20;
 /// EQ 频谱上限频率（Hz）。
 const double kAudioEqMaxHz = 20000;
 
-/// 21 段 EQ 频谱：位置 [seconds] 之前 [fftSize] 样本的 Hann 窗 FFT
-/// （左右声道混合为单声道），幅度按 20Hz–20kHz 对数等分 21 段取峰值，
+/// 第 [b] 段的中心频率（Hz）：20×10^(0.1b)，即 1/3 倍频程等距。
+double audioEqBandCenterHz(int b) =>
+    kAudioEqMinHz *
+    math.pow(kAudioEqMaxHz / kAudioEqMinHz, b / (kAudioEqBands - 1));
+
+/// 31 段 EQ 频谱：位置 [seconds] 之前 [fftSize] 样本的 Hann 窗 FFT，
+/// 左右声道独立计算（单声道时左右相同），幅度按 20Hz–20kHz
+/// 1/3 倍频程等距（等比，相邻段中心 ×10^0.1）分 31 段取峰值，
 /// dB 刻度（[kAudioLevelFloorDb] 起步）映射到 0..1。
-/// 返回 `{'kind': 'audio_eq', 'bands': Float64List(21)}`。
+/// 返回 `{'kind': 'audio_eq', 'left': Float64List(31), 'right': Float64List(31)}`。
 Map<String, Object?> audioEqBands(WavPcm pcm, double seconds,
     {int fftSize = 2048}) {
   final (start, end) = _window(pcm, seconds, fftSize);
-  // 混单声道 + Hann 窗。
-  final re = Float64List(fftSize);
   final n = end - start;
-  for (var i = 0; i < n; i++) {
-    final f = start + i;
-    final l = pcm.samples[f * pcm.channels] / 32768;
-    final r = pcm.channels > 1
-        ? pcm.samples[f * pcm.channels + 1] / 32768
-        : l;
-    final w = 0.5 - 0.5 * math.cos(2 * math.pi * i / (fftSize - 1));
-    re[i] = (l + r) * 0.5 * w;
-  }
-  final mags = _fftMagnitudes(re);
-  // 对数等分频段：[minHz, maxHz] 等比 21 段，段界取相邻中心的几何中点。
-  final ratio = math.pow(kAudioEqMaxHz / kAudioEqMinHz, 1 / kAudioEqBands);
+  // 1/3 倍频程等距频段：段中心从 minHz 到 maxHz 等比分布（含端点，
+  // 相邻中心 ×ratio ≈ 10^0.1），段界取相邻中心的几何中点。
+  final ratio =
+      math.pow(kAudioEqMaxHz / kAudioEqMinHz, 1 / (kAudioEqBands - 1));
   final binHz = pcm.sampleRate / fftSize;
-  final bands = Float64List(kAudioEqBands);
-  for (var b = 0; b < kAudioEqBands; b++) {
-    final fLo = kAudioEqMinHz * math.pow(ratio, b - 0.5);
-    final fHi = kAudioEqMinHz * math.pow(ratio, b + 0.5);
-    final binLo = (fLo / binHz).floor().clamp(1, mags.length - 1);
-    final binHi = (fHi / binHz).ceil().clamp(binLo + 1, mags.length);
-    var peak = 0.0;
-    for (var i = binLo; i < binHi; i++) {
-      if (mags[i] > peak) peak = mags[i];
+
+  /// 单声道 [ch]（超出实际声道数时取 0 声道）的 Hann 窗 FFT 分段峰值。
+  Float64List channelBands(int ch) {
+    final c = ch < pcm.channels ? ch : 0;
+    final re = Float64List(fftSize);
+    for (var i = 0; i < n; i++) {
+      final s = pcm.samples[(start + i) * pcm.channels + c] / 32768;
+      final w = 0.5 - 0.5 * math.cos(2 * math.pi * i / (fftSize - 1));
+      re[i] = s * w;
     }
-    // Hann 窗相干增益 0.5，幅值 ×2 还原。
-    bands[b] = _dbToUnit(peak * 2);
+    final mags = _fftMagnitudes(re);
+    final bands = Float64List(kAudioEqBands);
+    for (var b = 0; b < kAudioEqBands; b++) {
+      final fLo = kAudioEqMinHz * math.pow(ratio, b - 0.5);
+      final fHi = kAudioEqMinHz * math.pow(ratio, b + 0.5);
+      final binLo = (fLo / binHz).floor().clamp(1, mags.length - 1);
+      final binHi = (fHi / binHz).ceil().clamp(binLo + 1, mags.length);
+      var peak = 0.0;
+      for (var i = binLo; i < binHi; i++) {
+        if (mags[i] > peak) peak = mags[i];
+      }
+      // Hann 窗相干增益 0.5，幅值 ×2 还原。
+      bands[b] = _dbToUnit(peak * 2);
+    }
+    return bands;
   }
-  return {'kind': 'audio_eq', 'bands': bands};
+
+  return {
+    'kind': 'audio_eq',
+    'left': channelBands(0),
+    'right': channelBands(1),
+  };
 }
 
 /// 迭代基-2 FFT，返回前一半频点的归一化幅度（|X| / (N/2)）。

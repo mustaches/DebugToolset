@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 24 种节点类型', () {
+    test('包含全部 23 种节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -28,7 +28,6 @@ void main() {
         'vectorscope',
         'image_output',
         'video_output',
-        'audio_output',
         'audio_level',
         'audio_waveform',
         'audio_eq',
@@ -36,7 +35,7 @@ void main() {
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 24);
+      expect(IspNodeRegistry.types.length, 29);
     });
 
     test('端口类型符合预期', () {
@@ -64,13 +63,9 @@ void main() {
         expect(IspNodeRegistry.byId(id)!.outputs, isEmpty, reason: id);
       }
 
-      // video_source 的音轨输出与音频输出汇点。
+      // video_source 的音轨输出（接音频仪器）。
       final video = IspNodeRegistry.byId('video_source')!;
       expect(video.outputPort('out_audio')?.type, IspPortType.audio);
-      final audioOut = IspNodeRegistry.byId('audio_output')!;
-      expect(audioOut.inputPort('in')?.type, IspPortType.audio);
-      expect(audioOut.outputs, isEmpty);
-      expect(sinkNodeTypes.contains('audio_output'), isTrue);
       // 音频仪器：audio 输入、无输出、属汇点。
       for (final id in audioInstrumentTypes) {
         final t = IspNodeRegistry.byId(id)!;
@@ -130,12 +125,12 @@ void main() {
       expect(g.connect(src, 'out', blc, 'in'), isNull);
       // bayer → rgb（demosaic）合法。
       expect(g.connect(blc, 'out', demosaic, 'in'), isNull);
-      // video_source 的 rgb 输出 → 音频输出（audio 输入）应失败。
+      // video_source 的 rgb 输出 → 音频仪器（audio 输入）应失败。
       final video = g.addNode('video_source', 0, 0);
-      final speaker = g.addNode('audio_output', 0, 0);
-      expect(g.connect(video, 'out_rgb', speaker, 'in'), '端口类型不匹配');
+      final meter = g.addNode('audio_level', 0, 0);
+      expect(g.connect(video, 'out_rgb', meter, 'in'), '端口类型不匹配');
       // audio → audio 合法。
-      expect(g.connect(video, 'out_audio', speaker, 'in'), isNull);
+      expect(g.connect(video, 'out_audio', meter, 'in'), isNull);
     });
 
     test('节点或端口不存在返回错误', () {
@@ -254,6 +249,51 @@ void main() {
       g.disconnectInput(b, 'in');
       expect(g.connections, isEmpty);
     });
+
+    test('视频格式输入组（RGB/YUV/HSL）互斥', () {
+      final g = IspGraph();
+      final rgbSrc = g.addNode('image_source', 0, 0);
+      final yuvSrc = g.addNode('video_source', 0, 0);
+      final hist = g.addNode('histogram', 0, 0);
+      // 接入 RGB 后，YUV/HSL 端口不可用（界面置灰）。
+      expect(g.connect(rgbSrc, 'out_rgb', hist, 'in'), isNull);
+      expect(g.videoInputPortAvailable(hist, 'in_yuv'), isFalse);
+      expect(g.videoInputPortAvailable(hist, 'in_hsl'), isFalse);
+      expect(g.videoInputPortAvailable(hist, 'in'), isTrue); // 同端口可重连
+      // 第二路接入被拒绝，原连接不变。
+      expect(g.connect(yuvSrc, 'out_yuv', hist, 'in_yuv'),
+          'RGB/YUV/HSL/Mono 输入只能接入一路，请先断开已有连接');
+      expect(g.connections, hasLength(1));
+      // 同端口重连（替换旧连接）不受限。
+      final rgbSrc2 = g.addNode('video_source', 0, 0);
+      expect(g.connect(rgbSrc2, 'out_rgb', hist, 'in'), isNull);
+      expect(g.connections, hasLength(1));
+      // 断开已接入的一路后，其余端口恢复可用。
+      g.disconnectInput(hist, 'in');
+      expect(g.videoInputPortAvailable(hist, 'in_yuv'), isTrue);
+      expect(g.connect(yuvSrc, 'out_yuv', hist, 'in_yuv'), isNull);
+    });
+
+    test('非互斥组端口不受视频输入组限制', () {
+      final g = IspGraph();
+      final src = g.addNode('bayer_source', 0, 0);
+      final blc = g.addNode('black_level', 0, 0);
+      // 单输入节点的 'in' 不在互斥组。
+      expect(IspNodeRegistry.byId('black_level')!.hasVideoInputGroup, isFalse);
+      expect(g.videoInputPortAvailable(blc, 'in'), isTrue);
+      expect(g.connect(src, 'out', blc, 'in'), isNull);
+      expect(g.videoInputPortAvailable(blc, 'in'), isTrue);
+      // 音频仪器的 'in'（audio 类型）也不在互斥组。
+      expect(IspNodeRegistry.byId('audio_level')!.hasVideoInputGroup, isFalse);
+      // 仪器/预览/输出节点带互斥组。
+      for (final id in [
+        'histogram', 'waveform', 'vectorscope', 'preview',
+        'image_output', 'video_output',
+      ]) {
+        expect(IspNodeRegistry.byId(id)!.hasVideoInputGroup, isTrue,
+            reason: id);
+      }
+    });
   });
 
   group('IspGraph 序列化', () {
@@ -266,6 +306,12 @@ void main() {
       g.nodes[srcId]!.paramValues['filePath'] = 'a/b.raw';
       g.nodes[srcId]!.paramValues['width'] = 3840;
       g.nodes[srcId]!.x = 123.5;
+      // 调整过尺寸的节点：宽度与附加区高度都要随流程保存。
+      final previewId = g.nodes.entries
+          .firstWhere((e) => e.value.typeId == 'preview')
+          .key;
+      g.nodes[previewId]!.width = 320;
+      g.nodes[previewId]!.extraHeight = 480;
       final ccmId = g.nodes.entries
           .firstWhere((e) => e.value.typeId == 'ccm')
           .key;
@@ -283,6 +329,9 @@ void main() {
       expect(src.paramValues['filePath'], 'a/b.raw');
       expect(src.paramValues['width'], 3840);
       expect(src.x, 123.5);
+      final preview = restored.nodes[previewId]!;
+      expect(preview.width, 320);
+      expect(preview.extraHeight, 480);
       expect(restored.nodes[ccmId]!.paramValues['matrix'],
           [1.0, 0.1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
       // 拓扑序与连接关系一致。

@@ -7,7 +7,7 @@ import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
   testWidgets('变量表 DEC/HEX 切换格式化运行数组值', (tester) async {
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     final srcId = state.graph.nodes.entries
         .firstWhere((e) => e.value.typeId == 'bayer_source')
         .key;
@@ -50,7 +50,7 @@ void main() {
   });
 
   testWidgets('Input 区显示参数实际值与上游运行采样', (tester) async {
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     // 默认图：n1=bayer_source → n2=black_level。
     final srcId = state.graph.nodes.entries
         .firstWhere((e) => e.value.typeId == 'bayer_source')

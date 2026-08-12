@@ -47,7 +47,21 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
   for (final id in order) {
     if (!upstream.contains(id)) continue;
     final node = graph.nodes[id]!;
-    chain.add({'typeId': node.typeId, 'params': node.paramValues, 'nodeId': id});
+    final inConns = <String, Map<String, String>>{};
+    for (final c in graph.connections) {
+      if (c.toNodeId == id) {
+        inConns[c.toPort] = {
+          'fromNodeId': c.fromNodeId,
+          'fromPort': c.fromPort,
+        };
+      }
+    }
+    chain.add({
+      'typeId': node.typeId,
+      'params': node.paramValues,
+      'nodeId': id,
+      'inputs': inConns,
+    });
   }
   final sources =
       chain.where((op) => sourceTypes.contains(op['typeId'])).length;
@@ -213,7 +227,7 @@ Future<Uint8List> runChainFrame(
     throw StateError('算子链必须以源节点开头');
   }
   final firstType = chain.first['typeId'] as String;
-  final sp = chain.first['params'] as Map<String, Object?>;
+  final sp = (chain.first['params'] as Map?)?.cast<String, Object?>() ?? const {};
 
   _Frame frame;
   if (firstType == 'image_source' || firstType == 'video_source') {
@@ -222,11 +236,11 @@ Future<Uint8List> runChainFrame(
     }
     final maxValue = bayerMaxValue(
         int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')));
-    final (rgb, w, h) = firstType == 'image_source'
-        ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
-            maxValue: maxValue)
-        : sourceRgba != null
-            ? rgba8ToRgb16(sourceRgba, sourceWidth!, sourceHeight!, maxValue)
+    final (rgb, w, h) = sourceRgba != null
+        ? rgba8ToRgb16(sourceRgba, sourceWidth!, sourceHeight!, maxValue)
+        : firstType == 'image_source'
+            ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
+                maxValue: maxValue)
             : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
                 maxValue: maxValue, ffmpegPath: _str(sp, 'ffmpegPath'));
     final outFormat = chain.first['outFormat'] as String? ?? 'rgb';
@@ -299,13 +313,34 @@ Future<Uint8List> runChainFrame(
     }
   }
   // 源节点输出（解包/解码后的帧）。
-  onNodeOutput?.call(chain.first['nodeId'] as String, frame.data, frame.format,
-      frame.width, frame.height);
+  final firstNodeId = chain.first['nodeId'] as String? ?? 'source';
+  onNodeOutput?.call(
+      firstNodeId, frame.data, frame.format, frame.width, frame.height);
+
+  final portOutputs = <String, Map<String, Uint16List>>{};
+  portOutputs[firstNodeId] = {
+    'out': frame.data,
+    'out_rgb': frame.data,
+    'out_yuv': frame.data,
+    'out_hsl': frame.data,
+  };
+
+  Uint16List? getPortData(Map<String, Object?> op, String inputPortName) {
+    final inputs = op['inputs'] as Map<String, Object?>?;
+    if (inputs == null) return null;
+    final conn = inputs[inputPortName] as Map<String, Object?>?;
+    if (conn == null) return null;
+    final fromNodeId = conn['fromNodeId'] as String?;
+    final fromPort = conn['fromPort'] as String?;
+    if (fromNodeId == null || fromPort == null) return null;
+    return portOutputs[fromNodeId]?[fromPort];
+  }
 
   Uint8List? rgba;
   for (final op in chain.skip(1)) {
     final typeId = op['typeId'] as String;
-    final p = op['params'] as Map<String, Object?>;
+    final nodeId = op['nodeId'] as String? ?? typeId;
+    final p = (op['params'] as Map?)?.cast<String, Object?>() ?? const {};
     switch (typeId) {
       case 'black_level':
         frame.requireMosaic('黑电平校正');
@@ -371,23 +406,229 @@ Future<Uint8List> runChainFrame(
             gamma: _double(p, 'gamma') <= 0 ? 2.2 : _double(p, 'gamma'),
             brightness: _double(p, 'brightness'),
             contrast: _double(p, 'contrast') <= 0 ? 1.0 : _double(p, 'contrast'));
+      case 'rgb_splitter':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        if (frame.format == 'yuv') {
+          frame = _Frame(
+            data: yuvToRgb(frame.data, maxValue: max),
+            format: 'rgb',
+            width: w,
+            height: h,
+            maxValue: max,
+          );
+        } else if (frame.format == 'hsl') {
+          frame = _Frame(
+            data: hslToRgb(frame.data, maxValue: max),
+            format: 'rgb',
+            width: w,
+            height: h,
+            maxValue: max,
+          );
+        }
+        frame.requireRgb('RGB 分路器');
+        final pixels = w * h;
+        final rData = Uint16List(pixels);
+        final gData = Uint16List(pixels);
+        final bData = Uint16List(pixels);
+        for (var i = 0; i < pixels; i++) {
+          rData[i] = frame.data[3 * i];
+          gData[i] = frame.data[3 * i + 1];
+          bData[i] = frame.data[3 * i + 2];
+        }
+        portOutputs[nodeId] = {
+          'out_r': rData,
+          'out_g': gData,
+          'out_b': bData,
+        };
+      case 'yuv_splitter':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        if (frame.format == 'rgb') {
+          frame = _Frame(
+            data: rgbToYuv(frame.data, maxValue: max),
+            format: 'yuv',
+            width: w,
+            height: h,
+            maxValue: max,
+          );
+        }
+        if (frame.format != 'yuv') throw StateError('YUV 分路器需要 YUV 输入');
+        final pixels = w * h;
+        final src = frame.data;
+        final yData = Uint16List(pixels);
+        final uData = Uint16List(pixels);
+        final vData = Uint16List(pixels);
+        var srcIdx = 0;
+        for (var i = 0; i < pixels; i++, srcIdx += 3) {
+          yData[i] = src[srcIdx];
+          uData[i] = src[srcIdx + 1];
+          vData[i] = src[srcIdx + 2];
+        }
+        portOutputs[nodeId] = {
+          'out_y': yData,
+          'out_u': uData,
+          'out_v': vData,
+        };
+      case 'hsl_splitter':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        if (frame.format == 'rgb') {
+          frame = _Frame(
+            data: rgbToHsl(frame.data, maxValue: max),
+            format: 'hsl',
+            width: w,
+            height: h,
+            maxValue: max,
+          );
+        }
+        if (frame.format != 'hsl') throw StateError('HSL 分路器需要 HSL 输入');
+        final pixels = w * h;
+        final src = frame.data;
+        final hData = Uint16List(pixels);
+        final sData = Uint16List(pixels);
+        final lData = Uint16List(pixels);
+        var srcIdx = 0;
+        for (var i = 0; i < pixels; i++, srcIdx += 3) {
+          hData[i] = src[srcIdx];
+          sData[i] = src[srcIdx + 1];
+          lData[i] = src[srcIdx + 2];
+        }
+        portOutputs[nodeId] = {
+          'out_h': hData,
+          'out_s': sData,
+          'out_l': lData,
+        };
+      case 'rgb_combiner':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final pixels = w * h;
+        final rData = getPortData(op, 'in_r');
+        final gData = getPortData(op, 'in_g');
+        final bData = getPortData(op, 'in_b');
+        final combined = Uint16List(pixels * 3);
+        var dstIdx = 0;
+        for (var i = 0; i < pixels; i++, dstIdx += 3) {
+          combined[dstIdx] = rData != null && i < rData.length ? rData[i] : 0;
+          combined[dstIdx + 1] = gData != null && i < gData.length ? gData[i] : 0;
+          combined[dstIdx + 2] = bData != null && i < bData.length ? bData[i] : 0;
+        }
+        frame = _Frame(
+          data: combined,
+          format: 'rgb',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+        portOutputs[nodeId] = {'out': combined};
+      case 'yuv_combiner':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final pixels = w * h;
+        final yData = getPortData(op, 'in_y');
+        final uData = getPortData(op, 'in_u');
+        final vData = getPortData(op, 'in_v');
+        final combined = Uint16List(pixels * 3);
+        final mid = max >> 1;
+        var dstIdx = 0;
+        for (var i = 0; i < pixels; i++, dstIdx += 3) {
+          combined[dstIdx] = yData != null && i < yData.length ? yData[i] : 0;
+          combined[dstIdx + 1] = uData != null && i < uData.length ? uData[i] : mid;
+          combined[dstIdx + 2] = vData != null && i < vData.length ? vData[i] : mid;
+        }
+        frame = _Frame(
+          data: combined,
+          format: 'yuv',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+        portOutputs[nodeId] = {'out': combined};
+      case 'hsl_combiner':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final pixels = w * h;
+        final hData = getPortData(op, 'in_h');
+        final sData = getPortData(op, 'in_s');
+        final lData = getPortData(op, 'in_l');
+        final combined = Uint16List(pixels * 3);
+        for (var i = 0; i < pixels; i++) {
+          combined[3 * i] = hData != null && i < hData.length ? hData[i] : 0;
+          combined[3 * i + 1] = sData != null && i < sData.length ? sData[i] : 0;
+          combined[3 * i + 2] = lData != null && i < lData.length ? lData[i] : 0;
+        }
+        frame = _Frame(
+          data: combined,
+          format: 'hsl',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+        portOutputs[nodeId] = {'out': combined};
       case 'preview':
       case 'histogram':
       case 'waveform':
       case 'vectorscope':
+      case 'image_output':
+      case 'video_output':
+        final monoData = getPortData(op, 'in_mono');
+        if (monoData != null) {
+          final w = frame.width;
+          final h = frame.height;
+          final max = frame.maxValue;
+          final pixels = w * h;
+          final isSingleChan = monoData.length == pixels;
+
+          final isTargetSink = identical(op, chain.last);
+          final Uint16List rgb;
+          if (isTargetSink) {
+            rgb = Uint16List(pixels * 3);
+            for (var pIdx = 0; pIdx < pixels; pIdx++) {
+              final val = isSingleChan
+                  ? (pIdx < monoData.length ? monoData[pIdx] : 0)
+                  : ((77 * (3 * pIdx < monoData.length ? monoData[3 * pIdx] : 0) +
+                          150 * (3 * pIdx + 1 < monoData.length ? monoData[3 * pIdx + 1] : 0) +
+                          29 * (3 * pIdx + 2 < monoData.length ? monoData[3 * pIdx + 2] : 0) +
+                          128) >>
+                      8);
+              rgb[3 * pIdx] = val;
+              rgb[3 * pIdx + 1] = val;
+              rgb[3 * pIdx + 2] = val;
+            }
+          } else {
+            rgb = frame.data;
+          }
+          frame = _Frame(
+            data: rgb,
+            format: isTargetSink ? 'mono' : frame.format,
+            width: w,
+            height: h,
+            maxValue: max,
+          );
+          portOutputs[nodeId] = {
+            'out_mono': monoData,
+            'out': rgb,
+            'out_rgb': rgb,
+          };
+        }
+        break;
       case 'audio_level':
       case 'audio_waveform':
       case 'audio_eq':
-      case 'image_output':
-      case 'video_output':
-      case 'audio_output':
-        // 透传 / 汇点，不改变数据。
+        // 音频汇点，不改变数据。
         break;
       default:
         throw StateError('未知节点类型: $typeId');
     }
+    portOutputs.putIfAbsent(nodeId, () => {})['out'] = frame.data;
     // 每个节点处理完后的输出（Gamma 节点之后为 RGBA）。
-    onNodeOutput?.call(op['nodeId'] as String, rgba ?? frame.data,
+    onNodeOutput?.call(nodeId, rgba ?? frame.data,
         rgba != null ? 'rgba' : frame.format, frame.width, frame.height);
   }
 
@@ -397,7 +638,7 @@ Future<Uint8List> runChainFrame(
       firstType == 'image_source' || firstType == 'video_source' ? 1.0 : 2.2;
   final Uint8List result = rgba ??
       switch (frame.format) {
-        'rgb' => tonemapToRgba(frame.data,
+        'rgb' || 'mono' => tonemapToRgba(frame.data,
             maxValue: frame.maxValue, gamma: defaultGamma),
         'yuv' => tonemapToRgba(yuvToRgb(frame.data, maxValue: frame.maxValue),
             maxValue: frame.maxValue, gamma: defaultGamma),
@@ -493,11 +734,18 @@ Map<String, Object?> _instrumentResult(
     String kind, Uint8List rgba, int w, int h) {
   switch (kind) {
     case 'histogram':
-      final (r, g, b) = histogramRgb(rgba);
-      return {'kind': kind, 'r': r, 'g': g, 'b': b};
+      final (r, g, b, y) = histogramRgb(rgba);
+      return {'kind': kind, 'r': r, 'g': g, 'b': b, 'y': y};
     case 'waveform':
-      final (counts, cols) = waveformLuma(rgba, w, h);
-      return {'kind': kind, 'counts': counts, 'columns': cols};
+      final (r, g, b, y, cols) = waveformRgb(rgba, w, h);
+      return {
+        'kind': kind,
+        'r': r,
+        'g': g,
+        'b': b,
+        'y': y,
+        'columns': cols,
+      };
     case 'vectorscope':
       return {'kind': kind, 'counts': vectorscope(rgba)};
     default:
@@ -508,8 +756,9 @@ Map<String, Object?> _instrumentResult(
 /// compute() 入口：执行到仪器节点的一帧并计算分析数据。
 /// [msg] = `{'chain': List<Map>, 'frameIndex': int,
 /// 'kind': 'histogram'|'waveform'|'vectorscope'}`；
-/// 返回 `{'kind': kind, ...数据}`：直方图为 r/g/b 三个 256 桶，
+/// 返回 `{'kind': kind, ...数据}`：直方图为 r/g/b/y 四个 256 桶，
 /// 波形为 counts+columns，矢量示波器为 256x256 counts。
+@pragma('vm:entry-point')
 Future<Map<String, Object?>> analyzeInstrumentInIsolate(
     Map<String, Object?> msg) async {
   final chain = (msg['chain'] as List).cast<Map<String, Object?>>();
@@ -524,6 +773,7 @@ Future<Map<String, Object?>> analyzeInstrumentInIsolate(
 /// compute() 入口：直接对 RGBA8888 帧计算仪器分析数据。
 /// [msg] = `{'rgba': Uint8List, 'width': int, 'height': int, 'kind': ...}`；
 /// 播放中复用预览已算出的帧，无需重跑流水线。
+@pragma('vm:entry-point')
 Future<Map<String, Object?>> analyzeRgbaInIsolate(
     Map<String, Object?> msg) async {
   return _instrumentResult(
@@ -532,4 +782,25 @@ Future<Map<String, Object?>> analyzeRgbaInIsolate(
     msg['width'] as int,
     msg['height'] as int,
   );
+}
+
+/// 连续播放高速预览降采样（2x）：将 8 位 RGBA (w x h) 快速降采样为 (w/2 x h/2)。
+/// 算法为超高速步长采样，全帧 1080p 仅需 ~1.5 毫秒。
+(Uint8List, int, int) downsampleRgba82x(Uint8List src, int w, int h) {
+  final outW = w >> 1;
+  final outH = h >> 1;
+  final dst = Uint8List(outW * outH * 4);
+  final srcStride2 = w * 8; // (w * 4) * 2
+  var dstIdx = 0;
+  var srcRow = 0;
+  for (var y = 0; y < outH; y++, srcRow += srcStride2) {
+    var srcIdx = srcRow;
+    for (var x = 0; x < outW; x++, srcIdx += 8, dstIdx += 4) {
+      dst[dstIdx] = src[srcIdx];
+      dst[dstIdx + 1] = src[srcIdx + 1];
+      dst[dstIdx + 2] = src[srcIdx + 2];
+      dst[dstIdx + 3] = src[srcIdx + 3];
+    }
+  }
+  return (dst, outW, outH);
 }

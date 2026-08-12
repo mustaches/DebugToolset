@@ -44,7 +44,7 @@ void main() {
       await raw.writeAsBytes(
           List<int>.generate(w * h * frames, (i) => i % (w * h)));
       try {
-        final state = IspStudioState(); // 默认图：源→…→预览→图片输出
+        final state = IspStudioState.withDefaultGraph(); // 默认图：源→…→预览→图片输出
         final srcId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'bayer_source')
             .key;
@@ -82,7 +82,7 @@ void main() {
       await raw.writeAsBytes(
           List<int>.generate(w * h * frames, (i) => i % (w * h)));
       try {
-        final state = IspStudioState(); // 默认图：源→…→预览
+        final state = IspStudioState.withDefaultGraph(); // 默认图：源→…→预览
         final srcId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'bayer_source')
             .key;

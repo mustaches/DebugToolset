@@ -1,0 +1,136 @@
+{
+  "name": "音视频仪器演示",
+  "nodes": [
+    {
+      "id": "n12",
+      "typeId": "preview",
+      "x": 1704.6320095941019,
+      "y": 507.76444311430794,
+      "width": 473.25630443532793,
+      "extraHeight": 800.0,
+      "params": {
+        "fps": 25,
+        "frameCount": 151013
+      }
+    },
+    {
+      "id": "n22",
+      "typeId": "video_source",
+      "x": 886.910102760989,
+      "y": 341.9719807253511,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "filePath": "K:\\AI网剧\\🔓Tukang kunci dapat sistem dewa! Brankas, satelit, bahkan kunci genetik pun bis.mp4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n27",
+      "typeId": "waveform",
+      "x": 2214.257129969016,
+      "y": 11.066205572746252,
+      "width": 800.0,
+      "extraHeight": 423.5165472993941,
+      "params": {}
+    },
+    {
+      "id": "n30",
+      "typeId": "vectorscope",
+      "x": 2214.648592806122,
+      "y": 550.3998886530893,
+      "width": 800.0,
+      "extraHeight": 759.5689331774336,
+      "params": {}
+    },
+    {
+      "id": "n32",
+      "typeId": "audio_level",
+      "x": 883.9195673908786,
+      "y": 516.5635682118216,
+      "width": 800.0,
+      "extraHeight": 100.0,
+      "params": {}
+    },
+    {
+      "id": "n33",
+      "typeId": "audio_waveform",
+      "x": 884.7524119257282,
+      "y": 697.351472165752,
+      "width": 800.0,
+      "extraHeight": 239.1761113364907,
+      "params": {}
+    },
+    {
+      "id": "n34",
+      "typeId": "audio_eq",
+      "x": 886.145003973549,
+      "y": 1014.0507826867986,
+      "width": 800.0,
+      "extraHeight": 336.6170000676569,
+      "params": {}
+    },
+    {
+      "id": "n38",
+      "typeId": "histogram",
+      "x": 1378.8942222252458,
+      "y": 11.42654155993191,
+      "width": 800.0,
+      "extraHeight": 356.47874660693543,
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "c23",
+      "from": "n22",
+      "fromPort": "out_rgb",
+      "to": "n12",
+      "toPort": "in"
+    },
+    {
+      "id": "c28",
+      "from": "n12",
+      "fromPort": "out",
+      "to": "n27",
+      "toPort": "in"
+    },
+    {
+      "id": "c31",
+      "from": "n12",
+      "fromPort": "out",
+      "to": "n30",
+      "toPort": "in"
+    },
+    {
+      "id": "c35",
+      "from": "n22",
+      "fromPort": "out_audio",
+      "to": "n32",
+      "toPort": "in"
+    },
+    {
+      "id": "c36",
+      "from": "n22",
+      "fromPort": "out_audio",
+      "to": "n33",
+      "toPort": "in"
+    },
+    {
+      "id": "c37",
+      "from": "n22",
+      "fromPort": "out_audio",
+      "to": "n34",
+      "toPort": "in"
+    },
+    {
+      "id": "c39",
+      "from": "n12",
+      "fromPort": "out",
+      "to": "n38",
+      "toPort": "in"
+    }
+  ],
+  "nextId": 40
+}

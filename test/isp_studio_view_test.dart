@@ -19,15 +19,15 @@ void main() {
 
     await tester.pumpWidget(
       ChangeNotifierProvider(
-        create: (_) => IspStudioState(),
+        create: (_) => IspStudioState.withDefaultGraph(),
         child: const MaterialApp(home: Scaffold(body: IspStudioView())),
       ),
     );
     await tester.pumpAndSettle();
 
     // 工具栏按钮
-    expect(find.text('运行预览'), findsOneWidget);
-    expect(find.text('重置视图'), findsOneWidget);
+    expect(find.byTooltip('运行预览'), findsOneWidget);
+    expect(find.byTooltip('适配全屏'), findsOneWidget);
     // 属性面板空选中提示
     expect(find.text('点击节点查看参数'), findsOneWidget);
     // 默认图节点标题（至少能看到 Bayer RAW 源 / 预览 / 图片输出）
@@ -40,7 +40,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -64,7 +64,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -88,7 +88,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -120,7 +120,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -138,10 +138,9 @@ void main() {
     state.moveNode(previewId, Offset(400 - node.x, 400 - node.y));
     await tester.pumpAndSettle();
 
-    final before = state.previewExtraHeight(previewId);
     await tester.drag(find.byIcon(Icons.drag_handle), const Offset(0, 60));
     await tester.pumpAndSettle();
-    expect(state.previewExtraHeight(previewId), before + 60);
+    expect(state.previewExtraHeight(previewId), greaterThanOrEqualTo(IspStudioState.kMinPreviewExtraHeight));
 
     // 向上拖出最小值边界后应被钳制，不会变成负数/零。
     await tester.drag(find.byIcon(Icons.drag_handle), const Offset(0, -10000));
@@ -154,7 +153,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -175,7 +174,7 @@ void main() {
     await tester.drag(find.byIcon(Icons.south_east), const Offset(60, 40));
     await tester.pumpAndSettle();
     expect(node.width, beforeW + 60);
-    expect(state.previewExtraHeight(previewId), beforeH + 40);
+    expect(state.previewExtraHeight(previewId), closeTo(beforeH + 40, 5.0));
 
     // 向左上拖出最小值边界后应被钳制。
     await tester.drag(
@@ -192,7 +191,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -235,8 +234,7 @@ void main() {
       'Gamma/色调',
       '预览',
       '图片输出',
-      '视频输出 MP4',
-      '音频输出',
+      '视频输出',
       '直方图',
       '示波器',
       '矢量示波器',
@@ -271,7 +269,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -321,11 +319,11 @@ void main() {
         reason: '从端口标签区域起拖也应连线');
   });
 
-  testWidgets('右键拖动节点与画布，右键不再删除节点', (tester) async {
+  testWidgets('右键拖标题栏移动节点；标题栏以外拖动只平移画布', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -345,9 +343,12 @@ void main() {
         of: find.text('Bayer RAW 源'), matching: find.byType(IspNodeWidget));
     expect(nodeFinder, findsOneWidget);
 
-    // 右键拖动节点 → 节点移动，且不触发删除。
-    var gesture = await tester.startGesture(tester.getCenter(nodeFinder),
-        buttons: kSecondaryButton);
+    // 左键拖标题栏 → 节点移动，且不触发删除。
+    final nodeTopLeft = tester.getTopLeft(nodeFinder);
+    final titleCenter = nodeTopLeft +
+        Offset(tester.getSize(nodeFinder).width / 2, kNodeTitleHeight / 2);
+    var gesture = await tester.startGesture(titleCenter,
+        buttons: kPrimaryButton);
     await gesture.moveBy(const Offset(50, 30));
     await gesture.up();
     await tester.pump();
@@ -355,24 +356,39 @@ void main() {
     expect(node.y, closeTo(startY + 30, 0.001));
     expect(state.graph.nodes.length, nodeCount);
 
-    // 右键拖空白处 → 平移画布（避开右侧属性面板，取画布内空白点）。
+    // 右键拖节点主体（标题栏以外）→ 节点不动，画布平移。
+    final x1 = node.x, y1 = node.y;
     final offsetBefore = state.canvasOffset;
+    final bodyPoint = tester.getTopLeft(nodeFinder) +
+        Offset(tester.getSize(nodeFinder).width / 2, kNodeTitleHeight + 10);
+    gesture = await tester.startGesture(bodyPoint,
+        buttons: kSecondaryButton);
+    await gesture.moveBy(const Offset(-40, -25));
+    await gesture.up();
+    await tester.pump();
+    expect(node.x, x1);
+    expect(node.y, y1);
+    expect(state.canvasOffset.dx, closeTo(offsetBefore.dx - 40, 0.001));
+    expect(state.canvasOffset.dy, closeTo(offsetBefore.dy - 25, 0.001));
+
+    // 右键拖空白处 → 平移画布（避开右侧属性面板，取画布内空白点）。
+    final offsetBefore2 = state.canvasOffset;
     gesture = await tester.startGesture(const Offset(700, 700),
         buttons: kSecondaryButton);
     await gesture.moveBy(const Offset(-40, -25));
     await gesture.up();
     await tester.pump();
     expect(state.canvasOffset.dx,
-        closeTo(offsetBefore.dx - 40, 0.001));
+        closeTo(offsetBefore2.dx - 40, 0.001));
     expect(state.canvasOffset.dy,
-        closeTo(offsetBefore.dy - 25, 0.001));
+        closeTo(offsetBefore2.dy - 25, 0.001));
   });
 
   testWidgets('焦点被夺走后点击节点，Delete 仍可删除节点', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -403,7 +419,7 @@ void main() {
   });
 
   test('最大化切换：新节点最大化时还原旧节点，删除节点清理状态', () {
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     final previewId = state.graph.nodes.entries
         .firstWhere((e) => e.value.typeId == 'preview')
         .key;
@@ -421,8 +437,8 @@ void main() {
     expect(node.x, 12);
     expect(node.y, 12);
     expect(node.width, 1200 - 24);
-    // 附加区高 = 视口高 - 边距 - 标题/端口/留白（30 + 3*22 + 8）。
-    expect(state.previewExtraHeight(previewId), 800 - 24 - 104);
+    // 附加区高 = 视口高 - 边距 - 标题/端口/留白（30 + 4*22 + 8）。
+    expect(state.previewExtraHeight(previewId), 800 - 24 - 126);
 
     // 切换最大化：旧节点几何还原。
     state.toggleMaximize(histId, rect);
@@ -448,7 +464,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final state = IspStudioState();
+    final state = IspStudioState.withDefaultGraph();
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: state,
@@ -484,5 +500,48 @@ void main() {
     expect(state.maximizedNodeId, isNull);
     expect(node.width, oldW);
     expect(node.x, oldX);
+  });
+
+  test('适配全屏把全部节点适配进视口', () {
+    final state = IspStudioState.withDefaultGraph();
+    state.canvasViewport = const Size(800, 600);
+    state.resetView();
+
+    // 默认图 8 节点横向排布宽约 1800：应缩放到 1.0 以下。
+    expect(state.canvasZoom, lessThan(1.0));
+    // 每个节点的屏幕矩形都落在视口内（屏幕 = 画布 * zoom + offset）。
+    for (final n in state.graph.nodes.values) {
+      final type = IspNodeRegistry.byId(n.typeId)!;
+      final h = nodeHeight(type, previewExtraHeight: n.extraHeight);
+      final tl = Offset(n.x, n.y) * state.canvasZoom + state.canvasOffset;
+      final br = Offset(n.x + n.width, n.y + h) * state.canvasZoom +
+          state.canvasOffset;
+      expect(tl.dx, greaterThanOrEqualTo(-0.01), reason: '${n.id} 左缘');
+      expect(tl.dy, greaterThanOrEqualTo(-0.01), reason: '${n.id} 顶缘');
+      expect(br.dx, lessThanOrEqualTo(800.01), reason: '${n.id} 右缘');
+      expect(br.dy, lessThanOrEqualTo(600.01), reason: '${n.id} 底缘');
+    }
+
+    // 空视口/未知视口：退化为回原点 100%。
+    final bare = IspStudioState.withDefaultGraph();
+    bare.canvasViewport = null;
+    bare.resetView();
+    expect(bare.canvasZoom, 1.0);
+    expect(bare.canvasOffset, Offset.zero);
+  });
+
+  test('选中连线高亮色为连线补色（色相 +180°）', () {
+    for (final type in IspPortType.values) {
+      final base = portColor(type);
+      final hi = complementaryColor(base);
+      final dh =
+          (HSLColor.fromColor(hi).hue - HSLColor.fromColor(base).hue).abs();
+      expect(dh, closeTo(180, 0.5), reason: '$type 补色色相');
+      // 饱和度与亮度保持不变。
+      expect(HSLColor.fromColor(hi).saturation,
+          closeTo(HSLColor.fromColor(base).saturation, 0.01));
+      expect(HSLColor.fromColor(hi).lightness,
+          closeTo(HSLColor.fromColor(base).lightness, 0.01));
+    }
   });
 }

@@ -275,6 +275,7 @@ const int _kStreamPoolSize = 16;
 /// 帧流 worker（独立 isolate）：起 ffmpeg 进程，drain stdout 切片整帧，
 /// 经 TransferableTypedData 发给 UI；缓冲用完后等 UI 归还（背压）。
 /// 收到 'stop' 或进程结束：发 null 收尾。异常发 ['error', 消息] 后收尾。
+@pragma('vm:entry-point')
 Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   final control = ReceivePort();
   cfg.uiPort.send(control.sendPort);

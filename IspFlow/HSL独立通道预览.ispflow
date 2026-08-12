@@ -1,0 +1,225 @@
+{
+  "name": "YUV独立通道预览",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": -100.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n3",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": 510.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": 1120.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n5",
+      "typeId": "image_source",
+      "x": 440.0,
+      "y": 550.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\high_saturation_test.png",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n15",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": 1120.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n18",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": 510.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n20",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": -100.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n36",
+      "typeId": "waveform",
+      "x": 1940.0,
+      "y": 1730.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {}
+    },
+    {
+      "id": "n38",
+      "typeId": "preview",
+      "x": 1200.0,
+      "y": 1730.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n47",
+      "typeId": "hsl_splitter",
+      "x": 800.0,
+      "y": 550.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {}
+    },
+    {
+      "id": "n54",
+      "typeId": "hsl_combiner",
+      "x": 2900.0,
+      "y": 550.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {}
+    },
+    {
+      "id": "n58",
+      "typeId": "preview",
+      "x": 3260.0,
+      "y": 510.0,
+      "width": 781.0,
+      "extraHeight": 447.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c21",
+      "from": "n1",
+      "fromPort": "out_mono",
+      "to": "n20",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c22",
+      "from": "n3",
+      "fromPort": "out_mono",
+      "to": "n18",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c23",
+      "from": "n4",
+      "fromPort": "out_mono",
+      "to": "n15",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c48",
+      "from": "n5",
+      "fromPort": "out_hsl",
+      "to": "n38",
+      "toPort": "in_hsl"
+    },
+    {
+      "id": "c49",
+      "from": "n38",
+      "fromPort": "out_hsl",
+      "to": "n36",
+      "toPort": "in_hsl"
+    },
+    {
+      "id": "c50",
+      "from": "n5",
+      "fromPort": "out_hsl",
+      "to": "n47",
+      "toPort": "in"
+    },
+    {
+      "id": "c51",
+      "from": "n47",
+      "fromPort": "out_h",
+      "to": "n1",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c52",
+      "from": "n47",
+      "fromPort": "out_s",
+      "to": "n3",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c53",
+      "from": "n47",
+      "fromPort": "out_l",
+      "to": "n4",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c55",
+      "from": "n1",
+      "fromPort": "out_mono",
+      "to": "n54",
+      "toPort": "in_h"
+    },
+    {
+      "id": "c56",
+      "from": "n3",
+      "fromPort": "out_mono",
+      "to": "n54",
+      "toPort": "in_s"
+    },
+    {
+      "id": "c57",
+      "from": "n4",
+      "fromPort": "out_mono",
+      "to": "n54",
+      "toPort": "in_l"
+    },
+    {
+      "id": "c59",
+      "from": "n54",
+      "fromPort": "out",
+      "to": "n58",
+      "toPort": "in_hsl"
+    }
+  ],
+  "nextId": 60
+}

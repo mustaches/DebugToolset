@@ -68,7 +68,7 @@ BlackLevel_R=9999
           'BlackLevel_R=804\nBlackLevel_Gr=806\n'
           'BlackLevel_Gb=804\nBlackLevel_B=805\n');
       try {
-        final state = IspStudioState(); // 默认图：源→黑电平→…
+        final state = IspStudioState.withDefaultGraph(); // 默认图：源→黑电平→…
         final srcId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'bayer_source')
             .key;
@@ -97,7 +97,7 @@ BlackLevel_R=9999
     });
 
     test('同名 txt 缺失时保持节点参数不变', () async {
-      final state = IspStudioState();
+      final state = IspStudioState.withDefaultGraph();
       final srcId = state.graph.nodes.entries
           .firstWhere((e) => e.value.typeId == 'bayer_source')
           .key;

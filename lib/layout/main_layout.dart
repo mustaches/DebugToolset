@@ -8,6 +8,7 @@ import '../modules/hex_editor/hex_editor_view.dart';
 import '../modules/text_editor/text_editor_view.dart';
 import '../modules/font_extractor/font_extractor_view.dart';
 import '../modules/ui_designer/ui_designer_view.dart';
+import '../providers/isp_studio_state.dart';
 import '../modules/isp_studio/isp_studio_view.dart';
 
 class MainLayout extends StatelessWidget {
@@ -131,11 +132,76 @@ class MainLayout extends StatelessWidget {
   }
 
   Widget _buildStatusBar(BuildContext context) {
+    final selectedIndex = context.watch<AppState>().selectedModuleIndex;
     final terminalState = context.watch<TerminalState>();
-    String statusLeft = terminalState.isConnected ? '正在运行' : '准备就绪';
-    String statusRight = terminalState.isConnected 
-        ? '${terminalState.serialPort} - ${terminalState.baudRate}' 
+
+    String statusRight = terminalState.isConnected
+        ? '${terminalState.serialPort} - ${terminalState.baudRate}'
         : '未连接';
+
+    if (selectedIndex == 6) {
+      final ispState = context.watch<IspStudioState>();
+      final msg = ispState.statusMessage.isNotEmpty
+          ? ispState.statusMessage
+          : 'ISP Studio 准备就绪';
+      return Container(
+        height: 28,
+        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      msg,
+                      style: const TextStyle(fontSize: 12, color: Colors.white),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (ispState.errors.isNotEmpty) ...[
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Tooltip(
+                        message: ispState.errors.join('\n'),
+                        child: Text(
+                          ispState.errors.first,
+                          style: const TextStyle(
+                              fontSize: 12, color: Color(0xFFCF6679)),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (ispState.isProcessing) ...[
+                  Text(
+                    '处理中 ${(ispState.progress * 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                Text(
+                  statusRight,
+                  style: const TextStyle(fontSize: 12, color: Colors.white),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    String statusLeft = terminalState.isConnected ? '正在运行' : '准备就绪';
 
     return Container(
       height: 28,

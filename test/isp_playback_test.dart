@@ -17,7 +17,7 @@ void main() {
       await raw.writeAsBytes(
           List<int>.generate(w * h * frames, (i) => i % (w * h)));
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'bayer_source')
             .key;
@@ -55,7 +55,7 @@ void main() {
           ...List<int>.filled(w * h, f * 80),
       ]);
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'bayer_source')
             .key;
@@ -98,7 +98,7 @@ void main() {
       await raw.writeAsBytes(
           List<int>.generate(w * h * frames, (i) => i % (w * h)));
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'bayer_source')
             .key;
@@ -133,7 +133,7 @@ void main() {
       final raw = File('${Directory.systemTemp.path}/isp_play1_$stamp.raw');
       await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'bayer_source')
             .key;
@@ -164,7 +164,7 @@ void main() {
       ]);
       expect(enc.exitCode, 0);
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final prevId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'preview')
             .key;
@@ -197,7 +197,7 @@ void main() {
       ]);
       expect(enc.exitCode, 0);
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final prevId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'preview')
             .key;
@@ -240,7 +240,7 @@ void main() {
       ]);
       expect(enc.exitCode, 0);
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final prevId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'preview')
             .key;
@@ -294,7 +294,7 @@ void main() {
       ]);
       expect(enc.exitCode, 0);
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final prevId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'preview')
             .key;
@@ -335,7 +335,7 @@ void main() {
       ]);
       expect(enc.exitCode, 0);
       try {
-        final state = IspStudioState();
+        final state = IspStudioState.withDefaultGraph();
         final prevId = state.graph.nodes.entries
             .firstWhere((e) => e.value.typeId == 'preview')
             .key;
@@ -360,13 +360,13 @@ void main() {
         expect(level!['left'] as double, greaterThan(0.5));
         final eq = state.instrumentResults[eqId];
         expect(eq, isNotNull, reason: 'EQ 频谱应有分析结果');
-        final bands = eq!['bands'] as Float64List;
-        expect(bands.length, 21);
+        final bands = eq!['left'] as Float64List;
+        expect(bands.length, 31);
         var best = 0;
         for (var i = 1; i < bands.length; i++) {
           if (bands[i] > bands[best]) best = i;
         }
-        expect(best, inInclusiveRange(8, 10)); // 440Hz 所在段
+        expect(best, inInclusiveRange(12, 14)); // 440Hz 所在段
       } finally {
         await tmp.delete();
       }

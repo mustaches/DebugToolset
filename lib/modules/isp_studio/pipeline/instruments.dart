@@ -30,20 +30,44 @@ Uint8List downsample2x2(Uint8List rgba, int width, int height) {
   return out;
 }
 
+/// 合并条带并行分析的分片结果：直方图与波形的计数表按行条带各自
+/// 统计，逐元素相加即得全帧结果（各分片的 columns/桶数一致）。
+/// 矢量示波器是扫描轨迹连线、不可按条带拆分，不走这里。
+Map<String, Object?> mergeInstrumentResults(
+    List<Map<String, Object?>> parts) {
+  if (parts.length == 1) return parts.first;
+  final first = parts.first;
+  for (var p = 1; p < parts.length; p++) {
+    for (final key in ['r', 'g', 'b', 'y']) {
+      final dst = first[key];
+      final src = parts[p][key];
+      if (dst is! Uint32List || src is! Uint32List) continue; // 类型守卫
+      for (var i = 0; i < dst.length; i++) {
+        dst[i] += src[i];
+      }
+    }
+  }
+  return first;
+}
+
 /// 矢量示波器网格边长（Cb/Cr 各 256 的 2 倍超采样，迹线更细）。
 const int kVectorscopeSize = 512;
 
-/// RGB 直方图：返回 (R, G, B) 三个 256 桶计数。
-(Uint32List, Uint32List, Uint32List) histogramRgb(Uint8List rgba) {
+/// RGB+Y 直方图：返回 (R, G, B, Y) 四个 256 桶计数（Y 为 BT.601 亮度，
+/// 与波形监视器同一定义）。
+(Uint32List, Uint32List, Uint32List, Uint32List) histogramRgb(
+    Uint8List rgba) {
   final r = Uint32List(256);
   final g = Uint32List(256);
   final b = Uint32List(256);
+  final y = Uint32List(256);
   for (var i = 0; i + 2 < rgba.length; i += 4) {
     r[rgba[i]]++;
     g[rgba[i + 1]]++;
     b[rgba[i + 2]]++;
+    y[(77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8]++;
   }
-  return (r, g, b);
+  return (r, g, b, y);
 }
 
 /// 亮度波形监视器：横轴为图像列（降采样到 [maxCols]），纵轴为亮度级
@@ -62,6 +86,32 @@ const int kVectorscopeSize = 512;
     }
   }
   return (counts, cols);
+}
+
+/// RGB+Y 波形监视器：横轴为图像列（降采样到 [maxCols]），纵轴为各
+/// 通道级（Y 为 BT.601 亮度，0 在底）。返回 (R, G, B, Y, 列数)，
+/// 计数表按 级*列数+列 排列。
+(Uint32List, Uint32List, Uint32List, Uint32List, int) waveformRgb(
+    Uint8List rgba, int width, int height,
+    {int maxCols = 512}) {
+  final cols = width < maxCols ? width : maxCols;
+  final r = Uint32List(cols * kWaveformLevels);
+  final g = Uint32List(cols * kWaveformLevels);
+  final b = Uint32List(cols * kWaveformLevels);
+  final y = Uint32List(cols * kWaveformLevels);
+  for (var yy = 0; yy < height; yy++) {
+    var i = yy * width * 4;
+    for (var x = 0; x < width; x++, i += 4) {
+      final col = x * cols ~/ width;
+      r[rgba[i] * cols + col]++;
+      g[rgba[i + 1] * cols + col]++;
+      b[rgba[i + 2] * cols + col]++;
+      final luma =
+          (77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8;
+      y[luma * cols + col]++;
+    }
+  }
+  return (r, g, b, y, cols);
 }
 
 /// 矢量示波器：BT.601 Cb/Cr 在 512x512 网格上的计数（Cb/Cr 各 256
