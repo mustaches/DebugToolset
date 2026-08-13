@@ -106,10 +106,10 @@
     {
       "id": "n51",
       "typeId": "preview",
-      "x": 3200.0,
-      "y": -40.0,
-      "width": 700.0,
-      "extraHeight": 444.0,
+      "x": 3230.0,
+      "y": -470.0,
+      "width": 520.0,
+      "extraHeight": 800.0,
       "params": {
         "fps": 30,
         "frameCount": 194761

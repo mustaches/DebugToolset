@@ -286,42 +286,17 @@ class IspNodeWidget extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                // 左侧给格线级标留 labelWidth：迹线图在剩余宽度内
-                // contain 适配，格线画在级标区 + 迹线矩形的整体上方。
-                final area = constraints.biggest;
-                final fitWidth =
-                    area.width - WaveformGraticule.labelWidth;
-                final gridSize = image == null
-                    ? area
-                    : applyBoxFit(
-                            BoxFit.contain,
-                            Size(image.width.toDouble(),
-                                image.height.toDouble()),
-                            Size(fitWidth, area.height))
-                        .destination;
-                return SizedBox.expand(
-                  child: Center(
-                    child: SizedBox(
-                      width: image == null
-                          ? gridSize.width
-                          : gridSize.width + WaveformGraticule.labelWidth,
-                      height: gridSize.height,
-                      child: CustomPaint(
-                        foregroundPainter: const WaveformGraticule(),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                              left: WaveformGraticule.labelWidth),
-                          child: image == null
-                              ? const Center(child: hint)
-                              : RawImage(image: image, fit: BoxFit.fill),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
+            child: SizedBox.expand(
+              child: CustomPaint(
+                foregroundPainter: const WaveformGraticule(),
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                      left: WaveformGraticule.labelWidth),
+                  child: image == null
+                      ? const Center(child: hint)
+                      : RawImage(image: image, fit: BoxFit.fill),
+                ),
+              ),
             ),
           ),
         ],
@@ -657,53 +632,32 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
-  /// 底部手柄条：中间上下拖调整附加区高度，右下角控制点双向调整节点宽高。
+  /// 底部手柄条：只保留右下角的尺寸控制点。
   /// 预览与仪器节点共用。
   Widget _buildResizeBar(IspStudioState state) {
     return SizedBox(
       height: 10,
-      child: Row(
-        children: [
-          Expanded(
-            child: MouseRegion(
-              cursor: SystemMouseCursors.resizeUpDown,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                // 从按下点起算增量：认领后立刻补齐位移，避免前 36px 死区。
-                dragStartBehavior: DragStartBehavior.down,
-                onPanStart: (_) => state.beginNodeResize(node.id),
-                onPanUpdate: (d) => state.setPreviewExtraHeight(
-                    node.id, d.delta.dy / state.canvasZoom),
-                onPanEnd: (_) => state.endNodeResize(),
-                onPanCancel: () => state.endNodeResize(),
-                child: const Center(
-                  child:
-                      Icon(Icons.drag_handle, size: 10, color: Colors.grey),
-                ),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.resizeUpLeftDownRight,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            dragStartBehavior: DragStartBehavior.down,
+            onPanStart: (_) => state.beginNodeResize(node.id),
+            onPanUpdate: (d) =>
+                state.resizePreview(node.id, d.delta / state.canvasZoom),
+            onPanEnd: (_) => state.endNodeResize(),
+            onPanCancel: () => state.endNodeResize(),
+            child: const SizedBox(
+              width: 16,
+              height: 10,
+              child: Center(
+                child: Icon(Icons.south_east, size: 10, color: Colors.grey),
               ),
             ),
           ),
-          // 右下角控制点：X、Y 方向同时缩放，控制点自动对齐到 10px 网格。
-          MouseRegion(
-            cursor: SystemMouseCursors.resizeUpLeftDownRight,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              dragStartBehavior: DragStartBehavior.down,
-              onPanStart: (_) => state.beginNodeResize(node.id),
-              onPanUpdate: (d) =>
-                  state.resizePreview(node.id, d.delta / state.canvasZoom),
-              onPanEnd: (_) => state.endNodeResize(),
-              onPanCancel: () => state.endNodeResize(),
-              child: const SizedBox(
-                width: 16,
-                height: 10,
-                child: Center(
-                  child: Icon(Icons.south_east, size: 10, color: Colors.grey),
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
