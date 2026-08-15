@@ -14,6 +14,7 @@ import 'widgets/node_code_page.dart';
 import 'widgets/node_layout.dart';
 import 'widgets/node_palette.dart';
 import 'widgets/node_property_panel.dart';
+import 'widgets/run_progress_dialog.dart';
 
 /// ISP Studio 模块根视图：工具栏 + 标签栏 + 标签页（流程图 / 节点代码）+ 状态栏。
 class IspStudioView extends StatelessWidget {
@@ -127,7 +128,9 @@ class IspStudioView extends StatelessWidget {
             icon: const Icon(Icons.play_arrow, size: 20),
             tooltip: '运行预览',
             color: state.isProcessing ? Colors.white38 : const Color(0xFF4CAF50),
-            onPressed: state.isProcessing ? null : () => state.runPreview(),
+            onPressed: state.isProcessing
+                ? null
+                : () => runPreviewWithProgress(context, state),
           ),
           IconButton(
             icon: const Icon(Icons.center_focus_strong, size: 18),
