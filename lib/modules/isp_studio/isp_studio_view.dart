@@ -63,18 +63,18 @@ class IspStudioView extends StatelessWidget {
     return !state.statusMessage.startsWith('保存流程失败');
   }
 
-  /// 复位画布：警告窗口（保存当前流程 / 清除画布 / 取消操作）。
+  /// 清除画布：警告窗口（保存并清除 / 清除画布 / 取消操作）。
   Future<void> _confirmResetCanvas(
       BuildContext context, IspStudioState state) async {
     final action = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('复位画布'),
+        title: const Text('清除画布'),
         content: const Text('本操作将清除当前画布上的所有节点。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop('save'),
-            child: const Text('保存当前流程'),
+            child: const Text('保存并清除'),
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop('clear'),
@@ -178,7 +178,7 @@ class IspStudioView extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.layers_clear_outlined, size: 18),
-            tooltip: '复位画布',
+            tooltip: '清除画布',
             color: Colors.white,
             onPressed: () => _confirmResetCanvas(context, state),
           ),
