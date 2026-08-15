@@ -192,9 +192,15 @@ class MainLayout extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (ispState.isProcessing) ...[
-                  Text(
-                    '处理中 ${(ispState.progress * 100).toStringAsFixed(0)}%',
-                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                  // 百分比监听 progressTick 逐 tick 局部刷新（平滑
+                  // 插值），不随状态栏整体重建。
+                  ValueListenableBuilder<double>(
+                    valueListenable: ispState.progressTick,
+                    builder: (context, value, _) => Text(
+                      '处理中 ${(value * 100).toStringAsFixed(0)}%',
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.white),
+                    ),
                   ),
                   const SizedBox(width: 12),
                 ],

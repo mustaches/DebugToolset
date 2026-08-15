@@ -345,6 +345,39 @@ void main() {
       }
     });
 
+    test('运行预览进度：完成后 progress 与 progressTick 都收敛到 1', () async {
+      // 8x8、8bit、RGGB 单帧，像素 0..63。
+      const w = 8, h = 8;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final raw = File('${Directory.systemTemp.path}/isp_prog_$stamp.raw');
+      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        final srcId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'bayer_source')
+            .key;
+        state.setParam(srcId, 'filePath', raw.path);
+        state.setParam(srcId, 'width', w);
+        state.setParam(srcId, 'height', h);
+        state.setParam(srcId, 'bitDepth', '8');
+
+        // 进度显示值只能前进不能后退。
+        var last = 0.0;
+        state.progressTick.addListener(() {
+          expect(state.progressTick.value, greaterThanOrEqualTo(last));
+          last = state.progressTick.value;
+        });
+
+        await state.runPreview();
+        expect(state.statusMessage, contains('预览就绪'));
+        expect(state.progress, 1.0);
+        expect(state.progressTick.value, 1.0);
+        expect(last, greaterThan(0), reason: '运行过程中进度显示值应有连续中间值');
+      } finally {
+        await raw.delete();
+      }
+    });
+
     test('波形通道切换后递增 instrumentTick 触发局部重绘', () async {
       // 8x8、8bit、RGGB 单帧，像素 0..63。
       const w = 8, h = 8;

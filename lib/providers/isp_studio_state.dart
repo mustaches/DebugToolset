@@ -136,6 +136,43 @@ class IspStudioState extends ChangeNotifier {
   String statusMessage = '';
   final List<String> errors = [];
 
+  /// 进度显示信号：状态栏百分比唯一监听它（逐 tick 更新），避免
+  /// 走 notifyListeners 引发全树重建。显示值在事件锚点之间由
+  /// 定时器平滑逼近（见 [_advanceProgress]），百分比连续递增
+  /// 而非固定值跳变；显示值永不越过锚点（不会虚报进度）。
+  final ValueNotifier<double> progressTick = ValueNotifier(0);
+  double _progressAnchor = 0;
+  Timer? _progressTimer;
+
+  /// 把进度锚点推进到 [target]（0..1）；显示值以约 100ms 时间常数
+  /// 追赶锚点。只前进不后退。
+  void _advanceProgress(double target) {
+    if (target <= _progressAnchor) return;
+    _progressAnchor = target;
+    progress = target;
+    if (_progressTimer != null) return;
+    _progressTimer =
+        Timer.periodic(const Duration(milliseconds: 16), (timer) {
+      final gap = _progressAnchor - progressTick.value;
+      if (gap <= 0.004) {
+        progressTick.value = _progressAnchor;
+        timer.cancel();
+        _progressTimer = null;
+      } else {
+        progressTick.value += gap * 0.15;
+      }
+    });
+  }
+
+  /// 归零进度（运行开始/结束时调用）：停表、锚点与显示值同时复位。
+  void _resetProgress() {
+    _progressTimer?.cancel();
+    _progressTimer = null;
+    _progressAnchor = 0;
+    progress = 0;
+    progressTick.value = 0;
+  }
+
   // ---- 预览 ----
 
   /// 主预览图（向后兼容：取 previewImages 中的第一个条目，如没有则 null）。
@@ -953,22 +990,38 @@ class IspStudioState extends ChangeNotifier {
     }
 
     isProcessing = true;
-    progress = 0.05;
+    _resetProgress();
     statusMessage = '正在解析节点图与计算帧序列…';
     _lastPlaybackRgba = null; // 单次运行的节点捕获优先于过期播放帧
     _clearPlanePreviews();
     notifyListeners();
     final token = ++_runToken;
     try {
+      // 预编译全部预览链：既供并行执行直接复用（不再重复编译），
+      // 链长（算子数）也作为各预览节点的进度权重。
+      final chains = <String, List<Map<String, Object?>>>{};
+      var totalChainLen = 0;
+      for (final pvNode in previewNodes) {
+        try {
+          final c = compileChain(graph, pvNode.id);
+          chains[pvNode.id] = c;
+          totalChainLen += c.length;
+        } catch (_) {
+          // 无法编译的节点在并行执行阶段同样跳过。
+        }
+      }
       // 以第一个预览节点为基准计算 totalFrames / dimensions。
       final firstPreview = previewNodes.first;
-      List<Map<String, Object?>> firstChain;
-      try {
-        firstChain = _compileTo(firstPreview.id);
-      } catch (e) {
-        statusMessage = e.toString().replaceFirst('Bad state: ', '');
+      final firstChain = chains[firstPreview.id];
+      if (firstChain == null) {
+        try {
+          _compileTo(firstPreview.id); // 重跑以取得原始错误信息
+        } catch (e) {
+          statusMessage = e.toString().replaceFirst('Bad state: ', '');
+        }
         return;
       }
+      _advanceProgress(0.02); // 图解析与链编译完成
       final srcTypeId = firstChain.first['typeId'] as String;
       final srcParams = firstChain.first['params'] as Map<String, Object?>;
       totalFrames = await _previewFrameCount(firstPreview, srcTypeId, srcParams);
@@ -976,20 +1029,26 @@ class IspStudioState extends ChangeNotifier {
       previewFrame = frame;
       final (w, h) = await sourceDimensions(srcTypeId, srcParams);
 
-      int completedCount = 0;
+      // 按图里实际内容分配进度区段：探针(帧数/尺寸)固定 8%，仪器
+      // 有则占 18%，其余归预览节点（按链长加权）；无仪器时预览区段
+      // 自然延伸到 98%，不出现无人认领的固定跳变点。
+      const probeEnd = 0.08;
+      final instrumentCount = _connectedImageInstrumentCount();
+      final instrumentShare = instrumentCount > 0 ? 0.18 : 0.0;
+      final previewShare = 0.98 - probeEnd - instrumentShare;
+      _advanceProgress(probeEnd);
+
+      var completedWeight = 0;
       final totalCount = previewNodes.length;
+      var completedCount = 0;
 
       // 所有预览节点并行执行。
       await Future.wait([
         for (final pvNode in previewNodes)
           () async {
             try {
-              List<Map<String, Object?>> chain;
-              try {
-                chain = compileChain(graph, pvNode.id);
-              } catch (_) {
-                return;
-              }
+              final chain = chains[pvNode.id];
+              if (chain == null) return;
               final result = await compute(runChainFrameCapturedInIsolate,
                   {'chain': chain, 'frameIndex': frame});
               if (token != _runToken) return;
@@ -1012,8 +1071,13 @@ class IspStudioState extends ChangeNotifier {
               // 单个节点失败不影响其余节点。
             } finally {
               completedCount++;
+              completedWeight += chains[pvNode.id]?.length ?? 0;
               if (token == _runToken) {
-                progress = 0.05 + (completedCount / totalCount) * 0.70;
+                _advanceProgress(probeEnd +
+                    previewShare *
+                        (totalChainLen > 0
+                            ? completedWeight / totalChainLen
+                            : completedCount / totalCount));
                 statusMessage = '正在渲染预览节点 [$completedCount/$totalCount]…';
                 notifyListeners();
               }
@@ -1030,19 +1094,25 @@ class IspStudioState extends ChangeNotifier {
 
       previewWidth = w;
       previewHeight = h;
-      progress = 0.80;
-      statusMessage = '正在更新示波器与分析仪器…';
-      notifyListeners();
+      if (instrumentCount > 0) {
+        statusMessage = '正在更新示波器与分析仪器…';
+        notifyListeners();
+      }
 
       // 仪器节点随预览刷新（并行分析，单个失败不影响预览）。
-      await _runInstruments(frame, token);
+      await _runInstruments(frame, token,
+          progressBase: probeEnd + previewShare,
+          progressScale: instrumentShare);
       if (token != _runToken) return;
 
       progress = 1.0;
+      progressTick.value = 1.0;
       statusMessage = '预览就绪 第 ${frame + 1}/$totalFrames 帧  ${w}x$h';
     } catch (e) {
       statusMessage = e.toString().replaceFirst('Bad state: ', '');
     } finally {
+      _progressTimer?.cancel();
+      _progressTimer = null;
       if (token == _runToken) {
         isProcessing = false;
         notifyListeners();
@@ -1050,10 +1120,30 @@ class IspStudioState extends ChangeNotifier {
     }
   }
 
+  /// 已连接输入的图像仪器节点数（进度权重分配用；不改变任何状态）。
+  int _connectedImageInstrumentCount() {
+    var n = 0;
+    for (final node in graph.nodes.values) {
+      if (!allInstrumentTypes.contains(node.typeId) ||
+          audioInstrumentTypes.contains(node.typeId)) {
+        continue;
+      }
+      final type = IspNodeRegistry.byId(node.typeId)!;
+      if (type.inputs.any((p) => graph.connectionAt(node.id, p.name) != null)) {
+        n++;
+      }
+    }
+    return n;
+  }
+
   /// 对所有已连接输入的仪器节点并行执行分析（编译到该节点为止的链）。
   /// 音频仪器（[audioInstrumentTypes]）不走帧流水线，由
   /// [_runAudioInstruments] 按音轨 PCM 刷新。
-  Future<void> _runInstruments(int frame, int token) async {
+  /// [progressBase]/[progressScale] 非空时把进度锚点推进到
+  /// `base + scale * 完成数/总数`（单次运行预览用；暂停路径不传，
+  /// 不动进度）。
+  Future<void> _runInstruments(int frame, int token,
+      {double? progressBase, double progressScale = 0}) async {
     final connected = <IspNode>[];
     for (final node in graph.nodes.values) {
       if (!allInstrumentTypes.contains(node.typeId)) continue;
@@ -1140,7 +1230,10 @@ class IspStudioState extends ChangeNotifier {
             } finally {
               instrumentCompleted++;
               if (token == _runToken) {
-                progress = 0.80 + (instrumentCompleted / instrumentTotal) * 0.18;
+                if (progressBase != null) {
+                  _advanceProgress(progressBase +
+                      progressScale * instrumentCompleted / instrumentTotal);
+                }
                 statusMessage = '正在更新仪器 [$instrumentCompleted/$instrumentTotal]…';
                 notifyListeners();
               }
@@ -2303,6 +2396,8 @@ class IspStudioState extends ChangeNotifier {
     if (isProcessing) {
       _runToken++;
       isProcessing = false;
+      _progressTimer?.cancel();
+      _progressTimer = null;
       statusMessage = '已取消';
       notifyListeners();
     }
@@ -2382,6 +2477,8 @@ class IspStudioState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _progressTimer?.cancel();
+    progressTick.dispose();
     _instrumentAnalyzer.dispose();
     cleanupAudioWavCache();
     // _legacyPreviewImage 是非持有别名，其图像含在 previewImages 中。
