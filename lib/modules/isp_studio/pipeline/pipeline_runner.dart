@@ -8,6 +8,16 @@ import 'video_source.dart';
 import 'instruments.dart';
 import 'isp_kernels.dart';
 
+export 'isp_kernels.dart'
+    show
+        downsampleRgba82x,
+        downsampleYuv444p2x,
+        downsampleRgba8Step,
+        mono8ToRgba,
+        yuv444p8ToRgba,
+        yuv420p8ToRgbaStep,
+        yuv420pPlaneToRgbaStep;
+
 /// 流水线执行器：把图编译成串行算子链并逐帧执行。
 ///
 /// 全部为纯 Dart + dart:io（无 Flutter 依赖），可在后台 isolate 中运行。
@@ -171,10 +181,18 @@ String _rawCfaOf(String typeId, Map<String, Object?> p) => switch (typeId) {
 /// 链内流动的帧数据。
 class _Frame {
   /// mosaic 时长度 w*h；rgb/yuv/hsl 时长度 w*h*3（三通道交织）。
+  /// 平面轨道（[yuvPlanes8]/[mono8] 非空）时为空占位。
   Uint16List data;
 
-  /// 'mosaic' | 'rgb' | 'yuv' | 'hsl'
+  /// 'mosaic' | 'rgb' | 'yuv' | 'hsl' | 'mono'
   String format;
+
+  /// 视频 yuv444p 直出的平面轨道：三个 w*h 的 8 位平面（Y/U/V）视图，
+  /// 分路/合路零拷贝，仅全分辨率视频播放使用。
+  List<Uint8List>? yuvPlanes8;
+
+  /// 单通道 8 位 mono 轨道（视频分路预览汇点）：直接 LUT 出图。
+  Uint8List? mono8;
 
   /// mosaic 时的 CFA 种类：'bayer'|'rccb'|'rccg'|'rccc'|'ryycy'|'rgb_ir'。
   String? cfa;
@@ -192,6 +210,8 @@ class _Frame {
     required this.maxValue,
     this.cfa,
     this.bayerPattern,
+    this.yuvPlanes8,
+    this.mono8,
     this.irSubtraction = 0.5,
   });
 
@@ -204,6 +224,20 @@ class _Frame {
   }
 }
 
+/// 平面 8 位 YUV → 16 位量级交织（值域 0..255 直通）：平面轨道与仅
+/// 支持交织数据的算子（如 RGB 分路器）衔接时的兜底物化。
+Uint16List _interleavePlanes8(List<Uint8List> planes, int pixels) {
+  final out = Uint16List(pixels * 3);
+  final y = planes[0], u = planes[1], v = planes[2];
+  var j = 0;
+  for (var i = 0; i < pixels; i++, j += 3) {
+    out[j] = y[i];
+    out[j + 1] = u[i];
+    out[j + 2] = v[i];
+  }
+  return out;
+}
+
 /// 执行一帧：读取源 → 逐算子处理 → 返回 RGBA8888。
 ///
 /// YUV/HSL 链在末端转回 RGB 再做色调映射。
@@ -214,6 +248,11 @@ class _Frame {
 /// （调试用：nodeId、数据、格式 'mosaic'|'rgb'|'yuv'|'hsl'|'rgba'、帧宽、帧高）。
 /// [sourceRgba] 仅用于 video_source 链：调用方（顺序流式解码）已预
 /// 解码好的 RGBA8888 帧，注入后跳过每帧一次的 ffmpeg seek 解码。
+/// [sourceYuv] 同理：预解码的全范围平面 yuv444p 帧（w*h*3），仅当
+/// 链输出格式为 yuv 时生效，比 [sourceRgba] 少两道全帧转换。
+/// [captureSinks]/[capturedRgba]：多路预览的前缀覆盖去重——链 A 是
+/// 链 B 的前缀时由 B 顺带捕获 A 汇点（preview 类节点）的显示图，
+/// 捕获结果填入 [capturedRgba]（含 A 链末端的默认色调映射）。
 Future<Uint8List> runChainFrame(
   List<Map<String, Object?>> chain,
   int frameIndex, {
@@ -222,6 +261,9 @@ Future<Uint8List> runChainFrame(
   Uint8List? sourceRgba,
   int? sourceWidth,
   int? sourceHeight,
+  Uint8List? sourceYuv,
+  Set<String>? captureSinks,
+  Map<String, Uint8List>? capturedRgba,
 }) async {
   if (chain.isEmpty || !sourceTypes.contains(chain.first['typeId'])) {
     throw StateError('算子链必须以源节点开头');
@@ -236,25 +278,48 @@ Future<Uint8List> runChainFrame(
     }
     final maxValue = bayerMaxValue(
         int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')));
-    final (rgb, w, h) = sourceRgba != null
-        ? rgba8ToRgb16(sourceRgba, sourceWidth!, sourceHeight!, maxValue)
-        : firstType == 'image_source'
-            ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
-                maxValue: maxValue)
-            : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
-                maxValue: maxValue, ffmpegPath: _str(sp, 'ffmpegPath'));
     final outFormat = chain.first['outFormat'] as String? ?? 'rgb';
-    frame = _Frame(
-      data: switch (outFormat) {
-        'yuv' => rgbToYuv(rgb, maxValue: maxValue),
-        'hsl' => rgbToHsl(rgb, maxValue: maxValue),
-        _ => rgb,
-      },
-      format: outFormat,
-      width: w,
-      height: h,
-      maxValue: maxValue,
-    );
+    if (sourceYuv != null && outFormat == 'yuv') {
+      // 视频流式播放的 YUV 直出帧：平面轨道（三个 8 位平面视图），
+      // 分路/合路/出图全程零拷贝，无 16 位交织中间格式。
+      final w0 = sourceWidth!;
+      final h0 = sourceHeight!;
+      final px = w0 * h0;
+      if (sourceYuv.length < px * 3) {
+        throw StateError('帧 $frameIndex 解码失败（可能超出视频末尾）');
+      }
+      frame = _Frame(
+        data: Uint16List(0),
+        format: 'yuv',
+        width: w0,
+        height: h0,
+        maxValue: maxValue,
+        yuvPlanes8: [
+          Uint8List.sublistView(sourceYuv, 0, px),
+          Uint8List.sublistView(sourceYuv, px, px * 2),
+          Uint8List.sublistView(sourceYuv, px * 2, px * 3),
+        ],
+      );
+    } else {
+      final (rgb, w, h) = sourceRgba != null
+          ? rgba8ToRgb16(sourceRgba, sourceWidth!, sourceHeight!, maxValue)
+          : firstType == 'image_source'
+              ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
+                  maxValue: maxValue)
+              : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
+                  maxValue: maxValue, ffmpegPath: _str(sp, 'ffmpegPath'));
+      frame = _Frame(
+        data: switch (outFormat) {
+          'yuv' => rgbToYuv(rgb, maxValue: maxValue),
+          'hsl' => rgbToHsl(rgb, maxValue: maxValue),
+          _ => rgb,
+        },
+        format: outFormat,
+        width: w,
+        height: h,
+        maxValue: maxValue,
+      );
+    }
   } else {
     final width = _int(sp, 'width');
     final height = _int(sp, 'height');
@@ -317,7 +382,7 @@ Future<Uint8List> runChainFrame(
   onNodeOutput?.call(
       firstNodeId, frame.data, frame.format, frame.width, frame.height);
 
-  final portOutputs = <String, Map<String, Uint16List>>{};
+  final portOutputs = <String, Map<String, List<int>>>{};
   portOutputs[firstNodeId] = {
     'out': frame.data,
     'out_rgb': frame.data,
@@ -325,7 +390,7 @@ Future<Uint8List> runChainFrame(
     'out_hsl': frame.data,
   };
 
-  Uint16List? getPortData(Map<String, Object?> op, String inputPortName) {
+  List<int>? getPortData(Map<String, Object?> op, String inputPortName) {
     final inputs = op['inputs'] as Map<String, Object?>?;
     if (inputs == null) return null;
     final conn = inputs[inputPortName] as Map<String, Object?>?;
@@ -337,6 +402,9 @@ Future<Uint8List> runChainFrame(
   }
 
   Uint8List? rgba;
+  // 前缀覆盖捕获暂存：nodeId → 单通道 mono 数据 / 透传帧引用。
+  final monoCaptures = <String, List<int>>{};
+  final passthroughCaptures = <String, _Frame>{};
   for (final op in chain.skip(1)) {
     final typeId = op['typeId'] as String;
     final nodeId = op['nodeId'] as String? ?? typeId;
@@ -411,8 +479,12 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         if (frame.format == 'yuv') {
+          // 平面轨道先物化为交织（兜底路径，非常规连接）。
+          final yuvData = frame.yuvPlanes8 != null
+              ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
+              : frame.data;
           frame = _Frame(
-            data: yuvToRgb(frame.data, maxValue: max),
+            data: yuvToRgb(yuvData, maxValue: max),
             format: 'rgb',
             width: w,
             height: h,
@@ -446,6 +518,16 @@ Future<Uint8List> runChainFrame(
         final w = frame.width;
         final h = frame.height;
         final max = frame.maxValue;
+        final planes8 = frame.yuvPlanes8;
+        if (planes8 != null) {
+          // 平面轨道：分路 = 三个平面的零拷贝视图。
+          portOutputs[nodeId] = {
+            'out_y': planes8[0],
+            'out_u': planes8[1],
+            'out_v': planes8[2],
+          };
+          break;
+        }
         if (frame.format == 'rgb') {
           frame = _Frame(
             data: rgbToYuv(frame.data, maxValue: max),
@@ -533,6 +615,23 @@ Future<Uint8List> runChainFrame(
         final yData = getPortData(op, 'in_y');
         final uData = getPortData(op, 'in_u');
         final vData = getPortData(op, 'in_v');
+        // 平面轨道：三路输入都是整帧 8 位平面时直接引用（零拷贝），
+        // 数据与分路器输出同源时是纯粹的透传合路。
+        if (yData is Uint8List && uData is Uint8List && vData is Uint8List &&
+            yData.length == pixels &&
+            uData.length == pixels &&
+            vData.length == pixels) {
+          frame = _Frame(
+            data: Uint16List(0),
+            format: 'yuv',
+            width: w,
+            height: h,
+            maxValue: max,
+            yuvPlanes8: [yData, uData, vData],
+          );
+          portOutputs[nodeId] = {'out': Uint16List(0)};
+          break;
+        }
         final combined = Uint16List(pixels * 3);
         final mid = max >> 1;
         var dstIdx = 0;
@@ -586,36 +685,73 @@ Future<Uint8List> runChainFrame(
           final isSingleChan = monoData.length == pixels;
 
           final isTargetSink = identical(op, chain.last);
-          final Uint16List rgb;
-          if (isTargetSink) {
-            rgb = Uint16List(pixels * 3);
-            for (var pIdx = 0; pIdx < pixels; pIdx++) {
-              final val = isSingleChan
-                  ? (pIdx < monoData.length ? monoData[pIdx] : 0)
-                  : ((77 * (3 * pIdx < monoData.length ? monoData[3 * pIdx] : 0) +
-                          150 * (3 * pIdx + 1 < monoData.length ? monoData[3 * pIdx + 1] : 0) +
-                          29 * (3 * pIdx + 2 < monoData.length ? monoData[3 * pIdx + 2] : 0) +
-                          128) >>
-                      8);
-              rgb[3 * pIdx] = val;
-              rgb[3 * pIdx + 1] = val;
-              rgb[3 * pIdx + 2] = val;
-            }
+          if (isTargetSink && isSingleChan && monoData is Uint8List) {
+            // 8 位平面 MONO 汇点（视频分路预览零拷贝轨道）：
+            // 链末端 mono8ToRgba 一趟 LUT 出图。
+            frame = _Frame(
+              data: Uint16List(0),
+              format: 'mono',
+              width: w,
+              height: h,
+              maxValue: max,
+              mono8: monoData,
+            );
+            portOutputs[nodeId] = {'out_mono': monoData};
           } else {
-            rgb = frame.data;
+            final Uint16List rgb;
+            if (isTargetSink && isSingleChan) {
+              // 单通道 MONO 汇点：保留单通道数据，链末端 monoToRgba
+              // 一趟出图，免去灰度扩展 + 三通道查表。
+              rgb = monoData as Uint16List;
+            } else if (isTargetSink) {
+              // in_mono 接的是 3 通道交织数据：按 BT.601 加权转灰度。
+              rgb = Uint16List(pixels * 3);
+              for (var pIdx = 0; pIdx < pixels; pIdx++) {
+                final val = ((77 *
+                            (3 * pIdx < monoData.length
+                                ? monoData[3 * pIdx]
+                                : 0) +
+                        150 *
+                            (3 * pIdx + 1 < monoData.length
+                                ? monoData[3 * pIdx + 1]
+                                : 0) +
+                        29 *
+                            (3 * pIdx + 2 < monoData.length
+                                ? monoData[3 * pIdx + 2]
+                                : 0) +
+                        128) >>
+                    8);
+                rgb[3 * pIdx] = val;
+                rgb[3 * pIdx + 1] = val;
+                rgb[3 * pIdx + 2] = val;
+              }
+            } else {
+              rgb = frame.data;
+            }
+            frame = _Frame(
+              data: rgb,
+              format: isTargetSink ? 'mono' : frame.format,
+              width: w,
+              height: h,
+              maxValue: max,
+            );
+            portOutputs[nodeId] = {
+              'out_mono': monoData,
+              'out': rgb,
+              'out_rgb': rgb,
+            };
           }
-          frame = _Frame(
-            data: rgb,
-            format: isTargetSink ? 'mono' : frame.format,
-            width: w,
-            height: h,
-            maxValue: max,
-          );
-          portOutputs[nodeId] = {
-            'out_mono': monoData,
-            'out': rgb,
-            'out_rgb': rgb,
-          };
+        }
+        // 前缀覆盖捕获（多路预览去重）：本节点是被覆盖链的汇点时，
+        // 记下其显示输入（单通道 mono 数据或透传帧引用），链末端统一
+        // 做默认色调映射后填入 capturedRgba。
+        if (captureSinks != null && captureSinks.contains(nodeId)) {
+          final pixels = frame.width * frame.height;
+          if (monoData != null && monoData.length == pixels) {
+            monoCaptures[nodeId] = monoData;
+          } else if (monoData == null) {
+            passthroughCaptures[nodeId] = frame;
+          }
         }
         break;
       case 'audio_level':
@@ -638,10 +774,23 @@ Future<Uint8List> runChainFrame(
       firstType == 'image_source' || firstType == 'video_source' ? 1.0 : 2.2;
   final Uint8List result = rgba ??
       switch (frame.format) {
-        'rgb' || 'mono' => tonemapToRgba(frame.data,
+        'rgb' => tonemapToRgba(frame.data,
             maxValue: frame.maxValue, gamma: defaultGamma),
-        'yuv' => tonemapToRgba(yuvToRgb(frame.data, maxValue: frame.maxValue),
-            maxValue: frame.maxValue, gamma: defaultGamma),
+        // 单通道 MONO：8 位平面轨道（视频分路预览）直接 LUT；
+        // 16 位单通道一趟查表；三通道灰度（RAW MONO 源等）走通用 tonemap。
+        'mono' => frame.mono8 != null
+            ? mono8ToRgba(frame.mono8!, gamma: defaultGamma)
+            : frame.data.length == frame.width * frame.height
+                ? monoToRgba(frame.data,
+                    maxValue: frame.maxValue, gamma: defaultGamma)
+                : tonemapToRgba(frame.data,
+                    maxValue: frame.maxValue, gamma: defaultGamma),
+        // 平面轨道（视频 YUV 直出/零拷贝合路）：定点 8 位一趟出图。
+        'yuv' => frame.yuvPlanes8 != null
+            ? yuv444p8ToRgba(frame.yuvPlanes8!, frame.width, frame.height,
+                gamma: defaultGamma)
+            : yuvToRgba(frame.data,
+                maxValue: frame.maxValue, gamma: defaultGamma),
         'hsl' => tonemapToRgba(hslToRgb(frame.data, maxValue: frame.maxValue),
             maxValue: frame.maxValue, gamma: defaultGamma),
         _ => throw StateError('流水线末端不是图像数据（缺少去马赛克）'),
@@ -649,19 +798,56 @@ Future<Uint8List> runChainFrame(
   // 汇点（预览）节点的最终输出恒为 RGBA。
   onNodeOutput?.call(chain.last['nodeId'] as String, result, 'rgba',
       frame.width, frame.height);
+  // 被覆盖链汇点的显示图：与本链末端同一默认色调映射。
+  if (capturedRgba != null) {
+    for (final e in monoCaptures.entries) {
+      final v = e.value;
+      capturedRgba[e.key] = v is Uint8List
+          ? mono8ToRgba(v, gamma: defaultGamma)
+          : monoToRgba(v as Uint16List,
+              maxValue: frame.maxValue, gamma: defaultGamma);
+    }
+    for (final e in passthroughCaptures.entries) {
+      final f0 = e.value;
+      final Uint8List? rgba2;
+      if (f0.yuvPlanes8 != null) {
+        rgba2 = yuv444p8ToRgba(f0.yuvPlanes8!, f0.width, f0.height,
+            gamma: defaultGamma);
+      } else if (f0.mono8 != null) {
+        rgba2 = mono8ToRgba(f0.mono8!, gamma: defaultGamma);
+      } else {
+        rgba2 = switch (f0.format) {
+          'rgb' => tonemapToRgba(f0.data,
+              maxValue: f0.maxValue, gamma: defaultGamma),
+          'mono' when f0.data.length == f0.width * f0.height =>
+            monoToRgba(f0.data, maxValue: f0.maxValue, gamma: defaultGamma),
+          'mono' => tonemapToRgba(f0.data,
+              maxValue: f0.maxValue, gamma: defaultGamma),
+          'yuv' =>
+            yuvToRgba(f0.data, maxValue: f0.maxValue, gamma: defaultGamma),
+          'hsl' => tonemapToRgba(hslToRgb(f0.data, maxValue: f0.maxValue),
+              maxValue: f0.maxValue, gamma: defaultGamma),
+          _ => null, // 非图像格式：不捕获，由调用方回退单独执行该链
+        };
+      }
+      if (rgba2 != null) capturedRgba[e.key] = rgba2;
+    }
+  }
   return result;
 }
 
 /// compute() 入口：在后台 isolate 中执行单帧。
 /// [msg] = {'chain': List<Map>, 'frameIndex': int}，返回 RGBA8888。
 /// 视频流式播放时另带 'sourceRgba'/'sourceWidth'/'sourceHeight'
-/// （预解码帧，跳过源解码）。
+/// （预解码帧，跳过源解码）；YUV 直出流程改带 'sourceYuv'
+/// （平面 yuv444p 帧）。
 Future<Uint8List> runChainFrameInIsolate(Map<String, Object?> msg) {
   final chain = (msg['chain'] as List).cast<Map<String, Object?>>();
   return runChainFrame(chain, msg['frameIndex'] as int,
       sourceRgba: msg['sourceRgba'] as Uint8List?,
       sourceWidth: msg['sourceWidth'] as int?,
-      sourceHeight: msg['sourceHeight'] as int?);
+      sourceHeight: msg['sourceHeight'] as int?,
+      sourceYuv: msg['sourceYuv'] as Uint8List?);
 }
 
 /// 每个节点输出采样的元素个数上限（防止大帧撑爆消息与界面）。
@@ -726,17 +912,25 @@ Future<int> runChainValueAtInIsolate(Map<String, Object?> msg) async {
 /// 按仪器类型计算分析数据（常驻 worker isolate 使用，见
 /// instrument_worker.dart）。
 Map<String, Object?> instrumentAnalyze(
-        String kind, Uint8List rgba, int w, int h) =>
-    _instrumentResult(kind, rgba, w, h);
+        String kind, Uint8List rgba, int w, int h,
+        {Set<String>? visible}) =>
+    _instrumentResult(kind, rgba, w, h, visible: visible);
 
 /// 按仪器类型计算分析数据（analyze*InIsolate 共用）。
+/// [visible] 仅波形使用：只统计可见通道（播放中示波器通常只看
+/// 部分通道，全通道统计有 3/4 是无用功）；为 null 时全通道。
 Map<String, Object?> _instrumentResult(
-    String kind, Uint8List rgba, int w, int h) {
+    String kind, Uint8List rgba, int w, int h,
+    {Set<String>? visible}) {
   switch (kind) {
     case 'histogram':
       final (r, g, b, y) = histogramRgb(rgba);
       return {'kind': kind, 'r': r, 'g': g, 'b': b, 'y': y};
     case 'waveform':
+      if (visible != null) {
+        final (tables, cols) = waveformSelective(rgba, w, h, visible);
+        return {'kind': kind, ...tables, 'columns': cols};
+      }
       final (r, g, b, y, cols) = waveformRgb(rgba, w, h);
       return {
         'kind': kind,
@@ -782,25 +976,4 @@ Future<Map<String, Object?>> analyzeRgbaInIsolate(
     msg['width'] as int,
     msg['height'] as int,
   );
-}
-
-/// 连续播放高速预览降采样（2x）：将 8 位 RGBA (w x h) 快速降采样为 (w/2 x h/2)。
-/// 算法为超高速步长采样，全帧 1080p 仅需 ~1.5 毫秒。
-(Uint8List, int, int) downsampleRgba82x(Uint8List src, int w, int h) {
-  final outW = w >> 1;
-  final outH = h >> 1;
-  final dst = Uint8List(outW * outH * 4);
-  final srcStride2 = w * 8; // (w * 4) * 2
-  var dstIdx = 0;
-  var srcRow = 0;
-  for (var y = 0; y < outH; y++, srcRow += srcStride2) {
-    var srcIdx = srcRow;
-    for (var x = 0; x < outW; x++, srcIdx += 8, dstIdx += 4) {
-      dst[dstIdx] = src[srcIdx];
-      dst[dstIdx + 1] = src[srcIdx + 1];
-      dst[dstIdx + 2] = src[srcIdx + 2];
-      dst[dstIdx + 3] = src[srcIdx + 3];
-    }
-  }
-  return (dst, outW, outH);
 }

@@ -1,5 +1,5 @@
 {
-  "name": "YUV独立通道预览",
+  "name": "HSL独立通道预览",
   "nodes": [
     {
       "id": "n1",
@@ -45,7 +45,7 @@
       "width": 190.0,
       "extraHeight": 160.0,
       "params": {
-        "filePath": "G:\\DebugToolSet\\IspFlow\\high_saturation_test.png",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\Test_Pattern\\ColorBars_1920x1080.png",
         "bitDepth": "8"
       }
     },

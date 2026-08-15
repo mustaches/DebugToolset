@@ -845,6 +845,139 @@ for (var b = 0; b < 31; b++) {
 }
 ''';
 
+/// RGB 分路器：把交织 RGB 帧拆成 R/G/B 三个单通道平面。
+/// 输入若为 YUV/HSL 先转为 RGB（pipeline_runner.dart）。
+const String _rgbSplitterCode = r'''
+final pixels = w * h;
+final rData = Uint16List(pixels);
+final gData = Uint16List(pixels);
+final bData = Uint16List(pixels);
+for (var i = 0; i < pixels; i++) {
+  rData[i] = frame.data[3 * i];
+  gData[i] = frame.data[3 * i + 1];
+  bData[i] = frame.data[3 * i + 2];
+}
+portOutputs[nodeId] = {
+  'out_r': rData,
+  'out_g': gData,
+  'out_b': bData,
+};
+''';
+
+/// YUV 分路器：把交织 YUV 帧拆成 Y/U/V 三个单通道平面。
+/// 平面轨道（yuvPlanes8）直接引用三个平面，零拷贝。
+const String _yuvSplitterCode = r'''
+final pixels = w * h;
+final planes8 = frame.yuvPlanes8;
+if (planes8 != null) {
+  // 平面轨道：分路 = 三个平面的零拷贝视图。
+  portOutputs[nodeId] = {
+    'out_y': planes8[0],
+    'out_u': planes8[1],
+    'out_v': planes8[2],
+  };
+} else {
+  final yData = Uint16List(pixels);
+  final uData = Uint16List(pixels);
+  final vData = Uint16List(pixels);
+  var srcIdx = 0;
+  for (var i = 0; i < pixels; i++, srcIdx += 3) {
+    yData[i] = frame.data[srcIdx];
+    uData[i] = frame.data[srcIdx + 1];
+    vData[i] = frame.data[srcIdx + 2];
+  }
+  portOutputs[nodeId] = {
+    'out_y': yData,
+    'out_u': uData,
+    'out_v': vData,
+  };
+}
+''';
+
+/// HSL 分路器：把交织 HSL 帧拆成 H/S/L 三个单通道平面。
+const String _hslSplitterCode = r'''
+final pixels = w * h;
+final hData = Uint16List(pixels);
+final sData = Uint16List(pixels);
+final lData = Uint16List(pixels);
+var srcIdx = 0;
+for (var i = 0; i < pixels; i++, srcIdx += 3) {
+  hData[i] = frame.data[srcIdx];
+  sData[i] = frame.data[srcIdx + 1];
+  lData[i] = frame.data[srcIdx + 2];
+}
+portOutputs[nodeId] = {
+  'out_h': hData,
+  'out_s': sData,
+  'out_l': lData,
+};
+''';
+
+/// RGB 合路器：把 R/G/B 三个单通道平面合并为交织 RGB 帧。
+/// 未连接的通道按 0 填充。
+const String _rgbCombinerCode = r'''
+final pixels = w * h;
+final rData = getPortData(op, 'in_r');
+final gData = getPortData(op, 'in_g');
+final bData = getPortData(op, 'in_b');
+final combined = Uint16List(pixels * 3);
+var dstIdx = 0;
+for (var i = 0; i < pixels; i++, dstIdx += 3) {
+  combined[dstIdx] = rData != null && i < rData.length ? rData[i] : 0;
+  combined[dstIdx + 1] = gData != null && i < gData.length ? gData[i] : 0;
+  combined[dstIdx + 2] = bData != null && i < bData.length ? bData[i] : 0;
+}
+frame = _Frame(data: combined, format: 'rgb', width: w, height: h, maxValue: max);
+portOutputs[nodeId] = {'out': combined};
+''';
+
+/// YUV 合路器：把 Y/U/V 三个单通道平面合并为交织 YUV 帧。
+/// 平面轨道下三路输入为整帧 8 位平面时直接引用（零拷贝），
+/// 未连接的 U/V 通道按中值（max >> 1）填充。
+const String _yuvCombinerCode = r'''
+final pixels = w * h;
+final yData = getPortData(op, 'in_y');
+final uData = getPortData(op, 'in_u');
+final vData = getPortData(op, 'in_v');
+if (yData is Uint8List && uData is Uint8List && vData is Uint8List &&
+    yData.length == pixels &&
+    uData.length == pixels &&
+    vData.length == pixels) {
+  // 平面轨道：零拷贝引用，数据与分路器输出同源时是透传合路。
+  frame = _Frame(data: Uint16List(0), format: 'yuv', width: w, height: h,
+      maxValue: max, yuvPlanes8: [yData, uData, vData]);
+} else {
+  final combined = Uint16List(pixels * 3);
+  final mid = max >> 1;
+  var dstIdx = 0;
+  for (var i = 0; i < pixels; i++, dstIdx += 3) {
+    combined[dstIdx] = yData != null && i < yData.length ? yData[i] : 0;
+    combined[dstIdx + 1] = uData != null && i < uData.length ? uData[i] : mid;
+    combined[dstIdx + 2] = vData != null && i < vData.length ? vData[i] : mid;
+  }
+  frame = _Frame(data: combined, format: 'yuv', width: w, height: h,
+      maxValue: max);
+}
+portOutputs[nodeId] = {'out': combined};
+''';
+
+/// HSL 合路器：把 H/S/L 三个单通道平面合并为交织 HSL 帧。
+/// 未连接的通道按 0 填充。
+const String _hslCombinerCode = r'''
+final pixels = w * h;
+final hData = getPortData(op, 'in_h');
+final sData = getPortData(op, 'in_s');
+final lData = getPortData(op, 'in_l');
+final combined = Uint16List(pixels * 3);
+for (var i = 0; i < pixels; i++) {
+  combined[3 * i] = hData != null && i < hData.length ? hData[i] : 0;
+  combined[3 * i + 1] = sData != null && i < sData.length ? sData[i] : 0;
+  combined[3 * i + 2] = lData != null && i < lData.length ? lData[i] : 0;
+}
+frame = _Frame(data: combined, format: 'hsl', width: w, height: h, maxValue: max);
+portOutputs[nodeId] = {'out': combined};
+''';
+
 /// 节点类型 id → 只读源码片段。注册表中的每种类型都必须有对应条目。
 const Map<String, String> nodeSourceCode = {
   'bayer_source': _bayerPatternCode + _rawUnpackCode,
@@ -870,6 +1003,12 @@ const Map<String, String> nodeSourceCode = {
   'audio_level': _audioLevelCode,
   'audio_waveform': _audioWaveformCode,
   'audio_eq': _audioEqCode,
+  'rgb_splitter': _rgbSplitterCode,
+  'yuv_splitter': _yuvSplitterCode,
+  'hsl_splitter': _hslSplitterCode,
+  'rgb_combiner': _rgbCombinerCode,
+  'yuv_combiner': _yuvCombinerCode,
+  'hsl_combiner': _hslCombinerCode,
 };
 
 /// ---------------------------------------------------------------------------
@@ -989,6 +1128,36 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   'audio_level': _audioInstrumentInputs,
   'audio_waveform': _audioInstrumentInputs,
   'audio_eq': _audioInstrumentInputs,
+  'rgb_splitter': [
+    CodeVariable(name: 'frame', type: 'Uint16List', value: '交织 RGB 帧（w*h*3）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+  ],
+  'yuv_splitter': [
+    CodeVariable(name: 'frame', type: 'Uint16List', value: '交织 YUV 帧（w*h*3）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+  ],
+  'hsl_splitter': [
+    CodeVariable(name: 'frame', type: 'Uint16List', value: '交织 HSL 帧（w*h*3）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+  ],
+  'rgb_combiner': [
+    CodeVariable(name: 'rData', type: 'Uint16List?', value: 'R 平面（w*h，可空）'),
+    CodeVariable(name: 'gData', type: 'Uint16List?', value: 'G 平面（w*h，可空）'),
+    CodeVariable(name: 'bData', type: 'Uint16List?', value: 'B 平面（w*h，可空）'),
+  ],
+  'yuv_combiner': [
+    CodeVariable(name: 'yData', type: 'Uint16List?', value: 'Y 平面（w*h，可空）'),
+    CodeVariable(name: 'uData', type: 'Uint16List?', value: 'U 平面（w*h，可空）'),
+    CodeVariable(name: 'vData', type: 'Uint16List?', value: 'V 平面（w*h，可空）'),
+  ],
+  'hsl_combiner': [
+    CodeVariable(name: 'hData', type: 'Uint16List?', value: 'H 平面（w*h，可空）'),
+    CodeVariable(name: 'sData', type: 'Uint16List?', value: 'S 平面（w*h，可空）'),
+    CodeVariable(name: 'lData', type: 'Uint16List?', value: 'L 平面（w*h，可空）'),
+  ],
 };
 
 /// 音频仪器共用输入（音轨 PCM + 分析位置）。
@@ -1090,6 +1259,30 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
         name: 'right',
         type: 'Float64List',
         value: '右声道 31 段幅度 0..1（20Hz–20kHz 1/3 倍频程等距分布）'),
+  ],
+  'rgb_splitter': [
+    CodeVariable(name: 'rData', type: 'Uint16List', value: 'R 平面（w*h）'),
+    CodeVariable(name: 'gData', type: 'Uint16List', value: 'G 平面（w*h）'),
+    CodeVariable(name: 'bData', type: 'Uint16List', value: 'B 平面（w*h）'),
+  ],
+  'yuv_splitter': [
+    CodeVariable(name: 'yData', type: 'Uint16List', value: 'Y 平面（w*h）'),
+    CodeVariable(name: 'uData', type: 'Uint16List', value: 'U 平面（w*h）'),
+    CodeVariable(name: 'vData', type: 'Uint16List', value: 'V 平面（w*h）'),
+  ],
+  'hsl_splitter': [
+    CodeVariable(name: 'hData', type: 'Uint16List', value: 'H 平面（w*h）'),
+    CodeVariable(name: 'sData', type: 'Uint16List', value: 'S 平面（w*h）'),
+    CodeVariable(name: 'lData', type: 'Uint16List', value: 'L 平面（w*h）'),
+  ],
+  'rgb_combiner': [
+    CodeVariable(name: 'combined', type: 'Uint16List', value: '交织 RGB（w*h*3）'),
+  ],
+  'yuv_combiner': [
+    CodeVariable(name: 'combined', type: 'Uint16List', value: '交织 YUV（w*h*3）'),
+  ],
+  'hsl_combiner': [
+    CodeVariable(name: 'combined', type: 'Uint16List', value: '交织 HSL（w*h*3）'),
   ],
 };
 

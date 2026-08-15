@@ -7,8 +7,9 @@
 ///
 /// 多核加速：直方图/波形的计数表天然可加，帧按水平条带切给池内
 /// 多个 worker 并行统计，结果逐元素相加合并（mergeInstrumentResults）。
-/// 矢量示波器是扫描轨迹连线，条带边界会断线，固定由 0 号 worker
-/// 整帧分析。
+/// 矢量示波器的扫描轨迹连线逐行独立（行间接续仅占 1/行数，可忽略），
+/// 播放实时刷新按**隔行**条带拆分（analyzeVectorscopeParallel）：
+/// 负载天然均衡，合并与渲染在 0 号 worker 完成。
 library;
 
 import 'dart:async';
@@ -17,7 +18,14 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'pipeline_runner.dart' show instrumentAnalyze;
-import 'instruments.dart' show mergeInstrumentResults;
+import 'instruments.dart'
+    show
+        intensityRgba,
+        kVectorscopeSize,
+        kWaveformLevels,
+        mergeInstrumentResults,
+        vectorscope,
+        waveformIntensityRgba;
 
 /// 单个常驻 worker isolate 的槽位：自己的端口与挂起请求表。
 class _WorkerSlot {
@@ -29,13 +37,25 @@ class _WorkerSlot {
   var _reqId = 0;
 
   /// 发送分析请求，回分析结果 map；失败抛 [StateError]。
+  /// [render] 为 true 且类型为波形/矢量示波器时，worker 侧直接把计数表
+  /// 渲染成亮度图随结果返回（'bmp'，不回计数表，省一次 UI 全帧渲染与
+  /// 计数表端口拷贝）；[visible] 为波形的可见通道。
+  /// [payload] 通常是帧 RGBA（Uint8List）；'render_vectorscope' 时是
+  /// 各条带计数表的字节视图列表（`List<Uint8List>`）。
   Future<Map<String, Object?>> request(
-      String kind, Uint8List rgba, int width, int height) {
+      String kind, Object payload, int width, int height,
+      {Set<String>? visible, bool render = false}) {
     final id = _reqId++;
     final c = Completer<Map<String, Object?>>();
     _pending[id] = c;
-    _worker!.send([id, rgba, width, height, kind]);
-    return c.future;
+    _worker!.send([id, payload, width, height, kind, visible?.toList(), render]);
+    return c.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        _pending.remove(id);
+        throw StateError('仪器分析超时 ($kind ${width}x$height)');
+      },
+    );
   }
 
   Future<void> start() async {
@@ -86,6 +106,64 @@ class InstrumentAnalyzer {
 
   final List<_WorkerSlot> _workers = [];
   var _started = false;
+  var _rr = 0;
+
+  /// 整机分配到单一 worker（轮转）：播放中多台仪器并发刷新时摊到池内
+  /// 不同 isolate 并行，避免全挤在 0 号 worker 串行排队。波形/矢量
+  /// 示波器在 worker 侧直接渲染亮度图（结果带 'bmp'，不回计数表）。
+  /// 波形按 [visible] 只统计可见通道。
+  Future<Map<String, Object?>> analyzeDedicated(
+      Uint8List rgba, int width, int height, String kind,
+      {Set<String>? visible}) async {
+    await _ensureStarted();
+    final slot = _workers[_rr % _workers.length];
+    _rr++;
+    return slot.request(kind, rgba, width, height,
+        visible: visible,
+        render: kind == 'waveform' || kind == 'vectorscope');
+  }
+
+  /// 矢量示波器多核并行（播放实时刷新用，保留连线轨迹）：抗锯齿连线
+  /// 是噪声帧热点（实测单 worker 50~200ms/帧@480p），必须拆分。
+  /// 按**隔行**条带切给池内全部 worker（worker i 取第 i, i+n, … 行）：
+  /// 相对连续条带负载天然均衡（内容/噪声集中在某一区域时连续条带
+  /// 的拖尾带会拖住整帧，实测慢 2~3 倍）；代价是丢失行间接续线段
+  /// （每行末→下行首，仅占 1/height，视觉不可见）与一次行收集拷贝
+  /// （亚毫秒）。各带计数表一次性发给 0 号 worker 合并并渲染亮度图
+  /// （8 张 512² 表若在 UI 合并，每帧 2M 次加法挤占走帧事件循环）。
+  Future<Map<String, Object?>> analyzeVectorscopeParallel(
+      Uint8List rgba, int width, int height) async {
+    await _ensureStarted();
+    // 条带数取 4 封顶：每带要回传一张 512² 计数表（1MB），带数越多
+    // 端口搬运与合并开销越大，实测 4 带是分析并行度与搬运开销的拐点。
+    final n = _workers.length < 4 ? _workers.length : 4;
+    if (n <= 1 || height < n * 4) {
+      return _workers[0]
+          .request('vectorscope', rgba, width, height, render: true);
+    }
+    final rowBytes = width * 4;
+    final parts = <Future<Map<String, Object?>>>[];
+    for (var i = 0; i < n; i++) {
+      var rows = 0;
+      for (var y = i; y < height; y += n) {
+        rows++;
+      }
+      final band = Uint8List(rows * rowBytes);
+      var dst = 0;
+      for (var y = i; y < height; y += n, dst += rowBytes) {
+        band.setRange(dst, dst + rowBytes, rgba, y * rowBytes);
+      }
+      parts.add(_workers[i].request('vectorscope_rows', band, width, rows));
+    }
+    final countsList = <Uint8List>[];
+    for (final p in await Future.wait(parts)) {
+      final counts = p['counts'] as Uint32List;
+      countsList.add(counts.buffer
+          .asUint8List(counts.offsetInBytes, counts.lengthInBytes));
+    }
+    return _workers[0].request('render_vectorscope', countsList,
+        kVectorscopeSize, kVectorscopeSize);
+  }
 
   /// 分析一帧（直方图/波形/矢量示波器，见 pipeline_runner）。
   /// [rgba] 应已按需降采样（调用侧在抽取时完成）；直方图/波形在池内
@@ -111,15 +189,34 @@ class InstrumentAnalyzer {
     return mergeInstrumentResults(await Future.wait(parts));
   }
 
-  Future<void> _ensureStarted() async {
-    if (_started) return;
-    _started = true;
-    for (var i = 0; i < poolSize; i++) {
-      final slot = _WorkerSlot();
-      await slot.start();
-      _workers.add(slot);
-    }
+  Future<void>? _starting;
+
+  Future<void> _ensureStarted() {
+    if (_started) return Future.value();
+    final start = _starting;
+    if (start != null) return start;
+    final completer = Completer<void>();
+    _starting = completer.future;
+    () async {
+      try {
+        // 并行 spawn：串行 await 会把启动延迟叠加到首个分析请求上。
+        final slots = [for (var i = 0; i < poolSize; i++) _WorkerSlot()];
+        await Future.wait([for (final s in slots) s.start()]);
+        _workers.addAll(slots);
+        _started = true;
+        completer.complete();
+      } catch (e, st) {
+        completer.completeError(e, st);
+      } finally {
+        _starting = null;
+      }
+    }();
+    return completer.future;
   }
+
+  /// 预热全部 worker（播放开始时与流解码/流水线初始化并行，
+  /// 避免首个仪器刷新批次承担 isolate 启动开销）。
+  Future<void> warmup() => _ensureStarted();
 
   /// 结束全部 worker isolate（挂起的请求以错误收尾）。
   void dispose() {
@@ -131,8 +228,12 @@ class InstrumentAnalyzer {
   }
 }
 
-/// worker 入口：逐条处理 [id, rgba, 宽, 高, 仪器类型]，回 [id, 结果]，
-/// 失败回 [id, 'error', 消息]。
+/// worker 入口：逐条处理 [id, rgba, 宽, 高, 仪器类型, 可见通道, 渲染]，
+/// 回 [id, 结果]，失败回 [id, 'error', 消息]。渲染为 true 时波形/矢量
+/// 示波器在 worker 侧出亮度图（结果含 'bmp'，不含计数表）。
+/// 特殊类型：'vectorscope_rows' 为隔行条带（每行开头重置电子束起点，
+/// 回计数表）；'render_vectorscope' 的 rgba 槽位携带各条带计数表的
+/// 字节视图列表（`List<Uint8List>`），合并后渲染亮度图。
 @pragma('vm:entry-point')
 void _instrumentWorkerMain(SendPort ui) {
   final port = ReceivePort();
@@ -141,8 +242,59 @@ void _instrumentWorkerMain(SendPort ui) {
     final req = msg as List;
     final id = req[0] as int;
     try {
-      final result = instrumentAnalyze(
-          req[4] as String, req[1] as Uint8List, req[2] as int, req[3] as int);
+      final kind = req[4] as String;
+      final visible = (req[5] as List?)?.cast<String>().toSet();
+      final render = req.length > 6 && req[6] == true;
+      if (kind == 'vectorscope_rows') {
+        ui.send([
+          id,
+          {
+            'kind': 'vectorscope',
+            'counts':
+                vectorscope(req[1] as Uint8List, rowWidth: req[2] as int),
+          }
+        ]);
+        return;
+      }
+      if (kind == 'render_vectorscope') {
+        // rgba 槽位携带各条带计数表的字节视图列表：合并（首张表就地
+        // 累加，消息缓冲区为本 isolate 私有副本，可写）后渲染亮度图。
+        final list = (req[1] as List).cast<Uint8List>();
+        final counts = Uint32List.view(list.first.buffer,
+            list.first.offsetInBytes, list.first.lengthInBytes ~/ 4);
+        for (var i = 1; i < list.length; i++) {
+          final src = Uint32List.view(list[i].buffer, list[i].offsetInBytes,
+              list[i].lengthInBytes ~/ 4);
+          for (var j = 0; j < counts.length; j++) {
+            counts[j] += src[j];
+          }
+        }
+        ui.send([
+          id,
+          {
+            'kind': 'vectorscope',
+            'bmp': intensityRgba(
+                counts, kVectorscopeSize, kVectorscopeSize, 70, 235, 70),
+          }
+        ]);
+        return;
+      }
+      var result = instrumentAnalyze(
+          kind, req[1] as Uint8List, req[2] as int, req[3] as int,
+          visible: kind == 'waveform' ? visible : null);
+      if (render && kind == 'waveform') {
+        final cols = (result['columns'] as num).toInt();
+        final bmp =
+            waveformIntensityRgba(result, cols, kWaveformLevels, visible ?? {'y'});
+        result = {'kind': kind, 'columns': cols, 'bmp': bmp};
+      } else if (render && kind == 'vectorscope') {
+        final counts = result['counts'] as Uint32List;
+        result = {
+          'kind': kind,
+          'bmp': intensityRgba(
+              counts, kVectorscopeSize, kVectorscopeSize, 70, 235, 70),
+        };
+      }
       ui.send([id, result]);
     } catch (e) {
       ui.send([id, 'error', e.toString()]);

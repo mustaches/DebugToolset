@@ -28,7 +28,8 @@ void main() {
 
         final playing = state.togglePlayback();
         final seen = <int>{};
-        state.addListener(() => seen.add(state.previewFrame));
+        // 逐帧推进走 frameTick（全树 notifyListeners 已解耦）。
+        state.frameTick.addListener(() => seen.add(state.previewFrame));
         await Future<void>.delayed(const Duration(milliseconds: 600));
         expect(state.isPlaying, isTrue);
         expect(state.statusMessage, contains('播放中'));
@@ -116,7 +117,8 @@ void main() {
 
         final playing = state.togglePlayback();
         final seen = <int>{};
-        state.addListener(() => seen.add(state.previewFrame));
+        // 逐帧推进走 frameTick（全树 notifyListeners 已解耦）。
+        state.frameTick.addListener(() => seen.add(state.previewFrame));
         await Future<void>.delayed(const Duration(milliseconds: 600));
         state.stopPlayback();
         await playing;
@@ -308,7 +310,8 @@ void main() {
 
         final playing = state.togglePlayback();
         final seen = <int>{};
-        state.addListener(() => seen.add(state.previewFrame));
+        // 逐帧推进走 frameTick（全树 notifyListeners 已解耦）。
+        state.frameTick.addListener(() => seen.add(state.previewFrame));
         await Future<void>.delayed(const Duration(milliseconds: 1200));
         state.stopPlayback();
         await playing;

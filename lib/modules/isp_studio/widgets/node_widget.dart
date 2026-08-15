@@ -3,6 +3,7 @@ library;
 
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -141,7 +142,15 @@ class IspNodeWidget extends StatelessWidget {
   /// 仪器节点附加区：直方图与音频仪器（电平/波形/EQ）用 CustomPaint
   /// 直绘 instrumentResults，波形/矢量示波器显示 state 里解码好的亮度图。
   /// 高度与预览节点共用同一套拖动调整机制（底部手柄 + 右下角控制点）。
+  /// 播放中的仪器刷新走 [IspStudioState.instrumentTick]，只有本区重建。
   Widget _buildInstrumentExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.instrumentTick,
+      builder: (context, tick, child) => _buildInstrumentExtraContent(state),
+    );
+  }
+
+  Widget _buildInstrumentExtraContent(IspStudioState state) {
     const hint =
         Text('未运行', style: TextStyle(fontSize: 11, color: Colors.grey));
     final extra = state.previewExtraHeight(node.id);
@@ -570,8 +579,18 @@ class IspNodeWidget extends StatelessWidget {
   }
 
   /// 预览附加区：屏幕 + 播放控制条 + 底部拖动手柄（调整屏幕高度）。
+  /// 逐帧刷新走 [IspStudioState.frameTick]，只有本区重建。
   Widget _buildPreviewExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildPreviewExtraContent(state),
+    );
+  }
+
+  Widget _buildPreviewExtraContent(IspStudioState state) {
     final image = state.previewImages[node.id];
+    final plane = state.previewPlanes[node.id];
+    final shader = state.yuvPlaneShader;
     final total = state.totalFrames ?? 1;
     final extra = state.previewExtraHeight(node.id);
     return SizedBox(
@@ -585,10 +604,15 @@ class IspNodeWidget extends StatelessWidget {
               height: extra - 40,
               color: Colors.black,
               alignment: Alignment.center,
-              child: image != null
-                  ? RawImage(image: image, fit: BoxFit.contain)
-                  : const Text('未运行',
-                      style: TextStyle(fontSize: 11, color: Colors.grey)),
+              // GPU 平面帧（全分辨率视频播放）优先于 CPU 像素图。
+              child: plane != null && shader != null
+                  ? SizedBox.expand(
+                      child: CustomPaint(
+                          painter: _PlanePreviewPainter(plane, shader)))
+                  : image != null
+                      ? RawImage(image: image, fit: BoxFit.contain)
+                      : const Text('未运行',
+                          style: TextStyle(fontSize: 11, color: Colors.grey)),
             ),
           ),
           SizedBox(
@@ -632,32 +656,60 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
-  /// 底部手柄条：只保留右下角的尺寸控制点。
+  /// 底部手柄条：中间上下拖调整高度，右下角控制点双向调整宽高。
   /// 预览与仪器节点共用。
   Widget _buildResizeBar(IspStudioState state) {
     return SizedBox(
       height: 10,
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.resizeUpLeftDownRight,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            dragStartBehavior: DragStartBehavior.down,
-            onPanStart: (_) => state.beginNodeResize(node.id),
-            onPanUpdate: (d) =>
-                state.resizePreview(node.id, d.delta / state.canvasZoom),
-            onPanEnd: (_) => state.endNodeResize(),
-            onPanCancel: () => state.endNodeResize(),
-            child: const SizedBox(
-              width: 16,
-              height: 10,
-              child: Center(
-                child: Icon(Icons.south_east, size: 10, color: Colors.grey),
+      child: Stack(
+        children: [
+          // 中部：上下拖只调整高度（忽略横向位移）。
+          Align(
+            alignment: Alignment.center,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeUpDown,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                dragStartBehavior: DragStartBehavior.down,
+                onPanStart: (_) => state.beginNodeResize(node.id),
+                onPanUpdate: (d) => state.resizePreview(
+                    node.id, Offset(0, d.delta.dy) / state.canvasZoom),
+                onPanEnd: (_) => state.endNodeResize(),
+                onPanCancel: () => state.endNodeResize(),
+                child: const SizedBox(
+                  width: 40,
+                  height: 10,
+                  child: Center(
+                    child: Icon(Icons.drag_handle, size: 10, color: Colors.grey),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
+          // 右下角：双向拖同时调整宽高。
+          Align(
+            alignment: Alignment.centerRight,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeUpLeftDownRight,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                dragStartBehavior: DragStartBehavior.down,
+                onPanStart: (_) => state.beginNodeResize(node.id),
+                onPanUpdate: (d) =>
+                    state.resizePreview(node.id, d.delta / state.canvasZoom),
+                onPanEnd: (_) => state.endNodeResize(),
+                onPanCancel: () => state.endNodeResize(),
+                child: const SizedBox(
+                  width: 16,
+                  height: 10,
+                  child: Center(
+                    child: Icon(Icons.south_east, size: 10, color: Colors.grey),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1417,4 +1469,42 @@ class _AudioEqPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_AudioEqPainter old) => true;
+}
+
+/// GPU 平面预览绘制器：用 yuv_planes.frag 把打包纹理（Y/U/V 平面
+/// 各 4 样本/纹素）按 [PlanePreviewFrame.mode] 解包上色，等比 contain
+/// 适配绘制区域。全分辨率视频播放时预览的零 CPU 转换路径。
+class _PlanePreviewPainter extends CustomPainter {
+  final PlanePreviewFrame frame;
+  final ui.FragmentShader shader;
+
+  _PlanePreviewPainter(this.frame, this.shader);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // BoxFit.contain 等比适配。
+    final srcAspect = frame.width / frame.height;
+    double dw = size.width, dh = size.height;
+    if (dw / dh > srcAspect) {
+      dw = dh * srcAspect;
+    } else {
+      dh = dw / srcAspect;
+    }
+    final rect =
+        Rect.fromLTWH((size.width - dw) / 2, (size.height - dh) / 2, dw, dh);
+    shader
+      ..setFloat(0, rect.left)
+      ..setFloat(1, rect.top)
+      ..setFloat(2, rect.width)
+      ..setFloat(3, rect.height)
+      ..setFloat(4, frame.width.toDouble())
+      ..setFloat(5, frame.height.toDouble())
+      ..setFloat(6, frame.mode.toDouble())
+      ..setFloat(7, frame.limited ? 1.0 : 0.0)
+      ..setImageSampler(0, frame.packed);
+    canvas.drawRect(rect, Paint()..shader = shader);
+  }
+
+  @override
+  bool shouldRepaint(_PlanePreviewPainter old) => !identical(old.frame, frame);
 }

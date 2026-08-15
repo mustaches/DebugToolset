@@ -30,12 +30,17 @@ class VideoInfo {
   /// 是否含音频流（`ffmpeg -i` 输出中有 Audio: 行）。
   final bool hasAudio;
 
+  /// 是否全范围（pc/jpeg）。缺省为 limited（tv，视频的常见情形）；
+  /// yuv420p 直出流程由 GPU shader / 馈源 LUT 按此标志做范围扩展。
+  final bool fullRange;
+
   const VideoInfo({
     required this.width,
     required this.height,
     required this.fps,
     required this.frameCount,
     required this.hasAudio,
+    this.fullRange = false,
   });
 }
 
@@ -78,7 +83,8 @@ Future<VideoInfo> videoFileInfo(String path, {String ffmpegPath = ''}) async {
       height: height,
       fps: fps,
       frameCount: frameCount,
-      hasAudio: RegExp(r'Stream.*Audio:').hasMatch(text));
+      hasAudio: RegExp(r'Stream.*Audio:').hasMatch(text),
+      fullRange: RegExp(r'Color Range:\s*pc').hasMatch(text));
   _infoCache[key] = info;
   return info;
 }
@@ -142,6 +148,13 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
 /// 顺序视频帧流：ffmpeg 进程与帧切片运行在专用 isolate（[_streamWorker]），
 /// UI isolate 不接触管道。
 ///
+/// 解码优先走 GPU 硬解（`-hwaccel auto`，ffmpeg 自动选取
+/// d3d11va/qsv/cuvid 等可用设备）；硬解初始化失败（无可用 GPU/驱动）
+/// 时自动回退软件解码（ffmpeg 软解本身按帧多线程，吃满多核）。
+///
+/// [pixelFormat] 为 'yuv444p' 时直接输出平面 YUV444（全范围），
+/// 供 YUV 流程免去 RGBA→RGB16→YUV 两道逐像素转换。
+///
 /// 1080p60 是 ~500MB/s 的管道数据：若在 UI isolate 上按 ~64KB 块消费，
 /// 每帧要 ~130 次事件循环调度，事件循环一忙（重绘/GC）解码速率就崩。
 /// worker isolate 事件循环空闲，全速 drain 管道；整帧经
@@ -152,10 +165,23 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
 /// UI 不消费，worker 就没有缓冲可用，ffmpeg 管道自然阻塞。
 /// 随机跳帧时 [dispose] 后重新 [start]。
 class VideoFrameStream {
-  VideoFrameStream._(this.info, this.nextIndex);
+  VideoFrameStream._(this.info, this.nextIndex, this.pixelFormat,
+      this.outWidth, this.outHeight);
 
   /// 视频元信息（尺寸/帧率/帧数）。
   final VideoInfo info;
+
+  /// 输出像素格式：'rgba'（RGBA8888 交织，w*h*4 字节/帧）、
+  /// 'yuv444p'（全范围平面 YUV444，w*h*3）或 'yuv420p'（原始范围
+  /// 平面 YUV420，w*h*3/2，GPU 平面预览路径专用：解码器原生输出，
+  /// 零转换；范围扩展由 shader/馈源 LUT 完成）。
+  final String pixelFormat;
+
+  /// 出帧尺寸（worker 侧按 2 的幂步长降采样后的宽高；不降采样时与
+  /// [info] 一致）。高分辨率源只向 UI 送小工作帧，端口流量与 UI
+  /// 堆压力下降一个数量级。
+  final int outWidth;
+  final int outHeight;
 
   /// 下一帧序号（从 startFrame 起随 [next] 递增）。
   int nextIndex;
@@ -169,18 +195,37 @@ class VideoFrameStream {
   var _eof = false;
   var _disposed = false;
 
-  int get _frameBytes => info.width * info.height * 4;
+  int get _frameBytes {
+    final px = outWidth * outHeight;
+    return switch (pixelFormat) {
+      'yuv444p' => px * 3,
+      'yuv420p' => px * 3 ~/ 2,
+      _ => px * 4,
+    };
+  }
 
   /// 从 [startFrame] 起顺序解码（-ss 输入跳转到最近关键帧再精确到
-  /// 目标时刻，之后连续解码不回退）。
+  /// 目标时刻，之后连续解码不回退）。[pixelFormat] 见同名字段。
+  /// [maxWorkingHeight] > 0 时由解码 worker 把出帧步长降采样到该高度
+  /// 以内（因子取 2 的幂），高速预览免 UI 侧全帧搬运与降采样。
   static Future<VideoFrameStream> start(String path, int startFrame,
-      {String ffmpegPath = ''}) async {
+      {String ffmpegPath = '',
+      String pixelFormat = 'rgba',
+      int maxWorkingHeight = 0}) async {
     final info = await videoFileInfo(path, ffmpegPath: ffmpegPath);
     if (startFrame < 0 || startFrame >= info.frameCount) {
       throw StateError('帧 $startFrame 超出视频范围（共 ${info.frameCount} 帧）');
     }
     final ffmpeg = (await findFfmpeg(overridePath: ffmpegPath))!;
-    final stream = VideoFrameStream._(info, startFrame);
+    var factor = 1;
+    if (maxWorkingHeight > 0 && pixelFormat != 'yuv420p') {
+      while (info.height ~/ (factor * 2) > 0 &&
+          info.height ~/ factor > maxWorkingHeight) {
+        factor *= 2;
+      }
+    }
+    final stream = VideoFrameStream._(info, startFrame, pixelFormat,
+        info.width ~/ factor, info.height ~/ factor);
     final port = ReceivePort();
     final ready = Completer<void>();
     stream._sub = port.listen((msg) {
@@ -194,7 +239,7 @@ class VideoFrameStream {
     stream._isolate = await Isolate.spawn(
         _streamWorker,
         _StreamWorkerConfig(port.sendPort, ffmpeg, path, startFrame,
-            info.width, info.height, info.fps));
+            info.width, info.height, info.fps, pixelFormat, factor));
     await ready.future;
     return stream;
   }
@@ -212,8 +257,8 @@ class VideoFrameStream {
     _notEmpty = null;
   }
 
-  /// 取下一帧（RGBA8888，w*h*4）；EOF 后无帧返回 null。
-  /// 解码失败抛 [StateError]。
+  /// 取下一帧（RGBA8888 w*h*4 或 yuv444p 平面 w*h*3，见 [pixelFormat]）；
+  /// EOF 后无帧返回 null。解码失败抛 [StateError]。
   Future<Uint8List?> next() async {
     while (_frames.isEmpty) {
       if (_error != null) throw StateError(_error!);
@@ -265,8 +310,15 @@ class _StreamWorkerConfig {
   final int height;
   final double fps;
 
+  /// 'rgba' | 'yuv444p'
+  final String pixelFormat;
+
+  /// 出帧降采样因子（2 的幂；1 = 不降采样）。
+  final int downsampleFactor;
+
   const _StreamWorkerConfig(this.uiPort, this.ffmpeg, this.path,
-      this.startFrame, this.width, this.height, this.fps);
+      this.startFrame, this.width, this.height, this.fps, this.pixelFormat,
+      this.downsampleFactor);
 }
 
 /// worker 同时最多持有的帧缓冲数（信用额度；1080p ≈ 130MB）。
@@ -275,6 +327,7 @@ const int _kStreamPoolSize = 16;
 /// 帧流 worker（独立 isolate）：起 ffmpeg 进程，drain stdout 切片整帧，
 /// 经 TransferableTypedData 发给 UI；缓冲用完后等 UI 归还（背压）。
 /// 收到 'stop' 或进程结束：发 null 收尾。异常发 ['error', 消息] 后收尾。
+/// 首趟用 GPU 硬解（-hwaccel auto）；一帧未出即失败时回退软件解码重试。
 @pragma('vm:entry-point')
 Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   final control = ReceivePort();
@@ -294,65 +347,108 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
       bufferReturned = null;
     }
   });
-  final frameBytes = cfg.width * cfg.height * 4;
-  final chunks = <List<int>>[];
-  var chunksLen = 0;
-  Process? process;
-  try {
-    process = await Process.start(cfg.ffmpeg, [
-      '-hide_banner', '-loglevel', 'error',
-      if (cfg.startFrame > 0)
-        ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
-      '-i', cfg.path,
-      '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1',
-    ]);
-    // stderr 必须排空，否则管道缓冲打满会互相等待。
-    process.stderr.drain<void>();
-    await for (final chunk in process.stdout) {
-      chunks.add(chunk);
-      chunksLen += chunk.length;
-      while (chunksLen >= frameBytes && !stopped) {
-        // 信用背压：没有空闲缓冲就等 UI 归还（ffmpeg 管道自然阻塞）。
-        while (pool.isEmpty && allocated >= _kStreamPoolSize && !stopped) {
-          bufferReturned = Completer<void>();
-          await bufferReturned!.future;
+  final is444 = cfg.pixelFormat == 'yuv444p';
+  final is420 = cfg.pixelFormat == 'yuv420p';
+  final factor = cfg.downsampleFactor;
+  final outW = cfg.width ~/ factor;
+  final outH = cfg.height ~/ factor;
+  final outPx = outW * outH;
+  final frameBytes = is420 ? (outPx * 3 ~/ 2) : outPx * (is444 ? 3 : 4);
+  // 降采样由 ffmpeg 的 scale 滤镜完成（C 实现，远快于 Dart 逐像素
+  // 抽样，且管道只流小帧）。yuv420p 是解码器原生输出（GPU 平面预览
+  // 专用）：不做任何滤镜转换，limited range 扩展由 shader/馈源完成。
+  final vf = is444
+      ? (factor > 1 ? 'scale=$outW:$outH:out_range=pc' : 'scale=out_range=pc')
+      : (!is420 && factor > 1 ? 'scale=$outW:$outH' : null);
+
+  /// 单趟解码：返回 (送出的帧数, 错误消息)。进程出问题但已送出过帧时
+  /// 按 EOF 处理（错误为 null），避免后半段已播的帧被误判为失败。
+  Future<(int, String?)> runPass(bool useHwaccel) async {
+    final chunks = <List<int>>[];
+    var chunksLen = 0;
+    var framesSent = 0;
+    Process? process;
+    try {
+      process = await Process.start(cfg.ffmpeg, [
+        '-hide_banner', '-loglevel', 'error',
+        // GPU 硬解：ffmpeg 自动选取可用设备并在输出系统内存帧时
+        // 自动插入 hwdownload + 格式转换。
+        if (useHwaccel) ...['-hwaccel', 'auto'],
+        if (cfg.startFrame > 0)
+          ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
+        '-i', cfg.path,
+        // YUV444 直出时把视频的 limited range 扩展为全范围（与 RGBA
+        // 路径 ffmpeg 自动做的 mpeg→pc 扩展一致），供下游按
+        // 全范围 BT.601 处理；降采样时顺带缩放到工作分辨率。
+        if (vf != null) ...['-vf', vf],
+        '-f', 'rawvideo',
+        '-pix_fmt', is444 ? 'yuv444p' : (is420 ? 'yuv420p' : 'rgba'),
+        'pipe:1',
+      ]);
+      // stderr 必须排空，否则管道缓冲打满会互相等待。
+      process.stderr.drain<void>();
+      await for (final chunk in process.stdout) {
+        chunks.add(chunk);
+        chunksLen += chunk.length;
+        while (chunksLen >= frameBytes && !stopped) {
+          // 信用背压：没有空闲缓冲就等 UI 归还（ffmpeg 管道自然阻塞）。
+          while (pool.isEmpty && allocated >= _kStreamPoolSize && !stopped) {
+            bufferReturned = Completer<void>();
+            await bufferReturned!.future;
+          }
+          if (stopped) break;
+          final Uint8List frame;
+          if (pool.isNotEmpty) {
+            frame = pool.removeLast();
+          } else {
+            allocated++;
+            frame = Uint8List(frameBytes);
+          }
+          var off = 0;
+          while (off < frameBytes) {
+            final head = chunks.first;
+            final take = math.min(head.length, frameBytes - off);
+            frame.setRange(off, off + take, head);
+            off += take;
+            chunksLen -= take;
+            if (take == head.length) {
+              chunks.removeAt(0);
+            } else {
+              chunks[0] = head.sublist(take);
+            }
+          }
+          cfg.uiPort.send(TransferableTypedData.fromList([frame]));
+          framesSent++;
         }
         if (stopped) break;
-        final Uint8List frame;
-        if (pool.isNotEmpty) {
-          frame = pool.removeLast();
-        } else {
-          allocated++;
-          frame = Uint8List(frameBytes);
-        }
-        var off = 0;
-        while (off < frameBytes) {
-          final head = chunks.first;
-          final take = math.min(head.length, frameBytes - off);
-          frame.setRange(off, off + take, head);
-          off += take;
-          chunksLen -= take;
-          if (take == head.length) {
-            chunks.removeAt(0);
-          } else {
-            chunks[0] = head.sublist(take);
-          }
-        }
-        cfg.uiPort.send(TransferableTypedData.fromList([frame]));
       }
-      if (stopped) break;
+      final code = await process.exitCode;
+      if (code != 0 && framesSent == 0 && !stopped) {
+        return (0, 'ffmpeg 解码失败 (exit $code): ${cfg.path}');
+      }
+      return (framesSent, null);
+    } catch (e) {
+      return (framesSent, e.toString());
+    } finally {
+      // 杀进程后要等它真正退出（释放文件句柄）再继续，否则 dispose
+      // 返回后调用方立刻删除/重开视频文件可能撞到占用
+      // （Windows 上句柄释放有延迟，尤为常见）。
+      final proc = process;
+      if (proc != null) {
+        proc.kill();
+        await proc.exitCode
+            .timeout(const Duration(seconds: 2), onTimeout: () => -1);
+      }
     }
-  } catch (e) {
-    cfg.uiPort.send(['error', e.toString()]);
   }
-  // 杀进程后要等它真正退出（释放文件句柄）再发收尾信号，否则
-  // dispose 返回后调用方立刻删除/重开视频文件可能撞到占用
-  // （Windows 上句柄释放有延迟，尤为常见）。
-  final proc = process;
-  if (proc != null) {
-    proc.kill();
-    await proc.exitCode
-        .timeout(const Duration(seconds: 2), onTimeout: () => -1);
+
+  var (sent, error) = await runPass(true);
+  if (sent == 0 && error != null && !stopped) {
+    // 硬解初始化失败（无可用 GPU/驱动）：回退软件解码重试。
+    (sent, error) = await runPass(false);
+  }
+  if (error != null && !stopped) {
+    cfg.uiPort.send(['error', error]);
   }
   cfg.uiPort.send(null); // EOF / 停止
   control.close();

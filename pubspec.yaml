@@ -74,6 +74,9 @@ flutter:
     - LXI_Logo/LXI_Logo.svg
     - LXI_Logo/LXI_Logo_2.png
 
+  shaders:
+    - shaders/yuv_planes.frag
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

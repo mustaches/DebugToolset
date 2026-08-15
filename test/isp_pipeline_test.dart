@@ -416,6 +416,53 @@ void main() {
       }
     });
 
+    test('yuv444p 直出流 + sourceYuv 注入（YUV 链免 RGB 往返）', () async {
+      // 依赖项目内置 ffmpeg；缺失时跳过。
+      if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
+      // 16x16 纯蓝，2fps × 2s = 4 帧。
+      final tmp = File(
+          '${Directory.systemTemp.path}/isp_video_yuv_${DateTime.now().microsecondsSinceEpoch}.mp4');
+      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'color=blue:size=16x16:rate=2:duration=2',
+        '-pix_fmt', 'yuv420p', tmp.path,
+      ]);
+      expect(enc.exitCode, 0);
+      try {
+        final graph = IspGraph();
+        final src = graph.addNode('video_source', 0, 0);
+        graph.nodes[src]!.paramValues['filePath'] = tmp.path;
+        final prev = graph.addNode('preview', 200, 0);
+        expect(graph.connect(src, 'out_yuv', prev, 'in_yuv'), isNull);
+        final chain = compileChain(graph, prev);
+        expect(chain.first['outFormat'], 'yuv');
+
+        // yuv444p 直出流：平面 Y/U/V，全范围。
+        final stream =
+            await VideoFrameStream.start(tmp.path, 0, pixelFormat: 'yuv444p');
+        final yuv = await stream.next();
+        expect(yuv, isNotNull);
+        expect(yuv, hasLength(16 * 16 * 3));
+        // 纯蓝（全范围 BT.601）：Y≈29、U≈255、V≈107（yuv420 有损，给容差）。
+        expect(yuv![0], lessThan(60));
+        expect(yuv[16 * 16], greaterThan(220));
+        expect(yuv[16 * 16 * 2], inInclusiveRange(80, 135));
+        stream.recycle(yuv);
+        await stream.dispose();
+
+        // 注入 yuv444p 帧走完整 YUV 链：预览输出回到纯蓝 RGBA。
+        final rgba = await runChainFrame(chain, 0,
+            sourceYuv: yuv, sourceWidth: 16, sourceHeight: 16);
+        expect(rgba, hasLength(16 * 16 * 4));
+        expect(rgba[2], greaterThan(240));
+        expect(rgba[0], lessThan(15));
+        expect(rgba[1], lessThan(15));
+        expect(rgba[3], 255);
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
     test('cis_mono 源直接输出灰度 RGB', () async {
       const w = 4, h = 2;
       final tmp = File(

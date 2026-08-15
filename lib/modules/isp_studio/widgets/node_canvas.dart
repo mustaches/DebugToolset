@@ -1,6 +1,8 @@
 /// ISP Studio 无限画布：点阵背景、平移缩放、连线落点命中、键盘删除。
 library;
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -380,7 +382,9 @@ class _UnboundedHitRenderStack extends RenderStack {
   }
 }
 
-/// 屏幕空间点阵背景，基础间距 10 画布逻辑像素，每 10 个点（100px 间隔）高亮显示亮白灰点。
+/// 屏幕空间点阵背景，基础间距 10 画布逻辑像素，每 10 格（100px 间隔）画一条
+/// 主线（颜色与暗点一致），其余位置为暗灰点。缩小时按 2 的幂抽稀（步长 step），
+/// 屏幕间距不低于 ~8px。
 class _DotGridPainter extends CustomPainter {
   final Offset offset;
   final double zoom;
@@ -389,32 +393,57 @@ class _DotGridPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final gridSpacing = IspStudioState.kGridSize; // 10.0
-    final spacing = gridSpacing * zoom;
-    if (spacing <= 2) return;
+    const gridSpacing = IspStudioState.kGridSize; // 10.0
+    // 缩小时按 2 的幂抽稀格点，保证屏幕间距不低于 ~8px：间距过密时
+    // 一帧要画几十万个点（0.25 倍缩放下 1920 宽视口约 33 万个），
+    // 拖动平移每帧重绘直接打爆光栅线程；这个密度的点在视觉上也已
+    // 糊成一片，抽稀不损失信息。
+    var step = 1;
+    var spacing = gridSpacing * zoom;
+    while (spacing < 8) {
+      step *= 2;
+      spacing *= 2;
+    }
 
-    final minorPaint = Paint()..color = Colors.white.withValues(alpha: 0.08);
-    final majorPaint = Paint()..color = Colors.white.withValues(alpha: 0.38);
+    // 两点一批的 drawPoints 比逐点 drawCircle 快几个数量级；
+    // StrokeCap.round 让小点仍呈圆形。
+    final minorPoints = <Offset>[];
+    final minorPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.08)
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round;
+    // 主线：每 10 格一条直线，颜色与暗点一致。
+    final linePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.08)
+      ..strokeWidth = 1.0;
 
-    final startGridX = (-offset.dx / spacing).floor();
-    final endGridX = ((size.width - offset.dx) / spacing).ceil();
-    final startGridY = (-offset.dy / spacing).floor();
-    final endGridY = ((size.height - offset.dy) / spacing).ceil();
+    final startI = (-offset.dx / spacing).floor();
+    final endI = ((size.width - offset.dx) / spacing).ceil();
+    final startJ = (-offset.dy / spacing).floor();
+    final endJ = ((size.height - offset.dy) / spacing).ceil();
 
-    for (var gx = startGridX; gx <= endGridX; gx++) {
-      final x = offset.dx + gx * spacing;
-      final isMajorX = (gx % 10 == 0);
-      for (var gy = startGridY; gy <= endGridY; gy++) {
-        final y = offset.dy + gy * spacing;
-        final isMajorY = (gy % 10 == 0);
-        final isMajor = isMajorX && isMajorY;
-        canvas.drawCircle(
-          Offset(x, y),
-          1.0,
-          isMajor ? majorPaint : minorPaint,
-        );
+    for (var i = startI; i <= endI; i++) {
+      final x = offset.dx + i * spacing;
+      if ((i * step) % 10 == 0) {
+        canvas.drawLine(Offset(x, 0), Offset(x, size.height), linePaint);
       }
     }
+    for (var j = startJ; j <= endJ; j++) {
+      final y = offset.dy + j * spacing;
+      if ((j * step) % 10 == 0) {
+        canvas.drawLine(Offset(0, y), Offset(size.width, y), linePaint);
+      }
+    }
+    // 落在主线上的点被线覆盖，跳过不画。
+    for (var i = startI; i <= endI; i++) {
+      final x = offset.dx + i * spacing;
+      final onMajorX = (i * step) % 10 == 0;
+      for (var j = startJ; j <= endJ; j++) {
+        if (onMajorX || (j * step) % 10 == 0) continue;
+        minorPoints.add(Offset(x, offset.dy + j * spacing));
+      }
+    }
+    canvas.drawPoints(ui.PointMode.points, minorPoints, minorPaint);
   }
 
   @override

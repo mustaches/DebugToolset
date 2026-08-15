@@ -7,6 +7,7 @@
       "x": 330.0,
       "y": 100.0,
       "width": 190.0,
+      "extraHeight": 160.0,
       "params": {
         "r": 0.0,
         "gr": 0.0,
@@ -20,6 +21,7 @@
       "x": 560.0,
       "y": 100.0,
       "width": 190.0,
+      "extraHeight": 160.0,
       "params": {
         "algorithm": "bilinear"
       }
@@ -30,6 +32,7 @@
       "x": 790.0,
       "y": 100.0,
       "width": 190.0,
+      "extraHeight": 160.0,
       "params": {
         "mode": "auto",
         "rGain": 1.0,
@@ -42,6 +45,7 @@
       "x": 1020.0,
       "y": 100.0,
       "width": 190.0,
+      "extraHeight": 160.0,
       "params": {
         "matrix": [
           1.0,
@@ -62,6 +66,7 @@
       "x": 1250.0,
       "y": 100.0,
       "width": 190.0,
+      "extraHeight": 160.0,
       "params": {
         "gamma": 2.2,
         "brightness": 0.0,
@@ -71,9 +76,10 @@
     {
       "id": "n12",
       "typeId": "preview",
-      "x": 1480.0,
+      "x": 1500.0,
       "y": 100.0,
-      "width": 190.0,
+      "width": 800.0,
+      "extraHeight": 464.0,
       "params": {
         "fps": 24,
         "frameCount": 10
@@ -82,21 +88,23 @@
     {
       "id": "n25",
       "typeId": "vectorscope",
-      "x": 1761.834997414093,
-      "y": 100.92517055727413,
-      "width": 800.0,
+      "x": 2370.0,
+      "y": 100.0,
+      "width": 668.1650025859069,
+      "extraHeight": 683.0748294427259,
       "params": {}
     },
     {
       "id": "n27",
       "typeId": "cis_bayer_rggb",
       "x": 94.4353974714015,
-      "y": 101.859135232938,
+      "y": 100.0,
       "width": 190.0,
+      "extraHeight": 160.0,
       "params": {
         "filePath": "G:\\DebugToolSet\\BayerRGGB\\RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
-        "width": 3840,
-        "height": 2160,
+        "width": 1920,
+        "height": 1080,
         "bitDepth": "10",
         "packing": "unpacked_lsb",
         "littleEndian": true,

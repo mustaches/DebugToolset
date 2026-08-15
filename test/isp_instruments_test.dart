@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:provider/provider.dart';
 import 'package:debug_tool_set/modules/isp_studio/isp_studio_view.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/instruments.dart';
@@ -150,6 +151,119 @@ void main() {
       // 抗锯齿：斜线的亮度按覆盖率分摊，存在非整权重的格。
       expect(counts.any((c) => c % 256 != 0), isTrue);
     });
+
+    test('vectorscope 行模式（隔行条带）跨行不连线，行内轨迹一致', () {
+      // 两行：首行全灰、末行全红。整帧单趟会把灰→红连成跨行斜线；
+      // rowWidth 模式每行重置电子束起点，只有行内轨迹（此处为点）。
+      Uint8List twoRows() {
+        final rgba = Uint8List(8 * 2 * 4);
+        for (var i = 0; i < 8; i++) {
+          rgba[i * 4] = 128;
+          rgba[i * 4 + 1] = 128;
+          rgba[i * 4 + 2] = 128;
+          rgba[i * 4 + 3] = 255;
+        }
+        for (var i = 8; i < 16; i++) {
+          rgba[i * 4] = 255;
+          rgba[i * 4 + 1] = 0;
+          rgba[i * 4 + 2] = 0;
+          rgba[i * 4 + 3] = 255;
+        }
+        return rgba;
+      }
+
+      final plain = vectorscope(twoRows());
+      final banded = vectorscope(twoRows(), rowWidth: 8);
+      // 灰点 (256,256) 与红点 (170,511) 之间的中间格：
+      // 单趟连线经过，行模式为空。
+      const mid = 383 * 512 + 213;
+      expect(plain[mid], greaterThan(0));
+      expect(banded[mid], 0);
+      // 两端点两种模式都有。
+      expect(banded[256 * 512 + 256], greaterThan(0));
+      expect(banded[511 * 512 + 170], greaterThan(0));
+    });
+
+    test('vectorscope 隔行条带拆分合并与整帧单趟结果一致', () {
+      // 每行图案相同且行首像素 == 行末像素：跨行接续段长度为零，
+      // 条带合并后与整帧单趟逐格相等（行内轨迹完全一致）。
+      const w = 64, h = 48, n = 4;
+      final rgba = Uint8List(w * h * 4);
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final i = (y * w + x) * 4;
+          final xx = x == w - 1 ? 0 : x; // 行末 = 行首
+          rgba[i] = (xx * 7) % 256;
+          rgba[i + 1] = (xx * 13) % 256;
+          rgba[i + 2] = (xx * 29) % 256;
+          rgba[i + 3] = 255;
+        }
+      }
+      // 与 InstrumentAnalyzer.analyzeVectorscopeParallel 相同的隔行切法。
+      final parts = <Uint32List>[];
+      for (var b = 0; b < n; b++) {
+        var rows = 0;
+        for (var y = b; y < h; y += n) {
+          rows++;
+        }
+        final band = Uint8List(rows * w * 4);
+        var dst = 0;
+        for (var y = b; y < h; y += n, dst += w * 4) {
+          band.setRange(dst, dst + w * 4, rgba, y * w * 4);
+        }
+        parts.add(vectorscope(band, rowWidth: w));
+      }
+      final merged = parts.first;
+      for (var p = 1; p < parts.length; p++) {
+        for (var i = 0; i < merged.length; i++) {
+          merged[i] += parts[p][i];
+        }
+      }
+      expect(merged, vectorscope(rgba));
+    });
+
+    test('波形亮度图填充竖向迹线（逐列包络）', () {
+      // 三列计数表：col0 只有 0 级，col1/col2 只有 255 级（水平硬边）。
+      final counts = Uint32List(3 * kWaveformLevels);
+      counts[0 * 3 + 0] = 100; // col0 level 0
+      counts[255 * 3 + 1] = 100; // col1 level 255
+      counts[255 * 3 + 2] = 100; // col2 level 255
+      final bmp = waveformIntensityRgba(
+          {'y': counts}, 3, kWaveformLevels, {'y'});
+      // 数据第 0 行在底部：level L → 图像行 255-L。
+      int alpha(int lvl, int col) => bmp[((255 - lvl) * 3 + col) * 4 + 3];
+      // 边界两侧的列（col0/col1）画出竖向迹线。
+      expect(alpha(128, 0), greaterThan(0));
+      expect(alpha(1, 0), greaterThan(0));
+      expect(alpha(254, 0), greaterThan(0));
+      expect(alpha(128, 1), greaterThan(0));
+      // 包络亮度暗于主迹线。
+      expect(alpha(128, 0), lessThan(alpha(0, 0)));
+      expect(alpha(128, 1), lessThan(alpha(255, 1)));
+      // 远离边界的 col2 邻域平坦，不产生填充。
+      expect(alpha(128, 2), 0);
+    });
+
+    test('waveform 按可见通道选择性统计与全通道结果一致', () {
+      const w = 32, h = 8;
+      final rgba = Uint8List(w * h * 4);
+      for (var i = 0; i < w * h; i++) {
+        rgba[i * 4] = (i * 7) % 256;
+        rgba[i * 4 + 1] = (i * 13) % 256;
+        rgba[i * 4 + 2] = (i * 29) % 256;
+        rgba[i * 4 + 3] = 255;
+      }
+      final (fr, fg, fb, fy, fcols) = waveformRgb(rgba, w, h);
+      final (tables, cols) = waveformSelective(rgba, w, h, {'y', 'b'});
+      expect(cols, fcols);
+      expect(tables.keys, unorderedEquals(['y', 'b']));
+      expect(tables['y'], fy);
+      expect(tables['b'], fb);
+      // 空通道集：不统计但仍给出列数。
+      final (empty, ecols) = waveformSelective(rgba, w, h, {});
+      expect(empty, isEmpty);
+      expect(ecols, fcols);
+    });
   });
 
   group('IspStudioState 仪器分析', () {
@@ -187,6 +301,81 @@ void main() {
       }
     });
 
+    test('预览运行后波形/矢量示波器节点拿到显示图像', () async {
+      const w = 16, h = 16;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final raw = File('${Directory.systemTemp.path}/isp_instr_wv_$stamp.raw');
+      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        final srcId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'bayer_source')
+            .key;
+        final gammaId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'gamma')
+            .key;
+        state.setParam(srcId, 'filePath', raw.path);
+        state.setParam(srcId, 'width', w);
+        state.setParam(srcId, 'height', h);
+        state.setParam(srcId, 'bitDepth', '8');
+
+        final waveId = state.graph.addNode('waveform', 0, 0);
+        final vecId = state.graph.addNode('vectorscope', 0, 0);
+        expect(state.graph.connect(gammaId, 'out', waveId, 'in'), isNull);
+        expect(state.graph.connect(gammaId, 'out', vecId, 'in'), isNull);
+
+        await state.runPreview();
+
+        expect(state.statusMessage, contains('预览就绪'));
+        expect(state.instrumentResults[waveId], isNotNull);
+        expect(state.instrumentResults[vecId], isNotNull);
+        expect(state.instrumentImages[waveId], isNotNull,
+            reason: '波形示波器应有解码后的显示图像');
+        expect(state.instrumentImages[vecId], isNotNull,
+            reason: '矢量示波器应有解码后的显示图像');
+      } finally {
+        await raw.delete();
+      }
+    });
+
+    test('波形通道切换后递增 instrumentTick 触发局部重绘', () async {
+      // 8x8、8bit、RGGB 单帧，像素 0..63。
+      const w = 8, h = 8;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final raw = File('${Directory.systemTemp.path}/isp_instr3_$stamp.raw');
+      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        final srcId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'bayer_source')
+            .key;
+        final gammaId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'gamma')
+            .key;
+        state.setParam(srcId, 'filePath', raw.path);
+        state.setParam(srcId, 'width', w);
+        state.setParam(srcId, 'height', h);
+        state.setParam(srcId, 'bitDepth', '8');
+
+        final waveId = state.graph.addNode('waveform', 0, 0);
+        expect(state.graph.connect(gammaId, 'out', waveId, 'in'), isNull);
+
+        await state.runPreview();
+        expect(state.instrumentResults[waveId], isNotNull);
+
+        final tick = state.instrumentTick.value;
+        state.toggleWaveformChannel(waveId, 'y');
+        // 重绘图像异步解码：轮询等它完成（失败时超时报错而非挂起）。
+        for (var i = 0; i < 200 && state.instrumentTick.value == tick; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(state.instrumentTick.value, greaterThan(tick),
+            reason: '通道切换后 instrumentTick 必须递增，否则仪器附加区不重建');
+      } finally {
+        await raw.delete();
+      }
+    });
+
     test('直方图通道勾选切换', () {
       final state = IspStudioState.withDefaultGraph();
       expect(state.histogramChannels('n1'), {'r', 'g', 'b'});
@@ -212,19 +401,72 @@ void main() {
 
     test('波形监视器 Y 通道与 R/G/B 互斥', () {
       final state = IspStudioState.withDefaultGraph();
-      // 缺省只显示 Y。
-      expect(state.waveformChannels('n1'), {'y'});
-      // Y 态下勾选 G：Y 取消，G 生效；R/G/B 之间可多选。
+      // 缺省 RGB 全开（与直方图一致）。
+      expect(state.waveformChannels('n1'), {'r', 'g', 'b'});
+      // R/G/B 态下勾选 G：G 被关闭，剩下 R/B。
       state.toggleWaveformChannel('n1', 'g');
-      expect(state.waveformChannels('n1'), {'g'});
-      state.toggleWaveformChannel('n1', 'r');
-      expect(state.waveformChannels('n1'), {'r', 'g'});
+      expect(state.waveformChannels('n1'), {'r', 'b'});
       // 选中 Y：R/G/B 全部关闭。
       state.toggleWaveformChannel('n1', 'y');
       expect(state.waveformChannels('n1'), {'y'});
       // 取消 Y 后恢复 RGB 全选。
       state.toggleWaveformChannel('n1', 'y');
       expect(state.waveformChannels('n1'), {'r', 'g', 'b'});
+    });
+
+    test('修改图片源文件后重新运行预览，仪器结果随之刷新', () async {
+      img.Image solid(int v) {
+        final image = img.Image(width: 16, height: 16);
+        img.fill(image, color: img.ColorRgb8(v, v, v));
+        return image;
+      }
+
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final fileA = File('${Directory.systemTemp.path}/isp_img_a_$stamp.bmp');
+      final fileB = File('${Directory.systemTemp.path}/isp_img_b_$stamp.bmp');
+      await fileA.writeAsBytes(img.encodeBmp(solid(10)));
+      await fileB.writeAsBytes(img.encodeBmp(solid(245)));
+      try {
+        final state = IspStudioState();
+        final srcId = state.graph.addNode('image_source', 0, 0);
+        final pvId = state.graph.addNode('preview', 300, 0);
+        final waveId = state.graph.addNode('waveform', 600, 0);
+        expect(state.graph.connect(srcId, 'out_rgb', pvId, 'in'), isNull);
+        expect(state.graph.connect(srcId, 'out_rgb', waveId, 'in'), isNull);
+        state.setParam(srcId, 'filePath', fileA.path);
+
+        int argmaxLevel() {
+          final counts = state.instrumentResults[waveId]?['y'] as Uint32List?;
+          expect(counts, isNotNull, reason: '波形仪器应有分析结果');
+          var best = 0, bestC = 0;
+          final cols =
+              (state.instrumentResults[waveId]!['columns'] as num).toInt();
+          for (var lvl = 0; lvl < 256; lvl++) {
+            var c = 0;
+            for (var col = 0; col < cols; col++) {
+              c += counts![lvl * cols + col];
+            }
+            if (c > bestC) {
+              bestC = c;
+              best = lvl;
+            }
+          }
+          return best;
+        }
+
+        await state.runPreview();
+        expect(state.statusMessage, contains('预览就绪'));
+        expect(argmaxLevel(), lessThan(40), reason: '暗图计数应集中在低亮度');
+
+        state.setParam(srcId, 'filePath', fileB.path);
+        await state.runPreview();
+        expect(state.statusMessage, contains('预览就绪'));
+        expect(argmaxLevel(), greaterThan(220),
+            reason: '换成亮图重新运行后，波形计数应集中在高亮度');
+      } finally {
+        await fileA.delete();
+        await fileB.delete();
+      }
     });
 
     test('未连接的仪器节点不产生分析结果', () async {      const w = 8, h = 8;
@@ -284,3 +526,4 @@ void main() {
     });
   });
 }
+

@@ -141,9 +141,6 @@ class MainLayout extends StatelessWidget {
 
     if (selectedIndex == 6) {
       final ispState = context.watch<IspStudioState>();
-      final msg = ispState.statusMessage.isNotEmpty
-          ? ispState.statusMessage
-          : 'ISP Studio 准备就绪';
       return Container(
         height: 28,
         color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
@@ -156,10 +153,21 @@ class MainLayout extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Flexible(
-                    child: Text(
-                      msg,
-                      style: const TextStyle(fontSize: 12, color: Colors.white),
-                      overflow: TextOverflow.ellipsis,
+                    // 播放中的逐帧状态（帧号/FPS/停滞）只监听 frameTick，
+                    // 不依赖全树 notifyListeners。
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: ispState.frameTick,
+                      builder: (context, tick, child) {
+                        final msg = ispState.statusMessage.isNotEmpty
+                            ? ispState.statusMessage
+                            : 'ISP Studio 准备就绪';
+                        return Text(
+                          msg,
+                          style: const TextStyle(
+                              fontSize: 12, color: Colors.white),
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
                     ),
                   ),
                   if (ispState.errors.isNotEmpty) ...[

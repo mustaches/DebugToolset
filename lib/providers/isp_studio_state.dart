@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -22,6 +23,27 @@ import '../modules/isp_studio/pipeline/pipeline_worker.dart';
 import '../modules/isp_studio/pipeline/raw_sidecar.dart';
 import '../modules/isp_studio/pipeline/video_source.dart';
 import '../modules/isp_studio/widgets/node_layout.dart';
+
+/// GPU 平面预览帧：视频 yuv444p 直出帧原样打包成的单张纹理
+/// （宽 w/4、高 h*3，RGBA 纹素各装 4 个连续样本）+ 显示模式。
+/// 由 shaders/yuv_planes.frag 在 GPU 上解包上色，CPU 零逐像素工作。
+class PlanePreviewFrame {
+  /// 打包纹理（同帧所有预览节点共享，只随换帧释放一次）。
+  final ui.Image packed;
+
+  /// 0=YUV→RGB 彩色；1/2/3=Y/U/V 平面灰度。
+  final int mode;
+
+  /// 逻辑图像尺寸（视频原始宽高）。
+  final int width;
+  final int height;
+
+  /// 源是否 limited range（tv）：shader 里做范围扩展。
+  final bool limited;
+
+  const PlanePreviewFrame(
+      this.packed, this.mode, this.width, this.height, this.limited);
+}
 
 /// ISP Studio 模块状态：节点图、画布变换、执行与导出编排。
 class IspStudioState extends ChangeNotifier {
@@ -120,7 +142,9 @@ class IspStudioState extends ChangeNotifier {
   ui.Image? get previewImage =>
       previewImages.isEmpty ? _legacyPreviewImage : previewImages.values.first;
 
-  /// 旧单链预览路径写入的图像（runPreview 单帧非视频源路径保留）。
+  /// 旧单链预览路径的图像引用。**非持有别名**：指向 previewImages
+  /// 中第一个预览节点的图像，释放统一由 previewImages 的清理负责，
+  /// 任何路径都不得单独 dispose 它（否则与 previewImages 双重释放）。
   ui.Image? _legacyPreviewImage;
 
   int previewFrame = 0;
@@ -276,6 +300,7 @@ class IspStudioState extends ChangeNotifier {
     graph.removeNode(id);
     closeCodeTab(id);
     nodeOutputCaptures = {}; // 运行值已过期
+    _instrumentSrcCache.clear();
     instrumentResults.remove(id);
     instrumentImages.remove(id)?.dispose();
     _histogramChannels.remove(id);
@@ -316,6 +341,92 @@ class IspStudioState extends ChangeNotifier {
     return _waveformChannels[nodeId] = {'r', 'g', 'b'};
   }
 
+  /// 播放中各预览节点的 GPU 平面帧（非空时优先于 [previewImages] 显示；
+  /// 同帧所有节点共享一张打包纹理）。
+  Map<String, PlanePreviewFrame> previewPlanes = {};
+
+  /// yuv_planes.frag 着色器实例（GPU 平面预览播放时加载；失败回退 CPU）。
+  ui.FragmentShader? yuvPlaneShader;
+
+  /// 释放共享打包纹理并清空平面预览（换帧/单次运行时调用）。
+  void _clearPlanePreviews() {
+    if (previewPlanes.isNotEmpty) {
+      previewPlanes.values.first.packed.dispose();
+      previewPlanes = {};
+    }
+  }
+
+  /// 预览节点的 GPU 平面模式：1/2/3 = Y/U/V 平面灰度（in_mono 追溯到
+  /// 源分路器的 out_y/out_u/out_v，中间可隔透传预览）；0 = 彩色
+  /// （输入为视频源 out_yuv 直连，或输入可证明恒等的 YUV 合路器）。
+  /// 无法证明时返回 null（整体回退 CPU 流水线出图）。
+  int? _previewPlaneMode(String previewId, [int depth = 0]) {
+    if (depth > 8) return null;
+    final node = graph.nodes[previewId];
+    if (node == null || node.typeId != 'preview') return null;
+    final monoConn = graph.connectionAt(previewId, 'in_mono');
+    if (monoConn != null) {
+      final plane =
+          _resolveSplitterPlane(monoConn.fromNodeId, monoConn.fromPort, 0);
+      return plane == null ? null : plane + 1;
+    }
+    final conn = graph.connectionAt(previewId, 'in_yuv') ??
+        graph.connectionAt(previewId, 'in');
+    if (conn == null) return null;
+    final up = graph.nodes[conn.fromNodeId];
+    if (up == null) return null;
+    if (up.typeId == 'video_source' && conn.fromPort == 'out_yuv') return 0;
+    if (up.typeId == 'yuv_combiner' && conn.fromPort == 'out') {
+      return _combinerIsPlaneIdentity(conn.fromNodeId) ? 0 : null;
+    }
+    if (up.typeId == 'preview') {
+      return _previewPlaneMode(conn.fromNodeId, depth + 1);
+    }
+    return null;
+  }
+
+  /// 追溯 [nodeId] 的 [port] 输出是否源于 YUV 分路器的某个平面
+  /// （中间允许隔透传预览），是则返回平面序号（0/1/2），否则 null。
+  int? _resolveSplitterPlane(String nodeId, String port, int depth) {
+    if (depth > 8) return null;
+    final node = graph.nodes[nodeId];
+    if (node == null) return null;
+    if (node.typeId == 'yuv_splitter') {
+      return switch (port) {
+        'out_y' => 0,
+        'out_u' => 1,
+        'out_v' => 2,
+        _ => null,
+      };
+    }
+    if (node.typeId == 'preview') {
+      final conn = graph.connectionAt(nodeId, 'in_mono') ??
+          graph.connectionAt(nodeId, 'in_yuv') ??
+          graph.connectionAt(nodeId, 'in');
+      if (conn == null) return null;
+      return _resolveSplitterPlane(conn.fromNodeId, conn.fromPort, depth + 1);
+    }
+    return null;
+  }
+
+  /// YUV 合路器的三路输入是否分别源于同一分路器的 Y/U/V 平面
+  /// （恒等合路：输出与源帧内容一致，平面轨道下共享引用）。
+  bool _combinerIsPlaneIdentity(String combinerId) {
+    for (final (inPort, expected) in [
+      ('in_y', 0),
+      ('in_u', 1),
+      ('in_v', 2),
+    ]) {
+      final conn = graph.connectionAt(combinerId, inPort);
+      if (conn == null) return false;
+      if (_resolveSplitterPlane(conn.fromNodeId, conn.fromPort, 0) !=
+          expected) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /// 切换波形示波器节点某通道的显示（Y 与 R/G/B 互斥；关闭 Y 时 R/G/B 默认全开；当 R/G/B 全关时自动激活 Y）。
   void toggleWaveformChannel(String nodeId, String channel) {
     final set = waveformChannels(nodeId);
@@ -344,7 +455,17 @@ class IspStudioState extends ChangeNotifier {
     }
     final result = instrumentResults[nodeId];
     if (result != null) {
-      _updateInstrumentImage(nodeId, result);
+      if (result['bmp'] is Uint8List) {
+        // 播放中的 worker 预渲染结果不含计数表，无法本地重绘：
+        // 刷新已不限频，下一批（最近一帧内）会按新通道组合出图。
+      } else {
+        // 异步解码完成后必须递增 instrumentTick：仪器附加区靠它局部
+        // 重建；同步的 notifyListeners 触发重建时新图还没解码好，
+        // 少了这一步显示会停在旧通道组合上，直到下次刷新/缩放。
+        unawaited(_updateInstrumentImage(nodeId, result).then((_) {
+          instrumentTick.value++;
+        }));
+      }
     }
     notifyListeners();
   }
@@ -761,6 +882,7 @@ class IspStudioState extends ChangeNotifier {
     final error = graph.connect(fromId, fromPort, toNodeId, toPort);
     if (error == null) {
       nodeOutputCaptures = {}; // 连接变了，运行值已过期
+      _instrumentSrcCache.clear();
       final type = graph.nodes[toNodeId]?.typeId;
       if (type == 'histogram' || type == 'waveform') {
         if (toPort == 'in_mono') {
@@ -779,6 +901,7 @@ class IspStudioState extends ChangeNotifier {
   void disconnectInput(String nodeId, String port) {
     graph.disconnectInput(nodeId, port);
     nodeOutputCaptures = {};
+    _instrumentSrcCache.clear();
     _clearStaleConnectionSelection();
     notifyListeners();
   }
@@ -787,6 +910,7 @@ class IspStudioState extends ChangeNotifier {
   void removeConnection(String connectionId) {
     graph.disconnect(connectionId);
     nodeOutputCaptures = {};
+    _instrumentSrcCache.clear();
     if (selectedConnectionId == connectionId) selectedConnectionId = null;
     notifyListeners();
   }
@@ -831,6 +955,8 @@ class IspStudioState extends ChangeNotifier {
     isProcessing = true;
     progress = 0.05;
     statusMessage = '正在解析节点图与计算帧序列…';
+    _lastPlaybackRgba = null; // 单次运行的节点捕获优先于过期播放帧
+    _clearPlanePreviews();
     notifyListeners();
     final token = ++_runToken;
     try {
@@ -896,8 +1022,10 @@ class IspStudioState extends ChangeNotifier {
       ]);
       if (token != _runToken) return;
 
-      // 向后兼容：legacy 字段指向第一个预览图。
-      _legacyPreviewImage?.dispose();
+      // 向后兼容：legacy 字段指向第一个预览图（非持有别名，所有权在
+      // previewImages——此处若再 dispose 旧值，与上面闭包里
+      // previewImages.remove()?.dispose() 构成双重释放，二次运行必崩，
+      // 仪器刷新（在本次赋值之后）永远不会执行）。
       _legacyPreviewImage = previewImages[firstPreview.id];
 
       previewWidth = w;
@@ -960,7 +1088,18 @@ class IspStudioState extends ChangeNotifier {
               final type = IspNodeRegistry.byId(node.typeId);
               Uint8List? rgba;
               int? w, h;
-              if (type != null) {
+              // 优先复用播放中最近上屏的帧（暂停场景）：视频源逐仪器
+              // 重新 seek 解码要起多次 ffmpeg，耗时以秒计。
+              final lastMap = _lastPlaybackRgba;
+              if (lastMap != null && lastMap.isNotEmpty) {
+                final srcId = _instrumentSrcNodeId(node);
+                rgba = lastMap[srcId] ?? lastMap.values.first;
+                // GPU 平面馈源的 U/V chroma 平面是半尺寸，按条目取真实宽高，
+                // 不能用全分辨率 _lastPlaybackW/H 去索引。
+                final dim = _lastPlaybackDims?[srcId];
+                w = dim?.$1 ?? _lastPlaybackW;
+                h = dim?.$2 ?? _lastPlaybackH;
+              } else if (type != null) {
                 for (final inputSpec in type.inputs) {
                   final inputConn = graph.connectionAt(node.id, inputSpec.name);
                   if (inputConn != null) {
@@ -977,22 +1116,27 @@ class IspStudioState extends ChangeNotifier {
 
               Map<String, Object?> result;
               if (rgba != null && w != null && h != null && w > 0 && h > 0) {
-                final (downRgba, dw, dh) = downsampleRgba82x(rgba, w, h);
-                result = await _instrumentAnalyzer.analyze(downRgba, dw, dh, node.typeId);
+                final (srcRgba, srcW, srcH) = w > 64 && h > 64
+                    ? downsampleRgba82x(rgba, w, h)
+                    : (rgba, w, h);
+                result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
               } else {
                 final chain = compileChain(graph, node.id);
                 final chainRgba = await runChainFrame(chain, frame);
                 final (dw, dh) = await sourceDimensions(
                     chain.first['typeId'] as String,
                     chain.first['params'] as Map<String, Object?>);
-                final (downRgba, dw2, dh2) = downsampleRgba82x(chainRgba, dw, dh);
-                result = await _instrumentAnalyzer.analyze(downRgba, dw2, dh2, node.typeId);
+                final (srcRgba, srcW, srcH) = dw > 64 && dh > 64
+                    ? downsampleRgba82x(chainRgba, dw, dh)
+                    : (chainRgba, dw, dh);
+                result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
               }
               if (token != _runToken) return;
               instrumentResults[node.id] = result;
               await _updateInstrumentImage(node.id, result);
-            } catch (_) {
-              // 链不完整等失败：保留旧结果，不影响预览。
+            } catch (e) {
+              // 链不完整等失败：保留旧结果，不影响预览，但记录便于诊断。
+              debugPrint('[isp] 仪器分析失败 ${node.id}(${node.typeId}): $e');
             } finally {
               instrumentCompleted++;
               if (token == _runToken) {
@@ -1005,7 +1149,13 @@ class IspStudioState extends ChangeNotifier {
       ]);
     }
     await audioFuture;
-    if (token == _runToken) notifyListeners();
+    if (token == _runToken) {
+      // 仪器附加区用 ValueListenableBuilder 只监听 instrumentTick，
+      // 单次运行/暂停路径必须主动递增它，否则该区域在部分时序下
+      // 不会因外层 notifyListeners 而可靠重建。
+      instrumentTick.value++;
+      notifyListeners();
+    }
   }
 
   /// 音频仪器的 WAV PCM 缓存（WAV 路径 → 解析结果）。
@@ -1061,111 +1211,67 @@ class IspStudioState extends ChangeNotifier {
   }
 
   /// 波形/矢量示波器：把计数表映射为亮度图并解码为显示图像。
+  /// 播放中结果由仪器 worker 侧预渲染（'bmp'），直接解码；
+  /// 暂停/单次运行结果含计数表，本地渲染。
   Future<void> _updateInstrumentImage(
       String nodeId, Map<String, Object?> result) async {
     int w, h;
     Uint8List bmp;
     final kind = result['kind'] as String?;
+    final prerendered = result['bmp'] as Uint8List?;
     switch (kind) {
       case 'waveform':
         w = (result['columns'] as num?)?.toInt() ?? 512;
         h = kWaveformLevels;
-        final visible = waveformChannels(nodeId);
-        bmp = _waveformIntensityRgba(result, w, h, visible);
+        if (prerendered != null) {
+          bmp = prerendered;
+        } else {
+          final visible = waveformChannels(nodeId);
+          bmp = waveformIntensityRgba(result, w, h, visible);
+        }
       case 'vectorscope':
         w = h = kVectorscopeSize;
-        final counts = result['counts'] as Uint32List?;
-        if (counts == null) return;
-        bmp = _intensityRgba(counts, w, h, const (r: 70, g: 235, b: 70));
+        if (prerendered != null) {
+          bmp = prerendered;
+        } else {
+          final counts = result['counts'];
+          if (counts is! Uint32List) return;
+          bmp = intensityRgba(counts, w, h, 70, 235, 70);
+        }
       default:
         return; // 直方图与音频仪器由控件直绘，无需图像
     }
-    final completer = Completer<ui.Image>();
-    ui.decodeImageFromPixels(
-        bmp, w, h, ui.PixelFormat.rgba8888, completer.complete);
-    final image = await completer.future;
+    // 首次运行时光栅线程可能还在忙首帧渲染/大预览纹理上传，小图解码
+    // 回调会被推迟超过 2s——超时不等于解码失败，重试等引擎空闲即可。
+    ui.Image? image;
+    Object? lastError;
+    for (var attempt = 0; attempt < 3 && image == null; attempt++) {
+      final completer = Completer<ui.Image>();
+      var timedOut = false;
+      ui.decodeImageFromPixels(
+          bmp, w, h, ui.PixelFormat.rgba8888, completer.complete);
+      try {
+        image = await completer.future.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () {
+            timedOut = true;
+            throw StateError(
+                'decodeImageFromPixels 超时 (${bmp.length} bytes, ${w}x$h)');
+          },
+        );
+      } catch (e) {
+        lastError = e;
+        if (timedOut) {
+          // 迟到的回调仍会生成图像，无人持有会泄漏 GPU 纹理。
+          unawaited(completer.future.then((late) => late.dispose()));
+        }
+      }
+    }
+    if (image == null) {
+      throw lastError ?? StateError('decodeImageFromPixels 失败 (${w}x$h)');
+    }
     instrumentImages.remove(nodeId)?.dispose();
     instrumentImages[nodeId] = image;
-  }
-
-  /// 计数表 → RGBA 亮度图（对数刻度；数据第 0 行在底部，图像第 0 行在顶部）。
-  static Uint8List _intensityRgba(
-      Uint32List counts, int w, int h, ({int r, int g, int b}) tint) {
-    final out = Uint8List(w * h * 4);
-    var max = 0;
-    for (final c in counts) {
-      if (c > max) max = c;
-    }
-    if (max == 0) return out;
-    final logMax = math.log(max + 1);
-    for (var ry = 0; ry < h; ry++) {
-      final srcRow = h - 1 - ry;
-      for (var x = 0; x < w; x++) {
-        final c = counts[srcRow * w + x];
-        if (c == 0) continue;
-        final t = (math.log(c + 1) / logMax * 255).round();
-        final j = (ry * w + x) * 4;
-        out[j] = tint.r * t ~/ 255;
-        out[j + 1] = tint.g * t ~/ 255;
-        out[j + 2] = tint.b * t ~/ 255;
-        out[j + 3] = 255;
-      }
-    }
-    return out;
-  }
-
-  /// 波形监视器 RGBA 图像生成：按 [visible] 通道分别使用对应专属颜色绘制，
-  /// 不做色彩混叠（Y 为白色 0xFFFFFF，R 为红色 0xFFE04040，
-  /// G 为绿色 0xFF40C040，B 为蓝色 0xFF4080E0）。
-  static Uint8List _waveformIntensityRgba(
-      Map<String, Object?> result, int w, int h, Set<String> visible) {
-    final out = Uint8List(w * h * 4);
-    if (visible.isEmpty) return out;
-
-    if (visible.contains('y')) {
-      final counts = (result['y'] ?? result['counts']) as Uint32List?;
-      if (counts == null) return out;
-      return _intensityRgba(counts, w, h, const (r: 255, g: 255, b: 255));
-    }
-
-    for (final (ch, countsKey, tint) in [
-      ('r', 'r', const (r: 255, g: 0, b: 0)),
-      ('g', 'g', const (r: 0, g: 255, b: 0)),
-      ('b', 'b', const (r: 0, g: 0, b: 255)),
-    ]) {
-      if (!visible.contains(ch)) continue;
-      final counts = result[countsKey] as Uint32List?;
-      if (counts == null) continue;
-      _drawChannelInto(out, counts, w, h, tint);
-    }
-
-    return out;
-  }
-
-  static void _drawChannelInto(Uint8List out, Uint32List counts, int w, int h,
-      ({int r, int g, int b}) tint) {
-    var max = 0;
-    for (final c in counts) {
-      if (c > max) max = c;
-    }
-    if (max == 0) return;
-    final logMax = math.log(max + 1);
-    for (var ry = 0; ry < h; ry++) {
-      final srcRow = h - 1 - ry;
-      for (var x = 0; x < w; x++) {
-        final c = counts[srcRow * w + x];
-        if (c == 0) continue;
-        final t = (math.log(c + 1) / logMax * 255).round();
-        final j = (ry * w + x) * 4;
-        final cr = tint.r * t ~/ 255;
-        final cg = tint.g * t ~/ 255;
-        final cb = tint.b * t ~/ 255;
-        out[j] = math.min(255, out[j] + cr);
-        out[j + 1] = math.min(255, out[j + 1] + cg);
-        out[j + 2] = math.min(255, out[j + 2] + cb);
-        out[j + 3] = math.max(out[j + 3], t);
-      }
-    }
   }
 
   void setPreviewFrame(int frame) {
@@ -1178,6 +1284,16 @@ class IspStudioState extends ChangeNotifier {
 
   /// 是否正在连续播放预览。
   bool isPlaying = false;
+
+  /// 播放逐帧刷新信号：每帧 +1，取代全树 notifyListeners——只有预览
+  /// 附加区与状态栏监听它逐帧重建，画布/节点结构不再逐帧重排
+  /// （否则缩小画布后十几个节点卡片每帧全量重建，UI isolate 被堵死，
+  /// 走帧循环被饿死而连续停滞）。
+  final ValueNotifier<int> frameTick = ValueNotifier<int>(0);
+
+  /// 仪器结果刷新信号（波形/矢量/直方图/音频仪器附加区重建用，
+  /// 播放中限频触发，暂停/单次运行由结构性 notifyListeners 覆盖）。
+  final ValueNotifier<int> instrumentTick = ValueNotifier<int>(0);
 
   /// 播放计数：取到的帧数 / 实际上屏 / 时间轴重建（停滞）次数
   /// （诊断用，每次播放清零）。
@@ -1195,6 +1311,19 @@ class IspStudioState extends ChangeNotifier {
 
   /// 诊断：等待结束后超过截止时刻的最大值（微秒）。
   int playbackMaxWaitOverUs = 0;
+
+  /// 播放中最近一次上屏帧的各预览链 RGBA（暂停时仪器刷新直接复用，
+  /// 免逐仪器重新 seek 解码视频帧）。
+  Map<String, Uint8List>? _lastPlaybackRgba;
+  int _lastPlaybackW = 0;
+  int _lastPlaybackH = 0;
+
+  /// GPU 平面预览时 [_lastPlaybackRgba] 各条目的真实宽高（U/V chroma
+  /// 平面为半尺寸）；非 GPU 平面模式为 null（所有条目同为全分辨率）。
+  Map<String, (int, int)>? _lastPlaybackDims;
+
+  /// 调试：打印播放生产各阶段耗时（基准测试用，默认关闭）。
+  static bool debugPlaybackTiming = false;
 
   /// 帧缓存总字节数上限（超出则边算边播，不缓存）。
   static const int kPlaybackCacheBytes = 1600 * 1024 * 1024;
@@ -1240,6 +1369,7 @@ class IspStudioState extends ChangeNotifier {
 
     isProcessing = true;
     isPlaying = true;
+    _clearPlanePreviews(); // 避免上一段 GPU 播放的过期帧残留
     notifyListeners();
     final token = ++_runToken;
     try {
@@ -1249,11 +1379,56 @@ class IspStudioState extends ChangeNotifier {
           if (instrumentTypes.contains(node.typeId)) node,
       ];
       var frame = previewFrame.clamp(0, total - 1);
+      // 全部预览链都消费 YUV 时让 ffmpeg 直出平面 YUV，配合 GPU 硬解，
+      // 每条链省掉 RGBA→RGB16→YUV 两道逐像素全帧转换。
+      final yuvDirect = isVideo &&
+          validChains.values.every(
+              (c) => (c.first['outFormat'] as String? ?? 'rgb') == 'yuv');
+      // GPU 平面预览：全部预览链消费 YUV、尺寸可按 4 纹素/420 打包、
+      // 且每个预览节点都能证明是源平面（或其恒等合路）的直接视图时，
+      // 播放帧以解码器原生 yuv420p 原样打包上传，上色与范围扩展交给
+      // GPU shader（yuv_planes.frag），CPU 不做逐像素转换。任一条件
+      // 不满足则整体回退 CPU 流水线（yuv444p）。
+      // 帧字节数须 < 2^24（约 5.3K）：shader 扁平字节寻址用的是
+      // float，超出 24 位精度会错乱（4K = 12.4MB，余量充足）。
+      var gpuPlanes = false;
+      var planeModes = <String, int>{};
+      // GPU 平面预览时 rgbaMap 已按 gpuStep 预降采样，仪器刷新须用
+      // 降采样后的尺寸再喂给 downsampleRgba8Step，否则越界。
+      var gpuStep = 1;
+      // 各预览节点仪器馈源的真实宽高：U/V chroma 平面是半尺寸
+      // （w/2 × h/2），与 Y/彩色全尺寸不同。
+      final gpuPlaneDims = <String, (int, int)>{};
+      if (yuvDirect && w % 4 == 0 && h % 2 == 0 && w * h * 3 ~/ 2 < 1 << 24) {
+        final modes = <String, int>{};
+        var ok = true;
+        for (final id in validChains.keys) {
+          final m = _previewPlaneMode(id);
+          if (m == null) {
+            ok = false;
+            break;
+          }
+          modes[id] = m;
+        }
+        if (ok) {
+          try {
+            final prog = await ui.FragmentProgram.fromAsset(
+                'shaders/yuv_planes.frag');
+            yuvPlaneShader = prog.fragmentShader();
+            gpuPlanes = true;
+            planeModes = modes;
+          } catch (_) {} // shader 不可用：回退 CPU 流水线
+        }
+      }
+      final pixelFormat =
+          gpuPlanes ? 'yuv420p' : (yuvDirect ? 'yuv444p' : 'rgba');
       // 视频源：从当前帧起顺序流式解码（内部前向缓冲，背压限速）。
+      // 全分辨率出帧：预览按原始尺寸播放，不做降采样。
       var stream = isVideo
           ? await VideoFrameStream.start(
               srcParams['filePath']?.toString() ?? '', frame,
-              ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '')
+              ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '',
+              pixelFormat: pixelFormat)
           : null;
       // 音频回放（有音轨时）：ffmpeg 抽取 WAV + MCI 播放。
       final audio = MciAudioPlayer();
@@ -1276,16 +1451,31 @@ class IspStudioState extends ChangeNotifier {
       final videoDirect = isVideo &&
           (chain.first['outFormat'] as String? ?? 'rgb') == 'rgb' &&
           chain.skip(1).every((op) => sinkNodeTypes.contains(op['typeId']));
-      final poolSize = videoDirect
+      final poolSize = videoDirect || gpuPlanes
           ? 0
           : math.min(validChains.length,
               math.max(1, Platform.numberOfProcessors - 1));
-      final pipeline = videoDirect ? null : PipelineWorkerPool(count: poolSize);
+      final pipeline =
+          videoDirect || gpuPlanes ? null : PipelineWorkerPool(count: poolSize);
+      // 预热流水线 worker：isolate 启动与上面的流解码/音频初始化并行，
+      // 首帧生产不再承担 ~0.5s 的 spawn 开销。
+      pipeline?.warmup();
+      // 仪器分析池同样预热（懒启动否则发生在首个刷新批次，阻塞走帧）。
+      if (allImageInstruments.isNotEmpty) {
+        unawaited(_instrumentAnalyzer.warmup());
+      }
       final playSw = Stopwatch()..start();
       var pace = frameDuration;
       Duration? emaProd;
       var nextDeadline = Duration.zero;
       playbackProduced = playbackDisplayed = playbackDropped = 0;
+      // 实时帧率统计：最近 1 秒上屏时间戳的滚动窗口。
+      final fpsWindow = Queue<int>();
+
+      // 取流帧串行闸：VideoFrameStream.next() 不支持并发等待，预缓冲
+      // 深度为 2 时两趟生产会并发取帧，用门闩排队（解码 worker 内部有
+      // 16 帧前向缓冲，取帧通常即刻返回，不会成为瓶颈）。
+      Future<void> fetchGate = Future.value();
 
       // 生产一帧：并行跑全部有效预览链，返回像素映射与 UI 图像。
       Future<
@@ -1307,20 +1497,30 @@ class IspStudioState extends ChangeNotifier {
 
         if (isVideo) {
           final fetchSw = Stopwatch()..start();
-          var bytes = await stream!.next();
-          if (bytes == null) {
-            await stream!.dispose();
-            stream = await VideoFrameStream.start(
-                srcParams['filePath']?.toString() ?? '', 0,
-                ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '');
+          final prevGate = fetchGate;
+          final gate = Completer<void>();
+          fetchGate = gate.future;
+          Uint8List? bytes;
+          await prevGate;
+          try {
             bytes = await stream!.next();
-            if (bytes == null) return null;
-            f = 0;
-            restarted = true;
-            try {
-              audio.stop();
-              audioStarted = false;
-            } catch (_) {}
+            if (bytes == null) {
+              await stream!.dispose();
+              stream = await VideoFrameStream.start(
+                  srcParams['filePath']?.toString() ?? '', 0,
+                  ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '',
+                  pixelFormat: pixelFormat);
+              bytes = await stream!.next();
+              if (bytes == null) return null;
+              f = 0;
+              restarted = true;
+              try {
+                audio.stop();
+                audioStarted = false;
+              } catch (_) {}
+            }
+          } finally {
+            gate.complete();
           }
           playbackProduced++;
           if (fetchSw.elapsedMicroseconds > playbackMaxFetchUs) {
@@ -1330,12 +1530,52 @@ class IspStudioState extends ChangeNotifier {
 
           primaryRgba = bytes;
 
-          final needDownsample = h > 720;
-          final (workBytes, workW, workH) = needDownsample
-              ? downsampleRgba82x(bytes, w, h)
-              : (bytes, w, h);
+          // 全分辨率工作帧（预览按原始尺寸播放，不降采样）。
+          final workBytes = bytes;
+          final workW = stream!.outWidth;
+          final workH = stream!.outHeight;
+          final downUs = prodSw.elapsedMicroseconds;
 
-          if (videoDirect && validChains.length == 1) {
+          if (gpuPlanes) {
+            // GPU 平面预览：yuv420p 帧原样打包为 (w/4)x(h*3/2) RGBA
+            // 纹理上传（每纹素 4 字节，零重排零转换），上色与范围扩展
+            // 在 shader 里做。仪器馈源按平面模式步长抽样合成 ~480p
+            // 小图（统计类仪器不需要更高分辨率）。
+            final limited = !stream!.info.fullRange;
+            var step = 1;
+            while (workH ~/ step > 480) {
+              step *= 2;
+            }
+            gpuStep = step;
+            final frameData = bytes;
+            for (final e in planeModes.entries) {
+              if (e.value == 0) {
+                rgbaMap[e.key] = yuv420p8ToRgbaStep(frameData, workW, workH,
+                    step, limited: limited);
+                gpuPlaneDims[e.key] = (workW ~/ step, workH ~/ step);
+              } else {
+                // U/V chroma 平面（planeIdx = mode-1 = 1/2）半尺寸
+                // （w/2 × h/2），与 Y/彩色全尺寸不同，须记录真实宽高。
+                final planeIdx = e.value - 1;
+                rgbaMap[e.key] = yuv420pPlaneToRgbaStep(
+                    frameData, workW, workH, planeIdx, step, limited: limited);
+                final pw = planeIdx == 0 ? workW : workW >> 1;
+                final ph = planeIdx == 0 ? workH : workH >> 1;
+                gpuPlaneDims[e.key] = (pw ~/ step, ph ~/ step);
+              }
+            }
+            primaryRgba = rgbaMap[firstEntry.key] ?? bytes;
+
+            final completer = Completer<ui.Image>();
+            ui.decodeImageFromPixels(bytes, workW ~/ 4, workH * 3 ~/ 2,
+                ui.PixelFormat.rgba8888, completer.complete);
+            images[''] = await completer.future; // 打包纹理（'' 非节点 id）
+            if (debugPlaybackTiming) {
+              // ignore: avoid_print
+              print('prod f=$f: 取流 $downUs us, GPU打包+仪器馈源 '
+                  '${prodSw.elapsedMicroseconds - downUs} us');
+            }
+          } else if (videoDirect && validChains.length == 1) {
             final completer = Completer<ui.Image>();
             ui.decodeImageFromPixels(workBytes, workW, workH,
                 ui.PixelFormat.rgba8888, completer.complete);
@@ -1343,10 +1583,12 @@ class IspStudioState extends ChangeNotifier {
             rgbaMap = {firstEntry.key: workBytes};
           } else {
             rgbaMap = await pipeline!.runParallel(validChains, f,
-                sourceRgba: workBytes,
+                sourceRgba: yuvDirect ? null : workBytes,
+                sourceYuv: yuvDirect ? workBytes : null,
                 sourceWidth: workW,
                 sourceHeight: workH);
             primaryRgba = rgbaMap[firstEntry.key] ?? workBytes;
+            final pipeUs = prodSw.elapsedMicroseconds;
 
             await Future.wait([
               for (final entry in rgbaMap.entries)
@@ -1357,6 +1599,12 @@ class IspStudioState extends ChangeNotifier {
                   images[entry.key] = await completer.future;
                 }(),
             ]);
+            if (debugPlaybackTiming) {
+              final imgUs = prodSw.elapsedMicroseconds;
+              // ignore: avoid_print
+              print('prod f=$f: 取流+降采样 $downUs us, 流水线 '
+                  '${pipeUs - downUs} us, 图像解码 ${imgUs - pipeUs} us');
+            }
           }
           if (!videoDirect || validChains.length > 1) {
             stream!.recycle(bytes);
@@ -1397,17 +1645,20 @@ class IspStudioState extends ChangeNotifier {
         }
       }
 
-      Future<
-          (
-            int,
-            Uint8List,
-            Map<String, ui.Image>,
-            Map<String, Uint8List>,
-            bool,
-            int,
-            int,
-            int
-          )?>? pending = produceFrame(frame);
+      // 预缓冲：最多 2 帧在途生产（取帧经 fetchGate 串行、流水线计算
+      // 在 worker 池中并行），播放节拍抖动由在途帧吸收，解码/流水线
+      // 偶发慢帧不再直接造成上屏断档。
+      final inflight = Queue.of([produceFrame(frame)]);
+      var nextProduceFrame = (frame + 1) % total;
+      void refillInflight() {
+        while (inflight.length < 2) {
+          final f0 = nextProduceFrame;
+          inflight.add(produceFrame(f0));
+          nextProduceFrame = (f0 + 1) % total;
+        }
+      }
+
+      refillInflight();
       try {
         while (isPlaying && token == _runToken) {
           var remain = nextDeadline - playSw.elapsed;
@@ -1426,9 +1677,7 @@ class IspStudioState extends ChangeNotifier {
           if (over.inMicroseconds > playbackMaxWaitOverUs) {
             playbackMaxWaitOverUs = over.inMicroseconds;
           }
-          final pf = pending;
-          pending = null;
-          final produced = await pf!;
+          final produced = await inflight.removeFirst();
           if (produced == null) break;
           final (f, rgba, images, rgbaMap, restarted, prodUs, workW, workH) =
               produced;
@@ -1438,38 +1687,75 @@ class IspStudioState extends ChangeNotifier {
             }
             break;
           }
+          if (restarted) {
+            // EOF 重卷：在途的另一帧按旧流位置生产，丢弃并重建预缓冲队列。
+            while (inflight.isNotEmpty) {
+              final stale = await inflight.removeFirst();
+              if (stale != null) {
+                for (final img in stale.$3.values) {
+                  img.dispose();
+                }
+              }
+            }
+            nextProduceFrame = (f + 1) % total;
+          }
           if (playbackDisplayed == 0 || restarted) {
             nextDeadline = playSw.elapsed;
           } else if (playSw.elapsed - nextDeadline > pace * 2) {
             playbackDropped++;
             nextDeadline = playSw.elapsed;
           }
-          for (final entry in images.entries) {
-            previewImages.remove(entry.key)?.dispose();
-            previewImages[entry.key] = entry.value;
+          if (gpuPlanes) {
+            // 打包纹理换帧：同帧所有预览节点共享，旧纹理只释放一次。
+            final packed = images['']!;
+            final limited = !(stream?.info.fullRange ?? false);
+            _clearPlanePreviews();
+            previewPlanes = {
+              for (final e in planeModes.entries)
+                e.key: PlanePreviewFrame(packed, e.value, w, h, limited),
+            };
+          } else {
+            for (final entry in images.entries) {
+              previewImages.remove(entry.key)?.dispose();
+              previewImages[entry.key] = entry.value;
+            }
           }
           previewWidth = w;
           previewHeight = h;
           previewFrame = f;
+          // 留存最近上屏帧：暂停时仪器刷新直接复用，免重新解码。
+          _lastPlaybackRgba = rgbaMap;
+          _lastPlaybackW = workW;
+          _lastPlaybackH = workH;
+          _lastPlaybackDims = gpuPlanes ? Map.of(gpuPlaneDims) : null;
           playbackDisplayed++;
-          // 产能自适应：产能恢复时快速向上平滑收敛，防止冷启动帧拖慢后续节拍
+          // 产能自适应：产能恢复时快速向下平滑收敛。头两帧的生产耗时
+          // 含硬解初始化等一次性开销（预缓冲使其与后续帧叠加），过大的
+          // 瞬时值不计入节拍估计，避免冷启动拖慢整段播放的帧率显示与
+          // 走帧节奏。
           final prod = Duration(microseconds: prodUs);
-          final prevEma = emaProd;
-          final ema = prevEma == null
-              ? prod
-              : (prod < prevEma
-                  ? prevEma * 0.2 + prod * 0.8
-                  : prevEma * 0.7 + prod * 0.3);
-          emaProd = ema;
-          pace = ema > frameDuration ? ema : frameDuration;
+          if (playbackDisplayed > 2 || prod < frameDuration * 4) {
+            final prevEma = emaProd;
+            final ema = prevEma == null
+                ? prod
+                : (prod < prevEma
+                    ? prevEma * 0.2 + prod * 0.8
+                    : prevEma * 0.7 + prod * 0.3);
+            emaProd = ema;
+            pace = ema > frameDuration ? ema : frameDuration;
+          }
           playbackPaceUs = pace.inMicroseconds;
           if (prodUs > playbackMaxProdUs) playbackMaxProdUs = prodUs;
-          statusMessage = (pace > frameDuration
-                  ? '播放中 第 ${f + 1}/$total 帧'
-                      '（约 ${(1000000 / pace.inMicroseconds).toStringAsFixed(0)} fps，已降速）'
-                  : '播放中 第 ${f + 1}/$total 帧') +
-              (playbackDropped > 0 ? '  停滞$playbackDropped次' : '');
-          notifyListeners();
+          // 实时帧率：最近 1 秒的上屏时间戳滚动窗口，窗口长度即 FPS。
+          fpsWindow.add(playSw.elapsedMicroseconds);
+          while (fpsWindow.isNotEmpty &&
+              playSw.elapsedMicroseconds - fpsWindow.first > 1000000) {
+            fpsWindow.removeFirst();
+          }
+          statusMessage = '播放中 第 ${f + 1}/$total 帧  '
+              '${fpsWindow.length} FPS  停滞 $playbackDropped 次';
+          // 逐帧刷新只走 frameTick：避免全模块重建堵死 UI isolate。
+          frameTick.value++;
           if (audioReady && isVideo) {
             final videoT = f / stream!.info.fps;
             if (!audioStarted) {
@@ -1492,24 +1778,25 @@ class IspStudioState extends ChangeNotifier {
             }
           }
           // 仪器随播放刷新：实时匹配各预览节点渲染帧，免除 RangeError，无损高帧率刷新
+          final rgbaW = gpuPlanes ? workW ~/ gpuStep : workW;
+          final rgbaH = gpuPlanes ? workH ~/ gpuStep : workH;
           _refreshInstrumentsFromFrame(
-              rgbaMap, workW, workH, allImageInstruments, token);
+              rgbaMap, rgbaW, rgbaH, allImageInstruments, token,
+              dims: gpuPlanes ? gpuPlaneDims : null);
           // 音频仪器（电平/波形/EQ）随播放位置刷新（限频 ~15Hz）。
           _refreshAudioInstrumentsFromPlayback(f, token);
           if (isVideo && videoDirect) {
             // 像素与仪器数据都已取走，流帧缓冲归还池。
             stream!.recycle(rgba);
           }
-          // 立刻启动下一帧生产，与下一轮的截止等待并发。
-          frame = (f + 1) % total;
-          pending = produceFrame(frame);
+          // 补充在途生产（预缓冲深度 2），与下一轮的截止等待并发。
+          refillInflight();
           nextDeadline += pace;
         }
       } finally {
         // 在途的预取帧（未上屏）：结果回来后释放图像，避免泄漏 GPU 纹理。
-        final pf = pending;
-        if (pf != null) {
-          unawaited(pf.then((p) {
+        while (inflight.isNotEmpty) {
+          unawaited(inflight.removeFirst().then((p) {
             if (p != null) {
               for (final img in p.$3.values) {
                 img.dispose();
@@ -1582,11 +1869,11 @@ class IspStudioState extends ChangeNotifier {
     return true;
   }
 
-  /// 播放中：用当前帧 RGBA 后台刷新仪器分析。上一批未完成或距上次
-  /// 刷新不足 100ms 则跳过该帧（仪器刷新率自动低于帧率，不阻塞走帧；
-  /// 示波器类显示 10Hz 足够）。分析走常驻 worker isolate。
+  /// 播放中：用当前帧 RGBA 后台刷新仪器分析。不做硬性限频：上一批
+  /// 未完成则跳过该帧，刷新率自限到可持续速率（分析与渲染都在常驻
+  /// worker 池多核并行，目标与预览走帧实时同步）。上一批未完成时
+  /// 跳过不阻塞走帧。
   bool _instrumentBusy = false;
-  DateTime _lastLiveInstrumentRefresh = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// 常驻仪器分析 isolate（随 state 生命周期，懒启动）。
   final InstrumentAnalyzer _instrumentAnalyzer = InstrumentAnalyzer();
@@ -1615,7 +1902,8 @@ class IspStudioState extends ChangeNotifier {
     () async {
       try {
         await _runAudioInstruments(frame, token);
-        if (token == _runToken) notifyListeners();
+        // 播放中的音频仪器刷新只走 instrumentTick（局部重建）。
+        if (token == _runToken) instrumentTick.value++;
       } finally {
         _audioInstrumentBusy = false;
       }
@@ -1623,41 +1911,107 @@ class IspStudioState extends ChangeNotifier {
   }
 
   void _refreshInstrumentsFromFrame(Map<String, Uint8List> rgbaMap, int w,
-      int h, List<IspNode> targets, int token) {
+      int h, List<IspNode> targets, int token,
+      {Map<String, (int, int)>? dims}) {
     if (_instrumentBusy || targets.isEmpty || rgbaMap.isEmpty) return;
-    final now = DateTime.now();
-    if (now.difference(_lastLiveInstrumentRefresh) <
-        const Duration(milliseconds: 33)) {
-      return;
-    }
-    _lastLiveInstrumentRefresh = now;
     _instrumentBusy = true;
 
     () async {
       try {
+        // 同一馈源条目只降采样一次：多仪器共用同一预览源时省掉
+        // 重复的 UI 侧抽样（每帧都要做，重复做会挤占走帧事件循环）。
+        final downCache = <String, (Uint8List, int, int)>{};
         await Future.wait([
           for (final node in targets)
             () async {
+              final srcNodeId = _instrumentSrcNodeId(node);
+              final rgba = rgbaMap[srcNodeId] ?? rgbaMap.values.first;
+              // 该条目的真实宽高：GPU 平面馈源的 U/V chroma 平面是
+              // 半尺寸（w/2 × h/2），与 Y/彩色全尺寸不一致，必须按条目
+              // 尺寸降采样，否则按全尺寸索引越界。
+              final dim = dims?[srcNodeId];
+              final ew = dim?.$1 ?? w;
+              final eh = dim?.$2 ?? h;
               try {
-                final srcNodeId = _findSourcePreviewNodeId(node);
-                final rgba = rgbaMap[srcNodeId] ?? rgbaMap.values.first;
-                final (downRgba, dw, dh) = downsampleRgba82x(rgba, w, h);
-                final result = await _instrumentAnalyzer.analyze(
-                    downRgba, dw, dh, node.typeId);
+                // 分析输入压到 ~480p：统计类仪器（波形 ≤512 列、直方图
+                // 256 桶、矢量 512 网格）不需要更高分辨率；全分辨率帧
+                // 用步长抽样一趟完成（4K 只读 1/64 的数据）。
+                final (downRgba, dw, dh) =
+                    downCache.putIfAbsent(srcNodeId ?? '#fallback', () {
+                  var step = 1;
+                  while (eh ~/ step > 480) {
+                    step *= 2;
+                  }
+                  return downsampleRgba8Step(rgba, ew, eh, step);
+                });
+                // 波形：整机轮转分配到池内不同 worker，按可见通道选择性
+                // 统计，亮度图 worker 侧渲染（结果只带 bmp）。矢量示波器：
+                // 隔行条带多核并行（见下）。
+                Map<String, Object?> result;
+                if (node.typeId == 'vectorscope') {
+                  // 矢量示波器播放走多核并行（保留连线轨迹）：抗锯齿
+                  // 连线是噪声帧热点（实测单 worker 50~200ms/帧@480p），
+                  // 隔行条带切给池内全部 worker，负载均衡且行间接续的
+                  // 丢失视觉不可见。纯统计仪器（横轴不对应图像列）
+                  // 输入再压到 ~240p：连线成本与像素数成正比，数据量
+                  // 减为 1/4 而显示统计等效。
+                  var vecRgba = downRgba;
+                  var vw = dw, vh = dh;
+                  var vstep = 1;
+                  while (vh ~/ vstep > 240) {
+                    vstep *= 2;
+                  }
+                  if (vstep > 1) {
+                    (vecRgba, vw, vh) =
+                        downsampleRgba8Step(downRgba, dw, dh, vstep);
+                  }
+                  try {
+                    result = await _instrumentAnalyzer
+                        .analyzeVectorscopeParallel(vecRgba, vw, vh);
+                  } catch (_) {
+                    // 并行路径失败：回退为池内单 worker 分析 + 本地渲染。
+                    result = await _instrumentAnalyzer.analyze(
+                        vecRgba, vw, vh, node.typeId);
+                  }
+                } else if (node.typeId == 'waveform') {
+                  try {
+                    result = await _instrumentAnalyzer.analyzeDedicated(
+                        downRgba, dw, dh, node.typeId,
+                        visible: waveformChannels(node.id));
+                  } catch (_) {
+                    // worker 侧渲染失败：回退为池内分析 + 本地渲染。
+                    result = await _instrumentAnalyzer.analyze(
+                        downRgba, dw, dh, node.typeId);
+                  }
+                } else {
+                  result = await _instrumentAnalyzer.analyze(
+                      downRgba, dw, dh, node.typeId);
+                }
                 if (token != _runToken) return;
                 instrumentResults[node.id] = result;
                 await _updateInstrumentImage(node.id, result);
-              } catch (_) {
-                // 单个仪器失败不影响播放。
+              } catch (e, st) {
+                // 单个仪器失败不影响播放，但记录错误便于诊断。
+                debugPrint('仪器刷新失败 ${node.id}(${node.typeId}): $e\n'
+                    '  entryW=$ew entryH=$eh rgbaLen=${rgba.length}\n$st');
               }
             }(),
         ]);
-        if (token == _runToken) notifyListeners();
+        // 播放中的仪器刷新只走 instrumentTick（局部重建）。
+        if (token == _runToken) instrumentTick.value++;
       } finally {
         _instrumentBusy = false;
       }
     }();
   }
+  /// 仪器 → 源预览节点映射缓存：播放中每轮刷新都用，而
+  /// _findSourcePreviewNodeId 内部要 compileChain（拓扑排序），
+  /// 开销大。图结构变化（连线/删节点）时清空。
+  final Map<String, String?> _instrumentSrcCache = {};
+
+  String? _instrumentSrcNodeId(IspNode node) => _instrumentSrcCache
+      .putIfAbsent(node.id, () => _findSourcePreviewNodeId(node));
+
   String? _findSourcePreviewNodeId(IspNode instrument) {
     final conn = graph.connectionAt(instrument.id, 'in_mono') ??
         graph.connectionAt(instrument.id, 'in_yuv') ??
@@ -1960,10 +2314,13 @@ class IspStudioState extends ChangeNotifier {
   /// 保存后工程名更新为文件名。
   Future<void> saveGraphToFile(String path) async {
     try {
-      final json = <String, Object?>{'name': graphName, ...graph.toJson()};
+      // 序列化用目标文件名作为工程名：另存为新文件名时文件里的
+      // name 必须与文件名一致，否则重新打开时标签栏显示旧工程名。
+      final name = p.basenameWithoutExtension(path);
+      final json = <String, Object?>{'name': name, ...graph.toJson()};
       await File(path)
           .writeAsString(const JsonEncoder.withIndent('  ').convert(json));
-      graphName = p.basenameWithoutExtension(path);
+      graphName = name;
       statusMessage = '流程已保存 → $path';
     } catch (e) {
       statusMessage = '保存流程失败: $e';
@@ -2009,7 +2366,8 @@ class IspStudioState extends ChangeNotifier {
     }
     instrumentImages.clear();
     totalFrames = null;
-    _legacyPreviewImage?.dispose();
+    // 非持有别名（见 runPreview）：置空即可，图像由下面的
+    // previewImages 循环统一释放。
     _legacyPreviewImage = null;
     for (final img in previewImages.values) {
       img.dispose();
@@ -2026,7 +2384,7 @@ class IspStudioState extends ChangeNotifier {
   void dispose() {
     _instrumentAnalyzer.dispose();
     cleanupAudioWavCache();
-    _legacyPreviewImage?.dispose();
+    // _legacyPreviewImage 是非持有别名，其图像含在 previewImages 中。
     for (final img in previewImages.values) {
       img.dispose();
     }

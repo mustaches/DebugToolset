@@ -479,6 +479,26 @@ void applyCcm(
   }
 }
 
+/// 构建色调映射 LUT：normalize by [maxValue]、加 [brightness]、
+/// 绕 0.5 施加 [contrast]、`pow(c, 1 / gamma)`、钳位后映射到 0..255。
+Uint8List _tonemapLut(
+    int maxValue, double gamma, double brightness, double contrast) {
+  final lut = Uint8List(maxValue + 1);
+  final invGamma = 1.0 / gamma;
+  for (var v = 0; v <= maxValue; v++) {
+    var c = v / maxValue;
+    c += brightness;
+    c = (c - 0.5) * contrast + 0.5;
+    if (c < 0) c = 0;
+    if (c > 1) c = 1;
+    c = math.pow(c, invGamma).toDouble();
+    if (c < 0) c = 0;
+    if (c > 1) c = 1;
+    lut[v] = (c * 255).round();
+  }
+  return lut;
+}
+
 /// Converts a 16-bit interleaved RGB buffer to 8-bit RGBA (alpha 255).
 ///
 /// Per channel: normalize by [maxValue], add [brightness], apply
@@ -497,19 +517,7 @@ Uint8List tonemapToRgba(
   if (gamma <= 0) {
     throw ArgumentError.value(gamma, 'gamma', 'Must be > 0');
   }
-  final lut = Uint8List(maxValue + 1);
-  final invGamma = 1.0 / gamma;
-  for (var v = 0; v <= maxValue; v++) {
-    var c = v / maxValue;
-    c += brightness;
-    c = (c - 0.5) * contrast + 0.5;
-    if (c < 0) c = 0;
-    if (c > 1) c = 1;
-    c = math.pow(c, invGamma).toDouble();
-    if (c < 0) c = 0;
-    if (c > 1) c = 1;
-    lut[v] = (c * 255).round();
-  }
+  final lut = _tonemapLut(maxValue, gamma, brightness, contrast);
   final pixels = rgb.length ~/ 3;
   final out = Uint8List(pixels * 4);
   var j = 0;
@@ -524,6 +532,299 @@ Uint8List tonemapToRgba(
     out[j + 3] = 255;
   }
   return out;
+}
+
+/// MONO 灰度（w*h 单通道，16 位量级）→ 8 位 RGBA：与 [tonemapToRgba]
+/// 同一 LUT，单通道每像素一次查表，比「先扩展为三通道灰度再逐通道
+/// 查表」少一趟全帧写读与两次查表。
+Uint8List monoToRgba(
+  Uint16List mono, {
+  required int maxValue,
+  required double gamma,
+  double brightness = 0.0,
+  double contrast = 1.0,
+}) {
+  if (maxValue < 1) {
+    throw ArgumentError.value(maxValue, 'maxValue', 'Must be >= 1');
+  }
+  if (gamma <= 0) {
+    throw ArgumentError.value(gamma, 'gamma', 'Must be > 0');
+  }
+  final lut = _tonemapLut(maxValue, gamma, brightness, contrast);
+  final out = Uint8List(mono.length * 4);
+  var j = 0;
+  for (var i = 0; i < mono.length; i++, j += 4) {
+    var v = mono[i];
+    if (v > maxValue) v = maxValue;
+    final t = lut[v];
+    out[j] = t;
+    out[j + 1] = t;
+    out[j + 2] = t;
+    out[j + 3] = 255;
+  }
+  return out;
+}
+
+/// 8 位 MONO 平面（视频 yuv444p 直出的 Y/U/V 平面视图）→ 8 位 RGBA：
+/// 256 项 LUT 一趟查表，全分辨率视频分路预览的高速路径。
+Uint8List mono8ToRgba(  Uint8List mono, {
+  double gamma = 1.0,
+  double brightness = 0.0,
+  double contrast = 1.0,
+}) {
+  final lut = _tonemapLut(255, gamma, brightness, contrast);
+  final out = Uint8List(mono.length * 4);
+  var j = 0;
+  for (var i = 0; i < mono.length; i++, j += 4) {
+    final t = lut[mono[i]];
+    out[j] = t;
+    out[j + 1] = t;
+    out[j + 2] = t;
+    out[j + 3] = 255;
+  }
+  return out;
+}
+
+/// 平面 YUV444 8 位（三个 w*h 平面）→ 8 位 RGBA 一趟完成：定点
+/// BT.601 全范围转换 + 色调 LUT，免去 16 位交织中间格式的全部
+/// 写读（全分辨率视频 YUV 链末端的高速路径）。
+Uint8List yuv444p8ToRgba(
+  List<Uint8List> planes,
+  int width,
+  int height, {
+  double gamma = 1.0,
+  double brightness = 0.0,
+  double contrast = 1.0,
+}) {
+  final lut = _tonemapLut(255, gamma, brightness, contrast);
+  final yPlane = planes[0];
+  final uPlane = planes[1];
+  final vPlane = planes[2];
+  const crV = 91881;  // 1.402 * 65536
+  const cgU = -22553; // -0.344136 * 65536
+  const cgV = -46801; // -0.714136 * 65536
+  const cbU = 116130; // 1.772 * 65536
+  final pixels = width * height;
+  final out = Uint8List(pixels * 4);
+  var j = 0;
+  for (var i = 0; i < pixels; i++, j += 4) {
+    final y = yPlane[i];
+    final u = uPlane[i] - 128;
+    final v = vPlane[i] - 128;
+    var r = y + ((crV * v + 32768) >> 16);
+    var g = y + ((cgU * u + cgV * v + 32768) >> 16);
+    var b = y + ((cbU * u + 32768) >> 16);
+    r = r < 0 ? 0 : (r > 255 ? 255 : r);
+    g = g < 0 ? 0 : (g > 255 ? 255 : g);
+    b = b < 0 ? 0 : (b > 255 ? 255 : b);
+    out[j] = lut[r];
+    out[j + 1] = lut[g];
+    out[j + 2] = lut[b];
+    out[j + 3] = 255;
+  }
+  return out;
+}
+
+/// limited(tv)→full(pc) 8 位范围扩展 LUT。[chroma] 为 true 时以 128
+/// 为零点（U/V 平面），否则按亮度（Y 平面）扩展。
+Uint8List limitedToFullLut8({bool chroma = false}) {
+  final lut = Uint8List(256);
+  for (var i = 0; i < 256; i++) {
+    final v = chroma
+        ? ((i - 128) * 255 / 224 + 128).round()
+        : ((i - 16) * 255 / 219).round();
+    lut[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+  }
+  return lut;
+}
+
+/// yuv420p 缓冲（Y 平面 w*h，U/V 平面各 (w/2)*(h/2) 顺序排列）→
+/// 步长抽样的小尺寸 RGBA。仪器馈源用：统计类计算不需要全分辨率，
+/// 读取量与输出尺寸成正比。[limited] 为 true 时做 tv→pc 范围扩展
+/// （与 yuv_planes.frag 的显示一致）。
+Uint8List yuv420p8ToRgbaStep(Uint8List src, int w, int h, int step,
+    {bool limited = false}) {
+  final outW = w ~/ step;
+  final outH = h ~/ step;
+  final cw = w >> 1;
+  final uBase = w * h;
+  final vBase = uBase + cw * (h >> 1);
+  final yLut = limited ? limitedToFullLut8() : null;
+  final cLut = limited ? limitedToFullLut8(chroma: true) : null;
+  const crV = 91881;  // 1.402 * 65536
+  const cgU = -22553; // -0.344136 * 65536
+  const cgV = -46801; // -0.714136 * 65536
+  const cbU = 116130; // 1.772 * 65536
+  final out = Uint8List(outW * outH * 4);
+  var j = 0;
+  for (var y0 = 0; y0 < outH; y0++) {
+    final sy = y0 * step;
+    final yRow = sy * w;
+    final cRow = (sy >> 1) * cw;
+    for (var x0 = 0; x0 < outW; x0++, j += 4) {
+      final sx = x0 * step;
+      var y = src[yRow + sx];
+      var u = src[uBase + cRow + (sx >> 1)];
+      var v = src[vBase + cRow + (sx >> 1)];
+      if (yLut != null) {
+        y = yLut[y];
+        u = cLut![u];
+        v = cLut[v];
+      }
+      final uu = u - 128;
+      final vv = v - 128;
+      var r = y + ((crV * vv + 32768) >> 16);
+      var g = y + ((cgU * uu + cgV * vv + 32768) >> 16);
+      var b = y + ((cbU * uu + 32768) >> 16);
+      out[j] = r < 0 ? 0 : (r > 255 ? 255 : r);
+      out[j + 1] = g < 0 ? 0 : (g > 255 ? 255 : g);
+      out[j + 2] = b < 0 ? 0 : (b > 255 ? 255 : b);
+      out[j + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/// yuv420p 缓冲的 [planeIdx] 平面（0=Y, 1=U, 2=V；chroma 平面尺寸
+/// 减半）→ 步长抽样的小尺寸灰度 RGBA（分路预览的仪器馈源）。
+/// [limited] 为 true 时做 tv→pc 范围扩展。
+Uint8List yuv420pPlaneToRgbaStep(
+    Uint8List src, int w, int h, int planeIdx, int step,
+    {bool limited = false}) {
+  final isLuma = planeIdx == 0;
+  final pw = isLuma ? w : w >> 1;
+  final ph = isLuma ? h : h >> 1;
+  final base = isLuma ? 0 : (w * h + (planeIdx - 1) * pw * ph);
+  final outW = pw ~/ step;
+  final outH = ph ~/ step;
+  final lut = limited ? limitedToFullLut8(chroma: !isLuma) : null;
+  final out = Uint8List(outW * outH * 4);
+  var j = 0;
+  for (var y0 = 0; y0 < outH; y0++) {
+    var si = base + y0 * step * pw;
+    for (var x0 = 0; x0 < outW; x0++, si += step, j += 4) {
+      var v = src[si];
+      if (lut != null) v = lut[v];
+      out[j] = v;
+      out[j + 1] = v;
+      out[j + 2] = v;
+      out[j + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/// YUV（16 位量级交织）→ 8 位 RGBA 一趟完成：定点 yuvToRgb + 色调
+/// LUT，免去 [yuvToRgb] 与 [tonemapToRgba] 分趟时的中间 RGB 缓冲
+/// 写读（链末端 YUV 输出的高速路径）。
+Uint8List yuvToRgba(
+  Uint16List yuv, {
+  required int maxValue,
+  required double gamma,
+  double brightness = 0.0,
+  double contrast = 1.0,
+}) {
+  if (maxValue < 1) {
+    throw ArgumentError.value(maxValue, 'maxValue', 'Must be >= 1');
+  }
+  if (gamma <= 0) {
+    throw ArgumentError.value(gamma, 'gamma', 'Must be > 0');
+  }
+  final lut = _tonemapLut(maxValue, gamma, brightness, contrast);
+  final half = maxValue >> 1;
+  const crV = 91881;  // 1.402 * 65536
+  const cgU = -22553; // -0.344136 * 65536
+  const cgV = -46801; // -0.714136 * 65536
+  const cbU = 116130; // 1.772 * 65536
+  final pixels = yuv.length ~/ 3;
+  final out = Uint8List(pixels * 4);
+  var i = 0, j = 0;
+  for (var p = 0; p < pixels; p++, i += 3, j += 4) {
+    final y = yuv[i];
+    final u = yuv[i + 1] - half;
+    final v = yuv[i + 2] - half;
+    var r = y + ((crV * v + 32768) >> 16);
+    var g = y + ((cgU * u + cgV * v + 32768) >> 16);
+    var b = y + ((cbU * u + 32768) >> 16);
+    r = r < 0 ? 0 : (r > maxValue ? maxValue : r);
+    g = g < 0 ? 0 : (g > maxValue ? maxValue : g);
+    b = b < 0 ? 0 : (b > maxValue ? maxValue : b);
+    out[j] = lut[r];
+    out[j + 1] = lut[g];
+    out[j + 2] = lut[b];
+    out[j + 3] = 255;
+  }
+  return out;
+}
+
+/// 连续播放高速预览降采样（2x）：将 8 位 RGBA (w x h) 快速降采样为 (w/2 x h/2)。
+/// 算法为超高速步长采样，全帧 1080p 仅需 ~1.5 毫秒。
+(Uint8List, int, int) downsampleRgba82x(Uint8List src, int w, int h) {
+  final outW = w >> 1;
+  final outH = h >> 1;
+  final dst = Uint8List(outW * outH * 4);
+  final srcStride2 = w * 8; // (w * 4) * 2
+  var dstIdx = 0;
+  var srcRow = 0;
+  for (var y = 0; y < outH; y++, srcRow += srcStride2) {
+    var srcIdx = srcRow;
+    for (var x = 0; x < outW; x++, srcIdx += 8, dstIdx += 4) {
+      dst[dstIdx] = src[srcIdx];
+      dst[dstIdx + 1] = src[srcIdx + 1];
+      dst[dstIdx + 2] = src[srcIdx + 2];
+      dst[dstIdx + 3] = src[srcIdx + 3];
+    }
+  }
+  return (dst, outW, outH);
+}
+
+/// 步长抽样降采样（RGBA8888）：一趟把 (w, h) 抽成 (w/step, h/step)。
+/// 仪器分析输入用：多级 2x 降采样的第一级要读全帧（4K ≈ 33MB），
+/// 改为按最终倍率点采样后，读取量与输出尺寸成正比。
+(Uint8List, int, int) downsampleRgba8Step(
+    Uint8List src, int w, int h, int step) {
+  if (step <= 1) return (src, w, h);
+  final outW = w ~/ step;
+  final outH = h ~/ step;
+  final dst = Uint8List(outW * outH * 4);
+  final rowStride = w * 4;
+  final colStep = step * 4;
+  var dstIdx = 0;
+  var srcRow = 0;
+  for (var y = 0; y < outH; y++, srcRow += rowStride * step) {
+    var srcIdx = srcRow;
+    for (var x = 0; x < outW; x++, srcIdx += colStep, dstIdx += 4) {
+      dst[dstIdx] = src[srcIdx];
+      dst[dstIdx + 1] = src[srcIdx + 1];
+      dst[dstIdx + 2] = src[srcIdx + 2];
+      dst[dstIdx + 3] = src[srcIdx + 3];
+    }
+  }
+  return (dst, outW, outH);
+}
+
+/// 连续播放高速预览降采样（2x）：平面 yuv444p（w*h*3，Y/U/V 三个 w*h
+/// 平面顺序排列）快速降采样为 (w/2 x h/2)，与 [downsampleRgba82x]
+/// 同为超高速步长采样。
+(Uint8List, int, int) downsampleYuv444p2x(Uint8List src, int w, int h) {  final outW = w >> 1;
+  final outH = h >> 1;
+  final plane = w * h;
+  final outPlane = outW * outH;
+  final dst = Uint8List(outPlane * 3);
+  final rowStep = w * 2;
+  for (var p = 0; p < 3; p++) {
+    final srcBase = p * plane;
+    final dstBase = p * outPlane;
+    var srcRow = 0;
+    for (var y = 0; y < outH; y++, srcRow += rowStep) {
+      var srcIdx = srcBase + srcRow;
+      var dstIdx = dstBase + y * outW;
+      for (var x = 0; x < outW; x++, srcIdx += 2, dstIdx++) {
+        dst[dstIdx] = src[srcIdx];
+      }
+    }
+  }
+  return (dst, outW, outH);
 }
 
 /// ---------------------------------------------------------------------------
@@ -719,6 +1020,36 @@ Uint16List monoToRgb(Uint16List mosaic) {
 /// ---------------------------------------------------------------------------
 /// YUV / HSL 色彩空间转换（16 位量级，与 RGB 中间格式同为三通道交织）。
 /// ---------------------------------------------------------------------------
+
+/// 平面 YUV444 8 位（ffmpeg `-pix_fmt yuv444p` 直出，长度 w*h*3，
+/// Y/U/V 三个 w*h 平面顺序排列）→ 16 位量级交织 YUV（w*h*3）。
+/// 8 位样本按比例放大到 [maxValue]；maxValue==255（视频源默认
+/// bitDepth=8）时为纯交织拷贝。视频流式播放时由该函数一跳完成
+/// 「解码帧 → YUV 中间格式」，免去 RGBA→RGB16→YUV 两道全帧转换。
+Uint16List yuv444p8ToYuv16(
+    Uint8List planes, int width, int height, int maxValue) {
+  final pixels = width * height;
+  final out = Uint16List(pixels * 3);
+  final uBase = pixels;
+  final vBase = pixels * 2;
+  if (maxValue == 255) {
+    var j = 0;
+    for (var i = 0; i < pixels; i++, j += 3) {
+      out[j] = planes[i];
+      out[j + 1] = planes[uBase + i];
+      out[j + 2] = planes[vBase + i];
+    }
+  } else {
+    final scale = maxValue / 255;
+    var j = 0;
+    for (var i = 0; i < pixels; i++, j += 3) {
+      out[j] = (planes[i] * scale).round();
+      out[j + 1] = (planes[uBase + i] * scale).round();
+      out[j + 2] = (planes[vBase + i] * scale).round();
+    }
+  }
+  return out;
+}
 
 /// RGB → YUV（BT.601 全范围，16 位定点整数移位加速）：Y∈[0,maxValue]，U/V 以 maxValue/2 为零点。
 Uint16List rgbToYuv(Uint16List rgb, {required int maxValue}) {
