@@ -2440,6 +2440,14 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 清空画布（复位）：移除全部节点与连线，所有运行状态（预览/仪器/
+  /// 标签页/选中）失效。工程名清空，标签栏回到「缺省流程」。
+  void clearGraph() {
+    _replaceGraph(IspGraph(), null);
+    statusMessage = '画布已清空';
+    notifyListeners();
+  }
+
   /// 用打开的图替换当前图，并使所有运行状态（预览/采样/标签页）失效。
   void _replaceGraph(IspGraph imported, String? name) {
     graph.nodes
@@ -2451,6 +2459,7 @@ class IspStudioState extends ChangeNotifier {
     graph.nextId = imported.nextId;
     graphName = name;
     _runToken++; // 使进行中的运行结果失效
+    _instrumentSrcCache.clear(); // 仪器→源预览映射属于旧图（节点 id 可能撞名）
     openCodeTabs.clear();
     activeTab = 0;
     nodeOutputCaptures = {};

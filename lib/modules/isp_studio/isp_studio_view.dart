@@ -50,14 +50,52 @@ class IspStudioView extends StatelessWidget {
     if (file != null) await state.importGraphFromFile(file.path);
   }
 
-  /// 把当前流程图保存为 .ispflow 文件。
-  Future<void> _saveFlow(IspStudioState state) async {
+  /// 把当前流程图保存为 .ispflow 文件；返回是否真正保存
+  /// （用户在保存对话框中取消返回 false）。
+  Future<bool> _saveFlow(IspStudioState state) async {
     final loc = await getSaveLocation(
       suggestedName: '${state.graphTabTitle}.ispflow',
       acceptedTypeGroups: [_flowTypeGroup],
       initialDirectory: (await _flowDir()).path,
     );
-    if (loc != null) await state.saveGraphToFile(loc.path);
+    if (loc == null) return false;
+    await state.saveGraphToFile(loc.path);
+    return !state.statusMessage.startsWith('保存流程失败');
+  }
+
+  /// 复位画布：警告窗口（保存当前流程 / 清除画布 / 取消操作）。
+  Future<void> _confirmResetCanvas(
+      BuildContext context, IspStudioState state) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('复位画布'),
+        content: const Text('本操作将清除当前画布上的所有节点。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('save'),
+            child: const Text('保存当前流程'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('clear'),
+            child: const Text('清除画布',
+                style: TextStyle(color: Color(0xFFCF6679))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('cancel'),
+            child: const Text('取消操作'),
+          ),
+        ],
+      ),
+    );
+    if (action == 'save') {
+      // 保存成功才清除；保存对话框被取消或写盘失败都不动画布。
+      if (await _saveFlow(state)) {
+        state.clearGraph();
+      }
+    } else if (action == 'clear') {
+      state.clearGraph();
+    }
   }
 
   @override
@@ -137,6 +175,12 @@ class IspStudioView extends StatelessWidget {
             tooltip: '适配全屏',
             color: Colors.white,
             onPressed: () => state.resetView(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.layers_clear_outlined, size: 18),
+            tooltip: '复位画布',
+            color: Colors.white,
+            onPressed: () => _confirmResetCanvas(context, state),
           ),
           _buildDivider(),
 
