@@ -71,21 +71,64 @@ const int kVectorscopeSize = 512;
   return (r, g, b, y);
 }
 
+/// 波形竖向扫迹的权重刻度：驻留点每像素 +[_kSweepScale]，电子束在
+/// 相邻像素间连续移动扫出的中间电平每级 +1。竖向迹线的亮度因此
+/// 正比于电子束实际扫过该列该电平的频次——每行都扫过的硬边
+/// （彩条）竖线约为主迹线一半亮度，只有少数行扫过的区域（白色
+/// 字幕边缘）则显著更暗，不再是无差别的包络灰片。
+const int _kSweepScale = 256;
+
+/// 竖向扫迹的差分记录：span (from, to) 开区间每级 +1，O(1) 记两个
+/// 端点，由 [_applySweepDiff] 统一前缀和回填。逐电平直接累加在
+/// 噪声内容下是每像素几十次写（实测 4 通道 480p 近 70ms），差分
+/// 记录使成本与内容无关。[stride] = 电平数 + 1。
+void _recordSweep(Int32List diff, int stride, int col, int from, int to) {
+  final lo = from < to ? from : to;
+  final hi = from < to ? to : from;
+  if (hi - lo <= 1) return;
+  final base = col * stride;
+  diff[base + lo + 1]++;
+  diff[base + hi]--;
+}
+
+/// 差分表前缀和回填计数表（每列独立的扫描线覆盖计数）。
+void _applySweepDiff(Uint32List counts, Int32List diff, int cols, int levels) {
+  final stride = levels + 1;
+  for (var col = 0; col < cols; col++) {
+    final base = col * stride;
+    var acc = 0;
+    for (var lvl = 1; lvl < levels; lvl++) {
+      acc += diff[base + lvl];
+      if (acc != 0) counts[lvl * cols + col] += acc;
+    }
+  }
+}
+
 /// 亮度波形监视器：横轴为图像列（降采样到 [maxCols]），纵轴为亮度级
 /// （BT.601 Y，0 在底）。返回 (计数表, 列数)，计数表按 级*列数+列 排列。
+/// 逐行模拟电子束扫描：相邻像素电平差在中间电平留下扫迹权重
+/// （见 [_kSweepScale]），硬边处呈现竖向迹线。
 (Uint32List, int) waveformLuma(Uint8List rgba, int width, int height,
     {int maxCols = 512}) {
   final cols = width < maxCols ? width : maxCols;
   final counts = Uint32List(cols * kWaveformLevels);
+  const stride = kWaveformLevels + 1;
+  final diff = Int32List(cols * stride);
   final colLut = _columnLut(width, cols);
   for (var y = 0; y < height; y++) {
     var i = y * width * 4;
+    var prev = -1; // 每行重置：行间是回扫（消隐），不连线
     for (var x = 0; x < width; x++, i += 4) {
       final luma =
           (77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8;
-      counts[luma * cols + colLut[x]]++;
+      final col = colLut[x];
+      counts[luma * cols + col] += _kSweepScale;
+      // 扫迹段归入新列（列映射降采样下的近似）。
+      if (prev >= 0) _recordSweep(diff, stride, col, prev, luma);
+      prev = luma;
     }
   }
+  _applySweepDiff(counts, diff, cols, kWaveformLevels);
   return (counts, cols);
 }
 
@@ -100,7 +143,7 @@ Int32List _columnLut(int width, int cols) {
 
 /// RGB+Y 波形监视器：横轴为图像列（降采样到 [maxCols]），纵轴为各
 /// 通道级（Y 为 BT.601 亮度，0 在底）。返回 (R, G, B, Y, 列数)，
-/// 计数表按 级*列数+列 排列。
+/// 计数表按 级*列数+列 排列。逐行电子束扫迹见 [_kSweepScale]。
 (Uint32List, Uint32List, Uint32List, Uint32List, int) waveformRgb(
     Uint8List rgba, int width, int height,
     {int maxCols = 512}) {
@@ -110,24 +153,47 @@ Int32List _columnLut(int width, int cols) {
   final b = Uint32List(cols * kWaveformLevels);
   final y = Uint32List(cols * kWaveformLevels);
   final colLut = _columnLut(width, cols);
+  const stride = kWaveformLevels + 1;
+  final diffR = Int32List(cols * stride);
+  final diffG = Int32List(cols * stride);
+  final diffB = Int32List(cols * stride);
+  final diffY = Int32List(cols * stride);
   for (var yy = 0; yy < height; yy++) {
     var i = yy * width * 4;
+    var prevR = -1, prevG = -1, prevB = -1, prevY = -1;
     for (var x = 0; x < width; x++, i += 4) {
       final col = colLut[x];
-      r[rgba[i] * cols + col]++;
-      g[rgba[i + 1] * cols + col]++;
-      b[rgba[i + 2] * cols + col]++;
-      final luma =
-          (77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8;
-      y[luma * cols + col]++;
+      final rr = rgba[i];
+      final gg = rgba[i + 1];
+      final bb = rgba[i + 2];
+      final luma = (77 * rr + 150 * gg + 29 * bb + 128) >> 8;
+      r[rr * cols + col] += _kSweepScale;
+      g[gg * cols + col] += _kSweepScale;
+      b[bb * cols + col] += _kSweepScale;
+      y[luma * cols + col] += _kSweepScale;
+      if (prevR >= 0) {
+        _recordSweep(diffR, stride, col, prevR, rr);
+        _recordSweep(diffG, stride, col, prevG, gg);
+        _recordSweep(diffB, stride, col, prevB, bb);
+        _recordSweep(diffY, stride, col, prevY, luma);
+      }
+      prevR = rr;
+      prevG = gg;
+      prevB = bb;
+      prevY = luma;
     }
   }
+  _applySweepDiff(r, diffR, cols, kWaveformLevels);
+  _applySweepDiff(g, diffG, cols, kWaveformLevels);
+  _applySweepDiff(b, diffB, cols, kWaveformLevels);
+  _applySweepDiff(y, diffY, cols, kWaveformLevels);
   return (r, g, b, y, cols);
 }
 
 /// 按需通道的波形监视器：只统计 [channels] 列出的通道（'r'/'g'/'b'/'y'），
-/// 与 [waveformRgb] 同布局。播放中示波器只显示部分通道时，避免为不可见
-/// 通道白做 3/4 的统计。返回 (通道→计数表, 列数)。
+/// 与 [waveformRgb] 同布局（含逐行电子束扫迹，见 [_kSweepScale]）。
+/// 播放中示波器只显示部分通道时，避免为不可见通道白做 3/4 的统计。
+/// 返回 (通道→计数表, 列数)。
 (Map<String, Uint32List>, int) waveformSelective(
     Uint8List rgba, int width, int height, Set<String> channels,
     {int maxCols = 512}) {
@@ -143,20 +209,49 @@ Int32List _columnLut(int width, int cols) {
   final b = tables['b'];
   final y = tables['y'];
   final colLut = _columnLut(width, cols);
+  const stride = kWaveformLevels + 1;
+  final diffR = r == null ? null : Int32List(cols * stride);
+  final diffG = g == null ? null : Int32List(cols * stride);
+  final diffB = b == null ? null : Int32List(cols * stride);
+  final diffY = y == null ? null : Int32List(cols * stride);
   for (var yy = 0; yy < height; yy++) {
     var i = yy * width * 4;
+    var prevR = -1, prevG = -1, prevB = -1, prevY = -1;
     for (var x = 0; x < width; x++, i += 4) {
       final col = colLut[x];
-      if (r != null) r[rgba[i] * cols + col]++;
-      if (g != null) g[rgba[i + 1] * cols + col]++;
-      if (b != null) b[rgba[i + 2] * cols + col]++;
+      final rr = rgba[i];
+      final gg = rgba[i + 1];
+      final bb = rgba[i + 2];
+      if (r != null) r[rr * cols + col] += _kSweepScale;
+      if (g != null) g[gg * cols + col] += _kSweepScale;
+      if (b != null) b[bb * cols + col] += _kSweepScale;
+      var luma = -1;
       if (y != null) {
-        final luma =
-            (77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8;
-        y[luma * cols + col]++;
+        luma = (77 * rr + 150 * gg + 29 * bb + 128) >> 8;
+        y[luma * cols + col] += _kSweepScale;
       }
+      if (diffR != null && prevR >= 0) {
+        _recordSweep(diffR, stride, col, prevR, rr);
+      }
+      if (diffG != null && prevG >= 0) {
+        _recordSweep(diffG, stride, col, prevG, gg);
+      }
+      if (diffB != null && prevB >= 0) {
+        _recordSweep(diffB, stride, col, prevB, bb);
+      }
+      if (diffY != null && prevY >= 0) {
+        _recordSweep(diffY, stride, col, prevY, luma);
+      }
+      prevR = rr;
+      prevG = gg;
+      prevB = bb;
+      prevY = luma;
     }
   }
+  if (r != null) _applySweepDiff(r, diffR!, cols, kWaveformLevels);
+  if (g != null) _applySweepDiff(g, diffG!, cols, kWaveformLevels);
+  if (b != null) _applySweepDiff(b, diffB!, cols, kWaveformLevels);
+  if (y != null) _applySweepDiff(y, diffY!, cols, kWaveformLevels);
   return (tables, cols);
 }
 
@@ -299,7 +394,8 @@ Uint8List intensityRgba(
 
 /// 波形监视器 RGBA 亮度图：按 [visible] 通道分别使用对应专属颜色绘制，
 /// 不做色彩混叠（Y 为白色，R 为红色，G 为绿色，B 为蓝色）。
-/// 逐列包络（竖向迹线）在 [_drawChannelInto] 中绘制。
+/// 竖向迹线已在分析层按电子束扫过频次累积（见 [_kSweepScale]），
+/// 此处只按计数渲染。
 Uint8List waveformIntensityRgba(
     Map<String, Object?> result, int w, int h, Set<String> visible) {
   final out = Uint8List(w * h * 4);
@@ -334,50 +430,12 @@ void _drawChannelInto(
   }
   if (max == 0) return;
   final lut = _logLut(max);
-  // 竖向迹线（逐列包络）：真实示波器的电子束在相邻像素间连续移动，
-  // 硬边处会扫过两列电平之间的所有中间电平；计数表只含逐像素驻留
-  // 点，这里把每列与左右相邻列的最低/最高非零电平之间的空档用暗于
-  // 主迹线的固定亮度（峰值的 1/32，对数刻度下约主迹线一半）填满。
-  final colLo = Int32List(w);
-  final colHi = Int32List(w);
-  for (var x = 0; x < w; x++) {
-    var lo = -1, hi = -1;
-    for (var lvl = 0; lvl < h; lvl++) {
-      if (counts[lvl * w + x] > 0) {
-        if (lo < 0) lo = lvl;
-        hi = lvl;
-      }
-    }
-    colLo[x] = lo;
-    colHi[x] = hi;
-  }
-  // 电子束从左邻列扫入、向右邻列扫出：列 x 的包络取自身与左右
-  // 相邻列电平范围的并集（水平硬边因此在边界两列都出竖线）。
-  final envLo = Int32List(w);
-  final envHi = Int32List(w);
-  for (var x = 0; x < w; x++) {
-    var lo = colLo[x], hi = colHi[x];
-    for (final nx in [x - 1, x + 1]) {
-      if (nx < 0 || nx >= w || colLo[nx] < 0) continue;
-      if (lo < 0 || colLo[nx] < lo) lo = colLo[nx];
-      if (colHi[nx] > hi) hi = colHi[nx];
-    }
-    envLo[x] = lo;
-    envHi[x] = hi;
-  }
-  final envT = lut[max > 31 ? max >> 5 : 1];
   for (var ry = 0; ry < h; ry++) {
     final srcRow = h - 1 - ry;
     for (var x = 0; x < w; x++) {
       final c = counts[srcRow * w + x];
-      final int t;
-      if (c == 0) {
-        // 包络填充：仅 (envLo, envHi) 开区间，端点已有驻留计数。
-        if (srcRow <= envLo[x] || srcRow >= envHi[x]) continue;
-        t = envT;
-      } else {
-        t = lut[c];
-      }
+      if (c == 0) continue;
+      final t = lut[c];
       final j = (ry * w + x) * 4;
       final cr = tintR * t ~/ 255;
       final cg = tintG * t ~/ 255;

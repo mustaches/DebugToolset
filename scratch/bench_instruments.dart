@@ -71,8 +71,10 @@ void main() {
     final frame = makeFrame(w, h, 42);
     final smooth = makeFrame(w, h, 42, noise: false);
     print('--- ${w}x$h ---');
-    bench('waveformRgb(全4通道)', () => waveformRgb(frame, w, h));
-    bench('waveformLuma(仅Y)', () => waveformLuma(frame, w, h));
+    bench('waveformRgb(全4通道, 强噪声)', () => waveformRgb(frame, w, h));
+    bench('waveformLuma(仅Y, 强噪声)', () => waveformLuma(frame, w, h));
+    bench('waveformRgb(全4通道, 平滑)', () => waveformRgb(smooth, w, h));
+    bench('waveformLuma(仅Y, 平滑)', () => waveformLuma(smooth, w, h));
     bench('vectorscope(含噪声)', () => vectorscope(frame));
     bench('vectorscope(平滑图)', () => vectorscope(smooth));
     bench('vectorscopeFixed(含噪声)', () => vectorscopeFixed(frame));

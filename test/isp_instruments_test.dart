@@ -31,7 +31,7 @@ void main() {
     });
 
     test('waveformLuma 纯色帧所有计数落在同一亮度级', () {
-      // 4x2 纯灰 128 → Y=128，每列计数 = 高度。
+      // 4x2 纯灰 128 → Y=128，每列计数 = 高度 × 驻留权重刻度。
       final rgba = Uint8List(4 * 2 * 4);
       for (var i = 0; i < rgba.length; i += 4) {
         rgba[i] = 128;
@@ -42,9 +42,9 @@ void main() {
       final (counts, cols) = waveformLuma(rgba, 4, 2);
       expect(cols, 4);
       for (var c = 0; c < cols; c++) {
-        expect(counts[128 * cols + c], 2, reason: '列 $c');
+        expect(counts[128 * cols + c], 2 * 256, reason: '列 $c');
       }
-      expect(counts.fold<int>(0, (s, c) => s + c), 8);
+      expect(counts.fold<int>(0, (s, c) => s + c), 8 * 256);
     });
 
     test('waveformRgb 纯色帧各通道计数落在各自通道级', () {
@@ -60,15 +60,15 @@ void main() {
       final (r, g, b, y, cols) = waveformRgb(rgba, 4, 2);
       expect(cols, 4);
       for (var c = 0; c < cols; c++) {
-        expect(r[200 * cols + c], 2, reason: 'R 列 $c');
-        expect(g[100 * cols + c], 2, reason: 'G 列 $c');
-        expect(b[50 * cols + c], 2, reason: 'B 列 $c');
-        expect(y[124 * cols + c], 2, reason: 'Y 列 $c');
+        expect(r[200 * cols + c], 2 * 256, reason: 'R 列 $c');
+        expect(g[100 * cols + c], 2 * 256, reason: 'G 列 $c');
+        expect(b[50 * cols + c], 2 * 256, reason: 'B 列 $c');
+        expect(y[124 * cols + c], 2 * 256, reason: 'Y 列 $c');
       }
-      expect(r.fold<int>(0, (s, c) => s + c), 8);
-      expect(g.fold<int>(0, (s, c) => s + c), 8);
-      expect(b.fold<int>(0, (s, c) => s + c), 8);
-      expect(y.fold<int>(0, (s, c) => s + c), 8);
+      expect(r.fold<int>(0, (s, c) => s + c), 8 * 256);
+      expect(g.fold<int>(0, (s, c) => s + c), 8 * 256);
+      expect(b.fold<int>(0, (s, c) => s + c), 8 * 256);
+      expect(y.fold<int>(0, (s, c) => s + c), 8 * 256);
     });
 
     test('条带分片合并与全帧分析一致（波形/直方图）', () {
@@ -222,26 +222,33 @@ void main() {
       expect(merged, vectorscope(rgba));
     });
 
-    test('波形亮度图填充竖向迹线（逐列包络）', () {
-      // 三列计数表：col0 只有 0 级，col1/col2 只有 255 级（水平硬边）。
-      final counts = Uint32List(3 * kWaveformLevels);
-      counts[0 * 3 + 0] = 100; // col0 level 0
-      counts[255 * 3 + 1] = 100; // col1 level 255
-      counts[255 * 3 + 2] = 100; // col2 level 255
-      final bmp = waveformIntensityRgba(
-          {'y': counts}, 3, kWaveformLevels, {'y'});
-      // 数据第 0 行在底部：level L → 图像行 255-L。
-      int alpha(int lvl, int col) => bmp[((255 - lvl) * 3 + col) * 4 + 3];
-      // 边界两侧的列（col0/col1）画出竖向迹线。
-      expect(alpha(128, 0), greaterThan(0));
-      expect(alpha(1, 0), greaterThan(0));
-      expect(alpha(254, 0), greaterThan(0));
-      expect(alpha(128, 1), greaterThan(0));
-      // 包络亮度暗于主迹线。
-      expect(alpha(128, 0), lessThan(alpha(0, 0)));
-      expect(alpha(128, 1), lessThan(alpha(255, 1)));
-      // 远离边界的 col2 邻域平坦，不产生填充。
-      expect(alpha(128, 2), 0);
+    test('波形竖向扫迹：亮度正比于电子束扫过频次', () {
+      // 4 列宽图像：左半黑、右半白（水平硬边）。每行在 col1→col2
+      // 之间产生一次 0↔255 扫迹。
+      const w = 4, h = 8;
+      final rgba = Uint8List(w * h * 4);
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final i = (y * w + x) * 4;
+          final v = x < 2 ? 0 : 255;
+          rgba[i] = v;
+          rgba[i + 1] = v;
+          rgba[i + 2] = v;
+          rgba[i + 3] = 255;
+        }
+      }
+      final (counts, cols) = waveformLuma(rgba, w, h);
+      expect(cols, 4);
+      // 驻留：每列电平计数 = 行数 × 256。
+      expect(counts[0 * cols + 0], h * 256);
+      expect(counts[255 * cols + 2], h * 256);
+      // 竖向扫迹：归入新列 col2 的中间电平每行被扫过一次 →
+      // 计数 = 行数（为驻留的 1/256，对数刻度下约一半亮度）。
+      expect(counts[128 * cols + 2], h);
+      expect(counts[1 * cols + 2], h);
+      expect(counts[254 * cols + 2], h);
+      // 无跳变的 col1 中间电平无扫迹（字幕灰幕问题：无扫过不填充）。
+      expect(counts[128 * cols + 1], 0);
     });
 
     test('waveform 按可见通道选择性统计与全通道结果一致', () {

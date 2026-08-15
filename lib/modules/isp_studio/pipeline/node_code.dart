@@ -714,9 +714,26 @@ const String _instrumentCode = r'''
   return (r, g, b, y);
 }
 
+/// 波形竖向扫迹的权重刻度：驻留点每像素 +kSweepScale，电子束在
+/// 相邻像素间连续移动扫出的中间电平每级 +1。竖向迹线的亮度因此
+/// 正比于电子束实际扫过该列该电平的频次——每行都扫过的硬边
+/// （彩条）竖线约为主迹线一半亮度，只有少数行扫过的区域（白色
+/// 字幕边缘）则显著更暗，不再是无差别的包络灰片。
+const int kSweepScale = 256;
+
+/// 把 (col, from) → (col, to) 之间的中间电平各 +1（竖向扫迹，
+/// 不含端点——端点已有驻留计数）。
+void sweepSpan(Uint32List counts, int cols, int col, int from, int to) {
+  final lo = from < to ? from : to;
+  final hi = from < to ? to : from;
+  for (var lvl = lo + 1; lvl < hi; lvl++) {
+    counts[lvl * cols + col]++;
+  }
+}
+
 /// RGB+Y 波形监视器：横轴为图像列（降采样到 maxCols），纵轴为各通道
 /// 级（Y 为 BT.601 亮度，0 在底）。返回 (R, G, B, Y, 列数)，
-/// 计数表按 级*列数+列 排列。
+/// 计数表按 级*列数+列 排列。逐行电子束扫迹见 kSweepScale。
 (Uint32List, Uint32List, Uint32List, Uint32List, int) waveformRgb(
     Uint8List rgba, int width, int height, {int maxCols = 512}) {
   final cols = width < maxCols ? width : maxCols;
@@ -726,14 +743,22 @@ const String _instrumentCode = r'''
   final y = Uint32List(cols * 256);
   for (var yy = 0; yy < height; yy++) {
     var i = yy * width * 4;
+    var prevR = -1, prevG = -1, prevB = -1, prevY = -1;
     for (var x = 0; x < width; x++, i += 4) {
       final col = x * cols ~/ width;
-      r[rgba[i] * cols + col]++;
-      g[rgba[i + 1] * cols + col]++;
-      b[rgba[i + 2] * cols + col]++;
-      final luma =
-          (77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8;
-      y[luma * cols + col]++;
+      final rr = rgba[i], gg = rgba[i + 1], bb = rgba[i + 2];
+      final luma = (77 * rr + 150 * gg + 29 * bb + 128) >> 8;
+      r[rr * cols + col] += kSweepScale;
+      g[gg * cols + col] += kSweepScale;
+      b[bb * cols + col] += kSweepScale;
+      y[luma * cols + col] += kSweepScale;
+      if (prevR >= 0) {
+        sweepSpan(r, cols, col, prevR, rr); // 扫迹段归入新列
+        sweepSpan(g, cols, col, prevG, gg);
+        sweepSpan(b, cols, col, prevB, bb);
+        sweepSpan(y, cols, col, prevY, luma);
+      }
+      prevR = rr; prevG = gg; prevB = bb; prevY = luma;
     }
   }
   return (r, g, b, y, cols);
@@ -743,18 +768,38 @@ const String _instrumentCode = r'''
 /// 的 2 倍超采样；中心 (256,256) 为无色），按 Cr*512+Cb 排列。
 /// 按像素扫描顺序把相邻像素的色度点连成线（模拟示波器电子束的
 /// 连续扫描轨迹）；连线做抗锯齿，按覆盖率把亮度分摊到相邻两格。
-Uint32List vectorscope(Uint8List rgba) {
+/// rowWidth 非空表示缓冲是按行拼接的隔行条带（多核并行用）：
+/// 每行开头重置电子束起点（拼入的行在原图不相邻，跨行不连线）。
+Uint32List vectorscope(Uint8List rgba, {int? rowWidth}) {
   final counts = Uint32List(512 * 512);
   var prevCb = -1;
   var prevCr = -1;
+  var xInRow = 0;
   for (var i = 0; i + 2 < rgba.length; i += 4) {
+    if (rowWidth != null) {
+      if (xInRow == 0) {
+        prevCb = -1;
+        prevCr = -1;
+        xInRow = rowWidth;
+      }
+      xInRow--;
+    }
     final r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
     // BT.601 全范围：Cb/Cr 以 128 为中心；2 倍超采样（0..511，
     // 中心 256），右移 7 位保留半格精度（+64 为半格四舍五入）。
-    final cb =
-        (256 + ((-43 * r - 85 * g + 128 * b + 64) >> 7)).clamp(0, 511);
-    final cr =
-        (256 + ((128 * r - 107 * g - 21 * b + 64) >> 7)).clamp(0, 511);
+    // 分支钳制而非 clamp()：后者返回 num，逐像素隐式拆箱是热点。
+    var cb = 256 + ((-43 * r - 85 * g + 128 * b + 64) >> 7);
+    var cr = 256 + ((128 * r - 107 * g - 21 * b + 64) >> 7);
+    if (cb < 0) {
+      cb = 0;
+    } else if (cb > 511) {
+      cb = 511;
+    }
+    if (cr < 0) {
+      cr = 0;
+    } else if (cr > 511) {
+      cr = 511;
+    }
     aaSegment(counts, prevCb, prevCr, cb, cr);
     prevCb = cb;
     prevCr = cr;
