@@ -1,6 +1,8 @@
 /// ISP Studio 右侧属性面板：显示并编辑选中节点的参数。
 library;
 
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -154,6 +156,19 @@ class NodePropertyPanel extends StatelessWidget {
     );
   }
 
+  /// Bayer RGGB（cis_bayer_rggb）节点浏览 RAW 文件的默认目录
+  /// （根目录 IspFlow/BayerRGGB，不存在则创建）。
+  /// 注意：必须使用平台分隔符拼接。Windows 上混用 '/' 会导致
+  /// file_selector 内部 SHCreateItemFromParsingName 失败（E_INVALIDARG），
+  /// 文件对话框静默回退到“上次使用的目录”。
+  Future<String> _bayerRawDir() async {
+    final sep = Platform.pathSeparator;
+    final dir = Directory(
+        '${Directory.current.path}${sep}IspFlow${sep}BayerRGGB');
+    if (!dir.existsSync()) await dir.create(recursive: true);
+    return dir.path;
+  }
+
   /// 按 (节点类型, 参数 key) 选择文件/目录/保存位置对话框。
   Future<void> _browsePath(
       IspStudioState state, IspNode node, IspParamSpec spec) async {
@@ -163,6 +178,14 @@ class NodePropertyPanel extends StatelessWidget {
     } else if (node.typeId == 'video_output' && spec.key == 'filePath') {
       final loc = await getSaveLocation(suggestedName: 'output.mp4');
       path = loc?.path;
+    } else if (node.typeId == 'cis_bayer_rggb' && spec.key == 'filePath') {
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(label: 'RAW/DNG 图像', extensions: ['raw', 'dng']),
+        ],
+        initialDirectory: await _bayerRawDir(),
+      );
+      path = file?.path;
     } else if (node.typeId == 'image_source' && spec.key == 'filePath') {
       final file = await openFile(acceptedTypeGroups: [
         const XTypeGroup(

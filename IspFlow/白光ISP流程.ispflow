@@ -1,0 +1,304 @@
+{
+  "name": "白光ISP流程",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "cis_bayer_rggb",
+      "x": 0.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\BayerRGGB\\IMG_20260817_213218.raw",
+        "width": 4096,
+        "height": 3072,
+        "bitDepth": "10",
+        "packing": "unpacked_lsb",
+        "bayerPattern": "RGGB",
+        "littleEndian": true,
+        "frameIndex": 0
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "black_level",
+      "x": 260.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "r": 50.25,
+        "gr": 50.375,
+        "gb": 50.25,
+        "b": 50.3125
+      }
+    },
+    {
+      "id": "n3",
+      "typeId": "dpc",
+      "x": 520.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "threshold": 5.0,
+        "mode": "median"
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "fpn",
+      "x": 780.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "row": true,
+        "col": true,
+        "maxCorr": 64.0
+      }
+    },
+    {
+      "id": "n5",
+      "typeId": "lsc",
+      "x": 1040.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "strength": 0.5,
+        "centerX": 0.5,
+        "centerY": 0.5
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "grgb_balance",
+      "x": 1300.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "strength": 1.0
+      }
+    },
+    {
+      "id": "n7",
+      "typeId": "bayer_dnr",
+      "x": 1560.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "strength": 1.0
+      }
+    },
+    {
+      "id": "n8",
+      "typeId": "highlight",
+      "x": 1820.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "mode": "recover",
+        "knee": 0.9
+      }
+    },
+    {
+      "id": "n9",
+      "typeId": "demosaic",
+      "x": 2080.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "algorithm": "bilinear"
+      }
+    },
+    {
+      "id": "n10",
+      "typeId": "white_balance",
+      "x": 2340.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "mode": "auto",
+        "rGain": 1.0,
+        "bGain": 1.0
+      }
+    },
+    {
+      "id": "n11",
+      "typeId": "ccm",
+      "x": 2600.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "n12",
+      "typeId": "rgb_dnr",
+      "x": 2860.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "luma": 1.0,
+        "chroma": 0.5
+      }
+    },
+    {
+      "id": "n13",
+      "typeId": "sharpen",
+      "x": 3120.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "amount": 0.5,
+        "threshold": 4.0
+      }
+    },
+    {
+      "id": "n14",
+      "typeId": "gamma",
+      "x": 3380.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "gamma": 2.2,
+        "brightness": 0.0,
+        "contrast": 1.0
+      }
+    },
+    {
+      "id": "n15",
+      "typeId": "preview",
+      "x": 3690.0,
+      "y": 0.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 1
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "n1",
+      "fromPort": "out",
+      "to": "n2",
+      "toPort": "in"
+    },
+    {
+      "id": "c2",
+      "from": "n2",
+      "fromPort": "out",
+      "to": "n3",
+      "toPort": "in"
+    },
+    {
+      "id": "c3",
+      "from": "n3",
+      "fromPort": "out",
+      "to": "n4",
+      "toPort": "in"
+    },
+    {
+      "id": "c4",
+      "from": "n4",
+      "fromPort": "out",
+      "to": "n5",
+      "toPort": "in"
+    },
+    {
+      "id": "c5",
+      "from": "n5",
+      "fromPort": "out",
+      "to": "n6",
+      "toPort": "in"
+    },
+    {
+      "id": "c6",
+      "from": "n6",
+      "fromPort": "out",
+      "to": "n7",
+      "toPort": "in"
+    },
+    {
+      "id": "c7",
+      "from": "n7",
+      "fromPort": "out",
+      "to": "n8",
+      "toPort": "in"
+    },
+    {
+      "id": "c8",
+      "from": "n8",
+      "fromPort": "out",
+      "to": "n9",
+      "toPort": "in"
+    },
+    {
+      "id": "c9",
+      "from": "n9",
+      "fromPort": "out",
+      "to": "n10",
+      "toPort": "in"
+    },
+    {
+      "id": "c10",
+      "from": "n10",
+      "fromPort": "out",
+      "to": "n11",
+      "toPort": "in"
+    },
+    {
+      "id": "c11",
+      "from": "n11",
+      "fromPort": "out",
+      "to": "n12",
+      "toPort": "in"
+    },
+    {
+      "id": "c12",
+      "from": "n12",
+      "fromPort": "out",
+      "to": "n13",
+      "toPort": "in"
+    },
+    {
+      "id": "c13",
+      "from": "n13",
+      "fromPort": "out",
+      "to": "n14",
+      "toPort": "in"
+    },
+    {
+      "id": "c14",
+      "from": "n14",
+      "fromPort": "out",
+      "to": "n15",
+      "toPort": "in"
+    }
+  ],
+  "nextId": 100
+}

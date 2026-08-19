@@ -1175,3 +1175,831 @@ Uint16List hslToRgb(Uint16List hsl, {required int maxValue}) {
   }
   return out;
 }
+
+/// ---------------------------------------------------------------------------
+/// ICG 荧光内窥镜方案的 ISP 核（W06–W36 / N06–N40 / R01–R15 的简化实现，
+/// 见 IspFlow/双传感器并行ICG荧光内窥镜ISP的FPGA实现方案.pdf）。
+///
+/// RAW 域算子同时支持两种输入：
+/// - Bayer 马赛克：[pattern] 非空，邻域按同相位（±2 步进）取样；
+/// - 16 位 MONO：[pattern] 为 null，邻域按全像素（±1 步进）取样。
+/// ---------------------------------------------------------------------------
+
+/// 收集 (x, y) 的处理邻域下标：mono（[pattern] 为 null）取 3x3 全像素
+/// 8 邻域，Bayer 取同相位（±2 步进）最多 8 邻域。
+List<int> _phaseNeighbors(
+    int width, int height, int x, int y, BayerPattern? pattern) {
+  final idx = <int>[];
+  final step = pattern == null ? 1 : 2;
+  for (var dy = -step; dy <= step; dy += step) {
+    for (var dx = -step; dx <= step; dx += step) {
+      if (dx == 0 && dy == 0) continue;
+      final nx = x + dx;
+      final ny = y + dy;
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+      idx.add(ny * width + nx);
+    }
+  }
+  return idx;
+}
+
+List<int> _sortedValues(Uint16List buf, List<int> idx) {
+  final vals = [for (final i in idx) buf[i]]..sort();
+  return vals;
+}
+
+/// 坏点校正（W06/W07、N06–N09）：与同相位（mono 为全像素）3x3 邻域
+/// 中位数比较，离群超过 [threshold]（满量程百分比）即判定为坏点。
+/// [mode] 为 'median' 时用邻域中位数替换；为 'directional' 时沿梯度
+/// 最小的方向取两点平均替换（保边更好）。
+void applyDpc(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern,
+  double threshold = 5.0,
+  String mode = 'median',
+  int maxValue = 65535,
+}) {
+  final thr = threshold / 100 * maxValue;
+  final directional = mode == 'directional';
+  final step = pattern == null ? 1 : 2;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final i = y * width + x;
+      final neigh = _phaseNeighbors(width, height, x, y, pattern);
+      if (neigh.isEmpty) continue;
+      final vals = _sortedValues(buf, neigh);
+      final med = vals[vals.length ~/ 2];
+      if ((buf[i] - med).abs() <= thr) continue;
+      if (!directional) {
+        buf[i] = med;
+        continue;
+      }
+      // 方向插值：4 个方向各取一对对称点，选两点差最小（梯度最小）的。
+      var best = -1;
+      var bestDiff = 1 << 62;
+      const dirs = [
+        [1, 0], // 水平
+        [0, 1], // 垂直
+        [1, 1], // 主对角
+        [1, -1], // 副对角
+      ];
+      for (final d in dirs) {
+        final ax = x - d[0] * step, ay = y - d[1] * step;
+        final bx = x + d[0] * step, by = y + d[1] * step;
+        if (ax < 0 || ax >= width || ay < 0 || ay >= height) continue;
+        if (bx < 0 || bx >= width || by < 0 || by >= height) continue;
+        final va = buf[ay * width + ax];
+        final vb = buf[by * width + bx];
+        final diff = (va - vb).abs();
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          best = (va + vb + 1) >> 1;
+        }
+      }
+      buf[i] = best >= 0 ? best : med;
+    }
+  }
+}
+
+int _medianOf(List<int> vals) {
+  if (vals.isEmpty) return 0;
+  vals.sort();
+  return vals[vals.length ~/ 2];
+}
+
+/// FPN 校正（W08–W11、N10–N13）：行/列固定图案噪声的稳健估计与扣除。
+///
+/// 直接用"行/列中值 − 全图中值"会把图像内容（竖条/横条纹理）当成
+/// FPN——整列暗条会被抬亮 maxCorr，画面发花。这里按文档要求做估计与
+/// 施加分离、并加边缘掩膜：
+/// 1. 低通分离内容：行偏移估计前先做垂直滑窗均值（竖条等列方向内容
+///    结构保留在低频里，逐行 FPN 被平滑掉），残差 = 原图 − 低通；
+/// 2. 残差行中位数即行偏移的稳健估计；
+/// 3. 边缘掩膜：梯度超过 2*[maxCorr] 的像素邻域（按 [radius] 膨胀，
+///    覆盖低通窗的污染范围）不参与统计，防止内容边缘被当作 FPN；
+/// 4. 校正量限幅 ±[maxCorr]，扣除后截零。
+/// 列方向同理（水平低通 + 水平梯度掩膜）。[pattern] 仅作文档化参数
+/// （行/列统计不区分相位）。
+void applyFpn(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern,
+  bool row = true,
+  bool col = true,
+  double maxCorr = 64,
+  int radius = 8,
+}) {
+  if (!row && !col) return;
+  double clampCorr(num c) =>
+      c < -maxCorr ? -maxCorr : (c > maxCorr ? maxCorr : c).toDouble();
+  final edgeThresh = 2 * maxCorr; // 超过它的梯度视为内容边缘而非 FPN
+  final res = <int>[];
+  if (row) {
+    final low = _verticalBoxMean(buf, width, height, radius);
+    // 水平边缘（垂直梯度）的垂直膨胀掩膜：这些像素的垂直低通被边缘
+    // 污染，不参与行统计。
+    final mask = _dilateMask(
+        _gradientEdge(buf, width, height, edgeThresh, vertical: true),
+        width, height, radius,
+        vertical: true);
+    for (var y = 0; y < height; y++) {
+      res.clear();
+      final base = y * width;
+      for (var x = 0; x < width; x++) {
+        if (mask[base + x] != 0) continue;
+        res.add(buf[base + x] - low[base + x].round());
+      }
+      final corr = clampCorr(_medianOf(res));
+      if (corr == 0) continue;
+      for (var x = 0; x < width; x++) {
+        final i = base + x;
+        final v = buf[i] - corr;
+        buf[i] = v <= 0 ? 0 : v.round();
+      }
+    }
+  }
+  if (col) {
+    final low = _horizontalBoxMean(buf, width, height, radius);
+    final mask = _dilateMask(
+        _gradientEdge(buf, width, height, edgeThresh, vertical: false),
+        width, height, radius,
+        vertical: false);
+    for (var x = 0; x < width; x++) {
+      res.clear();
+      for (var y = 0; y < height; y++) {
+        if (mask[y * width + x] != 0) continue;
+        res.add(buf[y * width + x] - low[y * width + x].round());
+      }
+      final corr = clampCorr(_medianOf(res));
+      if (corr == 0) continue;
+      for (var y = 0; y < height; y++) {
+        final i = y * width + x;
+        final v = buf[i] - corr;
+        buf[i] = v <= 0 ? 0 : v.round();
+      }
+    }
+  }
+}
+
+/// 梯度边缘图：vertical=true 检测水平边缘（垂直方向梯度超过 [thresh]）。
+Uint8List _gradientEdge(Uint16List buf, int w, int h, double thresh,
+    {required bool vertical}) {
+  final out = Uint8List(w * h);
+  if (vertical) {
+    for (var y = 1; y < h - 1; y++) {
+      final base = y * w;
+      for (var x = 0; x < w; x++) {
+        if ((buf[base + w + x] - buf[base - w + x]).abs() > thresh) {
+          out[base + x] = 1;
+        }
+      }
+    }
+  } else {
+    for (var y = 0; y < h; y++) {
+      final base = y * w;
+      for (var x = 1; x < w - 1; x++) {
+        if ((buf[base + x + 1] - buf[base + x - 1]).abs() > thresh) {
+          out[base + x] = 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/// 边缘图按 [radius] 做滑窗膨胀（vertical=true 沿垂直方向）。
+Uint8List _dilateMask(Uint8List edge, int w, int h, int radius,
+    {required bool vertical}) {
+  final out = Uint8List(w * h);
+  if (vertical) {
+    for (var x = 0; x < w; x++) {
+      var cnt = 0;
+      for (var y = 0; y <= radius && y < h; y++) {
+        cnt += edge[y * w + x];
+      }
+      for (var y = 0; y < h; y++) {
+        out[y * w + x] = cnt > 0 ? 1 : 0;
+        final add = y + radius + 1;
+        final del = y - radius;
+        if (add < h) cnt += edge[add * w + x];
+        if (del >= 0) cnt -= edge[del * w + x];
+      }
+    }
+  } else {
+    var rowBase = 0;
+    for (var y = 0; y < h; y++, rowBase += w) {
+      var cnt = 0;
+      for (var x = 0; x <= radius && x < w; x++) {
+        cnt += edge[rowBase + x];
+      }
+      for (var x = 0; x < w; x++) {
+        out[rowBase + x] = cnt > 0 ? 1 : 0;
+        final add = x + radius + 1;
+        final del = x - radius;
+        if (add < w) cnt += edge[rowBase + add];
+        if (del >= 0) cnt -= edge[rowBase + del];
+      }
+    }
+  }
+  return out;
+}
+
+/// 垂直方向滑窗盒式均值（每列独立，窗口 [y-radius, y+radius] 截断）。
+Float32List _verticalBoxMean(Uint16List buf, int w, int h, int radius) {
+  final out = Float32List(w * h);
+  for (var x = 0; x < w; x++) {
+    var sum = 0, count = 0;
+    for (var y = 0; y <= radius && y < h; y++) {
+      sum += buf[y * w + x];
+      count++;
+    }
+    for (var y = 0; y < h; y++) {
+      out[y * w + x] = sum / count;
+      final add = y + radius + 1;
+      final del = y - radius;
+      if (add < h) {
+        sum += buf[add * w + x];
+        count++;
+      }
+      if (del >= 0) {
+        sum -= buf[del * w + x];
+        count--;
+      }
+    }
+  }
+  return out;
+}
+
+/// 水平方向滑窗盒式均值（每行独立，窗口 [x-radius, x+radius] 截断）。
+Float32List _horizontalBoxMean(Uint16List buf, int w, int h, int radius) {
+  final out = Float32List(w * h);
+  var rowBase = 0;
+  for (var y = 0; y < h; y++, rowBase += w) {
+    var sum = 0, count = 0;
+    for (var x = 0; x <= radius && x < w; x++) {
+      sum += buf[rowBase + x];
+      count++;
+    }
+    for (var x = 0; x < w; x++) {
+      out[rowBase + x] = sum / count;
+      final add = x + radius + 1;
+      final del = x - radius;
+      if (add < w) {
+        sum += buf[rowBase + add];
+        count++;
+      }
+      if (del >= 0) {
+        sum -= buf[rowBase + del];
+        count--;
+      }
+    }
+  }
+  return out;
+}
+
+/// 镜头阴影/平场校正（W12–W14、N14–N16）：以 ([centerX], [centerY])
+/// （归一化 0..1）为中心的径向二次增益曲面，增益 = 1 + strength*(r/rmax)²，
+/// 边缘亮中心暗，饱和截位到 [maxValue]。增益与相位无关，Bayer/mono 通用。
+void applyLsc(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern,
+  double strength = 0.5,
+  double centerX = 0.5,
+  double centerY = 0.5,
+  int maxValue = 65535,
+}) {
+  if (strength == 0) return;
+  final cx = centerX * (width - 1);
+  final cy = centerY * (height - 1);
+  final ex = math.max(cx, width - 1 - cx);
+  final ey = math.max(cy, height - 1 - cy);
+  final rMax2 = ex * ex + ey * ey;
+  if (rMax2 <= 0) return;
+  var i = 0;
+  for (var y = 0; y < height; y++) {
+    final dy = y - cy;
+    for (var x = 0; x < width; x++, i++) {
+      final dx = x - cx;
+      final gain = 1 + strength * (dx * dx + dy * dy) / rMax2;
+      buf[i] = _clampTo(buf[i] * gain, maxValue);
+    }
+  }
+}
+
+/// Gr/Gb 均衡（W15）：统计两个绿色通道相位（Gr 与 R 同行、Gb 与 B
+/// 同行）的全局均值，向两者中点按 [strength] 比例收敛，消除迷宫伪影。
+void applyGrGbBalance(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  required BayerPattern pattern,
+  double strength = 1.0,
+}) {
+  if (strength <= 0) return;
+  var sumGr = 0, cntGr = 0, sumGb = 0, cntGb = 0;
+  var i = 0;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++, i++) {
+      if (pattern.colorAt(x, y) != 1) continue;
+      if (pattern.colorAt(x ^ 1, y) == 0) {
+        sumGr += buf[i];
+        cntGr++;
+      } else {
+        sumGb += buf[i];
+        cntGb++;
+      }
+    }
+  }
+  if (cntGr == 0 || cntGb == 0) return;
+  final meanGr = sumGr / cntGr;
+  final meanGb = sumGb / cntGb;
+  if (meanGr <= 0 || meanGb <= 0) return;
+  final target = (meanGr + meanGb) / 2;
+  final gainGr = 1 + (target / meanGr - 1) * strength;
+  final gainGb = 1 + (target / meanGb - 1) * strength;
+  i = 0;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++, i++) {
+      if (pattern.colorAt(x, y) != 1) continue;
+      final gain = pattern.colorAt(x ^ 1, y) == 0 ? gainGr : gainGb;
+      buf[i] = _clampTo(buf[i] * gain, 65535);
+    }
+  }
+}
+
+/// Bayer 降噪（W16/W17、N24/N25）：同相位 3x3 保边加权平均，权重
+/// 1/(1+(Δ/σ)²)，σ 来自 σ²=aI+b 噪声模型（取 a=1、b=64，σ=√(I+64)），
+/// [strength] 为 σ 的倍率（0 = 关闭）。mono（pattern 为 null）时全像素。
+void applyBayerDenoise(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern,
+  double strength = 1.0,
+}) {
+  if (strength <= 0) return;
+  final src = Uint16List.fromList(buf);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final i = y * width + x;
+      final v = src[i];
+      final sigma = strength * math.sqrt(v + 64);
+      var sum = v.toDouble();
+      var wsum = 1.0;
+      for (final n in _phaseNeighbors(width, height, x, y, pattern)) {
+        final d = src[n] - v;
+        final w = 1 / (1 + (d / sigma) * (d / sigma));
+        sum += w * src[n];
+        wsum += w;
+      }
+      buf[i] = (sum / wsum).round();
+    }
+  }
+}
+
+/// 高光恢复（W18/W19）：
+/// - 'recover'：达到膝点（[knee]×[maxValue]）的饱和像素用同相位未饱和
+///   邻域均值重建（无可用邻域则保持原值）；
+/// - 'clip'：膝点以上做软压缩，平滑收敛到 [maxValue]，避免硬切色块。
+void applyHighlightRecovery(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern,
+  int maxValue = 65535,
+  String mode = 'recover',
+  double knee = 0.9,
+}) {
+  final kneePt = knee.clamp(0.0, 1.0) * maxValue;
+  if (mode == 'clip') {
+    final range = maxValue - kneePt;
+    if (range <= 0) return;
+    for (var i = 0; i < buf.length; i++) {
+      final v = buf[i];
+      if (v <= kneePt) continue;
+      final d = v - kneePt;
+      buf[i] = (kneePt + d * range / (range + d)).round();
+    }
+    return;
+  }
+  final src = Uint16List.fromList(buf);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final i = y * width + x;
+      if (src[i] < kneePt) continue;
+      var sum = 0, count = 0;
+      for (final n in _phaseNeighbors(width, height, x, y, pattern)) {
+        if (src[n] >= kneePt) continue;
+        sum += src[n];
+        count++;
+      }
+      if (count > 0) buf[i] = (sum + count ~/ 2) ~/ count;
+    }
+  }
+}
+
+/// RGB 降噪（W29–W31）：转 YUV 后亮度做 3x3 保边加权平均（权重同
+/// [applyBayerDenoise] 的 σ 模型，[luma] 为倍率），色度做 3x3 盒式
+/// 低通并按 [chroma]（0..1）混合，再转回 RGB 写回原缓冲。
+void applyRgbDenoise(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  double luma = 1.0,
+  double chroma = 0.5,
+  int maxValue = 65535,
+}) {
+  if (luma <= 0 && chroma <= 0) return;
+  final yuv = rgbToYuv(rgb, maxValue: maxValue);
+  final pixels = width * height;
+  if (luma > 0) {
+    final ys = Uint16List(pixels);
+    for (var p = 0; p < pixels; p++) {
+      ys[p] = yuv[p * 3];
+    }
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        final p = y * width + x;
+        final v = ys[p];
+        final sigma = luma * math.sqrt(v + 64);
+        var sum = v.toDouble();
+        var wsum = 1.0;
+        for (final n in _phaseNeighbors(width, height, x, y, null)) {
+          final d = ys[n] - v;
+          final w = 1 / (1 + (d / sigma) * (d / sigma));
+          sum += w * ys[n];
+          wsum += w;
+        }
+        yuv[p * 3] = _clampTo(sum / wsum, maxValue);
+      }
+    }
+  }
+  if (chroma > 0) {
+    final blend = chroma.clamp(0.0, 1.0);
+    final src = Uint16List.fromList(yuv);
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        final p = y * width + x;
+        for (final c in [1, 2]) {
+          var sum = 0, count = 0;
+          for (var dy = -1; dy <= 1; dy++) {
+            for (var dx = -1; dx <= 1; dx++) {
+              final nx = x + dx, ny = y + dy;
+              if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+              sum += src[(ny * width + nx) * 3 + c];
+              count++;
+            }
+          }
+          final avg = sum / count;
+          yuv[p * 3 + c] =
+              _clampTo(src[p * 3 + c] * (1 - blend) + avg * blend, maxValue);
+        }
+      }
+    }
+  }
+  rgb.setAll(0, yuvToRgb(yuv, maxValue: maxValue));
+}
+
+/// 锐化（W32–W34）：亮度 unsharp mask——detail = Y − 3x3 盒式模糊，
+/// |detail| < [threshold] 视为噪声置零，Y' = Y + amount×detail，
+/// 三通道按 Y'/Y 等比缩放并截位到 [maxValue]。
+void applySharpen(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  double amount = 0.5,
+  double threshold = 4.0,
+  int maxValue = 65535,
+}) {
+  if (amount == 0) return;
+  final pixels = width * height;
+  final ys = Uint16List(pixels);
+  for (var p = 0; p < pixels; p++) {
+    final i = p * 3;
+    ys[p] = (19595 * rgb[i] + 38470 * rgb[i + 1] + 7471 * rgb[i + 2] + 32768) >>
+        16;
+  }
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final p = y * width + x;
+      final v = ys[p];
+      var sum = 0, count = 0;
+      for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+          final nx = x + dx, ny = y + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          sum += ys[ny * width + nx];
+          count++;
+        }
+      }
+      var detail = v - sum / count;
+      if (detail.abs() < threshold) detail = 0;
+      if (detail == 0 || v <= 0) continue;
+      final y2 = (v + amount * detail).clamp(0.0, maxValue.toDouble());
+      final scale = y2 / v;
+      final i = p * 3;
+      rgb[i] = _clampTo(rgb[i] * scale, maxValue);
+      rgb[i + 1] = _clampTo(rgb[i + 1] * scale, maxValue);
+      rgb[i + 2] = _clampTo(rgb[i + 2] * scale, maxValue);
+    }
+  }
+}
+
+/// RGB → YUV 色彩空间转换（W36）：[standard] 为 'bt601'/'bt709' 定点
+/// 矩阵，[range] 为 'full'（全范围）/'limited'（tv 范围：Y 16..235、
+/// C 16..240 按 255 标度折算到 [maxValue] 量级）。
+Uint16List convertRgbToYuvCsc(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  String standard = 'bt601',
+  String range = 'full',
+  int maxValue = 65535,
+}) {
+  if (standard != 'bt709' && range == 'full') {
+    return rgbToYuv(rgb, maxValue: maxValue);
+  }
+  // BT.601 全范围系数（与 rgbToYuv 一致）。
+  var cyR = 19595, cyG = 38470, cyB = 7471;
+  var cuR = -11058, cuG = -21710, cuB = 32768;
+  var cvR = 32768, cvG = -27439, cvB = -5329;
+  if (standard == 'bt709') {
+    cyR = 13933; // 0.2126 * 65536
+    cyG = 46871; // 0.7152 * 65536
+    cyB = 4732;  // 0.0722 * 65536
+    cuR = -7509;  // -0.1146 * 65536
+    cuG = -25260; // -0.3854 * 65536
+    cvG = -29759; // -0.4542 * 65536
+    cvB = -3009;  // -0.0458 * 65536
+  }
+  final limited = range == 'limited';
+  final half = maxValue >> 1;
+  final offY = (maxValue * 16 + 127) ~/ 255;
+  final out = Uint16List(rgb.length);
+  for (var i = 0; i < rgb.length; i += 3) {
+    final r = rgb[i];
+    final g = rgb[i + 1];
+    final b = rgb[i + 2];
+    var y = (cyR * r + cyG * g + cyB * b + 32768) >> 16;
+    var u = ((cuR * r + cuG * g + cuB * b + 32768) >> 16) + half;
+    var v = ((cvR * r + cvG * g + cvB * b + 32768) >> 16) + half;
+    if (limited) {
+      y = offY + (y * 219 + 127) ~/ 255;
+      final du = u - half;
+      u = half + ((du * 224 + (du >= 0 ? 127 : -127)) ~/ 255);
+      final dv = v - half;
+      v = half + ((dv * 224 + (dv >= 0 ? 127 : -127)) ~/ 255);
+    }
+    out[i] = y < 0 ? 0 : (y > maxValue ? maxValue : y);
+    out[i + 1] = u < 0 ? 0 : (u > maxValue ? maxValue : u);
+    out[i + 2] = v < 0 ? 0 : (v > maxValue ? maxValue : v);
+  }
+  return out;
+}
+
+/// 激发泄漏扣除（N17/N18）：统一扣除泄漏电平 [level]，扣除量限幅
+/// [maxSub]，结果钳位到 0。
+void applyFluoroLeak(Uint16List mono, {double level = 0, double maxSub = 65535}) {
+  final sub = level < maxSub ? level : maxSub;
+  if (sub <= 0) return;
+  for (var i = 0; i < mono.length; i++) {
+    final v = mono[i] - sub;
+    mono[i] = v <= 0 ? 0 : v.round();
+  }
+}
+
+/// 自发荧光背景扣除（N19/N20）：按 [blockSize]×[blockSize] 块均值估计
+/// 低频背景，按 [strength]（0..1）比例扣除，结果钳位到 0。
+void applyFluoroBackground(
+  Uint16List mono, {
+  required int width,
+  required int height,
+  int blockSize = 16,
+  double strength = 1.0,
+}) {
+  if (strength <= 0) return;
+  final bs = blockSize < 2 ? 2 : blockSize;
+  final bx = (width + bs - 1) ~/ bs;
+  final by = (height + bs - 1) ~/ bs;
+  final means = List<double>.filled(bx * by, 0);
+  for (var byi = 0; byi < by; byi++) {
+    for (var bxi = 0; bxi < bx; bxi++) {
+      var sum = 0, count = 0;
+      final y0 = byi * bs, y1 = math.min(y0 + bs, height);
+      final x0 = bxi * bs, x1 = math.min(x0 + bs, width);
+      for (var y = y0; y < y1; y++) {
+        for (var x = x0; x < x1; x++) {
+          sum += mono[y * width + x];
+          count++;
+        }
+      }
+      means[byi * bx + bxi] = count > 0 ? sum / count : 0;
+    }
+  }
+  final src = Uint16List.fromList(mono);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final i = y * width + x;
+      final bg = means[(y ~/ bs) * bx + (x ~/ bs)];
+      final v = src[i] - strength * bg;
+      mono[i] = v <= 0 ? 0 : v.round();
+    }
+  }
+}
+
+/// 激发参考归一化（N21–N23）：以全帧均值作为激发强度估计，把画面
+/// 增益拉到参考电平 [reference]：v' = v × reference / max(mean, [epsilon])。
+void applyFluoroNormalize(
+  Uint16List mono, {
+  double reference = 0,
+  double epsilon = 1,
+  int maxValue = 65535,
+}) {
+  if (reference <= 0) return;
+  var sum = 0;
+  for (final v in mono) {
+    sum += v;
+  }
+  if (mono.isEmpty) return;
+  final mean = sum / mono.length;
+  if (mean < epsilon) return;
+  final gain = reference / mean;
+  if (gain == 1.0) return;
+  for (var i = 0; i < mono.length; i++) {
+    mono[i] = _clampTo(mono[i] * gain, maxValue);
+  }
+}
+
+/// 时域 IIR 降噪（N26–N28）：Y = αF + (1−α)Yprev。
+/// [history] 为上一帧输出（无历史或尺寸不符时直通并把当前帧作为历史）。
+/// [motionAdapt] 为 true 时帧差超过 maxValue/16 的像素判为运动，
+/// 强制 α=1（用当前帧，避免拖影）。返回 (输出帧, 新历史帧)。
+(Uint16List, Uint16List) applyTemporalIir(
+  Uint16List mono, {
+  Uint16List? history,
+  required double alpha,
+  bool motionAdapt = false,
+  int maxValue = 65535,
+}) {
+  final out = Uint16List(mono.length);
+  if (history == null || history.length != mono.length) {
+    out.setAll(0, mono);
+    return (out, Uint16List.fromList(mono));
+  }
+  final a = alpha.clamp(0.0, 1.0);
+  final motionThr = maxValue / 16;
+  for (var i = 0; i < mono.length; i++) {
+    final f = mono[i];
+    final prev = history[i];
+    var aa = a;
+    if (motionAdapt && (f - prev).abs() > motionThr) aa = 1.0;
+    out[i] = (aa * f + (1 - aa) * prev).round();
+  }
+  return (out, Uint16List.fromList(out));
+}
+
+/// 伪彩映射（N33/N40）：mono 灰度按 [gain] 增益归一化后映射为伪彩
+/// RGB（green / magenta / hot 三种色表），输出 16 位量级交织 RGB。
+Uint16List monoPseudoColor(
+  Uint16List mono, {
+  required int width,
+  required int height,
+  String colormap = 'green',
+  double gain = 1.0,
+  int maxValue = 65535,
+}) {
+  final out = Uint16List(mono.length * 3);
+  final inv = 1.0 / maxValue;
+  var j = 0;
+  for (var i = 0; i < mono.length; i++, j += 3) {
+    var t = mono[i] * gain * inv;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    double r, g, b;
+    switch (colormap) {
+      case 'magenta':
+        r = t;
+        g = 0;
+        b = t;
+      case 'hot':
+        // 黑 → 红 → 黄 → 白。
+        r = math.min(3 * t, 1.0);
+        g = (3 * t - 1).clamp(0.0, 1.0);
+        b = (3 * t - 2).clamp(0.0, 1.0);
+      default: // 'green'：ICG 荧光惯例的纯绿映射
+        r = 0;
+        g = t;
+        b = 0;
+    }
+    out[j] = _clampTo(r * maxValue, maxValue);
+    out[j + 1] = _clampTo(g * maxValue, maxValue);
+    out[j + 2] = _clampTo(b * maxValue, maxValue);
+  }
+  return out;
+}
+
+/// 荧光融合（R09–R11、N38/N39）：白光 RGB 与荧光 mono 的融合出图。
+/// 荧光图先按 ([offsetX], [offsetY]) 手动配准偏移做双线性重采样
+/// （几何配准 R01–R07 的简化）；α 由荧光强度经 [threshold] 门限映射到
+/// 0..[alphaMax]（SBR/SNR/置信度 N29/N30/N38 的简化折叠）。
+/// [mode] 为 'alpha' 时 RGB_f=(1−α)·WL+α·pseudo(FL)；为 'contour' 时
+/// 提取荧光 mask 的 3x3 轮廓，以伪彩全强度叠加。
+Uint16List fuseFluorescence(
+  Uint16List rgbWl,
+  Uint16List monoFl, {
+  required int width,
+  required int height,
+  String mode = 'alpha',
+  double threshold = 0,
+  double alphaMax = 0.8,
+  String colormap = 'green',
+  double offsetX = 0,
+  double offsetY = 0,
+  int maxValue = 65535,
+}) {
+  // 带偏移的荧光图双线性采样（边界钳位）。
+  double sampleFl(double fx, double fy) {
+    fx = fx.clamp(0.0, width - 1.0);
+    fy = fy.clamp(0.0, height - 1.0);
+    final x0 = fx.floor();
+    final y0 = fy.floor();
+    final x1 = x0 + 1 < width ? x0 + 1 : x0;
+    final y1 = y0 + 1 < height ? y0 + 1 : y0;
+    final tx = fx - x0;
+    final ty = fy - y0;
+    final v00 = monoFl[y0 * width + x0];
+    final v10 = monoFl[y0 * width + x1];
+    final v01 = monoFl[y1 * width + x0];
+    final v11 = monoFl[y1 * width + x1];
+    return (v00 * (1 - tx) + v10 * tx) * (1 - ty) +
+        (v01 * (1 - tx) + v11 * tx) * ty;
+  }
+
+  final out = Uint16List(width * height * 3);
+  final contour = mode == 'contour';
+  final range = maxValue - threshold;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final p = y * width + x;
+      final i = p * 3;
+      final fl = sampleFl(x + offsetX, y + offsetY);
+      // 伪彩（增益 1，融合内不再叠加增益）。
+      final t = (fl / maxValue).clamp(0.0, 1.0);
+      double pr, pg, pb;
+      switch (colormap) {
+        case 'magenta':
+          pr = t;
+          pg = 0;
+          pb = t;
+        case 'hot':
+          pr = math.min(3 * t, 1.0);
+          pg = (3 * t - 1).clamp(0.0, 1.0);
+          pb = (3 * t - 2).clamp(0.0, 1.0);
+        default:
+          pr = 0;
+          pg = t;
+          pb = 0;
+      }
+      if (contour) {
+        // 轮廓模式：mask 内像素若 3x3 邻域存在 mask 外点即为边缘。
+        var edge = false;
+        if (fl >= threshold) {
+          for (var dy = -1; dy <= 1 && !edge; dy++) {
+            for (var dx = -1; dx <= 1; dx++) {
+              if (dx == 0 && dy == 0) continue;
+              if (sampleFl(x + dx + offsetX, y + dy + offsetY) < threshold) {
+                edge = true;
+                break;
+              }
+            }
+          }
+        }
+        if (edge) {
+          out[i] = _clampTo(pr * maxValue, maxValue);
+          out[i + 1] = _clampTo(pg * maxValue, maxValue);
+          out[i + 2] = _clampTo(pb * maxValue, maxValue);
+        } else {
+          out[i] = rgbWl[i];
+          out[i + 1] = rgbWl[i + 1];
+          out[i + 2] = rgbWl[i + 2];
+        }
+        continue;
+      }
+      // alpha 模式：强度门限 → α 映射。
+      var a = 0.0;
+      if (range > 0 && fl > threshold) {
+        a = alphaMax * ((fl - threshold) / range);
+        if (a > alphaMax) a = alphaMax;
+      }
+      out[i] = _clampTo(rgbWl[i] * (1 - a) + pr * maxValue * a, maxValue);
+      out[i + 1] = _clampTo(rgbWl[i + 1] * (1 - a) + pg * maxValue * a, maxValue);
+      out[i + 2] = _clampTo(rgbWl[i + 2] * (1 - a) + pb * maxValue * a, maxValue);
+    }
+  }
+  return out;
+}

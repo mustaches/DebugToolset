@@ -97,6 +97,97 @@ void main() {
       }
     });
 
+    test('nodeTimingsUs 记录各节点执行耗时', () async {
+      // 4x4、8bit、RGGB 单帧。
+      const w = 4, h = 4;
+      final tmp = File(
+          '${Directory.systemTemp.path}/isp_timing_test_${DateTime.now().microsecondsSinceEpoch}.raw');
+      await tmp.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      try {
+        final chain = <Map<String, Object?>>[
+          {
+            'typeId': 'bayer_source',
+            'nodeId': 'src',
+            'params': {
+              'filePath': tmp.path,
+              'width': w,
+              'height': h,
+              'bitDepth': '8',
+              'packing': 'unpacked_lsb',
+              'bayerPattern': 'RGGB',
+              'littleEndian': true,
+              'frameIndex': 0,
+            }
+          },
+          {
+            'typeId': 'demosaic',
+            'nodeId': 'dm',
+            'params': {'algorithm': 'bilinear'}
+          },
+          {'typeId': 'preview', 'nodeId': 'pv', 'params': <String, Object?>{}},
+        ];
+        final timings = <String, int>{};
+        final rgba = await runChainFrame(chain, 0, nodeTimingsUs: timings);
+        expect(rgba.length, w * h * 4);
+        // 源（解码）、算子、汇点（含链末默认色调映射）都有计时。
+        expect(timings.keys, containsAll(['src', 'dm', 'pv']));
+        for (final us in timings.values) {
+          expect(us, greaterThanOrEqualTo(0));
+        }
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('runChainFrameWithProgress 按节点顺序回报进度', () async {
+      // 4x4、8bit、RGGB 单帧。
+      const w = 4, h = 4;
+      final tmp = File(
+          '${Directory.systemTemp.path}/isp_progress_test_${DateTime.now().microsecondsSinceEpoch}.raw');
+      await tmp.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      try {
+        final chain = <Map<String, Object?>>[
+          {
+            'typeId': 'bayer_source',
+            'nodeId': 'src',
+            'params': {
+              'filePath': tmp.path,
+              'width': w,
+              'height': h,
+              'bitDepth': '8',
+              'packing': 'unpacked_lsb',
+              'bayerPattern': 'RGGB',
+              'littleEndian': true,
+              'frameIndex': 0,
+            }
+          },
+          {
+            'typeId': 'demosaic',
+            'nodeId': 'dm',
+            'params': {'algorithm': 'bilinear'}
+          },
+          {'typeId': 'preview', 'nodeId': 'pv', 'params': <String, Object?>{}},
+        ];
+        final starts = <(String, int, int)>[];
+        final result = await runChainFrameWithProgress(chain, 0,
+            onNodeStart: (nodeId, index, total) {
+          starts.add((nodeId, index, total));
+        });
+        // 节点按链序依次回报，序号 0..n-1，总数为链长。
+        expect(starts.map((s) => s.$1), ['src', 'dm', 'pv']);
+        expect(starts.map((s) => s.$2), [0, 1, 2]);
+        expect(starts.map((s) => s.$3), [3, 3, 3]);
+        // 返回结构与 runChainFrameCapturedInIsolate 同构。
+        expect((result['rgba'] as Uint8List).length, w * h * 4);
+        expect(
+            (result['timings'] as Map).keys, containsAll(['src', 'dm', 'pv']));
+        expect(
+            (result['captures'] as Map).keys, containsAll(['src', 'dm', 'pv']));
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
     test('sourceFrameCount rejects missing file', () async {
       expect(
         () => sourceFrameCount('bayer_source', {
@@ -463,7 +554,7 @@ void main() {
       }
     });
 
-    test('cis_mono 源直接输出灰度 RGB', () async {
+    test('cis_mono 源以 16 位 mono 中间格式入链', () async {
       const w = 4, h = 2;
       final tmp = File(
           '${Directory.systemTemp.path}/isp_mono_${DateTime.now().microsecondsSinceEpoch}.raw');
@@ -477,7 +568,9 @@ void main() {
         p['height'] = h;
         p['bitDepth'] = '8';
         final prev = graph.addNode('preview', 200, 0);
-        expect(graph.connect(src, 'out', prev, 'in'), isNull);
+        // mono 输出接 RGB 输入端口类型不匹配；走 in_mono。
+        expect(graph.connect(src, 'out', prev, 'in'), '端口类型不匹配');
+        expect(graph.connect(src, 'out', prev, 'in_mono'), isNull);
         final rgba = await runChainFrame(compileChain(graph, prev), 0);
         expect(rgba.length, w * h * 4);
         // 灰度：三通道相等；gamma 2.2 后大于 128。
@@ -519,6 +612,138 @@ void main() {
         expect((rgba[1] - rgba[2]).abs(), lessThanOrEqualTo(2));
       } finally {
         await deleteQuietly(tmp);
+      }
+    });
+  });
+
+  group('ICG 荧光内窥镜链级用例', () {
+    /// 造一个 8bit unpacked RAW 临时文件。
+    Future<File> tempRaw(List<int> bytes, String tag) async {
+      final tmp = File(
+          '${Directory.systemTemp.path}/isp_icg_${tag}_${DateTime.now().microsecondsSinceEpoch}.raw');
+      await tmp.writeAsBytes(bytes);
+      return tmp;
+    }
+
+    void setRawParams(IspGraph graph, String nodeId, String path, int w, int h) {
+      final p = graph.nodes[nodeId]!.paramValues;
+      p['filePath'] = path;
+      p['width'] = w;
+      p['height'] = h;
+      p['bitDepth'] = '8';
+    }
+
+    test('bayer 链挂新 RAW 域算子（dpc/fpn/lsc/grgb/bayer_dnr/highlight）',
+        () async {
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          List<int>.generate(w * h, (i) => 20 + (i * 3) % 200), 'raw');
+      try {
+        final graph = IspGraph();
+        var prev = graph.addNode('bayer_source', 0, 0);
+        setRawParams(graph, prev, tmp.path, w, h);
+        // 按典型流水线顺序串接全部新 RAW 域算子（默认参数）。
+        for (final type in [
+          'black_level',
+          'dpc',
+          'fpn',
+          'lsc',
+          'grgb_balance',
+          'bayer_dnr',
+          'highlight',
+          'demosaic',
+          'preview',
+        ]) {
+          final id = graph.addNode(type, 0, 0);
+          expect(graph.connect(prev, 'out', id, 'in'), isNull, reason: type);
+          prev = id;
+        }
+        final rgba = await runChainFrame(compileChain(graph, prev), 0);
+        expect(rgba.length, w * h * 4);
+        for (var i = 3; i < rgba.length; i += 4) {
+          expect(rgba[i], 255); // alpha
+        }
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('cis_mono→fluoro_leak→fluoro_temporal→preview mono 链端到端',
+        () async {
+      const w = 8, h = 8;
+      // 两帧，验证时域 IIR 的历史帧累积路径（frame 0 直通、frame 1 混合）。
+      final tmp =
+          await tempRaw(List<int>.filled(w * h * 2, 100), 'mono_chain');
+      try {
+        final graph = IspGraph();
+        final src = graph.addNode('cis_mono', 0, 0);
+        setRawParams(graph, src, tmp.path, w, h);
+        final leak = graph.addNode('fluoro_leak', 0, 0);
+        graph.nodes[leak]!.paramValues['level'] = 20.0;
+        final temporal = graph.addNode('fluoro_temporal', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(src, 'out', leak, 'in_mono'), isNull);
+        expect(graph.connect(leak, 'out_mono', temporal, 'in_mono'), isNull);
+        expect(graph.connect(temporal, 'out_mono', prev, 'in_mono'), isNull);
+        final chain = compileChain(graph, prev);
+        for (final frameIndex in [0, 1]) {
+          final rgba = await runChainFrame(chain, frameIndex);
+          expect(rgba.length, w * h * 4);
+          // 灰度出图：三通道相等；100 − 20 = 80，gamma 2.2 后明显提亮。
+          expect(rgba[0], rgba[1]);
+          expect(rgba[1], rgba[2]);
+          expect(rgba[0], greaterThan(100));
+        }
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('双源 fluoro_fusion 链（白光 bayer + 荧光 mono）端到端', () async {
+      const w = 8, h = 8;
+      final wlTmp =
+          await tempRaw(List<int>.filled(w * h, 100), 'fusion_wl');
+      final flTmp =
+          await tempRaw(List<int>.filled(w * h, 255), 'fusion_fl');
+      try {
+        final graph = IspGraph();
+        final wl = graph.addNode('bayer_source', 0, 0);
+        setRawParams(graph, wl, wlTmp.path, w, h);
+        final dem = graph.addNode('demosaic', 0, 0);
+        final fl = graph.addNode('cis_mono', 0, 0);
+        setRawParams(graph, fl, flTmp.path, w, h);
+        final leak = graph.addNode('fluoro_leak', 0, 0);
+        final fusion = graph.addNode('fluoro_fusion', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(wl, 'out', dem, 'in'), isNull);
+        expect(graph.connect(dem, 'out', fusion, 'in'), isNull);
+        expect(graph.connect(fl, 'out', leak, 'in_mono'), isNull);
+        expect(graph.connect(leak, 'out_mono', fusion, 'in_fluoro'), isNull);
+        expect(graph.connect(fusion, 'out', prev, 'in'), isNull);
+        // 含 fluoro_fusion 的链允许 2 个源节点。
+        final chain = compileChain(graph, prev);
+        expect(
+            chain.where((op) => sourceTypes.contains(op['typeId'])).length, 2);
+        final rgba = await runChainFrame(chain, 0);
+        expect(rgba.length, w * h * 4);
+        // 荧光满幅 → α 映射后绿色通道显著高于 R/B（绿色伪彩融合）。
+        expect(rgba[1], greaterThan(rgba[0]));
+        expect(rgba[1], greaterThan(rgba[2]));
+
+        // 对照：不含 fluoro_fusion 的双源链仍被拒绝（两个 mono 源经
+        // 合路器汇入同一汇点）。
+        final graph2 = IspGraph();
+        final src1 = graph2.addNode('cis_mono', 0, 0);
+        final src2 = graph2.addNode('cis_mono', 0, 0);
+        final combiner = graph2.addNode('rgb_combiner', 0, 0);
+        final prev2 = graph2.addNode('preview', 0, 0);
+        expect(graph2.connect(src1, 'out', combiner, 'in_r'), isNull);
+        expect(graph2.connect(src2, 'out', combiner, 'in_g'), isNull);
+        expect(graph2.connect(combiner, 'out', prev2, 'in'), isNull);
+        expect(() => compileChain(graph2, prev2), throwsStateError);
+      } finally {
+        await deleteQuietly(wlTmp);
+        await deleteQuietly(flTmp);
       }
     });
   });

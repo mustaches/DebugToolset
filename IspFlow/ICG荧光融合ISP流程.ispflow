@@ -1,0 +1,450 @@
+{
+  "name": "ICG荧光融合ISP流程",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "cis_bayer_rggb",
+      "x": 0.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "filePath": "BayerRGGB/RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
+        "width": 1920,
+        "height": 1080,
+        "bitDepth": "10",
+        "packing": "unpacked_lsb",
+        "bayerPattern": "RGGB",
+        "littleEndian": true,
+        "frameIndex": 0
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "black_level",
+      "x": 260.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "r": 0.0,
+        "gr": 0.0,
+        "gb": 0.0,
+        "b": 0.0
+      }
+    },
+    {
+      "id": "n3",
+      "typeId": "dpc",
+      "x": 520.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "threshold": 5.0,
+        "mode": "median"
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "lsc",
+      "x": 780.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "strength": 0.5,
+        "centerX": 0.5,
+        "centerY": 0.5
+      }
+    },
+    {
+      "id": "n5",
+      "typeId": "demosaic",
+      "x": 1040.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "algorithm": "bilinear"
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "white_balance",
+      "x": 1300.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "mode": "auto",
+        "rGain": 1.0,
+        "bGain": 1.0
+      }
+    },
+    {
+      "id": "n7",
+      "typeId": "ccm",
+      "x": 1560.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "n10",
+      "typeId": "cis_mono",
+      "x": 0.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "filePath": "BayerRGGB/RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
+        "width": 1920,
+        "height": 1080,
+        "bitDepth": "10",
+        "packing": "unpacked_lsb",
+        "littleEndian": true,
+        "frameIndex": 0
+      }
+    },
+    {
+      "id": "n11",
+      "typeId": "black_level",
+      "x": 260.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "r": 0.0,
+        "gr": 0.0,
+        "gb": 0.0,
+        "b": 0.0
+      }
+    },
+    {
+      "id": "n12",
+      "typeId": "dpc",
+      "x": 520.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "threshold": 5.0,
+        "mode": "median"
+      }
+    },
+    {
+      "id": "n13",
+      "typeId": "fpn",
+      "x": 780.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "row": true,
+        "col": true,
+        "maxCorr": 64.0
+      }
+    },
+    {
+      "id": "n14",
+      "typeId": "lsc",
+      "x": 1040.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "strength": 0.5,
+        "centerX": 0.5,
+        "centerY": 0.5
+      }
+    },
+    {
+      "id": "n15",
+      "typeId": "fluoro_leak",
+      "x": 1300.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "level": 16.0,
+        "maxSub": 64.0
+      }
+    },
+    {
+      "id": "n16",
+      "typeId": "fluoro_background",
+      "x": 1560.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "blockSize": 16,
+        "strength": 0.3
+      }
+    },
+    {
+      "id": "n17",
+      "typeId": "fluoro_normalize",
+      "x": 1820.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "reference": 1000.0,
+        "epsilon": 1.0
+      }
+    },
+    {
+      "id": "n18",
+      "typeId": "bayer_dnr",
+      "x": 2080.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "strength": 1.0
+      }
+    },
+    {
+      "id": "n19",
+      "typeId": "fluoro_temporal",
+      "x": 2340.0,
+      "y": 350.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "alpha": 0.5,
+        "motionAdapt": true
+      }
+    },
+    {
+      "id": "n20",
+      "typeId": "fluoro_fusion",
+      "x": 2700.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "mode": "alpha",
+        "threshold": 128.0,
+        "alphaMax": 0.8,
+        "colormap": "green",
+        "offsetX": 0.0,
+        "offsetY": 0.0
+      }
+    },
+    {
+      "id": "n21",
+      "typeId": "gamma",
+      "x": 2960.0,
+      "y": 0.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "gamma": 2.2,
+        "brightness": 0.0,
+        "contrast": 1.0
+      }
+    },
+    {
+      "id": "n22",
+      "typeId": "preview",
+      "x": 3260.0,
+      "y": 0.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 1
+      }
+    },
+    {
+      "id": "n23",
+      "typeId": "pseudo_color",
+      "x": 2720.0,
+      "y": 680.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "colormap": "green",
+        "gain": 1.0
+      }
+    },
+    {
+      "id": "n24",
+      "typeId": "preview",
+      "x": 3260.0,
+      "y": 680.0,
+      "width": 700.0,
+      "extraHeight": 444.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 1
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "n1",
+      "fromPort": "out",
+      "to": "n2",
+      "toPort": "in"
+    },
+    {
+      "id": "c2",
+      "from": "n2",
+      "fromPort": "out",
+      "to": "n3",
+      "toPort": "in"
+    },
+    {
+      "id": "c3",
+      "from": "n3",
+      "fromPort": "out",
+      "to": "n4",
+      "toPort": "in"
+    },
+    {
+      "id": "c4",
+      "from": "n4",
+      "fromPort": "out",
+      "to": "n5",
+      "toPort": "in"
+    },
+    {
+      "id": "c5",
+      "from": "n5",
+      "fromPort": "out",
+      "to": "n6",
+      "toPort": "in"
+    },
+    {
+      "id": "c6",
+      "from": "n6",
+      "fromPort": "out",
+      "to": "n7",
+      "toPort": "in"
+    },
+    {
+      "id": "c7",
+      "from": "n7",
+      "fromPort": "out",
+      "to": "n20",
+      "toPort": "in"
+    },
+    {
+      "id": "c10",
+      "from": "n10",
+      "fromPort": "out",
+      "to": "n11",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c11",
+      "from": "n11",
+      "fromPort": "out_mono",
+      "to": "n12",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c12",
+      "from": "n12",
+      "fromPort": "out_mono",
+      "to": "n13",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c13",
+      "from": "n13",
+      "fromPort": "out_mono",
+      "to": "n14",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c14",
+      "from": "n14",
+      "fromPort": "out_mono",
+      "to": "n15",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c15",
+      "from": "n15",
+      "fromPort": "out_mono",
+      "to": "n16",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c16",
+      "from": "n16",
+      "fromPort": "out_mono",
+      "to": "n17",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c17",
+      "from": "n17",
+      "fromPort": "out_mono",
+      "to": "n18",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c18",
+      "from": "n18",
+      "fromPort": "out_mono",
+      "to": "n19",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c19",
+      "from": "n19",
+      "fromPort": "out_mono",
+      "to": "n20",
+      "toPort": "in_fluoro"
+    },
+    {
+      "id": "c20",
+      "from": "n20",
+      "fromPort": "out",
+      "to": "n21",
+      "toPort": "in"
+    },
+    {
+      "id": "c21",
+      "from": "n21",
+      "fromPort": "out",
+      "to": "n22",
+      "toPort": "in"
+    },
+    {
+      "id": "c22",
+      "from": "n19",
+      "fromPort": "out_mono",
+      "to": "n23",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c23",
+      "from": "n23",
+      "fromPort": "out",
+      "to": "n24",
+      "toPort": "in"
+    }
+  ],
+  "nextId": 100
+}

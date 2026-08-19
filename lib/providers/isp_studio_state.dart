@@ -20,6 +20,7 @@ import '../modules/isp_studio/pipeline/instrument_worker.dart';
 import '../modules/isp_studio/pipeline/instruments.dart';
 import '../modules/isp_studio/pipeline/pipeline_runner.dart';
 import '../modules/isp_studio/pipeline/pipeline_worker.dart';
+import '../modules/isp_studio/pipeline/dng_source.dart';
 import '../modules/isp_studio/pipeline/raw_sidecar.dart';
 import '../modules/isp_studio/pipeline/video_source.dart';
 import '../modules/isp_studio/widgets/node_layout.dart';
@@ -194,6 +195,11 @@ class IspStudioState extends ChangeNotifier {
   /// 供代码标签页的变量表显示运行值；图被修改后清空。
   Map<String, Map<String, Object?>> nodeOutputCaptures = {};
 
+  /// 最近一次预览运行时测得的各节点执行耗时（nodeId → 微秒），
+  /// 供节点卡片标题栏显示节点工作时间；与 [nodeOutputCaptures]
+  /// 同样规则过期（图被修改后清空）。
+  Map<String, int> nodeRunTimesUs = {};
+
   /// 仪器节点最近一次分析结果（nodeId → analyzeInstrumentInIsolate 的
   /// 返回 map），随预览运行刷新；直方图数据由节点控件直接绘制。
   Map<String, Map<String, Object?>> instrumentResults = {};
@@ -336,7 +342,8 @@ class IspStudioState extends ChangeNotifier {
   void removeNode(String id) {
     graph.removeNode(id);
     closeCodeTab(id);
-    nodeOutputCaptures = {}; // 运行值已过期
+    nodeOutputCaptures = {};
+    nodeRunTimesUs = {}; // 运行值已过期
     _instrumentSrcCache.clear();
     instrumentResults.remove(id);
     instrumentImages.remove(id)?.dispose();
@@ -796,14 +803,20 @@ class IspStudioState extends ChangeNotifier {
     if (node == null) return;
     node.paramValues[key] = value;
     totalFrames = null; // 源参数可能变了
-    nodeOutputCaptures = {}; // 运行值已过期
+    nodeOutputCaptures = {};
+    nodeRunTimesUs = {}; // 运行值已过期
     notifyListeners();
-    // RAW 源设置了文件路径：尝试从同名 txt 自动填充尺寸与黑电平。
+    // RAW 源设置了文件路径：DNG 解析文件头自动填充尺寸/位深/排列/
+    // 黑电平；普通 RAW 尝试从同名 txt 自动填充尺寸与黑电平。
     if (key == 'filePath' &&
         rawSourceTypes.contains(node.typeId) &&
         value is String &&
         value.isNotEmpty) {
-      autoFillFromSidecar(nodeId); // 异步，失败静默
+      if (isDngPath(value)) {
+        autoFillFromDng(nodeId); // 异步，失败弹状态栏消息
+      } else {
+        autoFillFromSidecar(nodeId); // 异步，失败静默
+      }
     }
     // 视频源设置了文件路径：用 ffmpeg 解析帧率/总帧数，自动填充下游
     // 预览节点的播放帧率与预览帧数。
@@ -883,10 +896,92 @@ class IspStudioState extends ChangeNotifier {
       }
     }
     if (changed) {
-      nodeOutputCaptures = {}; // 运行值已过期
+      nodeOutputCaptures = {};
+    nodeRunTimesUs = {}; // 运行值已过期
       statusMessage =
           '已从 ${p.basename(p.setExtension(rawPath, '.txt'))} 读取参数'
           '${w != null && h != null ? '（${w}x$h）' : ''}';
+      notifyListeners();
+    }
+  }
+
+  /// 读取 RAW 源节点文件路径对应的 DNG 文件头：把宽度/高度/位深/
+  /// Bayer 排列/字节序填入源节点参数，黑电平（按 CFA 相位映射为
+  /// R/Gr/Gb/B）填入该源下游的所有黑电平校正节点。
+  /// 解析失败时在状态栏提示原因（不支持的压缩/Tile/位深等）。
+  Future<void> autoFillFromDng(String sourceId) async {
+    final node = graph.nodes[sourceId];
+    if (node == null) return;
+    final path = node.paramValues['filePath']?.toString() ?? '';
+    if (path.isEmpty) return;
+    DngInfo info;
+    try {
+      info = await readDngInfo(path);
+    } catch (e) {
+      statusMessage = 'DNG 解析失败: ${e.toString().replaceFirst('Bad state: ', '')}';
+      notifyListeners();
+      return;
+    }
+    var changed = false;
+    void setIfPresent(String key, Object? value) {
+      if (node.paramValues.containsKey(key) && node.paramValues[key] != value) {
+        node.paramValues[key] = value;
+        changed = true;
+      }
+    }
+
+    setIfPresent('width', info.width);
+    setIfPresent('height', info.height);
+    setIfPresent('bitDepth', '${info.bitDepth}');
+    setIfPresent('packing', 'unpacked_lsb');
+    setIfPresent('littleEndian', info.littleEndian);
+    if (info.cfaPattern != null) setIfPresent('bayerPattern', info.cfaPattern);
+
+    // 黑电平（2x2 相位行主序）→ R/Gr/Gb/B：相位 0=(0,0)、1=(0,1)、
+    // 2=(1,0)、3=(1,1)；G 在第 0 行为 Gr、第 1 行为 Gb。
+    final levels = info.blackLevels;
+    final colors = info.cfaColors;
+    if (levels != null && colors != null) {
+      double? r, gr, gb, b;
+      for (var i = 0; i < 4; i++) {
+        final color = colors[i];
+        final v = levels[i];
+        if (color == 0) {
+          r = v;
+        } else if (color == 2) {
+          b = v;
+        } else if (i < 2) {
+          gr = v;
+        } else {
+          gb = v;
+        }
+      }
+      if (r != null && gr != null && gb != null && b != null) {
+        for (final e in graph.nodes.entries) {
+          if (e.value.typeId != 'black_level') continue;
+          if (!graph.upstreamOf(e.key).contains(sourceId)) continue;
+          e.value.paramValues['r'] = r;
+          e.value.paramValues['gr'] = gr;
+          e.value.paramValues['gb'] = gb;
+          e.value.paramValues['b'] = b;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      totalFrames = null; // 单帧字节数变了
+      nodeOutputCaptures = {};
+      nodeRunTimesUs = {}; // 运行值已过期
+      var lensNote = '';
+      if (info.gainMaps.isNotEmpty) {
+        lensNote = '，镜头阴影校正表已加载（解码时自动应用）';
+      }
+      if (info.warp != null && !info.warp!.isIdentity) {
+        lensNote += '，畸变校正参数暂未应用';
+      }
+      statusMessage = '已从 ${p.basename(path)} 读取参数'
+          '（${info.width}x${info.height} ${info.bitDepth}bit'
+          '${info.cfaPattern != null ? ' ${info.cfaPattern}' : ''}）$lensNote';
       notifyListeners();
     }
   }
@@ -918,7 +1013,8 @@ class IspStudioState extends ChangeNotifier {
     }
     final error = graph.connect(fromId, fromPort, toNodeId, toPort);
     if (error == null) {
-      nodeOutputCaptures = {}; // 连接变了，运行值已过期
+      nodeOutputCaptures = {};
+    nodeRunTimesUs = {}; // 连接变了，运行值已过期
       _instrumentSrcCache.clear();
       final type = graph.nodes[toNodeId]?.typeId;
       if (type == 'histogram' || type == 'waveform') {
@@ -938,6 +1034,7 @@ class IspStudioState extends ChangeNotifier {
   void disconnectInput(String nodeId, String port) {
     graph.disconnectInput(nodeId, port);
     nodeOutputCaptures = {};
+    nodeRunTimesUs = {};
     _instrumentSrcCache.clear();
     _clearStaleConnectionSelection();
     notifyListeners();
@@ -947,6 +1044,7 @@ class IspStudioState extends ChangeNotifier {
   void removeConnection(String connectionId) {
     graph.disconnect(connectionId);
     nodeOutputCaptures = {};
+    nodeRunTimesUs = {};
     _instrumentSrcCache.clear();
     if (selectedConnectionId == connectionId) selectedConnectionId = null;
     notifyListeners();
@@ -993,6 +1091,7 @@ class IspStudioState extends ChangeNotifier {
     _resetProgress();
     statusMessage = '正在解析节点图与计算帧序列…';
     _lastPlaybackRgba = null; // 单次运行的节点捕获优先于过期播放帧
+    nodeRunTimesUs = {}; // 重新测量各节点耗时
     _clearPlanePreviews();
     notifyListeners();
     final token = ++_runToken;
@@ -1041,6 +1140,9 @@ class IspStudioState extends ChangeNotifier {
       var completedWeight = 0;
       final totalCount = previewNodes.length;
       var completedCount = 0;
+      // 各链已完成算子数（nodeStart 回报粒度）：总进度 = 已完成算子
+      // 求和 / 总算子数（totalChainLen），链完成后置为链全长。
+      final chainDoneOps = <String, int>{};
 
       // 所有预览节点并行执行。
       await Future.wait([
@@ -1049,10 +1151,36 @@ class IspStudioState extends ChangeNotifier {
             try {
               final chain = chains[pvNode.id];
               if (chain == null) return;
-              final result = await compute(runChainFrameCapturedInIsolate,
-                  {'chain': chain, 'frameIndex': frame});
+              chainDoneOps[pvNode.id] = 0;
+              final result = await runChainFrameWithProgress(chain, frame,
+                  onNodeStart: (nodeId, index, total) {
+                if (token != _runToken) return;
+                // 节点粒度进度：该节点刚要开始，视为前面 index 个
+                // 算子已完成；与已完成链的算子数求和得总进度。
+                chainDoneOps[pvNode.id] = index;
+                final doneOps =
+                    chainDoneOps.values.fold<int>(0, (a, b) => a + b);
+                if (totalChainLen > 0) {
+                  _advanceProgress(probeEnd +
+                      previewShare * doneOps / totalChainLen);
+                }
+                final nodeType = graph.nodes[nodeId]?.typeId;
+                final name = nodeType == null
+                    ? nodeId
+                    : (IspNodeRegistry.byId(nodeType)?.displayName ??
+                        nodeId);
+                statusMessage =
+                    '正在运行：$name [$doneOps/$totalChainLen]…';
+                notifyListeners();
+              });
               if (token != _runToken) return;
               final rgba = result['rgba'] as Uint8List;
+              // 合并本条链测得的节点耗时（多链并行，共享前缀节点
+              // 后完成者覆盖先完成者，数值等价故无所谓）。
+              nodeRunTimesUs = {
+                ...nodeRunTimesUs,
+                ...(result['timings'] as Map).cast<String, int>(),
+              };
               if (pvNode.id == firstPreview.id) {
                 nodeOutputCaptures =
                     (result['captures'] as Map).cast<String, Map<String, Object?>>();
@@ -1072,6 +1200,8 @@ class IspStudioState extends ChangeNotifier {
             } finally {
               completedCount++;
               completedWeight += chains[pvNode.id]?.length ?? 0;
+              // 链结束：已完成算子数置为链全长（无论成败，不再推进）。
+              chainDoneOps[pvNode.id] = chains[pvNode.id]?.length ?? 0;
               if (token == _runToken) {
                 _advanceProgress(probeEnd +
                     previewShare *
@@ -1212,7 +1342,11 @@ class IspStudioState extends ChangeNotifier {
                 result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
               } else {
                 final chain = compileChain(graph, node.id);
-                final chainRgba = await runChainFrame(chain, frame);
+                // 链重跑放后台 isolate：多核 RAW 算子的长链在主 isolate
+                // 执行会冻结 UI 数秒，期间仪器 worker 的回包无法被处理，
+                // 5s 超时定时器抢先触发而误报「仪器分析超时」。
+                final chainRgba = await compute(runChainFrameInIsolate,
+                    {'chain': chain, 'frameIndex': frame});
                 final (dw, dh) = await sourceDimensions(
                     chain.first['typeId'] as String,
                     chain.first['params'] as Map<String, Object?>);
@@ -2463,6 +2597,7 @@ class IspStudioState extends ChangeNotifier {
     openCodeTabs.clear();
     activeTab = 0;
     nodeOutputCaptures = {};
+    nodeRunTimesUs = {};
     instrumentResults = {};
     _histogramChannels.clear();
     for (final img in instrumentImages.values) {

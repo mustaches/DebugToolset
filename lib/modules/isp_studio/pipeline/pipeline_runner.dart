@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../models/isp_graph.dart';
+import 'dng_source.dart';
 import 'frame3d.dart';
 import 'image_source.dart';
 import 'video_source.dart';
@@ -78,8 +81,10 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
   if (sources == 0) {
     throw StateError('流水线缺少源节点');
   }
-  if (sources > 1) {
-    throw StateError('一条流水线只能有一个源节点');
+  // 含荧光融合节点的链允许 2 个源节点（白光 + 荧光双路），其余链单源。
+  final hasFusion = chain.any((op) => op['typeId'] == 'fluoro_fusion');
+  if (sources > (hasFusion ? 2 : 1)) {
+    throw StateError(hasFusion ? '一条流水线最多两个源节点' : '一条流水线只能有一个源节点');
   }
   if (!sourceTypes.contains(chain.first['typeId'])) {
     throw StateError('源节点必须位于流水线起点');
@@ -145,6 +150,11 @@ Future<int> sourceFrameCount(String typeId, Map<String, Object?> params) async {
   if (path.isEmpty) throw StateError('RAW 源未设置文件路径');
   final file = File(path);
   if (!await file.exists()) throw StateError('RAW 文件不存在: $path');
+  // DNG（TIFF 容器）单帧文件：解析头部校验格式后直接返回 1。
+  if (isDngPath(path)) {
+    await readDngInfo(path);
+    return 1;
+  }
   final len = await file.length();
   final frameBytes = _sourceFrameBytes(params);
   if (frameBytes <= 0 || len < frameBytes) {
@@ -180,7 +190,7 @@ String _rawCfaOf(String typeId, Map<String, Object?> p) => switch (typeId) {
 
 /// 链内流动的帧数据。
 class _Frame {
-  /// mosaic 时长度 w*h；rgb/yuv/hsl 时长度 w*h*3（三通道交织）。
+  /// mosaic/mono 时长度 w*h；rgb/yuv/hsl 时长度 w*h*3（三通道交织）。
   /// 平面轨道（[yuvPlanes8]/[mono8] 非空）时为空占位。
   Uint16List data;
 
@@ -222,7 +232,133 @@ class _Frame {
   void requireRgb(String opName) {
     if (format != 'rgb') throw StateError('$opName需要 RGB 输入');
   }
+
+  void requireMono(String opName) {
+    if (format != 'mono') throw StateError('$opName需要 Mono 输入');
+  }
+
+  /// RAW 域算子：Bayer 马赛克或 16 位 mono 均可（mono 时按全像素邻域）。
+  void requireMosaicOrMono(String opName) {
+    if (format != 'mosaic' && format != 'mono') {
+      throw StateError('$opName需要 RAW 马赛克或 Mono 输入');
+    }
+  }
 }
+
+/// 解码 RAW 源节点的一帧为 [_Frame]（读文件 + 解包）。
+/// MONO 无 CFA：保持 16 位单通道 mono 格式（w*h）入链，不再展开为 RGB。
+Future<_Frame> _decodeRawSource(
+    String typeId, Map<String, Object?> sp, int frameIndex) async {
+  // DNG（TIFF 容器）：尺寸/位深/排列以文件头为准，走专用解析路径。
+  if (isDngPath(_str(sp, 'filePath'))) {
+    return _decodeDngSource(typeId, sp, frameIndex);
+  }
+  final width = _int(sp, 'width');
+  final height = _int(sp, 'height');
+  final bitDepth =
+      int.parse(_str(sp, 'bitDepth').isEmpty ? '10' : _str(sp, 'bitDepth'));
+  final packing = _packingOf(_str(sp, 'packing'));
+  final littleEndian = sp['littleEndian'] != false;
+  final baseFrame = _int(sp, 'frameIndex');
+  final maxValue = bayerMaxValue(bitDepth);
+
+  final frameBytes = frameByteSize(
+      width: width, height: height, bitDepth: bitDepth, packing: packing);
+  final file = File(_str(sp, 'filePath'));
+  final raf = await file.open();
+  final Uint8List raw;
+  try {
+    await raf.setPosition((baseFrame + frameIndex) * frameBytes);
+    raw = await raf.read(frameBytes);
+  } finally {
+    await raf.close();
+  }
+  if (raw.length < frameBytes) {
+    throw StateError('帧 ${baseFrame + frameIndex} 超出文件范围');
+  }
+
+  final mosaic = unpackBayer(raw,
+      width: width,
+      height: height,
+      bitDepth: bitDepth,
+      packing: packing,
+      littleEndian: littleEndian);
+  final cfa = _rawCfaOf(typeId, sp);
+  if (cfa == 'mono') {
+    // MONO 无 CFA：单通道直接入链（16 位 mono 中间格式）。
+    return _Frame(
+        data: mosaic,
+        format: 'mono',
+        width: width,
+        height: height,
+        maxValue: maxValue);
+  }
+  return _Frame(
+    data: mosaic,
+    format: 'mosaic',
+    cfa: cfa,
+    bayerPattern: cfa == 'bayer'
+        ? BayerPattern.fromName(
+            _str(sp, 'bayerPattern').isEmpty ? 'RGGB' : _str(sp, 'bayerPattern'))
+        : null,
+    width: width,
+    height: height,
+    maxValue: maxValue,
+    irSubtraction: _double(sp, 'irSubtraction'),
+  );
+}
+
+/// 解码 DNG 源节点的一帧为 [_Frame]：几何（宽/高）、白电平与 Bayer
+/// 排列以文件头为准（参数面板里的对应参数在选中文件时已自动填充为
+/// 相同值）。DNG 恒为单帧。CFA 种类仍由节点类型决定（DNG 只有 Bayer，
+/// 挂到非 Bayer 的 RAW 节点上时排列参数无意义，按直通处理）。
+Future<_Frame> _decodeDngSource(
+    String typeId, Map<String, Object?> sp, int frameIndex) async {
+  final baseFrame = _int(sp, 'frameIndex');
+  if (baseFrame + frameIndex > 0) {
+    throw StateError('DNG 文件只有一帧');
+  }
+  final (info, mosaic) = await readDngFrame(_str(sp, 'filePath'));
+  // 镜头阴影校正（GainMap 操作码）：DNG 解码的标准步骤，
+  // 按相位减黑电平→乘网格增益→加回黑电平→截位到白电平。
+  if (info.gainMaps.isNotEmpty) {
+    applyDngGainMaps(mosaic, info.width, info.height, info.gainMaps,
+        blackLevels: info.blackLevels, whiteLevel: info.whiteLevel);
+  }
+  final cfa = _rawCfaOf(typeId, sp);
+  if (cfa == 'mono') {
+    return _Frame(
+        data: mosaic,
+        format: 'mono',
+        width: info.width,
+        height: info.height,
+        maxValue: info.whiteLevel);
+  }
+  return _Frame(
+    data: mosaic,
+    format: 'mosaic',
+    cfa: cfa,
+    bayerPattern: cfa == 'bayer'
+        ? BayerPattern.fromName(info.cfaPattern ??
+            (_str(sp, 'bayerPattern').isEmpty ? 'RGGB' : _str(sp, 'bayerPattern')))
+        : null,
+    width: info.width,
+    height: info.height,
+    maxValue: info.whiteLevel,
+    irSubtraction: _double(sp, 'irSubtraction'),
+  );
+}
+
+/// 时域 IIR 降噪节点的历史帧缓存：nodeId →
+/// {'history': Uint16List, 'frame': int, 'w': int, 'h': int,
+///  'alpha': double, 'motion': bool}。
+/// 常驻 worker 内跨帧有效；frameIndex 不连续或尺寸/参数变化时重置。
+/// compute() 单次 isolate 路径无历史则直通，行为安全。
+final _temporalHistory = <String, Map<String, Object?>>{};
+
+/// 视频格式输入组端口名（与 IspNodeType.videoInputGroupPorts 一致；
+/// 本地保留一份以保持本文件无模型依赖）。
+const _videoInputPorts = ['in', 'in_yuv', 'in_hsl', 'in_mono'];
 
 /// 平面 8 位 YUV → 16 位量级交织（值域 0..255 直通）：平面轨道与仅
 /// 支持交织数据的算子（如 RGB 分路器）衔接时的兜底物化。
@@ -253,25 +389,35 @@ Uint16List _interleavePlanes8(List<Uint8List> planes, int pixels) {
 /// [captureSinks]/[capturedRgba]：多路预览的前缀覆盖去重——链 A 是
 /// 链 B 的前缀时由 B 顺带捕获 A 汇点（preview 类节点）的显示图，
 /// 捕获结果填入 [capturedRgba]（含 A 链末端的默认色调映射）。
+/// [nodeTimingsUs] 非空时，把每个节点的执行耗时（微秒）累加进该
+/// 映射（nodeId → µs）：源节点记解码耗时，其余算子记各自 case 的
+/// 处理耗时，链末默认色调映射计入汇点节点。同一节点多次出现时累加。
+/// [onNodeStart] 非空时，每个节点开始执行前回调其 nodeId（源节点
+/// 在最前，顺序即链序），供进度显示报告当前运行位置。
 Future<Uint8List> runChainFrame(
   List<Map<String, Object?>> chain,
   int frameIndex, {
   void Function(String nodeId, List<int> data, String format, int width,
       int height)? onNodeOutput,
+  void Function(String nodeId)? onNodeStart,
   Uint8List? sourceRgba,
   int? sourceWidth,
   int? sourceHeight,
   Uint8List? sourceYuv,
   Set<String>? captureSinks,
   Map<String, Uint8List>? capturedRgba,
+  Map<String, int>? nodeTimingsUs,
 }) async {
   if (chain.isEmpty || !sourceTypes.contains(chain.first['typeId'])) {
     throw StateError('算子链必须以源节点开头');
   }
   final firstType = chain.first['typeId'] as String;
   final sp = (chain.first['params'] as Map?)?.cast<String, Object?>() ?? const {};
+  final firstNodeId = chain.first['nodeId'] as String? ?? 'source';
 
   _Frame frame;
+  final srcSw = nodeTimingsUs == null ? null : (Stopwatch()..start());
+  onNodeStart?.call(firstNodeId);
   if (firstType == 'image_source' || firstType == 'video_source') {
     if (firstType == 'image_source' && frameIndex > 0) {
       throw StateError('图片源只有一帧');
@@ -321,64 +467,13 @@ Future<Uint8List> runChainFrame(
       );
     }
   } else {
-    final width = _int(sp, 'width');
-    final height = _int(sp, 'height');
-    final bitDepth =
-        int.parse(_str(sp, 'bitDepth').isEmpty ? '10' : _str(sp, 'bitDepth'));
-    final packing = _packingOf(_str(sp, 'packing'));
-    final littleEndian = sp['littleEndian'] != false;
-    final baseFrame = _int(sp, 'frameIndex');
-    final maxValue = bayerMaxValue(bitDepth);
-
-    final frameBytes = frameByteSize(
-        width: width, height: height, bitDepth: bitDepth, packing: packing);
-    final file = File(_str(sp, 'filePath'));
-    final raf = await file.open();
-    final Uint8List raw;
-    try {
-      await raf.setPosition((baseFrame + frameIndex) * frameBytes);
-      raw = await raf.read(frameBytes);
-    } finally {
-      await raf.close();
-    }
-    if (raw.length < frameBytes) {
-      throw StateError('帧 ${baseFrame + frameIndex} 超出文件范围');
-    }
-
-    final mosaic = unpackBayer(raw,
-        width: width,
-        height: height,
-        bitDepth: bitDepth,
-        packing: packing,
-        littleEndian: littleEndian);
-    final cfa = _rawCfaOf(firstType, sp);
-    if (cfa == 'mono') {
-      // MONO 无 CFA：直接复制为 RGB 灰度。
-      frame = _Frame(
-          data: monoToRgb(mosaic),
-          format: 'rgb',
-          width: width,
-          height: height,
-          maxValue: maxValue);
-    } else {
-      frame = _Frame(
-        data: mosaic,
-        format: 'mosaic',
-        cfa: cfa,
-        bayerPattern: cfa == 'bayer'
-            ? BayerPattern.fromName(_str(sp, 'bayerPattern').isEmpty
-                ? 'RGGB'
-                : _str(sp, 'bayerPattern'))
-            : null,
-        width: width,
-        height: height,
-        maxValue: maxValue,
-        irSubtraction: _double(sp, 'irSubtraction'),
-      );
-    }
+    frame = await _decodeRawSource(firstType, sp, frameIndex);
+  }
+  if (nodeTimingsUs != null) {
+    nodeTimingsUs[firstNodeId] = (nodeTimingsUs[firstNodeId] ?? 0) +
+        srcSw!.elapsedMicroseconds;
   }
   // 源节点输出（解包/解码后的帧）。
-  final firstNodeId = chain.first['nodeId'] as String? ?? 'source';
   onNodeOutput?.call(
       firstNodeId, frame.data, frame.format, frame.width, frame.height);
 
@@ -389,6 +484,13 @@ Future<Uint8List> runChainFrame(
     'out_yuv': frame.data,
     'out_hsl': frame.data,
   };
+
+  // 多源链（含荧光融合节点，compileChain 已校验最多 2 个源）：每个算子
+  // 按其视频组输入连接（'in'/'in_mono' 等）从 frames 取输入帧，第二个
+  // 源节点在循环内按需解码；单源链行为完全不变（线性 frame 路径）。
+  final multiSource =
+      chain.where((op) => sourceTypes.contains(op['typeId'])).length > 1;
+  final frames = <String, _Frame>{firstNodeId: frame};
 
   List<int>? getPortData(Map<String, Object?> op, String inputPortName) {
     final inputs = op['inputs'] as Map<String, Object?>?;
@@ -409,9 +511,53 @@ Future<Uint8List> runChainFrame(
     final typeId = op['typeId'] as String;
     final nodeId = op['nodeId'] as String? ?? typeId;
     final p = (op['params'] as Map?)?.cast<String, Object?>() ?? const {};
+    onNodeStart?.call(nodeId);
+    final opSw = nodeTimingsUs == null ? null : (Stopwatch()..start());
+    if (multiSource) {
+      if (sourceTypes.contains(typeId)) {
+        // 第二个源节点（荧光支路）：仅支持 RAW 源，解码后入 frames。
+        if (!rawSourceTypes.contains(typeId)) {
+          throw StateError('多源链的额外源节点仅支持 RAW 源');
+        }
+        frame = await _decodeRawSource(typeId, p, frameIndex);
+        frames[nodeId] = frame;
+        portOutputs[nodeId] = {'out': frame.data};
+        if (nodeTimingsUs != null) {
+          nodeTimingsUs[nodeId] =
+              (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
+        }
+        onNodeOutput?.call(
+            nodeId, frame.data, frame.format, frame.width, frame.height);
+        continue;
+      }
+      // 按视频组输入连接从 frames 取本算子的输入帧。
+      final inputs = op['inputs'] as Map<String, Object?>?;
+      if (inputs != null) {
+        for (final port in _videoInputPorts) {
+          final conn = inputs[port] as Map<String, Object?>?;
+          final from = conn?['fromNodeId'] as String?;
+          final upstream = from == null ? null : frames[from];
+          if (upstream != null) {
+            frame = upstream;
+            break;
+          }
+        }
+      }
+    }
     switch (typeId) {
       case 'black_level':
-        frame.requireMosaic('黑电平校正');
+        frame.requireMosaicOrMono('黑电平校正');
+        if (frame.format == 'mono') {
+          // mono（荧光链）：用 r 参数作为统一偏移扣除（N01–N03）。
+          final off = _double(p, 'r');
+          if (off != 0) {
+            for (var i = 0; i < frame.data.length; i++) {
+              final v = frame.data[i] - off;
+              frame.data[i] = v <= 0 ? 0 : v.round();
+            }
+          }
+          break;
+        }
         // 非 Bayer CFA 同样按 2x2 相位施加偏移（近似）。
         applyBlackLevel(frame.data,
             width: frame.width,
@@ -421,6 +567,189 @@ Future<Uint8List> runChainFrame(
             gr: _double(p, 'gr'),
             gb: _double(p, 'gb'),
             b: _double(p, 'b'));
+      // ---- ICG 荧光内窥镜方案：RAW 域算子（mosaic/mono 双格式）----
+      case 'dpc':
+        frame.requireMosaicOrMono('坏点校正');
+        applyDpc(frame.data,
+            width: frame.width,
+            height: frame.height,
+            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+            threshold: _double(p, 'threshold'),
+            mode: _str(p, 'mode').isEmpty ? 'median' : _str(p, 'mode'),
+            maxValue: frame.maxValue);
+      case 'fpn':
+        frame.requireMosaicOrMono('FPN 校正');
+        applyFpn(frame.data,
+            width: frame.width,
+            height: frame.height,
+            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+            row: p['row'] != false,
+            col: p['col'] != false,
+            maxCorr: _double(p, 'maxCorr'));
+      case 'lsc':
+        frame.requireMosaicOrMono('镜头阴影校正');
+        applyLsc(frame.data,
+            width: frame.width,
+            height: frame.height,
+            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+            strength: _double(p, 'strength'),
+            centerX: _double(p, 'centerX'),
+            centerY: _double(p, 'centerY'),
+            maxValue: frame.maxValue);
+      case 'grgb_balance':
+        frame.requireMosaicOrMono('Gr/Gb 均衡');
+        // mono 无 Gr/Gb 相位概念，直通。
+        final bp = frame.format == 'mosaic' ? frame.bayerPattern : null;
+        if (bp != null) {
+          applyGrGbBalance(frame.data,
+              width: frame.width,
+              height: frame.height,
+              pattern: bp,
+              strength: _double(p, 'strength'));
+        }
+      case 'bayer_dnr':
+        frame.requireMosaicOrMono('Bayer 降噪');
+        applyBayerDenoise(frame.data,
+            width: frame.width,
+            height: frame.height,
+            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+            strength: _double(p, 'strength'));
+      case 'highlight':
+        frame.requireMosaicOrMono('高光恢复');
+        applyHighlightRecovery(frame.data,
+            width: frame.width,
+            height: frame.height,
+            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+            maxValue: frame.maxValue,
+            mode: _str(p, 'mode').isEmpty ? 'recover' : _str(p, 'mode'),
+            knee: _double(p, 'knee'));
+      // ---- RGB 域算子 ----
+      case 'rgb_dnr':
+        frame.requireRgb('RGB 降噪');
+        applyRgbDenoise(frame.data,
+            width: frame.width,
+            height: frame.height,
+            luma: _double(p, 'luma'),
+            chroma: _double(p, 'chroma'),
+            maxValue: frame.maxValue);
+      case 'sharpen':
+        frame.requireRgb('锐化');
+        applySharpen(frame.data,
+            width: frame.width,
+            height: frame.height,
+            amount: _double(p, 'amount'),
+            threshold: _double(p, 'threshold'),
+            maxValue: frame.maxValue);
+      case 'csc_rgb2yuv':
+        frame.requireRgb('RGB→YUV 转换');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: convertRgbToYuvCsc(frame.data,
+              width: w,
+              height: h,
+              standard: _str(p, 'standard').isEmpty ? 'bt601' : _str(p, 'standard'),
+              range: _str(p, 'range').isEmpty ? 'full' : _str(p, 'range'),
+              maxValue: max),
+          format: 'yuv',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- 荧光 mono 域算子 ----
+      case 'fluoro_leak':
+        frame.requireMono('激发泄漏扣除');
+        applyFluoroLeak(frame.data,
+            level: _double(p, 'level'), maxSub: _double(p, 'maxSub'));
+      case 'fluoro_background':
+        frame.requireMono('背景扣除');
+        applyFluoroBackground(frame.data,
+            width: frame.width,
+            height: frame.height,
+            blockSize: _int(p, 'blockSize'),
+            strength: _double(p, 'strength'));
+      case 'fluoro_normalize':
+        frame.requireMono('激发归一化');
+        applyFluoroNormalize(frame.data,
+            reference: _double(p, 'reference'),
+            epsilon: _double(p, 'epsilon'),
+            maxValue: frame.maxValue);
+      case 'fluoro_temporal':
+        frame.requireMono('时域降噪');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final alpha = _double(p, 'alpha');
+        final motion = p['motionAdapt'] != false;
+        // 时域历史按 nodeId 缓存：frameIndex 不连续或尺寸/参数变化时重置。
+        final st = _temporalHistory[nodeId];
+        final valid = st != null &&
+            st['frame'] == frameIndex - 1 &&
+            st['w'] == w &&
+            st['h'] == h &&
+            st['alpha'] == alpha &&
+            st['motion'] == motion;
+        final (out, newHistory) = applyTemporalIir(frame.data,
+            history: valid ? st['history'] as Uint16List : null,
+            alpha: alpha,
+            motionAdapt: motion,
+            maxValue: max);
+        _temporalHistory[nodeId] = {
+          'history': newHistory,
+          'frame': frameIndex,
+          'w': w,
+          'h': h,
+          'alpha': alpha,
+          'motion': motion,
+        };
+        frame = _Frame(
+            data: out, format: 'mono', width: w, height: h, maxValue: max);
+      // ---- 映射/融合 ----
+      case 'pseudo_color':
+        frame.requireMono('伪彩映射');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: monoPseudoColor(frame.data,
+              width: w,
+              height: h,
+              colormap: _str(p, 'colormap').isEmpty ? 'green' : _str(p, 'colormap'),
+              gain: _double(p, 'gain'),
+              maxValue: max),
+          format: 'rgb',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      case 'fluoro_fusion':
+        frame.requireRgb('荧光融合');
+        // 白光 RGB（线性/多源路径的当前帧）× 荧光 mono（in_fluoro 端口）。
+        final flData = getPortData(op, 'in_fluoro');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        if (flData is Uint16List && flData.length == w * h) {
+          frame = _Frame(
+            data: fuseFluorescence(frame.data, flData,
+                width: w,
+                height: h,
+                mode: _str(p, 'mode').isEmpty ? 'alpha' : _str(p, 'mode'),
+                threshold: _double(p, 'threshold'),
+                alphaMax: _double(p, 'alphaMax'),
+                colormap:
+                    _str(p, 'colormap').isEmpty ? 'green' : _str(p, 'colormap'),
+                offsetX: _double(p, 'offsetX'),
+                offsetY: _double(p, 'offsetY'),
+                maxValue: max),
+            format: 'rgb',
+            width: w,
+            height: h,
+            maxValue: max,
+          );
+        }
+        // 荧光输入未连接或尺寸不符：白光直通。
       case 'demosaic':
         frame.requireMosaic('去马赛克');
         final w = frame.width;
@@ -762,7 +1091,15 @@ Future<Uint8List> runChainFrame(
       default:
         throw StateError('未知节点类型: $typeId');
     }
-    portOutputs.putIfAbsent(nodeId, () => {})['out'] = frame.data;
+    final opOuts = portOutputs.putIfAbsent(nodeId, () => {});
+    opOuts['out'] = frame.data;
+    // mono 帧同时登记 out_mono，供下游 in_mono/in_fluoro 连接取数。
+    if (frame.format == 'mono') opOuts['out_mono'] = frame.data;
+    if (multiSource) frames[nodeId] = frame;
+    if (nodeTimingsUs != null) {
+      nodeTimingsUs[nodeId] =
+          (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
+    }
     // 每个节点处理完后的输出（Gamma 节点之后为 RGBA）。
     onNodeOutput?.call(nodeId, rgba ?? frame.data,
         rgba != null ? 'rgba' : frame.format, frame.width, frame.height);
@@ -770,6 +1107,7 @@ Future<Uint8List> runChainFrame(
 
   // 链中没有 Gamma 节点时的默认色调映射：RAW 源（线性数据）按 gamma
   // 2.2 编码；图片/视频源本身已是 sRGB 显示数据，gamma 1.0 直通。
+  final tailSw = nodeTimingsUs == null ? null : (Stopwatch()..start());
   final defaultGamma =
       firstType == 'image_source' || firstType == 'video_source' ? 1.0 : 2.2;
   final Uint8List result = rgba ??
@@ -795,8 +1133,14 @@ Future<Uint8List> runChainFrame(
             maxValue: frame.maxValue, gamma: defaultGamma),
         _ => throw StateError('流水线末端不是图像数据（缺少去马赛克）'),
       };
-  // 汇点（预览）节点的最终输出恒为 RGBA。
-  onNodeOutput?.call(chain.last['nodeId'] as String, result, 'rgba',
+  // 汇点（预览）节点的最终输出恒为 RGBA；链末默认色调映射的耗时
+  // 计入汇点节点。
+  final sinkNodeId = chain.last['nodeId'] as String? ?? 'sink';
+  if (nodeTimingsUs != null) {
+    nodeTimingsUs[sinkNodeId] =
+        (nodeTimingsUs[sinkNodeId] ?? 0) + tailSw!.elapsedMicroseconds;
+  }
+  onNodeOutput?.call(sinkNodeId, result, 'rgba',
       frame.width, frame.height);
   // 被覆盖链汇点的显示图：与本链末端同一默认色调映射。
   if (capturedRgba != null) {
@@ -855,14 +1199,17 @@ const int kNodeOutputSampleSize = 256;
 
 /// compute() 入口：执行单帧并采样链上各节点的输出数据。
 /// [msg] = `{'chain': List<Map>, 'frameIndex': int}`；
-/// 返回 `{'rgba': rgba, 'captures': captures}`，其中 captures 为
-/// nodeId → `{'format': String, 'length': int, 'sample': 采样值列表}`，
-/// 供调试变量表展示运行值。
+/// 返回 `{'rgba': rgba, 'captures': captures, 'timings': timings}`，其中
+/// captures 为 nodeId → `{'format': String, 'length': int, 'sample': 采样值列表}`，
+/// 供调试变量表展示运行值；timings 为 nodeId → 执行耗时微秒数，
+/// 供节点卡片显示节点工作时间。
 Future<Map<String, Object?>> runChainFrameCapturedInIsolate(
     Map<String, Object?> msg) async {
   final chain = (msg['chain'] as List).cast<Map<String, Object?>>();
   final snapshots = <String, Map<String, Object?>>{};
+  final timings = <String, int>{};
   final rgba = await runChainFrame(chain, msg['frameIndex'] as int,
+      nodeTimingsUs: timings,
       onNodeOutput: (nodeId, data, format, width, height) {
     snapshots[nodeId] = {
       'format': format,
@@ -874,7 +1221,90 @@ Future<Map<String, Object?>> runChainFrameCapturedInIsolate(
           : List<int>.of(data.sublist(0, kNodeOutputSampleSize)),
     };
   });
-  return {'rgba': rgba, 'captures': snapshots};
+  return {'rgba': rgba, 'captures': snapshots, 'timings': timings};
+}
+
+/// [runChainFrameWithProgress] 的 worker isolate 入口。
+/// 启动参数 `[SendPort, chain, frameIndex]`；每个节点开始执行前回
+/// `{'type':'nodeStart', 'nodeId':..., 'index':..., 'total':...}`，
+/// 完成回 `{'type':'done', 'rgba':..., 'captures':..., 'timings':...}`
+/// （与 [runChainFrameCapturedInIsolate] 的返回同构），失败回
+/// `{'type':'error', 'message':...}`。
+@pragma('vm:entry-point')
+Future<void> _chainFrameProgressWorker(List<Object?> args) async {
+  final send = args[0] as SendPort;
+  try {
+    final chain = (args[1] as List).cast<Map<String, Object?>>();
+    final snapshots = <String, Map<String, Object?>>{};
+    final timings = <String, int>{};
+    final total = chain.length;
+    var index = 0;
+    final rgba = await runChainFrame(chain, args[2] as int,
+        nodeTimingsUs: timings,
+        onNodeStart: (nodeId) {
+      send.send(<String, Object?>{
+        'type': 'nodeStart',
+        'nodeId': nodeId,
+        'index': index,
+        'total': total,
+      });
+      index++;
+    }, onNodeOutput: (nodeId, data, format, width, height) {
+      snapshots[nodeId] = {
+        'format': format,
+        'length': data.length,
+        'width': width,
+        'height': height,
+        'sample': data.length <= kNodeOutputSampleSize
+            ? List<int>.of(data)
+            : List<int>.of(data.sublist(0, kNodeOutputSampleSize)),
+      };
+    });
+    send.send(<String, Object?>{
+      'type': 'done',
+      'rgba': rgba,
+      'captures': snapshots,
+      'timings': timings,
+    });
+  } catch (e) {
+    send.send(<String, Object?>{'type': 'error', 'message': '$e'});
+  }
+}
+
+/// 在独立 isolate 中执行单帧（返回与 [runChainFrameCapturedInIsolate]
+/// 同构的 map），每个节点开始执行时回调 [onNodeStart]
+/// （nodeId、链内序号 index、链节点总数 total）。
+/// 与 compute() 的区别：compute 一次性返回结果，无法流式回报进度；
+/// 这里用 Isolate.spawn + ReceivePort 换进度回报能力。
+Future<Map<String, Object?>> runChainFrameWithProgress(
+  List<Map<String, Object?>> chain,
+  int frameIndex, {
+  void Function(String nodeId, int index, int total)? onNodeStart,
+}) async {
+  final port = ReceivePort();
+  final completer = Completer<Map<String, Object?>>();
+  final sub = port.listen((msg) {
+    if (msg is! Map) return;
+    switch (msg['type']) {
+      case 'nodeStart':
+        onNodeStart?.call(msg['nodeId'] as String, msg['index'] as int,
+            msg['total'] as int);
+      case 'done':
+        completer.complete(msg.cast<String, Object?>());
+      case 'error':
+        completer.completeError(
+            StateError(msg['message']?.toString() ?? '流水线执行失败'));
+    }
+  });
+  final isolate = await Isolate.spawn(
+      _chainFrameProgressWorker, [port.sendPort, chain, frameIndex]);
+  try {
+    return await completer.future;
+  } finally {
+    await sub.cancel();
+    port.close();
+    isolate.kill();
+  }
 }
 
 /// compute() 入口：执行单帧，返回链末端节点输出在 (x, y, channel) 处的值。

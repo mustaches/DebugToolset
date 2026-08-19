@@ -52,6 +52,7 @@ class Frame3D {
   /// 链格式字符串 → 通道数。
   static int channelsOf(String format) => switch (format) {
         'mosaic' => 1,
+        'mono' => 1,
         'rgba' => 4,
         _ => 3, // rgb / yuv / hsl
       };

@@ -435,4 +435,406 @@ void main() {
       }
     });
   });
+
+  group('ICG RAW 域核', () {
+    test('applyDpc median：同相位离群像素替换为邻域中值', () {
+      // 5x5 rggb：全部 100，中心 (2,2) 坏点 1000。
+      final buf = Uint16List(25)..fillRange(0, 25, 100);
+      buf[2 * 5 + 2] = 1000;
+      applyDpc(buf,
+          width: 5,
+          height: 5,
+          pattern: BayerPattern.rggb,
+          threshold: 5,
+          mode: 'median',
+          maxValue: 255);
+      expect(buf[2 * 5 + 2], 100);
+      // 其余像素不变。
+      expect(buf.where((v) => v != 100), isEmpty);
+    });
+
+    test('applyDpc directional：沿最小梯度方向两点平均', () {
+      // 中心 (2,2) 坏点 1000；同相位邻域垂直对为 90/90（梯度最小），
+      // 其余方向对的取值差都在离群阈值以内（不会被先校正掉）。
+      final buf = Uint16List(25)..fillRange(0, 25, 100);
+      buf[0 * 5 + 2] = 90; // (2,0) 垂直对上端
+      buf[4 * 5 + 2] = 90; // (2,4) 垂直对下端
+      buf[2 * 5 + 4] = 104; // (4,2) 水平对：差 4
+      buf[4 * 5 + 4] = 105; // (4,4) 主对角对：差 5
+      buf[4 * 5 + 0] = 106; // (0,4) 副对角对：差 6
+      buf[2 * 5 + 2] = 1000; // 坏点
+      applyDpc(buf,
+          width: 5,
+          height: 5,
+          pattern: BayerPattern.rggb,
+          threshold: 5,
+          mode: 'directional',
+          maxValue: 255);
+      expect(buf[2 * 5 + 2], 90);
+      // median 模式则取邻域中值 100。
+      final buf2 = Uint16List(25)..fillRange(0, 25, 100);
+      buf2[0 * 5 + 2] = 90;
+      buf2[4 * 5 + 2] = 90;
+      buf2[2 * 5 + 4] = 104;
+      buf2[4 * 5 + 4] = 105;
+      buf2[4 * 5 + 0] = 106;
+      buf2[2 * 5 + 2] = 1000;
+      applyDpc(buf2,
+          width: 5,
+          height: 5,
+          pattern: BayerPattern.rggb,
+          threshold: 5,
+          mode: 'median',
+          maxValue: 255);
+      expect(buf2[2 * 5 + 2], 100);
+    });
+
+    test('applyDpc mono（pattern null）：全像素 3x3 邻域', () {
+      final buf = Uint16List(9)..fillRange(0, 9, 100);
+      buf[4] = 1000; // 中心坏点
+      applyDpc(buf,
+          width: 3, height: 3, pattern: null, threshold: 5, maxValue: 255);
+      expect(buf[4], 100);
+    });
+
+    test('applyDpc 2x2 小图无同相位邻域时不崩且不变', () {
+      final buf = Uint16List.fromList([10, 20, 30, 1000]);
+      applyDpc(buf,
+          width: 2,
+          height: 2,
+          pattern: BayerPattern.rggb,
+          threshold: 5,
+          maxValue: 255);
+      expect(buf, [10, 20, 30, 1000]);
+    });
+
+    test('applyFpn：行/列中值偏移扣除并限幅', () {
+      // 4x4：行 0 偏 +10、行 1 偏 −10、其余 100。
+      final buf = Uint16List(16);
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+          buf[y * 4 + x] = y == 0 ? 110 : (y == 1 ? 90 : 100);
+        }
+      }
+      applyFpn(buf, width: 4, height: 4, row: true, col: false, maxCorr: 64);
+      expect(buf.every((v) => v == 100), isTrue);
+      // 限幅：maxCorr=5 时行 0 只扣 5。
+      final buf2 = Uint16List(16);
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+          buf2[y * 4 + x] = y == 0 ? 110 : (y == 1 ? 90 : 100);
+        }
+      }
+      applyFpn(buf2, width: 4, height: 4, row: true, col: false, maxCorr: 5);
+      expect(buf2[0], 105);
+      expect(buf2[4], 95);
+      expect(buf2[8], 100);
+    });
+
+    test('applyFpn：内容条纹不被当作 FPN（竖条保持）', () {
+      // 64x16 竖条（条宽 32 > 低通窗半径 8）：左半 200 右半 50，无 FPN
+      // 时必须是无操作（旧实现按列中值扣除会把暗条整体抬亮 maxCorr）。
+      final buf = Uint16List(64 * 16);
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 64; x++) {
+          buf[y * 64 + x] = x < 32 ? 200 : 50;
+        }
+      }
+      applyFpn(buf, width: 64, height: 16, maxCorr: 64);
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 64; x++) {
+          expect(buf[y * 64 + x], x < 32 ? 200 : 50,
+              reason: '($x,$y) 不应被校正');
+        }
+      }
+    });
+
+    test('applyFpn：叠加列 FPN 的竖条内容仍被校正', () {
+      // 竖条内容 + 第 10 列 +12 列噪声：校正后第 10 列回到内容值附近
+      // （低通窗均摊引入 ±1 量化误差）；条带边缘列被掩膜保持原值。
+      final buf = Uint16List(64 * 16);
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 64; x++) {
+          buf[y * 64 + x] = (x < 32 ? 200 : 50) + (x == 10 ? 12 : 0);
+        }
+      }
+      applyFpn(buf, width: 64, height: 16, maxCorr: 64);
+      for (var y = 0; y < 16; y++) {
+        expect(buf[y * 64 + 10], inInclusiveRange(200, 201));
+        expect(buf[y * 64 + 19], 200); // 左条内部（低通窗不含噪声列）
+        expect(buf[y * 64 + 31], 200); // 条带边缘列：掩膜，保持原值
+        expect(buf[y * 64 + 50], 50); // 右条内部
+      }
+    });
+
+    test('applyLsc：径向增益边缘亮中心暗并截位', () {
+      final buf = Uint16List(16)..fillRange(0, 16, 100);
+      applyLsc(buf,
+          width: 4,
+          height: 4,
+          strength: 1.0,
+          centerX: 0.5,
+          centerY: 0.5,
+          maxValue: 65535);
+      expect(buf[0], 200); // 角落 gain = 2
+      expect(buf[1 * 4 + 1], 111); // 近中心 gain ≈ 1.11
+      // 饱和截位。
+      final sat = Uint16List(16)..fillRange(0, 16, 40000);
+      applyLsc(sat,
+          width: 4,
+          height: 4,
+          strength: 1.0,
+          centerX: 0.5,
+          centerY: 0.5,
+          maxValue: 65535);
+      expect(sat[0], 65535);
+    });
+
+    test('applyGrGbBalance：Gr/Gb 向均值中点收敛', () {
+      // 4x4 rggb：R=B=100，Gr=120，Gb=80 → 均衡后 G 全为 100。
+      final buf = Uint16List(16);
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+          final c = BayerPattern.rggb.colorAt(x, y);
+          if (c != 1) {
+            buf[y * 4 + x] = 100;
+          } else {
+            final isGr = BayerPattern.rggb.colorAt(x ^ 1, y) == 0;
+            buf[y * 4 + x] = isGr ? 120 : 80;
+          }
+        }
+      }
+      applyGrGbBalance(buf,
+          width: 4, height: 4, pattern: BayerPattern.rggb, strength: 1.0);
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+          if (BayerPattern.rggb.colorAt(x, y) == 1) {
+            expect(buf[y * 4 + x], inInclusiveRange(99, 101),
+                reason: 'G at ($x,$y)');
+          }
+        }
+      }
+    });
+
+    test('applyBayerDenoise：平坦区域保持不变，strength 0 直通', () {
+      final buf = Uint16List(16)..fillRange(0, 16, 500);
+      applyBayerDenoise(buf,
+          width: 4, height: 4, pattern: BayerPattern.rggb, strength: 1.0);
+      expect(buf.every((v) => v == 500), isTrue);
+      final buf2 = Uint16List.fromList([1, 2, 3, 4]);
+      applyBayerDenoise(buf2, width: 2, height: 2, pattern: null, strength: 0);
+      expect(buf2, [1, 2, 3, 4]);
+    });
+
+    test('applyHighlightRecovery：recover 用未饱和邻域重建，clip 软压缩', () {
+      // 4x4 rggb，maxValue 255，膝点 0.9 → 229.5；中心 R 饱和 255，其余 R=100。
+      final buf = Uint16List(16)..fillRange(0, 16, 100);
+      buf[2 * 4 + 2] = 255;
+      applyHighlightRecovery(buf,
+          width: 4,
+          height: 4,
+          pattern: BayerPattern.rggb,
+          maxValue: 255,
+          mode: 'recover',
+          knee: 0.9);
+      expect(buf[2 * 4 + 2], 100);
+      // clip：255 → 229.5 + 25.5*25.5/(25.5+25.5) ≈ 242。
+      final buf2 = Uint16List.fromList([255, 100, 100, 100]);
+      applyHighlightRecovery(buf2,
+          width: 2,
+          height: 2,
+          pattern: BayerPattern.rggb,
+          maxValue: 255,
+          mode: 'clip',
+          knee: 0.9);
+      expect(buf2[0], inInclusiveRange(241, 243));
+      expect(buf2[1], 100); // 膝点以下不变
+    });
+  });
+
+  group('ICG RGB 域核', () {
+    test('applyRgbDenoise：平坦区域基本不变', () {
+      final rgb = Uint16List(4 * 4 * 3);
+      for (var p = 0; p < 16; p++) {
+        rgb[p * 3] = 100;
+        rgb[p * 3 + 1] = 150;
+        rgb[p * 3 + 2] = 200;
+      }
+      applyRgbDenoise(rgb,
+          width: 4, height: 4, luma: 1.0, chroma: 0.5, maxValue: 1023);
+      for (var p = 0; p < 16; p++) {
+        expect((rgb[p * 3] - 100).abs(), lessThanOrEqualTo(2));
+        expect((rgb[p * 3 + 1] - 150).abs(), lessThanOrEqualTo(2));
+        expect((rgb[p * 3 + 2] - 200).abs(), lessThanOrEqualTo(2));
+      }
+    });
+
+    test('applySharpen：边缘增强、平坦不变、amount 0 直通', () {
+      // 4x1 灰度阶跃 [0, 0, 1000, 1000]，maxValue 1023。
+      Uint16List step() {
+        final rgb = Uint16List(4 * 3);
+        for (var x = 2; x < 4; x++) {
+          rgb[x * 3] = 1000;
+          rgb[x * 3 + 1] = 1000;
+          rgb[x * 3 + 2] = 1000;
+        }
+        return rgb;
+      }
+
+      final none = step();
+      applySharpen(none,
+          width: 4, height: 1, amount: 0, threshold: 0, maxValue: 1023);
+      expect(none, step());
+      final sharp = step();
+      applySharpen(sharp,
+          width: 4, height: 1, amount: 1.0, threshold: 0, maxValue: 1023);
+      // x=2：Y=1000，模糊 667，detail 333 → Y' 1333 截位 1023。
+      expect(sharp[2 * 3], 1023);
+      // 平坦区 detail 为 0，x=3 不变。
+      expect(sharp[3 * 3], 1000);
+    });
+
+    test('convertRgbToYuvCsc：bt601 full 与 rgbToYuv 一致', () {
+      final rgb = Uint16List.fromList([10, 200, 90, 255, 128, 0]);
+      expect(convertRgbToYuvCsc(rgb, width: 2, height: 1, maxValue: 255),
+          rgbToYuv(rgb, maxValue: 255));
+    });
+
+    test('convertRgbToYuvCsc：bt709 纯红系数与 limited 范围', () {
+      final red = Uint16List.fromList([255, 0, 0]);
+      final yuv = convertRgbToYuvCsc(red,
+          width: 1, height: 1, standard: 'bt709', maxValue: 255);
+      expect((yuv[0] - 54).abs(), lessThanOrEqualTo(1)); // 0.2126*255
+      expect(yuv[1], inInclusiveRange(97, 101));
+      expect(yuv[2], 255); // 钳位
+      // limited：128 灰 → Y=126（16+128*219/255），U/V 保持中点。
+      final gray = Uint16List.fromList([128, 128, 128]);
+      final yuv2 = convertRgbToYuvCsc(gray,
+          width: 1, height: 1, range: 'limited', maxValue: 255);
+      expect(yuv2[0], inInclusiveRange(125, 127));
+      expect((yuv2[1] - 128).abs(), lessThanOrEqualTo(1));
+      expect((yuv2[2] - 128).abs(), lessThanOrEqualTo(1));
+    });
+  });
+
+  group('ICG 荧光 mono 域核', () {
+    test('applyFluoroLeak：统一扣除并限幅、钳位 0', () {
+      final mono = Uint16List.fromList([10, 100, 200]);
+      applyFluoroLeak(mono, level: 50, maxSub: 100);
+      expect(mono, [0, 50, 150]);
+      final mono2 = Uint16List.fromList([100]);
+      applyFluoroLeak(mono2, level: 80, maxSub: 60); // 限幅到 60
+      expect(mono2, [40]);
+    });
+
+    test('applyFluoroBackground：块均值背景按强度扣除', () {
+      // 4x4，blockSize 2：四个 2x2 块常量 10/20/30/40。
+      final mono = Uint16List(16);
+      const vals = [10, 20, 30, 40];
+      for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+          mono[y * 4 + x] = vals[(y ~/ 2) * 2 + (x ~/ 2)];
+        }
+      }
+      final full = Uint16List.fromList(mono);
+      applyFluoroBackground(full,
+          width: 4, height: 4, blockSize: 2, strength: 1.0);
+      expect(full.every((v) => v == 0), isTrue);
+      final half = Uint16List.fromList(mono);
+      applyFluoroBackground(half,
+          width: 4, height: 4, blockSize: 2, strength: 0.5);
+      expect(half[0], 5); // 10 − 0.5*10
+      expect(half[3 * 4 + 3], 20); // 40 − 0.5*40
+    });
+
+    test('applyFluoroNormalize：按全帧均值拉到参考电平', () {
+      final mono = Uint16List.fromList([100, 200, 300, 400]);
+      applyFluoroNormalize(mono, reference: 500, epsilon: 1, maxValue: 65535);
+      expect(mono, [200, 400, 600, 800]); // 均值 250 → gain 2
+      // 均值低于 epsilon：直通。
+      final dark = Uint16List.fromList([0, 1]);
+      applyFluoroNormalize(dark, reference: 500, epsilon: 10, maxValue: 65535);
+      expect(dark, [0, 1]);
+      // reference 0：直通。
+      final off = Uint16List.fromList([100, 200]);
+      applyFluoroNormalize(off, reference: 0, epsilon: 1, maxValue: 65535);
+      expect(off, [100, 200]);
+    });
+
+    test('applyTemporalIir：无历史直通，有历史按 α 混合', () {
+      final mono = Uint16List.fromList([100, 200]);
+      final (out0, hist0) = applyTemporalIir(mono, alpha: 0.5, maxValue: 65535);
+      expect(out0, [100, 200]);
+      expect(hist0, [100, 200]);
+      final (out1, _) = applyTemporalIir(mono,
+          history: Uint16List.fromList([0, 100]),
+          alpha: 0.5,
+          maxValue: 65535);
+      expect(out1, [50, 150]);
+      // 运动自适应：帧差超过 maxValue/16 时强制用当前帧。
+      final (out2, _) = applyTemporalIir(mono,
+          history: Uint16List.fromList([0, 100]),
+          alpha: 0.5,
+          motionAdapt: true,
+          maxValue: 255);
+      expect(out2, [100, 200]);
+    });
+
+    test('monoPseudoColor：green/magenta/hot 色表', () {
+      final mono = Uint16List.fromList([0, 255]);
+      final green =
+          monoPseudoColor(mono, width: 2, height: 1, maxValue: 255);
+      expect(green, [0, 0, 0, 0, 255, 0]);
+      final magenta = monoPseudoColor(mono,
+          width: 2, height: 1, colormap: 'magenta', maxValue: 255);
+      expect(magenta, [0, 0, 0, 255, 0, 255]);
+      final hot = monoPseudoColor(Uint16List.fromList([128]),
+          width: 1, height: 1, colormap: 'hot', maxValue: 255);
+      expect(hot[0], 255); // 3t > 1 → 红满
+      expect(hot[1], inInclusiveRange(127, 131)); // 黄过渡
+      expect(hot[2], 0);
+      // gain 放大：0.5 满量程 × 2 → 满。
+      final gained = monoPseudoColor(Uint16List.fromList([128]),
+          width: 1, height: 1, gain: 2.0, maxValue: 255);
+      expect(gained[1], 255);
+    });
+
+    test('fuseFluorescence：alpha 模式按强度门限融合', () {
+      // 2x1：白光全 100 灰，荧光 [255, 0]，threshold 128、alphaMax 1。
+      final wl = Uint16List.fromList([100, 100, 100, 100, 100, 100]);
+      final fl = Uint16List.fromList([255, 0]);
+      final out = fuseFluorescence(wl, fl,
+          width: 2,
+          height: 1,
+          threshold: 128,
+          alphaMax: 1.0,
+          maxValue: 255);
+      // 荧光满强度 → α=1 → 纯绿伪彩。
+      expect([out[0], out[1], out[2]], [0, 255, 0]);
+      // 荧光 0 → α=0 → 白光原样。
+      expect([out[3], out[4], out[5]], [100, 100, 100]);
+      // 偏移 1 像素：像素 0 采到 fl[1]=0 → 白光。
+      final shifted = fuseFluorescence(wl, fl,
+          width: 2,
+          height: 1,
+          threshold: 128,
+          alphaMax: 1.0,
+          offsetX: 1,
+          maxValue: 255);
+      expect([shifted[0], shifted[1], shifted[2]], [100, 100, 100]);
+    });
+
+    test('fuseFluorescence：contour 模式只叠加 mask 轮廓', () {
+      // 3x3：中心荧光 255，周围 0；threshold 128。
+      final wl = Uint16List(9 * 3)..fillRange(0, 27, 100);
+      final fl = Uint16List(9);
+      fl[4] = 255;
+      final out = fuseFluorescence(wl, fl,
+          width: 3, height: 3, mode: 'contour', threshold: 128, maxValue: 255);
+      // 中心是 mask 边缘（邻域全是 mask 外）→ 伪彩全强度。
+      expect([out[12], out[13], out[14]], [0, 255, 0]);
+      // 角落非 mask → 白光。
+      expect([out[0], out[1], out[2]], [100, 100, 100]);
+    });
+  });
 }

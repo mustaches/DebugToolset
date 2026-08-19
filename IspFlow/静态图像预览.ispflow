@@ -1,0 +1,87 @@
+{
+  "name": "静态图像预览",
+  "nodes": [
+    {
+      "id": "n2",
+      "typeId": "image_source",
+      "x": 720.0,
+      "y": 300.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\BayerRGGB\\IMG_20260817_213218.png",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n3",
+      "typeId": "preview",
+      "x": 1020.0,
+      "y": 300.0,
+      "width": 800.0,
+      "extraHeight": 534.0,
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n5",
+      "typeId": "histogram",
+      "x": 2760.0,
+      "y": 60.0,
+      "width": 800.0,
+      "extraHeight": 424.0,
+      "params": {}
+    },
+    {
+      "id": "n7",
+      "typeId": "waveform",
+      "x": 1900.0,
+      "y": 60.0,
+      "width": 800.0,
+      "extraHeight": 424.0,
+      "params": {}
+    },
+    {
+      "id": "n9",
+      "typeId": "vectorscope",
+      "x": 1900.0,
+      "y": 620.0,
+      "width": 800.0,
+      "extraHeight": 800.0,
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "c4",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n3",
+      "toPort": "in"
+    },
+    {
+      "id": "c6",
+      "from": "n3",
+      "fromPort": "out",
+      "to": "n5",
+      "toPort": "in"
+    },
+    {
+      "id": "c8",
+      "from": "n3",
+      "fromPort": "out",
+      "to": "n7",
+      "toPort": "in"
+    },
+    {
+      "id": "c10",
+      "from": "n3",
+      "fromPort": "out",
+      "to": "n9",
+      "toPort": "in"
+    }
+  ],
+  "nextId": 11
+}

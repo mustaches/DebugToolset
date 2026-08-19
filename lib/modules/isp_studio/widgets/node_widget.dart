@@ -421,6 +421,19 @@ class IspNodeWidget extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          // 节点工作时间（最近一次运行预览测得；未运行时不显示）。
+          if (state.nodeRunTimesUs[node.id] != null)
+            Tooltip(
+              message: '节点工作时间',
+              child: Padding(
+                padding: const EdgeInsets.only(right: 3),
+                child: Text(
+                  formatNodeRunTime(state.nodeRunTimesUs[node.id]!),
+                  style: const TextStyle(
+                      color: Colors.white70, fontSize: 10),
+                ),
+              ),
+            ),
           // 查看代码（只读标签页）。
           Tooltip(
             message: '查看代码',
@@ -733,6 +746,14 @@ class IspNodeWidget extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 节点工作时间的紧凑格式：µs / ms / s 三档。
+String formatNodeRunTime(int us) {
+  if (us >= 1000000) return '${(us / 1000000).toStringAsFixed(2)} s';
+  if (us >= 100000) return '${us ~/ 1000} ms';
+  if (us >= 1000) return '${(us / 1000).toStringAsFixed(1)} ms';
+  return '$us µs';
 }
 
 /// RGB+Y 直方图绘制：对数刻度，通道竖条叠加（每亮度级一根，Y 为白色）。

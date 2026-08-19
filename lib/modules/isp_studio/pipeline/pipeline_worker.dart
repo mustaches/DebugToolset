@@ -171,12 +171,17 @@ class PipelineWorkerPool {
       }
     }
 
-    var workerIdx = 0;
+    // 链 → worker 哈希绑定：同一链（按时序键，即汇点 nodeId）恒分发到
+    // 同一 worker isolate，保证时序状态（如时域 IIR 降噪的历史帧缓存）
+    // 始终在同一 isolate 内跨帧累积。
+    int workerFor(String chainKey) =>
+        chainKey.hashCode.abs() % _workers.length;
+
     await Future.wait([
       for (final j in order)
         if (!coveredBy.containsKey(j))
           () async {
-            final worker = _workers[workerIdx++ % _workers.length];
+            final worker = _workers[workerFor(entries[j].key)];
             final (rgba, captures) = await worker.run(
               entries[j].value,
               frameIndex,
@@ -190,10 +195,10 @@ class PipelineWorkerPool {
             results.addAll(captures);
           }(),
     ]);
-    // 回退：捕获落空的被覆盖链单独执行。
+    // 回退：捕获落空的被覆盖链单独执行（同样按链键绑定 worker）。
     for (final i in coveredBy.keys) {
       if (results.containsKey(entries[i].key)) continue;
-      final worker = _workers[workerIdx++ % _workers.length];
+      final worker = _workers[workerFor(entries[i].key)];
       final (rgba, _) = await worker.run(
         entries[i].value,
         frameIndex,

@@ -255,6 +255,18 @@ abstract final class IspNodeRegistry {
         ...extra,
       ];
 
+  /// RAW 域处理算子的双输入端口（Bayer 或 Mono 二选一，互斥组自动生效）。
+  static const List<IspPortSpec> _rawDualInputs = [
+    IspPortSpec(name: 'in', type: IspPortType.bayer, label: 'Bayer'),
+    IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+  ];
+
+  /// RAW 域处理算子的双输出端口（与输入同格式直通）。
+  static const List<IspPortSpec> _rawDualOutputs = [
+    IspPortSpec(name: 'out', type: IspPortType.bayer, label: 'Bayer'),
+    IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+  ];
+
   static final Map<String, IspNodeType> types = {
     'bayer_source': IspNodeType(
       typeId: 'bayer_source',
@@ -397,7 +409,8 @@ abstract final class IspNodeRegistry {
       displayName: 'MONO',
       colorValue: 0xFF5E5E5E,
       outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+        // 16 位 mono 中间格式：单通道直接入链，不再展开为 RGB。
+        IspPortSpec(name: 'out', type: IspPortType.mono, label: 'Mono'),
       ],
       params: _rawSourceParams(),
     ),
@@ -467,9 +480,12 @@ abstract final class IspNodeRegistry {
       colorValue: 0xFF5A5A6E,
       inputs: [
         IspPortSpec(name: 'in', type: IspPortType.bayer, label: 'Bayer'),
+        // mono 输入（荧光链）：用 r 参数作为统一偏移扣除。
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
       outputs: [
         IspPortSpec(name: 'out', type: IspPortType.bayer, label: 'Bayer'),
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
       ],
       params: [
         IspParamSpec(
@@ -503,6 +519,442 @@ abstract final class IspNodeRegistry {
           defaultValue: 0.0,
           min: 0,
           max: 4095,
+        ),
+      ],
+    ),
+    // ---- ICG 荧光内窥镜方案：RAW 域算子（mosaic/mono → 同格式）----
+    'dpc': IspNodeType(
+      typeId: 'dpc',
+      displayName: '坏点校正',
+      colorValue: 0xFF5A5A6E,
+      inputs: _rawDualInputs,
+      outputs: _rawDualOutputs,
+      params: [
+        IspParamSpec(
+          key: 'threshold',
+          label: '离群阈值%',
+          type: IspParamType.doubleNumber,
+          defaultValue: 5.0,
+          min: 0,
+          max: 100,
+        ),
+        IspParamSpec(
+          key: 'mode',
+          label: '模式',
+          type: IspParamType.choice,
+          defaultValue: 'median',
+          options: ['median', 'directional'],
+        ),
+      ],
+    ),
+    'fpn': IspNodeType(
+      typeId: 'fpn',
+      displayName: 'FPN 校正',
+      colorValue: 0xFF5A626E,
+      inputs: _rawDualInputs,
+      outputs: _rawDualOutputs,
+      params: [
+        IspParamSpec(
+          key: 'row',
+          label: '行校正',
+          type: IspParamType.boolean,
+          defaultValue: true,
+        ),
+        IspParamSpec(
+          key: 'col',
+          label: '列校正',
+          type: IspParamType.boolean,
+          defaultValue: true,
+        ),
+        IspParamSpec(
+          key: 'maxCorr',
+          label: '最大校正量',
+          type: IspParamType.doubleNumber,
+          defaultValue: 64.0,
+          min: 0,
+          max: 4095,
+        ),
+      ],
+    ),
+    'lsc': IspNodeType(
+      typeId: 'lsc',
+      displayName: '镜头阴影校正',
+      colorValue: 0xFF5A6A6E,
+      inputs: _rawDualInputs,
+      outputs: _rawDualOutputs,
+      params: [
+        IspParamSpec(
+          key: 'strength',
+          label: '强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.5,
+          min: 0,
+          max: 2,
+        ),
+        IspParamSpec(
+          key: 'centerX',
+          label: '中心 X',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.5,
+          min: 0,
+          max: 1,
+        ),
+        IspParamSpec(
+          key: 'centerY',
+          label: '中心 Y',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.5,
+          min: 0,
+          max: 1,
+        ),
+      ],
+    ),
+    'grgb_balance': IspNodeType(
+      typeId: 'grgb_balance',
+      displayName: 'Gr/Gb 均衡',
+      colorValue: 0xFF4E6A5E,
+      inputs: _rawDualInputs,
+      outputs: _rawDualOutputs,
+      params: [
+        IspParamSpec(
+          key: 'strength',
+          label: '强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 1,
+        ),
+      ],
+    ),
+    'bayer_dnr': IspNodeType(
+      typeId: 'bayer_dnr',
+      displayName: 'Bayer 降噪',
+      colorValue: 0xFF56665E,
+      inputs: _rawDualInputs,
+      outputs: _rawDualOutputs,
+      params: [
+        IspParamSpec(
+          key: 'strength',
+          label: '强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 4,
+        ),
+      ],
+    ),
+    'highlight': IspNodeType(
+      typeId: 'highlight',
+      displayName: '高光恢复',
+      colorValue: 0xFF66605A,
+      inputs: _rawDualInputs,
+      outputs: _rawDualOutputs,
+      params: [
+        IspParamSpec(
+          key: 'mode',
+          label: '模式',
+          type: IspParamType.choice,
+          defaultValue: 'recover',
+          options: ['recover', 'clip'],
+        ),
+        IspParamSpec(
+          key: 'knee',
+          label: '膝点',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.9,
+          min: 0.5,
+          max: 1,
+        ),
+      ],
+    ),
+    // ---- ICG 荧光内窥镜方案：RGB 域算子 ----
+    'rgb_dnr': IspNodeType(
+      typeId: 'rgb_dnr',
+      displayName: 'RGB 降噪',
+      colorValue: 0xFF4E5A66,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'luma',
+          label: '亮度强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 4,
+        ),
+        IspParamSpec(
+          key: 'chroma',
+          label: '色度强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.5,
+          min: 0,
+          max: 1,
+        ),
+      ],
+    ),
+    'sharpen': IspNodeType(
+      typeId: 'sharpen',
+      displayName: '锐化',
+      colorValue: 0xFF5E5A66,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'amount',
+          label: '强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.5,
+          min: 0,
+          max: 4,
+        ),
+        IspParamSpec(
+          key: 'threshold',
+          label: '噪声门限',
+          type: IspParamType.doubleNumber,
+          defaultValue: 4.0,
+          min: 0,
+          max: 256,
+        ),
+      ],
+    ),
+    'csc_rgb2yuv': IspNodeType(
+      typeId: 'csc_rgb2yuv',
+      displayName: 'RGB→YUV 转换',
+      colorValue: 0xFF565E6A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'standard',
+          label: '标准',
+          type: IspParamType.choice,
+          defaultValue: 'bt601',
+          options: ['bt601', 'bt709'],
+        ),
+        IspParamSpec(
+          key: 'range',
+          label: '范围',
+          type: IspParamType.choice,
+          defaultValue: 'full',
+          options: ['full', 'limited'],
+        ),
+      ],
+    ),
+    // ---- ICG 荧光内窥镜方案：荧光 mono 域算子（青绿色系）----
+    'fluoro_leak': IspNodeType(
+      typeId: 'fluoro_leak',
+      displayName: '激发泄漏扣除',
+      colorValue: 0xFF3E7E76,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'level',
+          label: '扣除电平',
+          type: IspParamType.doubleNumber,
+          defaultValue: 64.0,
+          min: 0,
+          max: 65535,
+        ),
+        IspParamSpec(
+          key: 'maxSub',
+          label: '最大扣除限幅',
+          type: IspParamType.doubleNumber,
+          defaultValue: 128.0,
+          min: 0,
+          max: 65535,
+        ),
+      ],
+    ),
+    'fluoro_background': IspNodeType(
+      typeId: 'fluoro_background',
+      displayName: '背景扣除',
+      colorValue: 0xFF3E767E,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'blockSize',
+          label: '块大小',
+          type: IspParamType.intNumber,
+          defaultValue: 16,
+          min: 2,
+          max: 256,
+        ),
+        IspParamSpec(
+          key: 'strength',
+          label: '强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 1,
+        ),
+      ],
+    ),
+    'fluoro_normalize': IspNodeType(
+      typeId: 'fluoro_normalize',
+      displayName: '激发归一化',
+      colorValue: 0xFF3E6E7E,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'reference',
+          label: '参考电平',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1000.0,
+          min: 0,
+          max: 65535,
+        ),
+        IspParamSpec(
+          key: 'epsilon',
+          label: '除法下限',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 1024,
+        ),
+      ],
+    ),
+    'fluoro_temporal': IspNodeType(
+      typeId: 'fluoro_temporal',
+      displayName: '时域 IIR 降噪',
+      colorValue: 0xFF3E667E,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'alpha',
+          label: 'α（当前帧权重）',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.5,
+          min: 0,
+          max: 1,
+        ),
+        IspParamSpec(
+          key: 'motionAdapt',
+          label: '运动自适应',
+          type: IspParamType.boolean,
+          defaultValue: true,
+        ),
+      ],
+    ),
+    'pseudo_color': IspNodeType(
+      typeId: 'pseudo_color',
+      displayName: '伪彩映射',
+      colorValue: 0xFF3E7E6E,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'colormap',
+          label: '色表',
+          type: IspParamType.choice,
+          defaultValue: 'green',
+          options: ['green', 'magenta', 'hot'],
+        ),
+        IspParamSpec(
+          key: 'gain',
+          label: '增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 8,
+        ),
+      ],
+    ),
+    'fluoro_fusion': IspNodeType(
+      typeId: 'fluoro_fusion',
+      displayName: '荧光融合',
+      colorValue: 0xFF2E8E7E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '白光 RGB'),
+        // 荧光输入不在视频互斥组（'in'/'in_yuv'/'in_hsl'/'in_mono'）内，
+        // 可与 'in' 同时接入（白光 + 荧光双源链）。
+        IspPortSpec(name: 'in_fluoro', type: IspPortType.mono, label: '荧光 Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'mode',
+          label: '模式',
+          type: IspParamType.choice,
+          defaultValue: 'alpha',
+          options: ['alpha', 'contour'],
+        ),
+        IspParamSpec(
+          key: 'threshold',
+          label: '荧光门限',
+          type: IspParamType.doubleNumber,
+          defaultValue: 128.0,
+          min: 0,
+          max: 65535,
+        ),
+        IspParamSpec(
+          key: 'alphaMax',
+          label: '最大 α',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.8,
+          min: 0,
+          max: 1,
+        ),
+        IspParamSpec(
+          key: 'colormap',
+          label: '色表',
+          type: IspParamType.choice,
+          defaultValue: 'green',
+          options: ['green', 'magenta', 'hot'],
+        ),
+        IspParamSpec(
+          key: 'offsetX',
+          label: '配准偏移 X',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -64,
+          max: 64,
+        ),
+        IspParamSpec(
+          key: 'offsetY',
+          label: '配准偏移 Y',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -64,
+          max: 64,
         ),
       ],
     ),

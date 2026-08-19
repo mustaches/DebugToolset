@@ -35,8 +35,12 @@ class IspStudioView extends StatelessWidget {
       XTypeGroup(label: 'ISP 流程', extensions: ['ispflow']);
 
   /// 打开/保存流程的默认目录（根目录下的 IspFlow，不存在则创建）。
+  /// 注意：必须使用平台分隔符拼接。Windows 上混用 '/' 会导致
+  /// file_selector 内部 SHCreateItemFromParsingName 失败（E_INVALIDARG），
+  /// 文件对话框静默回退到“上次使用的目录”而不是 IspFlow。
   Future<Directory> _flowDir() async {
-    final dir = Directory('${Directory.current.path}/IspFlow');
+    final dir = Directory(
+        '${Directory.current.path}${Platform.pathSeparator}IspFlow');
     if (!dir.existsSync()) await dir.create(recursive: true);
     return dir;
   }

@@ -23,10 +23,29 @@ const _cisTypeIds = [
 /// 「Process」分组：RAW→RGB 链上的处理算子（按典型流水线顺序）。
 const _processTypeIds = [
   'black_level',
+  'dpc',
+  'fpn',
+  'lsc',
+  'grgb_balance',
+  'bayer_dnr',
+  'highlight',
   'demosaic',
   'white_balance',
   'ccm',
+  'rgb_dnr',
+  'sharpen',
   'gamma',
+  'csc_rgb2yuv',
+];
+
+/// 「Process → Fluorescence」分组：ICG 荧光 mono 域算子与融合。
+const _fluorescenceTypeIds = [
+  'fluoro_leak',
+  'fluoro_background',
+  'fluoro_normalize',
+  'fluoro_temporal',
+  'pseudo_color',
+  'fluoro_fusion',
 ];
 
 /// 「Datapath」分组：分路器与合路器。
@@ -91,6 +110,11 @@ class IspNodePalette extends StatelessWidget {
             ]),
             _expansionGroup('Process', [
               for (final id in _processTypeIds) _item(state, id),
+              _expansionGroup(
+                'Fluorescence',
+                [for (final id in _fluorescenceTypeIds) _item(state, id)],
+                nested: true,
+              ),
             ]),
             _expansionGroup('Datapath', [
               for (final id in _datapathTypeIds) _item(state, id),

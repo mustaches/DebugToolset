@@ -49,6 +49,13 @@ app.*.map.json
 
 # 大体积 RAW 图像测试素材（约 950MB，不入库）
 /BayerRGGB/
+/IspFlow/BayerRGGB/
+
+# DNG 原始图像（单张约 25MB，不入库）
+*.dng
+
+# scratch 下的编译产物（exe）
+/scratch/*.exe
 
 # ISP 冒烟测试输出
 /scratch/isp_smoke_out/

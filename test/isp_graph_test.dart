@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 23 种节点类型', () {
+    test('包含全部 44 种节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -18,6 +18,21 @@ void main() {
         'image_source',
         'video_source',
         'black_level',
+        'dpc',
+        'fpn',
+        'lsc',
+        'grgb_balance',
+        'bayer_dnr',
+        'highlight',
+        'rgb_dnr',
+        'sharpen',
+        'csc_rgb2yuv',
+        'fluoro_leak',
+        'fluoro_background',
+        'fluoro_normalize',
+        'fluoro_temporal',
+        'pseudo_color',
+        'fluoro_fusion',
         'demosaic',
         'white_balance',
         'ccm',
@@ -35,7 +50,7 @@ void main() {
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 29);
+      expect(IspNodeRegistry.types.length, 44);
     });
 
     test('端口类型符合预期', () {
@@ -278,12 +293,14 @@ void main() {
       final g = IspGraph();
       final src = g.addNode('bayer_source', 0, 0);
       final blc = g.addNode('black_level', 0, 0);
-      // 单输入节点的 'in' 不在互斥组。
-      expect(IspNodeRegistry.byId('black_level')!.hasVideoInputGroup, isFalse);
+      // black_level 现有 in(bayer) + in_mono(mono) 双输入，属互斥组：
+      // 接入 bayer 一路后 in_mono 置灰，同端口重连不受限。
+      expect(IspNodeRegistry.byId('black_level')!.hasVideoInputGroup, isTrue);
       expect(g.videoInputPortAvailable(blc, 'in'), isTrue);
       expect(g.connect(src, 'out', blc, 'in'), isNull);
       expect(g.videoInputPortAvailable(blc, 'in'), isTrue);
-      // 音频仪器的 'in'（audio 类型）也不在互斥组。
+      expect(g.videoInputPortAvailable(blc, 'in_mono'), isFalse);
+      // 音频仪器的 'in'（audio 类型）不在互斥组。
       expect(IspNodeRegistry.byId('audio_level')!.hasVideoInputGroup, isFalse);
       // 仪器/预览/输出节点带互斥组。
       for (final id in [

@@ -204,19 +204,21 @@ int _rgbIrAt(int x, int y) {
 // 解包后由「去马赛克」节点调用 demosaicRgbIr() 完成插值。
 ''';
 
-/// MONO 转 RGB（isp_kernels.dart）。
+/// MONO 源出帧（pipeline_runner.dart）：16 位 mono 中间格式直接入链。
 const String _monoCode = r'''
-/// MONO（无 CFA 黑白传感器）：单通道直接复制为 RGB 三通道。
-Uint16List monoToRgb(Uint16List mosaic) {
-  final rgb = Uint16List(mosaic.length * 3);
-  var j = 0;
-  for (var i = 0; i < mosaic.length; i++, j += 3) {
-    rgb[j] = mosaic[i];
-    rgb[j + 1] = mosaic[i];
-    rgb[j + 2] = mosaic[i];
-  }
-  return rgb;
+// pipeline_runner.dart — MONO 无 CFA：解包后的单通道帧（w*h，16 位
+// 量级）直接以 'mono' 格式进入流水线，不再复制展开为 RGB 三通道：
+if (cfa == 'mono') {
+  return _Frame(
+      data: mosaic,
+      format: 'mono',
+      width: width,
+      height: height,
+      maxValue: maxValue);
 }
+
+// 链末端 / 汇点按 monoToRgba 一趟 LUT 出图（isp_kernels.dart）：
+// 16 位单通道每像素一次查表，免去灰度扩展 + 三通道查表。
 ''';
 
 /// 图片源解码（image_source.dart）。
@@ -1023,6 +1025,327 @@ frame = _Frame(data: combined, format: 'hsl', width: w, height: h, maxValue: max
 portOutputs[nodeId] = {'out': combined};
 ''';
 
+/// 坏点校正（isp_kernels.dart，W06/W07、N06–N09）。
+const String _dpcCode = r'''
+/// 坏点校正：与同相位（mono 为全像素）3x3 邻域中位数比较，离群超过
+/// threshold（满量程百分比）即判定为坏点。mode 为 'median' 时用邻域
+/// 中位数替换；为 'directional' 时沿梯度最小的方向取两点平均替换。
+void applyDpc(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern, // null = mono（全像素 3x3）
+  double threshold = 5.0,
+  String mode = 'median',
+  int maxValue = 65535,
+}) {
+  final thr = threshold / 100 * maxValue;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final i = y * width + x;
+      final neigh = _phaseNeighbors(width, height, x, y, pattern);
+      if (neigh.isEmpty) continue;
+      final med = 中位数(neigh);
+      if ((buf[i] - med).abs() <= thr) continue;
+      buf[i] = mode == 'directional' ? 最小梯度方向两点平均 : med;
+    }
+  }
+}
+''';
+
+/// FPN 校正（isp_kernels.dart，W08–W11、N10–N13）。
+const String _fpnCode = r'''
+/// FPN 校正：低通分离内容 + 边缘掩膜的稳健行/列偏移估计，
+/// 校正量限幅 ±maxCorr。
+void applyFpn(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern, // null = mono
+  bool row = true,
+  bool col = true,
+  double maxCorr = 64,
+  int radius = 8,
+}) {
+  if (row) {
+    final low = 垂直滑窗盒式均值(buf, radius); // 内容留在低频，残差含行 FPN
+    for (var y = 0; y < height; y++) {
+      // 中位数抑制稀疏边缘离群；垂直梯度 > maxCorr 的像素掩膜
+      final corr = clamp(残差行中位数(y, low, 掩膜), -maxCorr, maxCorr);
+      行内逐像素: buf[i] = max(0, buf[i] - corr);
+    }
+  }
+  if (col) { /* 列同理：水平低通 + 水平梯度掩膜 */ }
+}
+''';
+
+/// 镜头阴影校正（isp_kernels.dart，W12–W14、N14–N16）。
+const String _lscCode = r'''
+/// 镜头阴影/平场校正：以 (centerX, centerY)（归一化 0..1）为中心的
+/// 径向二次增益曲面，增益 = 1 + strength*(r/rmax)^2，边缘亮中心暗，
+/// 饱和截位到 maxValue。增益与相位无关，Bayer/mono 通用。
+void applyLsc(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern, // null = mono
+  double strength = 0.5,
+  double centerX = 0.5,
+  double centerY = 0.5,
+  int maxValue = 65535,
+}) {
+  final cx = centerX * (width - 1);
+  final cy = centerY * (height - 1);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final gain = 1 + strength * ((x-cx)*(x-cx) + (y-cy)*(y-cy)) / rMax2;
+      buf[y * width + x] = clamp(buf[y * width + x] * gain, 0, maxValue);
+    }
+  }
+}
+''';
+
+/// Gr/Gb 均衡（isp_kernels.dart，W15）。
+const String _grGbBalanceCode = r'''
+/// Gr/Gb 均衡：统计两个绿色通道相位（Gr 与 R 同行、Gb 与 B 同行）的
+/// 全局均值，向两者中点按 strength 比例收敛，消除迷宫伪影。
+void applyGrGbBalance(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  required BayerPattern pattern,
+  double strength = 1.0,
+}) {
+  // meanGr / meanGb：两个 G 相位的全局均值。
+  final target = (meanGr + meanGb) / 2;
+  final gainGr = 1 + (target / meanGr - 1) * strength;
+  final gainGb = 1 + (target / meanGb - 1) * strength;
+  // 逐 G 像素按相位施加对应增益。
+}
+''';
+
+/// Bayer 降噪（isp_kernels.dart，W16/W17、N24/N25）。
+const String _bayerDnrCode = r'''
+/// Bayer 降噪：同相位 3x3 保边加权平均，权重 1/(1+(Δ/σ)^2)，
+/// σ 来自 σ^2=aI+b 噪声模型（取 a=1、b=64，σ=√(I+64)），
+/// strength 为 σ 的倍率（0 = 关闭）。mono（pattern 为 null）时全像素。
+void applyBayerDenoise(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern, // null = mono
+  double strength = 1.0,
+}) {
+  final src = Uint16List.fromList(buf);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final v = src[y * width + x];
+      final sigma = strength * sqrt(v + 64);
+      var sum = v.toDouble();
+      var wsum = 1.0;
+      for (final n in _phaseNeighbors(width, height, x, y, pattern)) {
+        final d = src[n] - v;
+        final w = 1 / (1 + (d / sigma) * (d / sigma));
+        sum += w * src[n];
+        wsum += w;
+      }
+      buf[y * width + x] = (sum / wsum).round();
+    }
+  }
+}
+''';
+
+/// 高光恢复（isp_kernels.dart，W18/W19）。
+const String _highlightCode = r'''
+/// 高光恢复：
+/// - 'recover'：达到膝点（knee×maxValue）的饱和像素用同相位未饱和
+///   邻域均值重建（无可用邻域则保持原值）；
+/// - 'clip'：膝点以上做软压缩，平滑收敛到 maxValue，避免硬切色块。
+void applyHighlightRecovery(
+  Uint16List buf, {
+  required int width,
+  required int height,
+  BayerPattern? pattern, // null = mono
+  int maxValue = 65535,
+  String mode = 'recover',
+  double knee = 0.9,
+}) {
+  final kneePt = knee * maxValue;
+  if (mode == 'clip') {
+    // v' = kneePt + d*range/(range+d)，d = v - kneePt。
+  } else {
+    // 饱和像素 ← 同相位未饱和邻域均值。
+  }
+}
+''';
+
+/// RGB 降噪（isp_kernels.dart，W29–W31）。
+const String _rgbDnrCode = r'''
+/// RGB 降噪：转 YUV 后亮度做 3x3 保边加权平均（权重同 Bayer 降噪的
+/// σ 模型，luma 为倍率），色度做 3x3 盒式低通并按 chroma（0..1）
+/// 混合，再转回 RGB 写回原缓冲。
+void applyRgbDenoise(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  double luma = 1.0,
+  double chroma = 0.5,
+  int maxValue = 65535,
+}) {
+  final yuv = rgbToYuv(rgb, maxValue: maxValue);
+  // Y：保边加权平均；U/V：盒式低通按 chroma 混合。
+  rgb.setAll(0, yuvToRgb(yuv, maxValue: maxValue));
+}
+''';
+
+/// 锐化（isp_kernels.dart，W32–W34）。
+const String _sharpenCode = r'''
+/// 锐化：亮度 unsharp mask——detail = Y − 3x3 盒式模糊，
+/// |detail| < threshold 视为噪声置零，Y' = Y + amount×detail，
+/// 三通道按 Y'/Y 等比缩放并截位到 maxValue。
+void applySharpen(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  double amount = 0.5,
+  double threshold = 4.0,
+  int maxValue = 65535,
+}) {
+  // 逐像素：Y = BT.601 亮度；detail 过小时置零（噪声限幅）。
+  final y2 = (v + amount * detail).clamp(0.0, maxValue.toDouble());
+  final scale = y2 / v; // 等比缩放到 R/G/B
+}
+''';
+
+/// RGB→YUV 转换（isp_kernels.dart，W36）。
+const String _cscCode = r'''
+/// RGB → YUV 色彩空间转换：standard 为 'bt601'/'bt709' 定点矩阵，
+/// range 为 'full'（全范围）/'limited'（tv 范围：Y 16..235、C 16..240
+/// 按 255 标度折算到 maxValue 量级）。
+Uint16List convertRgbToYuvCsc(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  String standard = 'bt601',
+  String range = 'full',
+  int maxValue = 65535,
+}) {
+  // BT.709 定点系数：Y = 0.2126R + 0.7152G + 0.0722B。
+  // limited：Y' = 16/255*max + Y*219/255；C' = half + (C-half)*224/255。
+}
+''';
+
+/// 激发泄漏扣除（isp_kernels.dart，N17/N18）。
+const String _fluoroLeakCode = r'''
+/// 激发泄漏扣除：统一扣除泄漏电平 level，扣除量限幅 maxSub，
+/// 结果钳位到 0。
+void applyFluoroLeak(Uint16List mono, {double level = 0, double maxSub = 65535}) {
+  final sub = level < maxSub ? level : maxSub;
+  if (sub <= 0) return;
+  for (var i = 0; i < mono.length; i++) {
+    final v = mono[i] - sub;
+    mono[i] = v <= 0 ? 0 : v.round();
+  }
+}
+''';
+
+/// 背景扣除（isp_kernels.dart，N19/N20）。
+const String _fluoroBackgroundCode = r'''
+/// 自发荧光背景扣除：按 blockSize×blockSize 块均值估计低频背景，
+/// 按 strength（0..1）比例扣除，结果钳位到 0。
+void applyFluoroBackground(
+  Uint16List mono, {
+  required int width,
+  required int height,
+  int blockSize = 16,
+  double strength = 1.0,
+}) {
+  // means[byi*bx+bxi] = 块内均值（背景估计）。
+  // v' = max(0, v - strength * bg)。
+}
+''';
+
+/// 激发归一化（isp_kernels.dart，N21–N23）。
+const String _fluoroNormalizeCode = r'''
+/// 激发参考归一化：以全帧均值作为激发强度估计，把画面增益拉到
+/// 参考电平 reference：v' = v × reference / max(mean, epsilon)。
+void applyFluoroNormalize(
+  Uint16List mono, {
+  double reference = 0,
+  double epsilon = 1,
+  int maxValue = 65535,
+}) {
+  final gain = reference / max(mean, epsilon);
+  // v' = clamp(v * gain, 0, maxValue)。
+}
+''';
+
+/// 时域 IIR 降噪（isp_kernels.dart + pipeline_runner.dart，N26–N28）。
+const String _fluoroTemporalCode = r'''
+/// 时域 IIR 降噪：Y = αF + (1−α)Yprev。
+/// history 为上一帧输出（无历史或尺寸不符时直通并把当前帧作为历史）。
+/// motionAdapt 为 true 时帧差超过 maxValue/16 的像素判为运动，
+/// 强制 α=1（用当前帧，避免拖影）。
+(Uint16List, Uint16List) applyTemporalIir(
+  Uint16List mono, {
+  Uint16List? history,
+  required double alpha,
+  bool motionAdapt = false,
+  int maxValue = 65535,
+}) {
+  // out[i] = (aa*f + (1-aa)*prev).round()；返回 (输出帧, 新历史帧)。
+}
+
+// pipeline_runner.dart — 历史帧按 nodeId 缓存在 runner 顶层：
+// frameIndex 不连续或尺寸/参数变化时重置；compute() 单次 isolate
+// 路径无历史则直通。
+''';
+
+/// 伪彩映射（isp_kernels.dart，N33/N40）。
+const String _pseudoColorCode = r'''
+/// 伪彩映射：mono 灰度按 gain 增益归一化后映射为伪彩 RGB
+/// （green / magenta / hot 三种色表），输出 16 位量级交织 RGB。
+Uint16List monoPseudoColor(
+  Uint16List mono, {
+  required int width,
+  required int height,
+  String colormap = 'green',
+  double gain = 1.0,
+  int maxValue = 65535,
+}) {
+  final t = clamp(v * gain / maxValue, 0, 1);
+  // green: (0,t,0)；magenta: (t,0,t)；hot: 黑→红→黄→白。
+}
+''';
+
+/// 荧光融合（isp_kernels.dart，R09–R11、N38/N39）。
+const String _fluoroFusionCode = r'''
+/// 荧光融合：白光 RGB 与荧光 mono 的融合出图。
+/// 荧光图先按 (offsetX, offsetY) 手动配准偏移做双线性重采样
+/// （几何配准 R01–R07 的简化）；α 由荧光强度经 threshold 门限映射到
+/// 0..alphaMax（SBR/SNR/置信度 N29/N30/N38 的简化折叠）。
+Uint16List fuseFluorescence(
+  Uint16List rgbWl,
+  Uint16List monoFl, {
+  required int width,
+  required int height,
+  String mode = 'alpha',   // 'alpha' / 'contour'
+  double threshold = 0,
+  double alphaMax = 0.8,
+  String colormap = 'green',
+  double offsetX = 0,
+  double offsetY = 0,
+  int maxValue = 65535,
+}) {
+  // alpha：RGB_f = (1−α)·WL + α·pseudo(FL)。
+  // contour：荧光 mask 的 3x3 轮廓以伪彩全强度叠加，其余保持白光。
+}
+
+// pipeline_runner.dart — 双源链：融合节点的 'in' 接白光 RGB 支路，
+// 'in_fluoro'（不在视频互斥组）接荧光 mono 支路；两路各自由独立
+// 源节点驱动（compileChain 对含 fluoro_fusion 的链放行 2 个源节点）。
+''';
+
 /// 节点类型 id → 只读源码片段。注册表中的每种类型都必须有对应条目。
 const Map<String, String> nodeSourceCode = {
   'bayer_source': _bayerPatternCode + _rawUnpackCode,
@@ -1035,6 +1358,21 @@ const Map<String, String> nodeSourceCode = {
   'image_source': _imageSourceCode,
   'video_source': _videoSourceCode,
   'black_level': _blackLevelCode,
+  'dpc': _dpcCode,
+  'fpn': _fpnCode,
+  'lsc': _lscCode,
+  'grgb_balance': _grGbBalanceCode,
+  'bayer_dnr': _bayerDnrCode,
+  'highlight': _highlightCode,
+  'rgb_dnr': _rgbDnrCode,
+  'sharpen': _sharpenCode,
+  'csc_rgb2yuv': _cscCode,
+  'fluoro_leak': _fluoroLeakCode,
+  'fluoro_background': _fluoroBackgroundCode,
+  'fluoro_normalize': _fluoroNormalizeCode,
+  'fluoro_temporal': _fluoroTemporalCode,
+  'pseudo_color': _pseudoColorCode,
+  'fluoro_fusion': _fluoroFusionCode,
   'demosaic': _demosaicDispatchCode + _demosaicBilinearCode,
   'white_balance': _whiteBalanceCode,
   'ccm': _ccmCode,
@@ -1087,6 +1425,18 @@ const List<CodeVariable> _instrumentInputs = [
   CodeVariable(name: 'height', type: 'int', value: '帧高'),
 ];
 
+/// RAW 域算子（dpc/fpn/lsc/grgb_balance/bayer_dnr/highlight）共用输入：
+/// Bayer 马赛克或 16 位 mono 帧（二选一接入）+ 帧尺寸与节点参数。
+const List<CodeVariable> _rawDualInputsVars = [
+  CodeVariable(
+      name: 'buf', type: 'Uint16List', value: 'RAW 帧（w*h，mosaic 或 mono）'),
+  CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+  CodeVariable(name: 'height', type: 'int', value: '帧高'),
+  CodeVariable(
+      name: 'pattern', type: 'BayerPattern?', value: 'CFA 图案（mono 为 null）'),
+  CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+];
+
 /// 节点类型 id → Input 变量（传入节点的数据与参数）。
 const Map<String, List<CodeVariable>> nodeInputVars = {
   'bayer_source': _rawSourceInputs,
@@ -1112,10 +1462,80 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
     CodeVariable(name: 'height', type: 'int', value: '帧高'),
     CodeVariable(name: 'pattern', type: 'BayerPattern', value: 'CFA 图案'),
-    CodeVariable(name: 'r', type: 'double', value: 'R 相偏移（节点参数）'),
+    CodeVariable(name: 'r', type: 'double', value: 'R 相偏移（节点参数；mono 时为统一偏移）'),
     CodeVariable(name: 'gr', type: 'double', value: 'Gr 相偏移（节点参数）'),
     CodeVariable(name: 'gb', type: 'double', value: 'Gb 相偏移（节点参数）'),
     CodeVariable(name: 'b', type: 'double', value: 'B 相偏移（节点参数）'),
+  ],
+  'dpc': _rawDualInputsVars,
+  'fpn': _rawDualInputsVars,
+  'lsc': _rawDualInputsVars,
+  'grgb_balance': _rawDualInputsVars,
+  'bayer_dnr': _rawDualInputsVars,
+  'highlight': _rawDualInputsVars,
+  'rgb_dnr': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'luma', type: 'double', value: '亮度保边强度（节点参数）'),
+    CodeVariable(name: 'chroma', type: 'double', value: '色度低通强度（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'sharpen': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'amount', type: 'double', value: '锐化强度（节点参数）'),
+    CodeVariable(name: 'threshold', type: 'double', value: '噪声门限（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'csc_rgb2yuv': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
+    CodeVariable(name: 'standard', type: 'String', value: 'bt601 / bt709（节点参数）'),
+    CodeVariable(name: 'range', type: 'String', value: 'full / limited（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'fluoro_leak': [
+    CodeVariable(name: 'mono', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
+    CodeVariable(name: 'level', type: 'double', value: '扣除电平（节点参数）'),
+    CodeVariable(name: 'maxSub', type: 'double', value: '最大扣除限幅（节点参数）'),
+  ],
+  'fluoro_background': [
+    CodeVariable(name: 'mono', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'blockSize', type: 'int', value: '背景估计块大小（节点参数）'),
+    CodeVariable(name: 'strength', type: 'double', value: '扣除强度（节点参数）'),
+  ],
+  'fluoro_normalize': [
+    CodeVariable(name: 'mono', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
+    CodeVariable(name: 'reference', type: 'double', value: '参考电平（节点参数）'),
+    CodeVariable(name: 'epsilon', type: 'double', value: '除法下限（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'fluoro_temporal': [
+    CodeVariable(name: 'mono', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
+    CodeVariable(name: 'history', type: 'Uint16List?', value: '上一帧输出（时域缓存）'),
+    CodeVariable(name: 'alpha', type: 'double', value: '当前帧权重（节点参数）'),
+    CodeVariable(name: 'motionAdapt', type: 'bool', value: '运动自适应开关（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'pseudo_color': [
+    CodeVariable(name: 'mono', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
+    CodeVariable(name: 'colormap', type: 'String', value: 'green / magenta / hot'),
+    CodeVariable(name: 'gain', type: 'double', value: '增益（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'fluoro_fusion': [
+    CodeVariable(name: 'rgbWl', type: 'Uint16List', value: '白光 RGB 帧（w*h*3）'),
+    CodeVariable(name: 'monoFl', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'mode', type: 'String', value: 'alpha / contour（节点参数）'),
+    CodeVariable(name: 'threshold', type: 'double', value: '荧光门限（节点参数）'),
+    CodeVariable(name: 'alphaMax', type: 'double', value: '最大 α（节点参数）'),
+    CodeVariable(name: 'offsetX', type: 'double', value: '配准偏移 X（节点参数）'),
+    CodeVariable(name: 'offsetY', type: 'double', value: '配准偏移 Y（节点参数）'),
   ],
   'demosaic': [
     CodeVariable(name: 'bayer', type: 'Uint16List', value: '马赛克帧（w*h）'),
@@ -1212,6 +1632,18 @@ const List<CodeVariable> _audioInstrumentInputs = [
   CodeVariable(name: 'seconds', type: 'double', value: '当前播放位置（秒）'),
 ];
 
+/// RAW 域算子共用输出：原地修改后的同格式帧。
+const List<CodeVariable> _rawDualOutputVars = [
+  CodeVariable(
+      name: 'buf', type: 'Uint16List', value: '处理后 RAW 帧（原地修改）'),
+];
+
+/// 荧光 mono 域原地修改类算子共用输出。
+const List<CodeVariable> _monoInPlaceOutputVars = [
+  CodeVariable(
+      name: 'mono', type: 'Uint16List', value: '处理后 mono 帧（原地修改）'),
+];
+
 /// 节点类型 id → Output 变量（节点产出的数据）。
 const Map<String, List<CodeVariable>> nodeOutputVars = {
   'bayer_source': _rawSourceOutputs,
@@ -1222,7 +1654,7 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'cis_rgb_ir': _rawSourceOutputs,
   'cis_mono': [
     CodeVariable(
-        name: 'rgb', type: 'Uint16List', value: '灰度复制三通道（w*h*3）'),
+        name: 'mono', type: 'Uint16List', value: '16 位单通道帧（w*h）'),
   ],
   'image_source': [
     CodeVariable(
@@ -1239,6 +1671,34 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'black_level': [
     CodeVariable(
         name: 'bayer', type: 'Uint16List', value: '黑电平校正后（原地修改）'),
+  ],
+  'dpc': _rawDualOutputVars,
+  'fpn': _rawDualOutputVars,
+  'lsc': _rawDualOutputVars,
+  'grgb_balance': _rawDualOutputVars,
+  'bayer_dnr': _rawDualOutputVars,
+  'highlight': _rawDualOutputVars,
+  'rgb_dnr': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: '降噪后（原地修改）'),
+  ],
+  'sharpen': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: '锐化后（原地修改）'),
+  ],
+  'csc_rgb2yuv': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '交织 YUV（w*h*3）'),
+  ],
+  'fluoro_leak': _monoInPlaceOutputVars,
+  'fluoro_background': _monoInPlaceOutputVars,
+  'fluoro_normalize': _monoInPlaceOutputVars,
+  'fluoro_temporal': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: 'IIR 滤波后 mono 帧'),
+    CodeVariable(name: 'newHistory', type: 'Uint16List', value: '新历史帧（时域缓存）'),
+  ],
+  'pseudo_color': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '伪彩 RGB（w*h*3）'),
+  ],
+  'fluoro_fusion': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '融合 RGB（w*h*3）'),
   ],
   'demosaic': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: '插值 RGB（w*h*3）'),

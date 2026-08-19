@@ -188,7 +188,7 @@ void main() {
   testWidgets('左侧工具栏按分组列出节点类型，点击可添加节点', (tester) async {
     // 高度给足：调色板是懒构建 ListView，表面太矮时分组标题会被
     // 滚出可视区而不构建（find 不到）。
-    await tester.binding.setSurfaceSize(const Size(1400, 1200));
+    await tester.binding.setSurfaceSize(const Size(1400, 2400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final state = IspStudioState.withDefaultGraph();
@@ -204,6 +204,28 @@ void main() {
     expect(palette, findsOneWidget);
     // 分组标题：Source / CIS Src / Process / Output / Instrument。
     for (final name in ['Source', 'CIS Src', 'Process', 'Output', 'Instrument']) {
+      expect(find.descendant(of: palette, matching: find.text(name)),
+          findsOneWidget);
+    }
+    // ICG 荧光内窥镜方案的 Process 新算子与 Fluorescence 子分组。
+    for (final name in [
+      '坏点校正',
+      'FPN 校正',
+      '镜头阴影校正',
+      'Gr/Gb 均衡',
+      'Bayer 降噪',
+      '高光恢复',
+      'RGB 降噪',
+      '锐化',
+      'RGB→YUV 转换',
+      'Fluorescence',
+      '激发泄漏扣除',
+      '背景扣除',
+      '激发归一化',
+      '时域 IIR 降噪',
+      '伪彩映射',
+      '荧光融合',
+    ]) {
       expect(find.descendant(of: palette, matching: find.text(name)),
           findsOneWidget);
     }
