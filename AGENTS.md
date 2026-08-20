@@ -92,6 +92,15 @@ flutter test test/isp_kernels_test.dart   # 单个文件
 3. 安装包输出到 `Windows_setup/Output/`。
 4. 若新增了运行时依赖目录，需同步更新 `.iss` 与该指南文档。
 
+### Linux（.deb）
+
+实验性 Linux 桌面版的打包脚本在 `Linux_setup/`（在 Ubuntu/WSL 中运行）：
+
+1. 先 `flutter build linux --release`。
+2. `bash Linux_setup/build_deb.sh` 产出 `Linux_setup/Output/debug-tool-set_<版本>_amd64.deb`。
+3. 布局：程序装 `/opt/debug_tool_set/`，启动器 `/usr/bin/debug-tool-set`（首次启动把数据目录复制到 `~/.local/share/debug_tool_set/` 再启动，解决 `/opt` 不可写问题）；`Depends` 由 `ldd`+`dpkg -S` 自动推导，另加 `ffmpeg`、`fonts-noto-cjk`。
+4. 若新增运行时依赖目录，需同步更新 `build_deb.sh` 与启动器 `debug-tool-set` 中的目录列表。
+
 ## 安全与其他注意事项
 
 - 工程根目录的 `kimi_proxy.py` 与 `requirements.txt`（fastapi/uvicorn/httpx/pydantic）是一个与主程序无关的 Kimi↔OpenAI API 代理脚本，内含 API key 环境变量占位；**不要**将其 key 提交真实值，也不要把它当作应用的一部分。

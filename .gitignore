@@ -59,3 +59,4 @@ app.*.map.json
 
 # ISP 冒烟测试输出
 /scratch/isp_smoke_out/
+Linux_setup/Output/

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=DebugToolSet
+Comment=Multi-function embedded debugging toolset
+Exec=debug-tool-set
+Icon=debug-tool-set
+Terminal=false
+Type=Application
+Categories=Development;Engineering;

@@ -13,6 +13,13 @@ analyzer:
   exclude:
     # scratch/ 为临时脚本目录（基准/验证脚本），不参与静态分析
     - scratch/**
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   # The lint rules applied to this project can be customized in the

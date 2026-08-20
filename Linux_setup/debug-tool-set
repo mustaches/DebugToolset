@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# DebugToolSet 启动器（Linux .deb 安装版）
+# 应用按 Directory.current 相对路径访问数据目录（bussetup/、DeviceProtocol/ 等），
+# /opt 下不可写，因此首次启动时把数据目录复制到用户目录再进入该目录启动。
+set -e
+APP=/opt/debug_tool_set
+DATA="$HOME/.local/share/debug_tool_set"
+mkdir -p "$DATA"
+for d in bussetup DeviceProtocol docs waveform IspFlow UI_Project; do
+  if [ ! -e "$DATA/$d" ]; then
+    cp -r "$APP/data/$d" "$DATA/" 2>/dev/null || mkdir -p "$DATA/$d"
+  fi
+done
+cd "$DATA"
+exec "$APP/debug_tool_set" "$@"
