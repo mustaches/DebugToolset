@@ -38,6 +38,7 @@ flutter run -d linux              # Linux（需先安装 clang/cmake/ninja/libgt
 
 ## 文档
 
+- [使用手册（各模块详细说明 + 截图）](docs/User_Manual.md)
 - [安装说明（Windows/Ubuntu）](docs/Installation_Guide.md)
 - [Inno Setup 打包指南](docs/Inno_Setup_Packaging_Guide.md)
 - [示波器下位机通信协议](docs/Oscilloscope_Protocol.md)
