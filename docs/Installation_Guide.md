@@ -110,3 +110,61 @@ flutter run -d linux              # 调试运行
 flutter build linux --release     # 产出 build/linux/x64/release/bundle/
 bash Linux_setup/build_deb.sh     # 打包 .deb 到 Linux_setup/Output/
 ```
+
+---
+
+## 发布新版本（维护者）
+
+完整的发版流程如下（版本号以 `pubspec.yaml` 的 `version:` 为准，发版前先更新它）：
+
+1. **构建 Windows 安装包**
+
+   ```bash
+   flutter build windows --release
+   # 用 Inno Setup 编译 Windows_setup/DebugToolSet.iss
+   # 产出 Windows_setup/Output/DebugToolset_setup.exe
+   ```
+
+2. **构建 Ubuntu 安装包**（在 WSL 或 Ubuntu 机器上）
+
+   ```bash
+   flutter build linux --release
+   bash Linux_setup/build_deb.sh
+   # 产出 Linux_setup/Output/debug-tool-set_<版本>_amd64.deb
+   ```
+
+3. **提交代码并打标签**
+
+   ```bash
+   git add -A && git commit -m "chore(release): v<版本>"
+   git push origin main
+   ```
+
+4. **创建 GitHub Release 并上传安装包**
+
+   有 `gh` CLI 时最简单（需 `repo` 权限的登录）：
+
+   ```bash
+   gh release create v<版本> \
+     Windows_setup/Output/DebugToolset_setup.exe \
+     Linux_setup/Output/debug-tool-set_<版本>_amd64.deb \
+     --title "DebugToolSet v<版本>" --notes "版本说明……"
+   ```
+
+   没有 `gh` 时走 REST API（`<TOKEN>` 为有 `repo` scope 的 token；本机已用 git 凭据管理器登录过 GitHub 的话，可用
+   `printf 'protocol=https\nhost=github.com\n\n' | git credential fill` 取出）：
+
+   ```bash
+   # 创建 Release，记下返回的 id
+   curl -s -X POST -H "Authorization: token <TOKEN>" \
+     https://api.github.com/repos/mustaches/DebugToolset/releases \
+     -d '{"tag_name":"v<版本>","name":"DebugToolSet v<版本>","body":"版本说明……"}'
+
+   # 逐个上传资产（URL 中是上一步的 Release id）
+   curl -s -X POST -H "Authorization: token <TOKEN>" \
+     -H "Content-Type: application/octet-stream" \
+     --data-binary @<安装包路径> \
+     "https://uploads.github.com/repos/mustaches/DebugToolset/releases/<id>/assets?name=<文件名>"
+   ```
+
+注意：安装包体积较大（约 70~100M），**不要**提交进 git 仓库（`Linux_setup/Output/` 已在 `.gitignore` 中），只作为 Release 资产分发。
