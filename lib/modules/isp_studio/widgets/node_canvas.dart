@@ -185,6 +185,34 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
     return KeyEventResult.ignored;
   }
 
+  /// 节点标题栏右键菜单：多选时点中选中节点提供「编组」；点中已编组
+  /// 节点提供「取消编组」。其余情况不弹菜单（保留右键拖动平移画布）。
+  void _showNodeGroupMenu(
+      IspStudioState state, String nodeId, Offset globalPos) {
+    final groupId = state.groupIdOf(nodeId);
+    final canGroup = groupId == null &&
+        state.selectedNodeIds.length >= 2 &&
+        state.selectedNodeIds.contains(nodeId);
+    if (groupId == null && !canGroup) return;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
+      items: [
+        if (canGroup)
+          const PopupMenuItem(value: 'group', child: Text('编组')),
+        if (groupId != null)
+          const PopupMenuItem(value: 'ungroup', child: Text('取消编组')),
+      ],
+    ).then((v) {
+      if (v == 'group') {
+        state.groupSelectedNodes();
+      } else if (v == 'ungroup' && groupId != null) {
+        state.ungroup(groupId);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<IspStudioState>();
@@ -230,6 +258,13 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
           } else {
             _dragNodeId = null;
             _boxSelectStartCanvasPos = null;
+            if (event.buttons & kSecondaryButton != 0) {
+              // 标题栏右键：编组/取消编组菜单。
+              final titleNodeId = _nodeAt(state, globalToCanvas(event.position));
+              if (titleNodeId != null) {
+                _showNodeGroupMenu(state, titleNodeId, event.position);
+              }
+            }
           }
         },
         onPointerMove: (event) {
@@ -298,6 +333,13 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
                             painter: IspConnectionPainter(state),
                             child: const SizedBox.expand(),
                           ),
+                          // 编组包围框（连线之上、节点之下，不参与命中）。
+                          if (state.graph.groups.isNotEmpty)
+                            Positioned.fill(
+                              child: CustomPaint(
+                                painter: _GroupFramesPainter(state),
+                              ),
+                            ),
                           if (state.selectionBoxRect != null)
                             Positioned.fill(
                               child: CustomPaint(
@@ -449,6 +491,49 @@ class _DotGridPainter extends CustomPainter {
   @override
   bool shouldRepaint(_DotGridPainter oldDelegate) =>
       oldDelegate.offset != offset || oldDelegate.zoom != zoom;
+}
+
+/// 编组包围框：成员节点包围盒外扩一圈的圆角矩形（半透明填充 +
+/// 描边），与框选蓝色区分用青绿色。节点拖动/缩放时画布整体重建，
+/// 此处 shouldRepaint 恒真即可（每帧至多数个矩形，开销可忽略）。
+class _GroupFramesPainter extends CustomPainter {
+  final IspStudioState state;
+
+  _GroupFramesPainter(this.state);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final g in state.graph.groups) {
+      Rect? bounds;
+      for (final id in g.nodeIds) {
+        final node = state.graph.nodes[id];
+        if (node == null) continue;
+        final type = IspNodeRegistry.byId(node.typeId);
+        final h = type == null
+            ? 0.0
+            : nodeHeight(type, previewExtraHeight: node.extraHeight);
+        final r = Rect.fromLTWH(node.x, node.y, node.width, h);
+        bounds = bounds == null ? r : bounds.expandToInclude(r);
+      }
+      if (bounds == null) continue;
+      final rrect =
+          RRect.fromRectAndRadius(bounds.inflate(8), const Radius.circular(8));
+      canvas.drawRRect(
+          rrect,
+          Paint()
+            ..color = const Color(0x1426A69A)
+            ..style = PaintingStyle.fill);
+      canvas.drawRRect(
+          rrect,
+          Paint()
+            ..color = const Color(0xFF26A69A)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GroupFramesPainter oldDelegate) => true;
 }
 
 /// 画布坐标系下的框选矩形绘制（半透明蓝色填充 + 蓝边）。

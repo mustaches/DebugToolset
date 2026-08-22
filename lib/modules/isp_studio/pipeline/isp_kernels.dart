@@ -64,7 +64,7 @@ enum BayerPattern {
 
 /// How raw bytes are packed into the file buffer.
 enum BayerPacking {
-  /// One pixel per 16-bit word (or per byte when bitDepth == 8),
+  /// One pixel per 16-bit word (fixed 2 bytes per pixel, any bit depth),
   /// data right-aligned (LSB-aligned): value = raw & mask.
   unpackedLsb,
 
@@ -92,7 +92,8 @@ int frameByteSize({
   switch (packing) {
     case BayerPacking.unpackedLsb:
     case BayerPacking.unpackedMsb:
-      return bitDepth == 8 ? pixels : pixels * 2;
+      // 固定每像素 2 字节（16 位字），与位深无关。
+      return pixels * 2;
     case BayerPacking.mipi:
       if (bitDepth == 10) return (pixels * 5 + 3) ~/ 4;
       if (bitDepth == 12) return (pixels * 3 + 1) ~/ 2;
@@ -134,21 +135,16 @@ Uint16List unpackBayer(
   switch (packing) {
     case BayerPacking.unpackedLsb:
     case BayerPacking.unpackedMsb:
+      // 固定每像素 2 字节（16 位字）：8/10/12/14/16 位深同样按字读取。
       final isLsb = packing == BayerPacking.unpackedLsb;
-      if (bitDepth == 8) {
-        for (var i = 0; i < pixels; i++) {
-          out[i] = bytes[byteOffset + i];
-        }
-      } else {
-        final mask = bayerMaxValue(bitDepth);
-        final shift = 16 - bitDepth;
-        var p = byteOffset;
-        for (var i = 0; i < pixels; i++, p += 2) {
-          final raw = littleEndian
-              ? bytes[p] | (bytes[p + 1] << 8)
-              : (bytes[p] << 8) | bytes[p + 1];
-          out[i] = isLsb ? raw & mask : raw >> shift;
-        }
+      final mask = bayerMaxValue(bitDepth);
+      final shift = 16 - bitDepth;
+      var p = byteOffset;
+      for (var i = 0; i < pixels; i++, p += 2) {
+        final raw = littleEndian
+            ? bytes[p] | (bytes[p + 1] << 8)
+            : (bytes[p] << 8) | bytes[p + 1];
+        out[i] = isLsb ? raw & mask : raw >> shift;
       }
     case BayerPacking.mipi:
       if (bitDepth == 10) {
@@ -1176,6 +1172,131 @@ Uint16List hslToRgb(Uint16List hsl, {required int maxValue}) {
   return out;
 }
 
+/// HSL 调整（HSL 调试器节点）：H 在 0..360° 色环上循环偏移 [hShiftDeg]
+/// 度，S/L 分别乘增益 [sGain]/[lGain] 后钳位到 0..maxValue。
+/// 三个参数均为恒等值时直接返回原数据（不拷贝）。
+Uint16List adjustHsl(Uint16List hsl,
+    {required int maxValue,
+    double hShiftDeg = 0,
+    double sGain = 1.0,
+    double lGain = 1.0}) {
+  if (hShiftDeg == 0 && sGain == 1.0 && lGain == 1.0) return hsl;
+  final out = Uint16List(hsl.length);
+  final m = maxValue + 1; // 色环模数：H 在 0..maxValue 上循环
+  final shift = (hShiftDeg / 360 * maxValue).round();
+  for (var i = 0; i < hsl.length; i += 3) {
+    // Dart 的 % 对负数返回负值，用 ((x % m) + m) % m 修正环绕。
+    out[i] = ((hsl[i] + shift) % m + m) % m;
+    out[i + 1] = _clampTo(hsl[i + 1] * sGain, maxValue);
+    out[i + 2] = _clampTo(hsl[i + 2] * lGain, maxValue);
+  }
+  return out;
+}
+
+/// YUV → HSL：单遍融合实现——循环内先按 [yuvToRgb] 的定点公式算出 RGB
+/// 中间值（含钳位，不分配中间缓冲），再按 [rgbToHsl] 的逻辑求 H/S/L。
+/// 数学上等价于 YUV→RGB→HSL 两段中转，数值结果与之逐点一致。
+Uint16List yuvToHsl(Uint16List yuv, {required int maxValue}) {
+  final out = Uint16List(yuv.length);
+  final half = maxValue >> 1;
+  final inv = 1.0 / maxValue;
+  const crV = 91881;  // 1.402 * 65536
+  const cgU = -22553; // -0.344136 * 65536
+  const cgV = -46801; // -0.714136 * 65536
+  const cbU = 116130; // 1.772 * 65536
+
+  for (var i = 0; i < yuv.length; i += 3) {
+    final y = yuv[i];
+    final u = yuv[i + 1] - half;
+    final v = yuv[i + 2] - half;
+
+    // RGB 中间值：与 yuvToRgb 完全一致的定点计算与钳位。
+    var ri = y + ((crV * v + 32768) >> 16);
+    var gi = y + ((cgU * u + cgV * v + 32768) >> 16);
+    var bi = y + ((cbU * u + 32768) >> 16);
+    ri = ri < 0 ? 0 : (ri > maxValue ? maxValue : ri);
+    gi = gi < 0 ? 0 : (gi > maxValue ? maxValue : gi);
+    bi = bi < 0 ? 0 : (bi > maxValue ? maxValue : bi);
+
+    // HSL 部分：与 rgbToHsl 完全一致。
+    final r = ri * inv;
+    final g = gi * inv;
+    final b = bi * inv;
+    final mx = math.max(r, math.max(g, b));
+    final mn = math.min(r, math.min(g, b));
+    final l = (mx + mn) / 2;
+    var h = 0.0;
+    var s = 0.0;
+    final d = mx - mn;
+    if (d > 0) {
+      s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      if (mx == r) {
+        h = ((g - b) / d) % 6;
+      } else if (mx == g) {
+        h = (b - r) / d + 2;
+      } else {
+        h = (r - g) / d + 4;
+      }
+      h /= 6;
+      if (h < 0) h += 1;
+    }
+    out[i] = _clampTo(h * maxValue, maxValue);
+    out[i + 1] = _clampTo(s * maxValue, maxValue);
+    out[i + 2] = _clampTo(l * maxValue, maxValue);
+  }
+  return out;
+}
+
+/// HSL → YUV：单遍融合实现——循环内先按 [hslToRgb] 的逻辑算出 RGB
+/// 中间值（含钳位，不分配中间缓冲），再按 [rgbToYuv] 的定点公式求 Y/U/V。
+/// 数学上等价于 HSL→RGB→YUV 两段中转，数值结果与之逐点一致。
+Uint16List hslToYuv(Uint16List hsl, {required int maxValue}) {
+  final out = Uint16List(hsl.length);
+  final half = maxValue >> 1;
+  final inv = 1.0 / maxValue;
+  const cyR = 19595; // 0.299 * 65536
+  const cyG = 38470; // 0.587 * 65536
+  const cyB = 7471;  // 0.114 * 65536
+
+  const cuR = -11058; // -0.168736 * 65536
+  const cuG = -21710; // -0.331264 * 65536
+  const cuB = 32768;  // 0.5 * 65536
+
+  const cvR = 32768;  // 0.5 * 65536
+  const cvG = -27439; // -0.418688 * 65536
+  const cvB = -5329;  // -0.081312 * 65536
+
+  for (var i = 0; i < hsl.length; i += 3) {
+    // RGB 中间值：与 hslToRgb 完全一致。
+    final h = (hsl[i] * inv) % 1.0;
+    final s = hsl[i + 1] * inv;
+    final l = hsl[i + 2] * inv;
+    double rd, gd, bd;
+    if (s == 0) {
+      rd = gd = bd = l;
+    } else {
+      final q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      final p = 2 * l - q;
+      rd = _hueToRgb(p, q, h + 1 / 3);
+      gd = _hueToRgb(p, q, h);
+      bd = _hueToRgb(p, q, h - 1 / 3);
+    }
+    final r = _clampTo(rd * maxValue, maxValue);
+    final g = _clampTo(gd * maxValue, maxValue);
+    final b = _clampTo(bd * maxValue, maxValue);
+
+    // YUV 部分：与 rgbToYuv 完全一致的定点计算与钳位。
+    final yi = (cyR * r + cyG * g + cyB * b + 32768) >> 16;
+    final ui = ((cuR * r + cuG * g + cuB * b + 32768) >> 16) + half;
+    final vi = ((cvR * r + cvG * g + cvB * b + 32768) >> 16) + half;
+
+    out[i] = yi < 0 ? 0 : (yi > maxValue ? maxValue : yi);
+    out[i + 1] = ui < 0 ? 0 : (ui > maxValue ? maxValue : ui);
+    out[i + 2] = vi < 0 ? 0 : (vi > maxValue ? maxValue : vi);
+  }
+  return out;
+}
+
 /// ---------------------------------------------------------------------------
 /// ICG 荧光内窥镜方案的 ISP 核（W06–W36 / N06–N40 / R01–R15 的简化实现，
 /// 见 IspFlow/双传感器并行ICG荧光内窥镜ISP的FPGA实现方案.pdf）。
@@ -1706,6 +1827,172 @@ void applySharpen(
       rgb[i] = _clampTo(rgb[i] * scale, maxValue);
       rgb[i + 1] = _clampTo(rgb[i + 1] * scale, maxValue);
       rgb[i + 2] = _clampTo(rgb[i + 2] * scale, maxValue);
+    }
+  }
+}
+
+/// CLAHE 直方图 bin 数（亮度按 maxValue 等比落入 256 bin）。
+const int _claheBins = 256;
+
+/// CLAHE 分块 LUT 构建：对单通道亮度平面 [ys]（w*h）按 blockSize×blockSize
+/// 分 tile 统计 256 bin 直方图，按 [clipLimit]（tile 内平均计数的倍数）
+/// 裁剪、超出量均匀再分配，再由累积分布（CDF）得各 tile 的均衡 LUT
+/// （bin → 均衡亮度，0..maxValue）。返回长度 tilesX*tilesY*256 的表，
+/// tile 网格尺寸为 (width+blockSize-1)~/blockSize × (height+blockSize-1)~/blockSize。
+Float64List _claheTileLuts(Uint16List ys, int width, int height, int blockSize,
+    double clipLimit, int maxValue) {
+  final tilesX = (width + blockSize - 1) ~/ blockSize;
+  final tilesY = (height + blockSize - 1) ~/ blockSize;
+  final luts = Float64List(tilesX * tilesY * _claheBins);
+  final hist = Float64List(_claheBins);
+  for (var ty = 0; ty < tilesY; ty++) {
+    for (var tx = 0; tx < tilesX; tx++) {
+      hist.fillRange(0, _claheBins, 0);
+      final x0 = tx * blockSize, y0 = ty * blockSize;
+      final x1 = math.min(x0 + blockSize, width);
+      final y1 = math.min(y0 + blockSize, height);
+      final count = (x1 - x0) * (y1 - y0);
+      for (var y = y0; y < y1; y++) {
+        for (var x = x0; x < x1; x++) {
+          hist[ys[y * width + x] * _claheBins ~/ (maxValue + 1)]++;
+        }
+      }
+      // 裁剪：阈值为平均计数（count/bins）的 clipLimit 倍，
+      // 超出量均匀再分配到全部 bin。
+      final limit = clipLimit * count / _claheBins;
+      var excess = 0.0;
+      for (var b = 0; b < _claheBins; b++) {
+        if (hist[b] > limit) {
+          excess += hist[b] - limit;
+          hist[b] = limit;
+        }
+      }
+      final per = excess / _claheBins;
+      final lutBase = (ty * tilesX + tx) * _claheBins;
+      var cdf = 0.0;
+      for (var b = 0; b < _claheBins; b++) {
+        cdf += hist[b] + per;
+        luts[lutBase + b] = cdf / count * maxValue;
+      }
+    }
+  }
+  return luts;
+}
+
+/// CLAHE 双线性插值：像素 (x, y) 的均衡亮度由周围 4 个 tile 中心的 LUT
+/// 插值得到（tile 中心位于各 tile 中点，边缘像素钳到最近 tile），
+/// 避免块效应。[v] 为该像素亮度。
+double _claheBilinear(Float64List luts, int tilesX, int tilesY, int blockSize,
+    int x, int y, int v, int maxValue) {
+  final fy = (y + 0.5) / blockSize - 0.5;
+  var ty0 = fy.floor();
+  var wy = fy - ty0;
+  if (ty0 < 0) {
+    ty0 = 0;
+    wy = 0.0;
+  } else if (ty0 >= tilesY - 1) {
+    ty0 = tilesY - 1;
+    wy = 0.0;
+  }
+  final ty1 = ty0 + 1 < tilesY ? ty0 + 1 : ty0;
+  final fx = (x + 0.5) / blockSize - 0.5;
+  var tx0 = fx.floor();
+  var wx = fx - tx0;
+  if (tx0 < 0) {
+    tx0 = 0;
+    wx = 0.0;
+  } else if (tx0 >= tilesX - 1) {
+    tx0 = tilesX - 1;
+    wx = 0.0;
+  }
+  final tx1 = tx0 + 1 < tilesX ? tx0 + 1 : tx0;
+  final bin = v * _claheBins ~/ (maxValue + 1);
+  final l00 = luts[(ty0 * tilesX + tx0) * _claheBins + bin];
+  final l01 = luts[(ty0 * tilesX + tx1) * _claheBins + bin];
+  final l10 = luts[(ty1 * tilesX + tx0) * _claheBins + bin];
+  final l11 = luts[(ty1 * tilesX + tx1) * _claheBins + bin];
+  final top = l00 + (l01 - l00) * wx;
+  final bottom = l10 + (l11 - l10) * wx;
+  return top + (bottom - top) * wy;
+}
+
+/// 自适应直方图均衡（CLAHE，对比度受限）：对亮度做分块直方图均衡，
+/// 三通道按亮度缩放比例等比缩放（保持 hue/sat 不变），原地修改。
+///
+/// 算法步骤：
+/// 1. 逐像素求亮度 Y（BT.601 定点加权和，与 [applySharpen] 一致）；
+/// 2. 分 tile 统计直方图 → 裁剪再分配 → CDF 得 LUT（[_claheTileLuts]）；
+/// 3. 每像素的均衡亮度由周围 4 个 tile 中心的 LUT 双线性插值得到
+///    （[_claheBilinear]，标准 CLAHE 做法，避免块效应）；
+/// 4. 三通道按 Y'/Y 等比缩放；[strength] 为均衡亮度与原亮度的混合比
+///    （0 = 原图直通，直接跳过）。
+void applyClahe(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  int blockSize = 32,
+  double clipLimit = 2.0,
+  double strength = 1.0,
+  int maxValue = 65535,
+}) {
+  if (strength <= 0) return;
+  if (blockSize < 2) blockSize = 32;
+  if (clipLimit <= 0) clipLimit = 1.0;
+  final pixels = width * height;
+  // 1. 亮度平面。
+  final ys = Uint16List(pixels);
+  for (var p = 0; p < pixels; p++) {
+    final i = p * 3;
+    ys[p] =
+        (19595 * rgb[i] + 38470 * rgb[i + 1] + 7471 * rgb[i + 2] + 32768) >> 16;
+  }
+  final tilesX = (width + blockSize - 1) ~/ blockSize;
+  final tilesY = (height + blockSize - 1) ~/ blockSize;
+  final luts = _claheTileLuts(ys, width, height, blockSize, clipLimit, maxValue);
+  // 2/3. 逐像素插值均衡亮度，按亮度比例缩放三通道。
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final p = y * width + x;
+      final v = ys[p];
+      if (v <= 0) continue; // 黑像素无亮度比例可言，保持不动
+      final le = _claheBilinear(luts, tilesX, tilesY, blockSize, x, y, v, maxValue);
+      // strength 混合在亮度域进行，再折算为通道缩放比。
+      final scale = (v + (le - v) * strength) / v;
+      final i = p * 3;
+      rgb[i] = _clampTo(rgb[i] * scale, maxValue);
+      rgb[i + 1] = _clampTo(rgb[i + 1] * scale, maxValue);
+      rgb[i + 2] = _clampTo(rgb[i + 2] * scale, maxValue);
+    }
+  }
+}
+
+/// Mono 单通道 CLAHE（[applyClahe] 的单通道版）：16 位 w*h 单通道帧
+/// 直接作为亮度平面做分块直方图均衡，无需亮度提取与色度缩放，
+/// 单通道即亮度本身。用于单通道视频信号（如荧光 Mono 链）。原地修改。
+void applyClaheMono(
+  Uint16List mono, {
+  required int width,
+  required int height,
+  int blockSize = 32,
+  double clipLimit = 2.0,
+  double strength = 1.0,
+  int maxValue = 65535,
+}) {
+  if (strength <= 0) return;
+  if (blockSize < 2) blockSize = 32;
+  if (clipLimit <= 0) clipLimit = 1.0;
+  final tilesX = (width + blockSize - 1) ~/ blockSize;
+  final tilesY = (height + blockSize - 1) ~/ blockSize;
+  final luts =
+      _claheTileLuts(mono, width, height, blockSize, clipLimit, maxValue);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final p = y * width + x;
+      final v = mono[p];
+      if (v <= 0) continue; // 与 RGB 版一致：纯黑保持不动
+      final le =
+          _claheBilinear(luts, tilesX, tilesY, blockSize, x, y, v, maxValue);
+      mono[p] = _clampTo(v + (le - v) * strength, maxValue);
     }
   }
 }

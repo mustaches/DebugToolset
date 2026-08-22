@@ -17,11 +17,14 @@ const double kPortRowHeight = 22;
 const double kPortRadius = 5;
 
 /// 节点总高度：标题 + 端口行 + 类型附加区 + 底部留白。
-/// [previewExtraHeight] 对 preview 与仪器节点生效（可拖动调整的附加区高度）。
+/// [previewExtraHeight] 对 preview、HSL 调试器与仪器节点生效
+/// （可拖动调整的附加区高度）。
 double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
   final rows = math.max(type.inputs.length, type.outputs.length);
   var h = kNodeTitleHeight + rows * kPortRowHeight + 8;
-  if (type.typeId == 'preview' || allInstrumentTypes.contains(type.typeId)) {
+  if (type.typeId == 'preview' ||
+      type.typeId == 'hsl_debugger' ||
+      allInstrumentTypes.contains(type.typeId)) {
     h += previewExtraHeight;
   }
   if (type.typeId == 'image_output' || type.typeId == 'video_output') {

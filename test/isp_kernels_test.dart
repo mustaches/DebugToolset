@@ -75,8 +75,9 @@ void main() {
       expect(out, [512, 1023]);
     });
 
-    test('8-bit path uses one byte per pixel', () {
-      final bytes = Uint8List.fromList([0, 128, 255, 7]);
+    test('8-bit unpacked uses one 16-bit word per pixel', () {
+      // unpacked 固定每像素 2 字节（16 位字），8 位深同样按字读取并 LSB 对齐。
+      final bytes = Uint8List.fromList([0, 0, 128, 0, 255, 0, 7, 0]);
       final out = unpackBayer(bytes,
           width: 2,
           height: 2,
@@ -433,6 +434,197 @@ void main() {
         expect((back[i] - src[i]).abs(), lessThanOrEqualTo(2),
             reason: 'channel $i');
       }
+    });
+  });
+
+  group('HSL 调整（adjustHsl）', () {
+    test('恒等参数直接返回原数据（不拷贝）', () {
+      final hsl = Uint16List.fromList([10, 200, 100, 0, 0, 0]);
+      final out = adjustHsl(hsl, maxValue: 255);
+      expect(identical(out, hsl), isTrue);
+    });
+
+    test('纯红偏移 180° 变青色', () {
+      final red = rgbToHsl(Uint16List.fromList([255, 0, 0]), maxValue: 255);
+      final rgb =
+          hslToRgb(adjustHsl(red, maxValue: 255, hShiftDeg: 180),
+              maxValue: 255);
+      // 色环按 1/(maxValue+1) 量化（半步约 0.7°），通道误差放宽到 ≤4。
+      expect(rgb[0], lessThanOrEqualTo(4)); // R ≈ 0
+      expect((rgb[1] - 255).abs(), lessThanOrEqualTo(4)); // G ≈ max
+      expect((rgb[2] - 255).abs(), lessThanOrEqualTo(4)); // B ≈ max
+    });
+
+    test('s_gain=0 时 S 通道全零，H/L 不变', () {
+      final hsl = Uint16List.fromList([10, 200, 100, 0, 128, 60]);
+      final out = adjustHsl(hsl, maxValue: 255, sGain: 0);
+      expect(out[1], 0);
+      expect(out[4], 0);
+      expect(out[0], 10);
+      expect(out[2], 100);
+      expect(out[3], 0);
+      expect(out[5], 60);
+    });
+
+    test('增益结果钳位到 maxValue 不溢出', () {
+      final hsl = Uint16List.fromList([0, 200, 250]);
+      final out = adjustHsl(hsl, maxValue: 255, sGain: 2, lGain: 2);
+      expect(out[1], 255);
+      expect(out[2], 255);
+    });
+
+    test('h_shift 负值在色环上正确环绕', () {
+      // shift = round(-90/360*255) = -64；H=10 → (10-64) mod 256 = 202。
+      final hsl = Uint16List.fromList([10, 128, 128]);
+      final out = adjustHsl(hsl, maxValue: 255, hShiftDeg: -90);
+      expect(out[0], 202);
+      expect(out[1], 128);
+      expect(out[2], 128);
+    });
+  });
+
+  group('YUV/HSL 组合转换', () {
+    test('yuvToHsl：纯红 YUV 得 H=0、S=max、L=max/2', () {
+      final yuv = rgbToYuv(Uint16List.fromList([255, 0, 0]), maxValue: 255);
+      final hsl = yuvToHsl(yuv, maxValue: 255);
+      expect((hsl[0]).abs(), lessThanOrEqualTo(2));
+      expect((hsl[1] - 255).abs(), lessThanOrEqualTo(2));
+      expect((hsl[2] - 128).abs(), lessThanOrEqualTo(2));
+    });
+
+    test('hslToYuv：灰点（S=0）的 U/V 位于中点', () {
+      final yuv = hslToYuv(Uint16List.fromList([0, 0, 128]), maxValue: 255);
+      expect((yuv[0] - 128).abs(), lessThanOrEqualTo(2));
+      expect((yuv[1] - 128).abs(), lessThanOrEqualTo(2));
+      expect((yuv[2] - 128).abs(), lessThanOrEqualTo(2));
+    });
+
+    test('YUV→HSL→YUV 往返误差 ≤8', () {
+      final rgb = Uint16List.fromList(
+          [0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 37, 200, 90]);
+      final yuv = rgbToYuv(rgb, maxValue: 255);
+      final back = hslToYuv(yuvToHsl(yuv, maxValue: 255), maxValue: 255);
+      for (var i = 0; i < yuv.length; i++) {
+        expect((back[i] - yuv[i]).abs(), lessThanOrEqualTo(8),
+            reason: 'channel $i');
+      }
+    });
+
+    test('HSL→YUV→HSL 往返误差 ≤8', () {
+      // H 取值避开 0/maxValue 回绕点；灰点 H 取 0（灰度 H 任意，还原后为 0）。
+      final src = [0, 0, 0, 0, 0, 128, 60, 255, 128, 128, 200, 100, 220, 255, 60];
+      final hsl = Uint16List.fromList(src);
+      final back = yuvToHsl(hslToYuv(hsl, maxValue: 255), maxValue: 255);
+      for (var i = 0; i < src.length; i++) {
+        expect((back[i] - src[i]).abs(), lessThanOrEqualTo(8),
+            reason: 'channel $i');
+      }
+    });
+  });
+
+  group('CLAHE 自适应直方图均衡', () {
+    /// 16x16 灰度水平渐变：亮度 100..110 的低对比度图。
+    Uint16List lowContrast() {
+      final rgb = Uint16List(16 * 16 * 3);
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 16; x++) {
+          final v = 100 + (x * 10) ~/ 15;
+          final i = (y * 16 + x) * 3;
+          rgb[i] = v;
+          rgb[i + 1] = v;
+          rgb[i + 2] = v;
+        }
+      }
+      return rgb;
+    }
+
+    int rangeOf(Uint16List rgb) {
+      var mn = 1 << 30, mx = 0;
+      for (final v in rgb) {
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      return mx - mn;
+    }
+
+    test('均匀灰图均衡后仍近似均匀、亮度不变', () {
+      final rgb = Uint16List(16 * 16 * 3);
+      for (var p = 0; p < 16 * 16; p++) {
+        rgb[p * 3] = 128;
+        rgb[p * 3 + 1] = 128;
+        rgb[p * 3 + 2] = 128;
+      }
+      applyClahe(rgb, width: 16, height: 16, blockSize: 8, maxValue: 255);
+      for (var p = 0; p < 16 * 16; p++) {
+        // 三通道一致（仍是均匀灰），亮度变化在容差内。
+        expect(rgb[p * 3], rgb[p * 3 + 1], reason: 'pixel $p');
+        expect(rgb[p * 3 + 1], rgb[p * 3 + 2], reason: 'pixel $p');
+        expect((rgb[p * 3] - 128).abs(), lessThanOrEqualTo(2),
+            reason: 'pixel $p');
+      }
+    });
+
+    test('strength=0 时输出等于原图', () {
+      final rgb = lowContrast();
+      final orig = Uint16List.fromList(rgb);
+      applyClahe(rgb,
+          width: 16, height: 16, blockSize: 8, strength: 0, maxValue: 255);
+      expect(rgb, orig);
+    });
+
+    test('低对比度图像均衡后取值范围展宽', () {
+      final before = rangeOf(lowContrast());
+      final rgb = lowContrast();
+      // 单 tile（blockSize 16 = 整幅）即全局 CLAHE。
+      applyClahe(rgb, width: 16, height: 16, blockSize: 16, maxValue: 255);
+      expect(rangeOf(rgb), greaterThan(before));
+    });
+
+    test('clipLimit 越大对比度增强越明显', () {
+      final weak = lowContrast();
+      applyClahe(weak,
+          width: 16, height: 16, blockSize: 16, clipLimit: 1.0,
+          maxValue: 255);
+      final strong = lowContrast();
+      applyClahe(strong,
+          width: 16, height: 16, blockSize: 16, clipLimit: 10.0,
+          maxValue: 255);
+      expect(rangeOf(strong), greaterThan(rangeOf(weak)));
+    });
+
+    /// 16x16 低对比度 Mono 帧（100..110 水平渐变，w*h 单通道）。
+    Uint16List lowContrastMono() {
+      final mono = Uint16List(16 * 16);
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 16; x++) {
+          mono[y * 16 + x] = 100 + (x * 10) ~/ 15;
+        }
+      }
+      return mono;
+    }
+
+    test('Mono 通路：均匀帧均衡后近似不变', () {
+      final mono = Uint16List(16 * 16)..fillRange(0, 256, 128);
+      applyClaheMono(mono, width: 16, height: 16, blockSize: 8, maxValue: 255);
+      for (var p = 0; p < 256; p++) {
+        expect((mono[p] - 128).abs(), lessThanOrEqualTo(2),
+            reason: 'pixel $p');
+      }
+    });
+
+    test('Mono 通路：strength=0 时输出等于原图', () {
+      final mono = lowContrastMono();
+      final orig = Uint16List.fromList(mono);
+      applyClaheMono(mono,
+          width: 16, height: 16, blockSize: 8, strength: 0, maxValue: 255);
+      expect(mono, orig);
+    });
+
+    test('Mono 通路：低对比度帧均衡后取值范围展宽', () {
+      final before = rangeOf(lowContrastMono());
+      final mono = lowContrastMono();
+      applyClaheMono(mono, width: 16, height: 16, blockSize: 16, maxValue: 255);
+      expect(rangeOf(mono), greaterThan(before));
     });
   });
 

@@ -35,7 +35,14 @@ const _processTypeIds = [
   'rgb_dnr',
   'sharpen',
   'gamma',
+  'ahe',
   'csc_rgb2yuv',
+  'csc_rgb2hsl',
+  'csc_yuv2rgb',
+  'csc_yuv2hsl',
+  'csc_hsl2rgb',
+  'csc_hsl2yuv',
+  'hsl_debugger',
 ];
 
 /// 「Process → Fluorescence」分组：ICG 荧光 mono 域算子与融合。

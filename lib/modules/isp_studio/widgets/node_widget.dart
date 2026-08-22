@@ -125,6 +125,7 @@ class IspNodeWidget extends StatelessWidget {
             _buildTitleBar(state),
             for (var i = 0; i < rows; i++) _buildPortRow(state, i),
             if (type.typeId == 'preview') _buildPreviewExtra(state),
+            if (type.typeId == 'hsl_debugger') _buildHslDebugExtra(state),
             if (allInstrumentTypes.contains(type.typeId))
               _buildInstrumentExtra(state),
             if (type.typeId == 'image_output')
@@ -413,7 +414,7 @@ class IspNodeWidget extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              type.displayName,
+              node.name,
               style: const TextStyle(
                   color: Colors.white,
                   fontSize: 12,
@@ -445,8 +446,9 @@ class IspNodeWidget extends StatelessWidget {
               ),
             ),
           ),
-          // 最大化/还原（仅有显示区的节点：预览/仪器）。
+          // 最大化/还原（仅有显示区的节点：预览/HSL 调试器/仪器）。
           if (type.typeId == 'preview' ||
+              type.typeId == 'hsl_debugger' ||
               allInstrumentTypes.contains(type.typeId))
             Tooltip(
               message:
@@ -669,8 +671,123 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
+  /// HSL 调试器附加区：双联对比预览图（左调整前/右调整后）+ H/S/L
+  /// 三行紧凑滑块 + 底部拖动手柄。
+  /// 拖动滑块只写参数（实时刷新数值），松手才重跑流水线更新预览图；
+  /// 预览图刷新走 [IspStudioState.frameTick]，只有本区重建。
+  Widget _buildHslDebugExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildHslDebugExtraContent(state),
+    );
+  }
+
+  Widget _buildHslDebugExtraContent(IspStudioState state) {
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null;
+    final extra = state.previewExtraHeight(node.id);
+    // 3 行滑块各 24，顶部留白 4，底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 * 3 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: imageHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链出图）；右半：调整后（输出链出图）。
+                  Expanded(
+                      child: _buildHslComparePane(inputImage, '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslComparePane(
+                          image, '调整后', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'H', 'h_shift', -180, 180, 0,
+              (v) => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(0)}°'),
+          _buildHslSliderRow(state, 'S', 's_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          _buildHslSliderRow(state, 'L', 'l_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// HSL 调试器对比窗格的半区：黑底图（无图时显示占位文案 [hint]），
+  /// 左上角叠加半透明小标签 [label]（「调整前」/「调整后」）。
+  Widget _buildHslComparePane(ui.Image? image, String label, String hint) {
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: image != null
+                ? RawImage(image: image, fit: BoxFit.contain)
+                : Text(hint,
+                    style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          ),
+          Positioned(
+            left: 4,
+            top: 2,
+            child: Text(label,
+                style: const TextStyle(fontSize: 10, color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// HSL 调试器的单行紧凑滑块：窄标签 + Slider + 数值文本。
+  /// [fallback] 为参数缺失时的显示值（增益类参数应取恒等 1.0），
+  /// [format] 把参数值格式化为显示文本（H 带符号角度，S/L 增益倍数）。
+  Widget _buildHslSliderRow(IspStudioState state, String label, String key,
+      double min, double max, double fallback, String Function(double) format) {
+    final value = (node.paramValues[key] as num?)?.toDouble() ?? fallback;
+    return SizedBox(
+      height: 24,
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 12,
+            child: Text(label,
+                style: const TextStyle(fontSize: 11, color: Colors.white70)),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              // 拖动中只写参数（不重跑流水线），松手才重跑。
+              onChanged: (v) => state.setParam(node.id, key, v),
+              onChangeEnd: (_) => state.runPreview(),
+            ),
+          ),
+          SizedBox(
+            width: 48,
+            child: Text(format(value),
+                style: const TextStyle(fontSize: 10, color: Colors.white70)),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
   /// 底部手柄条：中间上下拖调整高度，右下角控制点双向调整宽高。
-  /// 预览与仪器节点共用。
+  /// 预览、HSL 调试器与仪器节点共用。
   Widget _buildResizeBar(IspStudioState state) {
     return SizedBox(
       height: 10,

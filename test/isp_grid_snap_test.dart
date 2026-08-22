@@ -46,6 +46,40 @@ void main() {
       state.endNodeDrag();
     });
 
+    test('框选多节点后拖动任一选中节点，整组同步移动', () {
+      state.addNodeAt('image_source', const Offset(100, 100));
+      final n1 = state.graph.nodes.keys.first;
+      state.addNodeAt('preview', const Offset(400, 200));
+      final n2 = state.graph.nodes.keys.last;
+      state.addNodeAt('rgb_splitter', const Offset(800, 100));
+      final n3 = state.graph.nodes.keys.last;
+
+      // 框选 n1、n2（不含 n3）。
+      state.updateBoxSelection(const Offset(50, 50), const Offset(650, 350));
+      state.endBoxSelection();
+      expect(state.selectedNodeIds, containsAll([n1, n2]));
+
+      state.beginNodeDrag(n2);
+      state.moveNode(n2, const Offset(13, 7));
+      // 组内两节点按网格同步移动（13→10、7→10），相对位置不变。
+      expect(state.graph.nodes[n1]!.x, 110.0);
+      expect(state.graph.nodes[n1]!.y, 110.0);
+      expect(state.graph.nodes[n2]!.x, 410.0);
+      expect(state.graph.nodes[n2]!.y, 210.0);
+      // 未选中的 n3 不动。
+      expect(state.graph.nodes[n3]!.x, 800.0);
+      expect(state.graph.nodes[n3]!.y, 100.0);
+      state.endNodeDrag();
+
+      // 拖动不在多选集合内的节点：只移动它自己。
+      state.beginNodeDrag(n3);
+      state.moveNode(n3, const Offset(20, 0));
+      expect(state.graph.nodes[n3]!.x, 820.0);
+      expect(state.graph.nodes[n1]!.x, 110.0);
+      expect(state.graph.nodes[n2]!.x, 410.0);
+      state.endNodeDrag();
+    });
+
     test('Align modes snap target positions to 10px grid', () {
       state.addNodeAt('image_source', const Offset(104, 53)); // snapped to 100, 50
       final n1 = state.graph.nodes.keys.first;

@@ -256,6 +256,12 @@ class IspStudioState extends ChangeNotifier {
   static const double kMaxPreviewExtraHeight = 800;
   static const double kMinPreviewNodeWidth = 140;
   static const double kMaxPreviewNodeWidth = 800;
+
+  /// 节点宽度上限：HSL 调试器为双联对比预览需要更宽，
+  /// 放宽到全局上限的 1.6 倍，其余节点用全局上限。
+  static double maxNodeWidthFor(String typeId) => typeId == 'hsl_debugger'
+      ? kMaxPreviewNodeWidth * 1.6
+      : kMaxPreviewNodeWidth;
   final Map<String, double> _previewExtraHeights = {};
 
   int _runToken = 0;
@@ -331,11 +337,23 @@ class IspStudioState extends ChangeNotifier {
   // Accumulated sub-pixel drag delta per node (cleared on endNodeDrag).
   final Map<String, Offset> _nodeDragAccum = {};
 
+  /// 当前拖动组：拖动开始时若被拖节点在多选集合内，整组同步移动。
+  final Set<String> _dragGroupIds = {};
+
   void beginNodeDrag(String nodeId) {
-    _nodeDragAccum[nodeId] = Offset.zero;
+    _dragGroupIds
+      ..clear()
+      ..add(nodeId);
+    if (selectedNodeIds.length > 1 && selectedNodeIds.contains(nodeId)) {
+      _dragGroupIds.addAll(selectedNodeIds);
+    }
+    for (final id in _dragGroupIds) {
+      _nodeDragAccum[id] = Offset.zero;
+    }
   }
 
   void endNodeDrag() {
+    _dragGroupIds.clear();
     _nodeDragAccum.clear();
   }
 
@@ -372,6 +390,11 @@ class IspStudioState extends ChangeNotifier {
   Size? canvasViewport;
 
   final Map<String, ui.Image> previewImages = {};
+
+  /// HSL 调试器节点的「调整前」输入对比图（仅 hsl_debugger 使用，
+  /// 键为调试器节点 id）。所有权与释放规则同 [previewImages]：
+  /// 替换前先 dispose 旧值，统一清理由 _replaceGraph / dispose 负责。
+  final Map<String, ui.Image> previewInputImages = {};
 
   final Map<String, Set<String>> _waveformChannels = {};
 
@@ -524,7 +547,8 @@ class IspStudioState extends ChangeNotifier {
     // Snap the absolute right edge: rightX = node.x + width → snap rightX.
     final oldRight = node.x + node.width;
     final snappedRight = snapToGrid(oldRight + delta.dx);
-    final newWidth = (snappedRight - node.x).clamp(kMinPreviewNodeWidth, kMaxPreviewNodeWidth);
+    final newWidth = (snappedRight - node.x)
+        .clamp(kMinPreviewNodeWidth, maxNodeWidthFor(node.typeId));
 
     // Snap the absolute bottom edge: bottomY = node.y + baseHeight + extraHeight.
     // Snapping only extraHeight fails when baseHeight is not a multiple of the grid.
@@ -543,11 +567,24 @@ class IspStudioState extends ChangeNotifier {
   void endNodeResize() {}
 
   void selectNode(String? id, {bool multiSelect = false}) {
+    // 编组联动：点选组内任一成员等同于选中/取消整组。
+    final gid = id == null ? null : groupIdOf(id);
+    final members = gid == null
+        ? null
+        : graph.groups.firstWhere((g) => g.id == gid).nodeIds;
     if (id == null) {
       selectedNodeIds.clear();
       selectedNodeId = null;
     } else if (multiSelect) {
-      if (selectedNodeIds.contains(id)) {
+      if (members != null) {
+        if (members.every(selectedNodeIds.contains)) {
+          selectedNodeIds.removeWhere(members.contains);
+        } else {
+          for (final m in members) {
+            if (!selectedNodeIds.contains(m)) selectedNodeIds.add(m);
+          }
+        }
+      } else if (selectedNodeIds.contains(id)) {
         selectedNodeIds.remove(id);
       } else {
         selectedNodeIds.add(id);
@@ -555,11 +592,44 @@ class IspStudioState extends ChangeNotifier {
       selectedNodeId = selectedNodeIds.firstOrNull;
     } else {
       selectedNodeIds.clear();
-      selectedNodeIds.add(id);
+      if (members != null) {
+        selectedNodeIds.addAll(members);
+      } else {
+        selectedNodeIds.add(id);
+      }
       selectedNodeId = id;
     }
     selectedConnectionId = null;
     notifyListeners();
+  }
+
+  /// 节点所属编组 id；未编组返回 null。
+  String? groupIdOf(String nodeId) {
+    for (final g in graph.groups) {
+      if (g.nodeIds.contains(nodeId)) return g.id;
+    }
+    return null;
+  }
+
+  /// 把当前多选节点编为一组。一个节点至多属于一个组：成员先从
+  /// 旧组摘除，旧组剩余不足 2 个节点时自动解散。
+  void groupSelectedNodes() {
+    final members =
+        selectedNodeIds.where((id) => graph.nodes.containsKey(id)).toSet();
+    if (members.length < 2) return;
+    for (final g in graph.groups) {
+      g.nodeIds.removeAll(members);
+    }
+    graph.groups.removeWhere((g) => g.nodeIds.length < 2);
+    graph.groups.add(IspNodeGroup('g${graph.nextId++}', members));
+    notifyListeners();
+  }
+
+  /// 解散指定编组。
+  void ungroup(String groupId) {
+    final before = graph.groups.length;
+    graph.groups.removeWhere((g) => g.id == groupId);
+    if (graph.groups.length != before) notifyListeners();
   }
 
   void updateBoxSelection(Offset start, Offset end, {bool multiSelect = false}) {
@@ -597,7 +667,9 @@ class IspStudioState extends ChangeNotifier {
     if (arg1 is Offset) {
       resizeNodeBy(nodeId, arg1);
     } else if (arg1 is num && extraHeight != null) {
-      node.width = arg1.toDouble().clamp(kMinPreviewNodeWidth, kMaxPreviewNodeWidth);
+      node.width = arg1
+          .toDouble()
+          .clamp(kMinPreviewNodeWidth, maxNodeWidthFor(node.typeId));
       final clampedH = extraHeight.clamp(kMinPreviewExtraHeight, kMaxPreviewExtraHeight);
       node.extraHeight = clampedH;
       _previewExtraHeights[nodeId] = clampedH;
@@ -776,24 +848,31 @@ class IspStudioState extends ChangeNotifier {
   }
 
   void moveNode(String id, Offset delta) {
-    final node = graph.nodes[id];
-    if (node == null) return;
-    if (_nodeDragAccum.containsKey(id)) {
-      // Accumulate sub-pixel delta during drag; snap whole position to grid.
-      final accum = _nodeDragAccum[id]! + delta;
-      final targetX = node.x + accum.dx;
-      final targetY = node.y + accum.dy;
-      final snappedX = snapToGrid(targetX);
-      final snappedY = snapToGrid(targetY);
-      // Only count what we actually moved; leave the remainder in accum.
-      final movedDx = snappedX - node.x;
-      final movedDy = snappedY - node.y;
-      _nodeDragAccum[id] = Offset(accum.dx - movedDx, accum.dy - movedDy);
-      node.x = snappedX;
-      node.y = snappedY;
-    } else {
-      node.x += delta.dx;
-      node.y += delta.dy;
+    // 多选同步拖动：被拖节点在拖动组内时整组移动，各节点独立做
+    // 亚像素累积与网格吸附（起始均在网格上，相对位置保持不变）。
+    final group = _dragGroupIds.length > 1 && _dragGroupIds.contains(id)
+        ? _dragGroupIds
+        : {id};
+    for (final gid in group) {
+      final node = graph.nodes[gid];
+      if (node == null) continue;
+      if (_nodeDragAccum.containsKey(gid)) {
+        // Accumulate sub-pixel delta during drag; snap whole position to grid.
+        final accum = _nodeDragAccum[gid]! + delta;
+        final targetX = node.x + accum.dx;
+        final targetY = node.y + accum.dy;
+        final snappedX = snapToGrid(targetX);
+        final snappedY = snapToGrid(targetY);
+        // Only count what we actually moved; leave the remainder in accum.
+        final movedDx = snappedX - node.x;
+        final movedDy = snappedY - node.y;
+        _nodeDragAccum[gid] = Offset(accum.dx - movedDx, accum.dy - movedDy);
+        node.x = snappedX;
+        node.y = snappedY;
+      } else {
+        node.x += delta.dx;
+        node.y += delta.dy;
+      }
     }
     notifyListeners();
   }
@@ -1074,14 +1153,26 @@ class IspStudioState extends ChangeNotifier {
   Future<void> runPreview() async {
     if (isProcessing) return;
 
-    // 收集所有可编译的预览节点。
+    // 收集所有可编译的预览节点（含 HSL 调试器：作为运行目标汇点跑链，
+    // 链末端 HSL 帧的默认色调映射出图后存入 previewImages）。
     final previewNodes = <IspNode>[];
     for (final node in graph.nodes.values) {
-      if (node.typeId == 'preview') {
+      if (node.typeId == 'preview' || node.typeId == 'hsl_debugger') {
         previewNodes.add(node);
       }
     }
     if (previewNodes.isEmpty) {
+      // 无预览类节点但有已连接输入的仪器（如 源→AHE→直方图 的纯仪器
+      // 流程）：仍然运行仪器分析，否则仪器永远停留在「未运行」。
+      final hasConnectedInstrument = graph.nodes.values.any((node) =>
+          allInstrumentTypes.contains(node.typeId) &&
+          IspNodeRegistry.byId(node.typeId)!
+              .inputs
+              .any((p) => graph.connectionAt(node.id, p.name) != null));
+      if (hasConnectedInstrument) {
+        await _runInstrumentsOnly();
+        return;
+      }
       statusMessage = '图中没有预览节点';
       notifyListeners();
       return;
@@ -1099,6 +1190,9 @@ class IspStudioState extends ChangeNotifier {
       // 预编译全部预览链：既供并行执行直接复用（不再重复编译），
       // 链长（算子数）也作为各预览节点的进度权重。
       final chains = <String, List<Map<String, Object?>>>{};
+      // HSL 调试器的「调整前」输入链：到其上游节点为止（无输入连接或
+      // 编译失败的节点没有该条目，UI 显示占位文案）。
+      final inputChains = <String, List<Map<String, Object?>>>{};
       var totalChainLen = 0;
       for (final pvNode in previewNodes) {
         try {
@@ -1107,6 +1201,20 @@ class IspStudioState extends ChangeNotifier {
           totalChainLen += c.length;
         } catch (_) {
           // 无法编译的节点在并行执行阶段同样跳过。
+        }
+        if (pvNode.typeId == 'hsl_debugger') {
+          // 注意：上游是多输出节点（如分路器）时，该链渲染的是上游节点
+          // 主帧，可能与具体连接端口的数据有差异（可接受的近似）。
+          final up = graph.connectionAt(pvNode.id, 'in');
+          if (up != null) {
+            try {
+              final c = compileChain(graph, up.fromNodeId);
+              inputChains[pvNode.id] = c;
+              totalChainLen += c.length;
+            } catch (_) {
+              // 输入链编译失败：仅没有「调整前」对比图，不影响输出链。
+            }
+          }
         }
       }
       // 以第一个预览节点为基准计算 totalFrames / dimensions。
@@ -1151,32 +1259,53 @@ class IspStudioState extends ChangeNotifier {
             try {
               final chain = chains[pvNode.id];
               if (chain == null) return;
+              // 节点粒度进度回报（key 区分输出链与 HSL 调试器的输入链）：
+              // 该节点刚要开始，视为前面 index 个算子已完成；与已完成链
+              // 的算子数求和得总进度。
+              void Function(String, int, int) progressOf(String key) {
+                return (nodeId, index, total) {
+                  if (token != _runToken) return;
+                  chainDoneOps[key] = index;
+                  final doneOps =
+                      chainDoneOps.values.fold<int>(0, (a, b) => a + b);
+                  if (totalChainLen > 0) {
+                    _advanceProgress(probeEnd +
+                        previewShare * doneOps / totalChainLen);
+                  }
+                  final nodeType = graph.nodes[nodeId]?.typeId;
+                  final name = nodeType == null
+                      ? nodeId
+                      : (IspNodeRegistry.byId(nodeType)?.displayName ??
+                          nodeId);
+                  statusMessage =
+                      '正在运行：$name [$doneOps/$totalChainLen]…';
+                  notifyListeners();
+                };
+              }
+
               chainDoneOps[pvNode.id] = 0;
-              final result = await runChainFrameWithProgress(chain, frame,
-                  onNodeStart: (nodeId, index, total) {
-                if (token != _runToken) return;
-                // 节点粒度进度：该节点刚要开始，视为前面 index 个
-                // 算子已完成；与已完成链的算子数求和得总进度。
-                chainDoneOps[pvNode.id] = index;
-                final doneOps =
-                    chainDoneOps.values.fold<int>(0, (a, b) => a + b);
-                if (totalChainLen > 0) {
-                  _advanceProgress(probeEnd +
-                      previewShare * doneOps / totalChainLen);
-                }
-                final nodeType = graph.nodes[nodeId]?.typeId;
-                final name = nodeType == null
-                    ? nodeId
-                    : (IspNodeRegistry.byId(nodeType)?.displayName ??
-                        nodeId);
-                statusMessage =
-                    '正在运行：$name [$doneOps/$totalChainLen]…';
-                notifyListeners();
-              });
+              // HSL 调试器：与输出链并行跑「到上游节点为止」的输入链（即
+              // 输出链去掉末节点的前缀，末端 HSL 帧走既有默认色调映射），
+              // 出「调整前」对比图；输入链独立容错，失败只少对比图。
+              final inputChain = inputChains[pvNode.id];
+              final inKey = '${pvNode.id}#in';
+              if (inputChain != null) chainDoneOps[inKey] = 0;
+              // Future 创建即启动，两条链实际并行执行。
+              final outFuture = runChainFrameWithProgress(chain, frame,
+                  onNodeStart: progressOf(pvNode.id));
+              final inFuture = inputChain == null
+                  ? null
+                  : runChainFrameWithProgress(inputChain, frame,
+                          onNodeStart: progressOf(inKey))
+                      .then<Map<String, Object?>?>((r) => r,
+                          onError: (_) => null);
+              final result = await outFuture;
+              final inputResult = await inFuture;
               if (token != _runToken) return;
               final rgba = result['rgba'] as Uint8List;
               // 合并本条链测得的节点耗时（多链并行，共享前缀节点
-              // 后完成者覆盖先完成者，数值等价故无所谓）。
+              // 后完成者覆盖先完成者，数值等价故无所谓；输入链是
+              // 输出链的前缀，其耗时重复故不合并）。
               nodeRunTimesUs = {
                 ...nodeRunTimesUs,
                 ...(result['timings'] as Map).cast<String, int>(),
@@ -1185,23 +1314,41 @@ class IspStudioState extends ChangeNotifier {
                 nodeOutputCaptures =
                     (result['captures'] as Map).cast<String, Map<String, Object?>>();
               }
-              final completer = Completer<ui.Image>();
-              ui.decodeImageFromPixels(
-                  rgba, w, h, ui.PixelFormat.rgba8888, completer.complete);
-              final image = await completer.future;
+              Future<ui.Image> decode(Uint8List rgba) {
+                final completer = Completer<ui.Image>();
+                ui.decodeImageFromPixels(rgba, w, h,
+                    ui.PixelFormat.rgba8888, completer.complete);
+                return completer.future;
+              }
+
+              final image = await decode(rgba);
+              // hsl_debugger 不改变帧尺寸，输入图与输出图同宽高。
+              final inputRgba = inputResult?['rgba'] as Uint8List?;
+              final inputImage =
+                  inputRgba == null ? null : await decode(inputRgba);
               if (token != _runToken) {
                 image.dispose();
+                inputImage?.dispose();
                 return;
               }
               previewImages.remove(pvNode.id)?.dispose();
               previewImages[pvNode.id] = image;
+              previewInputImages.remove(pvNode.id)?.dispose();
+              if (inputImage != null) {
+                previewInputImages[pvNode.id] = inputImage;
+              }
             } catch (_) {
               // 单个节点失败不影响其余节点。
             } finally {
               completedCount++;
               completedWeight += chains[pvNode.id]?.length ?? 0;
+              completedWeight += inputChains[pvNode.id]?.length ?? 0;
               // 链结束：已完成算子数置为链全长（无论成败，不再推进）。
               chainDoneOps[pvNode.id] = chains[pvNode.id]?.length ?? 0;
+              final inChain = inputChains[pvNode.id];
+              if (inChain != null) {
+                chainDoneOps['${pvNode.id}#in'] = inChain.length;
+              }
               if (token == _runToken) {
                 _advanceProgress(probeEnd +
                     previewShare *
@@ -1238,6 +1385,60 @@ class IspStudioState extends ChangeNotifier {
       progress = 1.0;
       progressTick.value = 1.0;
       statusMessage = '预览就绪 第 ${frame + 1}/$totalFrames 帧  ${w}x$h';
+    } catch (e) {
+      statusMessage = e.toString().replaceFirst('Bad state: ', '');
+    } finally {
+      _progressTimer?.cancel();
+      _progressTimer = null;
+      if (token == _runToken) {
+        isProcessing = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  /// 无预览节点时的纯仪器运行（如 源→AHE→直方图 的流程）：以第一个
+  /// 已连接仪器的上游链推算帧序列，只刷新仪器分析结果。
+  Future<void> _runInstrumentsOnly() async {
+    isProcessing = true;
+    _resetProgress();
+    statusMessage = '正在解析节点图与计算帧序列…';
+    _lastPlaybackRgba = null; // 单次运行的节点捕获优先于过期播放帧
+    notifyListeners();
+    final token = ++_runToken;
+    try {
+      // 用第一个已连接图像仪器的上游链确定源节点与帧数；音频仪器
+      // 不经营帧流水线，链不可编译时按第 0 帧运行（具体失败在仪器
+      // 分析阶段记录）。
+      var frame = 0;
+      for (final node in graph.nodes.values) {
+        if (!allInstrumentTypes.contains(node.typeId) ||
+            audioInstrumentTypes.contains(node.typeId)) {
+          continue;
+        }
+        final type = IspNodeRegistry.byId(node.typeId)!;
+        final hasInput =
+            type.inputs.any((p) => graph.connectionAt(node.id, p.name) != null);
+        if (!hasInput) continue;
+        try {
+          final chain = compileChain(graph, node.id);
+          final total = await sourceFrameCount(chain.first['typeId'] as String,
+              chain.first['params'] as Map<String, Object?>);
+          totalFrames = total;
+          frame = previewFrame.clamp(0, total - 1);
+          previewFrame = frame;
+        } catch (_) {
+          // 链不可编译：保持第 0 帧。
+        }
+        break;
+      }
+      statusMessage = '正在更新示波器与分析仪器…';
+      notifyListeners();
+      await _runInstruments(frame, token);
+      if (token != _runToken) return;
+      progress = 1.0;
+      progressTick.value = 1.0;
+      statusMessage = '仪器分析就绪 第 ${frame + 1}/${totalFrames ?? 1} 帧';
     } catch (e) {
       statusMessage = e.toString().replaceFirst('Bad state: ', '');
     } finally {
@@ -2289,10 +2490,12 @@ class IspStudioState extends ChangeNotifier {
   /// 最大化前的几何备份：nodeId → (x, y, width, extraHeight)。
   final Map<String, (double, double, double, double)> _maximizeBackup = {};
 
-  /// 有显示区（可最大化）的节点：预览 + 仪器（含音频仪器）。
+  /// 有显示区（可最大化）的节点：预览 + HSL 调试器 + 仪器（含音频仪器）。
   bool canMaximize(String nodeId) {
     final t = graph.nodes[nodeId]?.typeId;
-    return t == 'preview' || allInstrumentTypes.contains(t);
+    return t == 'preview' ||
+        t == 'hsl_debugger' ||
+        allInstrumentTypes.contains(t);
   }
 
   /// 最大化/还原切换：最大化 = 节点铺满 [viewportCanvas]（画布坐标
@@ -2612,6 +2815,10 @@ class IspStudioState extends ChangeNotifier {
       img.dispose();
     }
     previewImages.clear();
+    for (final img in previewInputImages.values) {
+      img.dispose();
+    }
+    previewInputImages.clear();
     selectedNodeId = null;
     selectedConnectionId = null;
     _previewExtraHeights.clear();
@@ -2627,6 +2834,9 @@ class IspStudioState extends ChangeNotifier {
     cleanupAudioWavCache();
     // _legacyPreviewImage 是非持有别名，其图像含在 previewImages 中。
     for (final img in previewImages.values) {
+      img.dispose();
+    }
+    for (final img in previewInputImages.values) {
       img.dispose();
     }
     for (final img in instrumentImages.values) {

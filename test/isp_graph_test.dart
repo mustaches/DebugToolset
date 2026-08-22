@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 44 种节点类型', () {
+    test('包含全部 51 种节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -27,6 +27,12 @@ void main() {
         'rgb_dnr',
         'sharpen',
         'csc_rgb2yuv',
+        'csc_rgb2hsl',
+        'csc_yuv2rgb',
+        'csc_yuv2hsl',
+        'csc_hsl2rgb',
+        'csc_hsl2yuv',
+        'hsl_debugger',
         'fluoro_leak',
         'fluoro_background',
         'fluoro_normalize',
@@ -37,6 +43,7 @@ void main() {
         'white_balance',
         'ccm',
         'gamma',
+        'ahe',
         'preview',
         'histogram',
         'waveform',
@@ -50,7 +57,7 @@ void main() {
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 44);
+      expect(IspNodeRegistry.types.length, 51);
     });
 
     test('端口类型符合预期', () {
@@ -102,11 +109,59 @@ void main() {
       expect(node.paramValues['frameIndex'], 0);
     });
 
+    test('addNode 自动编号生成唯一节点名', () {
+      final graph = IspGraph();
+      final h1 = graph.addNode('histogram', 0, 0);
+      final h2 = graph.addNode('histogram', 0, 0);
+      final p1 = graph.addNode('preview', 0, 0);
+      expect(graph.nodes[h1]!.name, '直方图#1');
+      expect(graph.nodes[h2]!.name, '直方图#2');
+      expect(graph.nodes[p1]!.name, '预览#1');
+      // 删除后序号不复用，保证不重名。
+      graph.removeNode(h1);
+      final h3 = graph.addNode('histogram', 0, 0);
+      expect(graph.nodes[h3]!.name, '直方图#3');
+    });
+
+    test('节点名随序列化往返保留，旧文件缺省时按类型补编号', () {
+      final graph = IspGraph();
+      graph.addNode('histogram', 0, 0);
+      graph.addNode('histogram', 0, 0);
+      final restored = IspGraph.fromJson(graph.toJson());
+      expect(restored.nodes.values.map((n) => n.name),
+          ['直方图#1', '直方图#2']);
+
+      // 模拟旧格式（无 name 字段）：加载时按同类型出现顺序补编号。
+      final legacy = graph.toJson();
+      for (final n in (legacy['nodes'] as List).cast<Map>()) {
+        n.remove('name');
+      }
+      final legacyRestored =
+          IspGraph.fromJson(legacy.cast<String, Object?>());
+      expect(legacyRestored.nodes.values.map((n) => n.name),
+          ['直方图#1', '直方图#2']);
+    });
+
     test('ccm 矩阵默认值为单位矩阵', () {
       final node =
           IspNode.create(IspNodeRegistry.byId('ccm')!, 'n1', 0, 0);
       expect(node.paramValues['matrix'],
           <double>[1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    });
+
+    test('hsl_debugger 注册信息与参数默认值', () {
+      final type = IspNodeRegistry.byId('hsl_debugger')!;
+      expect(type.displayName, 'HSL调试器');
+      // HSL 入、HSL 出。
+      expect(type.inputs.single.type, IspPortType.hsl);
+      expect(type.outputs.single.type, IspPortType.hsl);
+      final node = IspNode.create(type, 'n1', 0, 0);
+      expect(node.paramValues['h_shift'], 0.0);
+      expect(node.paramValues['s_gain'], 1.0);
+      expect(node.paramValues['l_gain'], 1.0);
+      // 双联对比预览：默认宽度加倍，附加区含 3 行滑块故默认更高。
+      expect(node.width, kNodeWidth * 2);
+      expect(node.extraHeight, greaterThan(kDefaultNodeExtraHeight));
     });
   });
 
@@ -277,7 +332,7 @@ void main() {
       expect(g.videoInputPortAvailable(hist, 'in'), isTrue); // 同端口可重连
       // 第二路接入被拒绝，原连接不变。
       expect(g.connect(yuvSrc, 'out_yuv', hist, 'in_yuv'),
-          'RGB/YUV/HSL/Mono 输入只能接入一路，请先断开已有连接');
+          'RGB/YUV/HSL/Mono/RAW 输入只能接入一路，请先断开已有连接');
       expect(g.connections, hasLength(1));
       // 同端口重连（替换旧连接）不受限。
       final rgbSrc2 = g.addNode('video_source', 0, 0);

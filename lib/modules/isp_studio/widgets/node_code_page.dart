@@ -69,7 +69,7 @@ class NodeCodePage extends StatelessWidget {
             child: Row(
               children: [
                 Text(
-                  '${type?.displayName ?? node.typeId} ($nodeId)',
+                  '${node.name} ($nodeId)',
                   style: const TextStyle(fontSize: 12, color: Colors.white70),
                 ),
                 const SizedBox(width: 8),

@@ -35,7 +35,7 @@ class NodePropertyPanel extends StatelessWidget {
           : ListView(
               padding: const EdgeInsets.all(12),
               children: [
-                Text(type.displayName,
+                Text(node.name,
                     style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,

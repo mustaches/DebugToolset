@@ -11,6 +11,11 @@ import 'package:debug_tool_set/modules/isp_studio/widgets/node_widget.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
+  /// 8bit unpacked RAW：每像素一个 16 位小端字（LSB 对齐，与位深无关）。
+  List<int> raw8Le(Iterable<int> px) => [
+        for (final v in px) ...[v & 0xFF, (v >> 8) & 0xFF],
+      ];
+
   group('instruments 分析函数', () {
     test('histogramRgb 分通道计数', () {
       // 两个像素：(255, 0, 0) 与 (0, 128, 255)。
@@ -279,7 +284,7 @@ void main() {
       const w = 8, h = 8;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_instr_$stamp.raw');
-      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await raw.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final state = IspStudioState.withDefaultGraph(); // 默认图：源→…→gamma→预览
         final srcId = state.graph.nodes.entries
@@ -312,7 +317,7 @@ void main() {
       const w = 16, h = 16;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_instr_wv_$stamp.raw');
-      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await raw.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
@@ -350,7 +355,7 @@ void main() {
       const w = 8, h = 8;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_prog_$stamp.raw');
-      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await raw.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
@@ -383,7 +388,7 @@ void main() {
       const w = 8, h = 8;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_instr3_$stamp.raw');
-      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await raw.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
@@ -512,7 +517,7 @@ void main() {
     test('未连接的仪器节点不产生分析结果', () async {      const w = 8, h = 8;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_instr2_$stamp.raw');
-      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await raw.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
@@ -525,6 +530,46 @@ void main() {
         final histId = state.graph.addNode('histogram', 0, 0); // 不连接
         await state.runPreview();
         expect(state.instrumentResults.containsKey(histId), isFalse);
+      } finally {
+        await raw.delete();
+      }
+    });
+
+    test('无预览节点时纯仪器流程（源→…→AHE→直方图）也能运行', () async {
+      const w = 8, h = 8;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final raw = File('${Directory.systemTemp.path}/isp_instr_ahe_$stamp.raw');
+      await raw.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        final srcId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'bayer_source')
+            .key;
+        final gammaId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'gamma')
+            .key;
+        final previewId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'preview')
+            .key;
+        state.setParam(srcId, 'filePath', raw.path);
+        state.setParam(srcId, 'width', w);
+        state.setParam(srcId, 'height', h);
+        state.setParam(srcId, 'bitDepth', '8');
+        // 纯仪器流程：移除预览节点，只留 源→…→gamma→AHE→直方图。
+        state.graph.removeNode(previewId);
+        final aheId = state.graph.addNode('ahe', 0, 0);
+        final histId = state.graph.addNode('histogram', 0, 0);
+        state.setParam(aheId, 'blockSize', 8);
+        expect(state.graph.connect(gammaId, 'out', aheId, 'in'), isNull);
+        expect(state.graph.connect(aheId, 'out', histId, 'in'), isNull);
+
+        await state.runPreview();
+
+        expect(state.statusMessage, contains('仪器分析就绪'));
+        final result = state.instrumentResults[histId];
+        expect(result, isNotNull, reason: '无预览节点时直方图也应得到分析结果');
+        final r = result!['r'] as Uint32List;
+        expect(r.fold<int>(0, (s, c) => s + c), w * h);
       } finally {
         await raw.delete();
       }
@@ -555,7 +600,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final histNode = find.ancestor(
-          of: find.text('直方图'), matching: find.byType(IspNodeWidget));
+          of: find.textContaining('直方图'), matching: find.byType(IspNodeWidget));
       expect(histNode, findsOneWidget);
       final paint =
           find.descendant(of: histNode, matching: find.byType(CustomPaint));

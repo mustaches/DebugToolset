@@ -57,7 +57,8 @@ int frameByteSize({
   switch (packing) {
     case BayerPacking.unpackedLsb:
     case BayerPacking.unpackedMsb:
-      return bitDepth == 8 ? pixels : pixels * 2;
+      // 固定每像素 2 字节（16 位字），与位深无关。
+      return pixels * 2;
     case BayerPacking.mipi:
       if (bitDepth == 10) return (pixels * 5 + 3) ~/ 4;
       if (bitDepth == 12) return (pixels * 3 + 1) ~/ 2;
@@ -96,21 +97,16 @@ Uint16List unpackBayer(
   switch (packing) {
     case BayerPacking.unpackedLsb:
     case BayerPacking.unpackedMsb:
+      // 固定每像素 2 字节（16 位字）：8/10/12/14/16 位深同样按字读取。
       final isLsb = packing == BayerPacking.unpackedLsb;
-      if (bitDepth == 8) {
-        for (var i = 0; i < pixels; i++) {
-          out[i] = bytes[byteOffset + i];
-        }
-      } else {
-        final mask = bayerMaxValue(bitDepth);
-        final shift = 16 - bitDepth;
-        var p = byteOffset;
-        for (var i = 0; i < pixels; i++, p += 2) {
-          final raw = littleEndian
-              ? bytes[p] | (bytes[p + 1] << 8)
-              : (bytes[p] << 8) | bytes[p + 1];
-          out[i] = isLsb ? raw & mask : raw >> shift;
-        }
+      final mask = bayerMaxValue(bitDepth);
+      final shift = 16 - bitDepth;
+      var p = byteOffset;
+      for (var i = 0; i < pixels; i++, p += 2) {
+        final raw = littleEndian
+            ? bytes[p] | (bytes[p + 1] << 8)
+            : (bytes[p] << 8) | bytes[p + 1];
+        out[i] = isLsb ? raw & mask : raw >> shift;
       }
     case BayerPacking.mipi:
       if (bitDepth == 10) {
@@ -343,8 +339,23 @@ case 'demosaic':
   final data = frame.data;
   frame = _Frame(
     data: switch (frame.cfa) {
-      'bayer' => demosaicBilinear(data,
-          width: w, height: h, pattern: frame.bayerPattern!),
+      // Bayer：按 algorithm 参数分发（demosaic_advanced.dart），
+      // 空（默认）/ bilinear 走双线性；未知算法值抛 StateError。
+      'bayer' => switch (_str(p, 'algorithm')) {
+          '' || 'bilinear' => demosaicBilinear(data,
+              width: w, height: h, pattern: frame.bayerPattern!),
+          'mhc' => demosaicMhc(data,
+              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
+          'aahd' => demosaicAahd(data,
+              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
+          'amaze' => demosaicAmaze(data,
+              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
+          'lmmse' => demosaicLmmse(data,
+              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
+          'igv' => demosaicIgv(data,
+              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
+          _ => throw StateError('未知去马赛克算法: ${_str(p, 'algorithm')}'),
+        },
       'rccb' => demosaicRccb(data, width: w, height: h, maxValue: max),
       'rccg' => demosaicRccb(data,
           width: w, height: h, rccg: true, maxValue: max),
@@ -444,6 +455,49 @@ Uint16List demosaicBilinear(
 // 非 Bayer CFA（RCCB/RCCG、RCCC、RYYCy、RGB-IR）的插值实现：
 // demosaicRccb / demosaicRccc / demosaicRyycy / demosaicRgbIr，
 // 见 lib/modules/isp_studio/pipeline/isp_kernels.dart。
+''';
+
+/// 高级去马赛克算法（demosaic_advanced.dart，均为简化实现）。
+const String _demosaicAdvancedCode = r'''
+// demosaic_advanced.dart — 5 种高级 Bayer 去马赛克，统一约定：
+// 输入 16 位 w*h 马赛克，输出交织 RGB（w*h*3）；边界 2~3 像素环与
+// 小图回退 demosaicBilinear；输出钳位 0..maxValue。
+
+/// MHC（Malvar, He, Cutler, ICASSP 2004）：梯度校正线性插值。
+/// G 用 5x5 FIR（含亮度梯度校正项），R/B 在 G 相位/对方相位各有固定核：
+Uint16List demosaicMhc(...) {
+  // g@R/B站点: (4·ΣG轴向 + 8C − 2·ΣC±2)/16；
+  // R/B@G站点与 R@B/B@R 各有 5x5 核（核系数见实现，和均为 16）。
+}
+
+/// AAHD（Hirakawa & Parks, IEEE TIP 2005）：同质性定向（简化实现）。
+Uint16List demosaicAahd(...) {
+  // 1. H/V 两方向各生成候选图：G 沿方向梯度校正插值，R/B 色差平滑；
+  // 2. 两候选图转 CIELab（简化 sRGB 流程）；
+  // 3. 逐像素 3x3 邻域同质性（Lab 距离 < 阈值的邻居数）投票选方向。
+}
+
+/// AMaZE（Zhang & Wu, IEEE TIP 2005）：方向滤波融合（简化实现）。
+Uint16List demosaicAmaze(...) {
+  // 1. G 按 H/V 两方向（原论文四方向，简化为两方向）反梯度加权融合：
+  //    w = 1/(1+|一阶差|+|二阶差|)；
+  // 2. R/B 色差平滑；3. 对 R−G/B−G 色差平面做 3x3 中值滤波去拉链。
+}
+
+/// LMMSE（Zhang & Wu, IEEE TIP 2005）：方向 LMMSE 估计（简化实现）。
+Uint16List demosaicLmmse(...) {
+  // 1. G 沿 H/V 梯度校正估计，按 3x3 窗口亮度二阶差分能量逆加权融合
+  //    （替代原论文方向梯度分类 + 维纳权重）；
+  // 2. R/B 色差平滑（省略二阶 Laplacian 迭代校正）。
+}
+
+/// IGV（Pekkucuksen & Altunbasak, ICIP 2010）：无阈值方向插值
+/// （等价思想实现，参考 darktable/RawTherapee 的 IGV 思路）。
+Uint16List demosaicIgv(...) {
+  // 1. G 初值用 MHC 式 5x5 核；2. R/B 站点按 H/V 5 样本窗口方差
+  //    （无阈值）逆加权融合修正 G：w = 1/(var+eps)；
+  // 3. R/B 色差平滑。
+}
 ''';
 
 /// 白平衡（isp_kernels.dart）。
@@ -568,7 +622,47 @@ Uint8List tonemapToRgba(
 }
 ''';
 
-/// 预览节点（pipeline_runner.dart + isp_studio_state.dart 说明）。
+/// 自适应直方图均衡 CLAHE（isp_kernels.dart，RGB / Mono 双通路）。
+const String _aheCode = r'''
+/// 自适应直方图均衡（CLAHE，对比度受限）：对亮度做分块直方图均衡，
+/// 三通道按亮度缩放比例等比缩放（保持 hue/sat 不变），原地修改。
+void applyClahe(
+  Uint16List rgb, {
+  required int width,
+  required int height,
+  int blockSize = 32,
+  double clipLimit = 2.0,
+  double strength = 1.0,
+  int maxValue = 65535,
+}) {
+  // 1. 逐像素求亮度 Y（BT.601 定点加权和）；
+  // 2. 分成 blockSize×blockSize 的 tile，逐 tile 统计 256 bin 直方图；
+  // 3. 直方图按 clipLimit（平均计数的倍数）裁剪，超出量均匀再分配，
+  //    累积分布得该 tile 的 LUT；
+  // 4. 每像素由周围 4 个 tile 中心的 LUT 双线性插值得均衡亮度（避免块效应）；
+  // 5. 三通道按 Y'/Y 等比缩放；strength 为均衡亮度与原亮度的混合比，
+  //    0 = 原图直通。
+}
+
+/// Mono 单通道 CLAHE（applyClahe 的单通道版，荧光 Mono 链用）：
+/// 16 位 w*h 单通道帧直接作为亮度平面，无需亮度提取与色度缩放，
+/// 其余步骤（分 tile / 裁剪再分配 / 双线性插值 / strength 混合）相同。
+void applyClaheMono(
+  Uint16List mono, {
+  required int width,
+  required int height,
+  int blockSize = 32,
+  double clipLimit = 2.0,
+  double strength = 1.0,
+  int maxValue = 65535,
+}) {
+  // mono[p] = clamp(v + (le - v) * strength)；le 为插值后的均衡亮度。
+}
+
+// pipeline_runner.dart — case 'ahe' 按帧格式分发：'rgb' 走 applyClahe，
+// 'mono' 走 applyClaheMono，其余格式抛 StateError；
+// 节点的 in(RGB) 与 in_mono(Mono) 属视频输入互斥组，只能接入一路。
+''';
 const String _previewCode = r'''
 // pipeline_runner.dart — 预览是汇点，不改变数据：
 case 'preview':
@@ -587,6 +681,8 @@ return switch (frame.format) {
     tonemapToRgba(yuvToRgb(frame.data, maxValue: max), maxValue: max, gamma: 2.2),
   'hsl' =>
     tonemapToRgba(hslToRgb(frame.data, maxValue: max), maxValue: max, gamma: 2.2),
+  // RAW 马赛克直显（预览节点 in_raw 接入）：不去马赛克，像素值即亮度。
+  'mosaic' => monoToRgba(frame.data, maxValue: max, gamma: 2.2),
   _ => throw StateError('流水线末端不是图像数据（缺少去马赛克）'),
 };
 
@@ -1235,6 +1331,86 @@ Uint16List convertRgbToYuvCsc(
 }
 ''';
 
+/// RGB→HSL 转换（isp_kernels.dart）。
+const String _cscRgb2HslCode = r'''
+/// RGB → HSL 色彩空间转换：H 按 0..360° 映射到 0..maxValue，
+/// S/L 映射到 0..maxValue。
+Uint16List rgbToHsl(Uint16List rgb, {required int maxValue}) {
+  // 逐像素：l = (max+min)/2；d = max-min；
+  // s = l > 0.5 ? d/(2-max-min) : d/(max+min)；
+  // h 按最大分量所在扇区计算（R：(g-b)/d；G：(b-r)/d+2；B：(r-g)/d+4），
+  // 归一化到 0..1 后乘 maxValue。
+}
+''';
+
+/// YUV→RGB 转换（isp_kernels.dart）。
+const String _cscYuv2RgbCode = r'''
+/// YUV → RGB 色彩空间转换：BT.601 全范围逆变换，16 位定点整数移位加速，
+/// U/V 以 maxValue/2 为零点。
+Uint16List yuvToRgb(Uint16List yuv, {required int maxValue}) {
+  // 逐像素：u = U - half；v = V - half；
+  // R = Y + 1.402*v；G = Y - 0.344136*u - 0.714136*v；B = Y + 1.772*u
+  // （系数 ×65536 定点，右移 16 位，结果钳位到 0..maxValue）。
+}
+''';
+
+/// YUV→HSL 转换（isp_kernels.dart，单遍融合实现）。
+const String _cscYuv2HslCode = r'''
+/// YUV → HSL 色彩空间转换：单遍融合实现，循环内先按 yuvToRgb 的
+/// 定点公式算出 RGB 中间值（不分配中间缓冲），再直接求 H/S/L。
+/// 数学上等价于 YUV→RGB→HSL，数值与两段中转逐点一致。
+Uint16List yuvToHsl(Uint16List yuv, {required int maxValue}) {
+  // 逐像素：u = U - half；v = V - half；
+  // R = Y + 1.402*v；G = Y - 0.344136*u - 0.714136*v；B = Y + 1.772*u
+  // （系数 ×65536 定点，右移 16 位，钳位到 0..maxValue，仅作中间值）；
+  // 随后 l = (max+min)/2；s 按 l 分档；h 按最大分量扇区计算，
+  // H 0..360°、S/L 均映射到 0..maxValue。
+}
+''';
+
+/// HSL→RGB 转换（isp_kernels.dart）。
+const String _cscHsl2RgbCode = r'''
+/// HSL → RGB 色彩空间转换：rgbToHsl 的逆变换，
+/// H/S/L 均按 0..maxValue 归一化后还原 RGB。
+Uint16List hslToRgb(Uint16List hsl, {required int maxValue}) {
+  // 逐像素：s == 0 时 r = g = b = l（灰度）；
+  // 否则 q = l < 0.5 ? l*(1+s) : l+s-l*s，p = 2*l - q，
+  // 三个通道按 hueToRgb(p, q, h±1/3) 求值并钳位到 0..maxValue。
+}
+''';
+
+/// HSL→YUV 转换（isp_kernels.dart，单遍融合实现）。
+const String _cscHsl2YuvCode = r'''
+/// HSL → YUV 色彩空间转换：单遍融合实现，循环内先按 hslToRgb 的
+/// 逻辑算出 RGB 中间值（不分配中间缓冲），再直接求 Y/U/V。
+/// 数学上等价于 HSL→RGB→YUV，数值与两段中转逐点一致。
+Uint16List hslToYuv(Uint16List hsl, {required int maxValue}) {
+  // 逐像素：s == 0 时 r = g = b = l（灰度）；否则 q/p 分档，
+  // 三个通道按 hueToRgb(p, q, h±1/3) 求值并钳位到 0..maxValue
+  // （仅作中间值）；随后按 BT.601 全范围定点矩阵：
+  // Y = 0.299R + 0.587G + 0.114B；
+  // U = -0.168736R - 0.331264G + 0.5B + half；
+  // V = 0.5R - 0.418688G - 0.081312B + half（half = maxValue/2）。
+}
+''';
+
+/// HSL 调试器（isp_kernels.dart）：HSL 域交互调参。
+const String _hslDebuggerCode = r'''
+/// HSL 调整：H 在 0..360° 色环上循环偏移 hShiftDeg 度，
+/// S/L 分别乘增益 sGain/lGain 后钳位到 0..maxValue。
+/// 三个参数均为恒等值时直接返回原数据（不拷贝）。
+Uint16List adjustHsl(Uint16List hsl,
+    {required int maxValue,
+    double hShiftDeg = 0,
+    double sGain = 1.0,
+    double lGain = 1.0}) {
+  // 逐像素：shift = round(hShiftDeg / 360 * maxValue)；
+  // H' = (H + shift) mod (maxValue + 1)（Dart % 对负数返回负值，
+  // 用 ((x % m) + m) % m 修正环绕）；
+  // S' = clamp(S * sGain, 0..maxValue)；L' = clamp(L * lGain, 0..maxValue)。
+}
+''';
+
 /// 激发泄漏扣除（isp_kernels.dart，N17/N18）。
 const String _fluoroLeakCode = r'''
 /// 激发泄漏扣除：统一扣除泄漏电平 level，扣除量限幅 maxSub，
@@ -1367,16 +1543,23 @@ const Map<String, String> nodeSourceCode = {
   'rgb_dnr': _rgbDnrCode,
   'sharpen': _sharpenCode,
   'csc_rgb2yuv': _cscCode,
+  'csc_rgb2hsl': _cscRgb2HslCode,
+  'csc_yuv2rgb': _cscYuv2RgbCode,
+  'csc_yuv2hsl': _cscYuv2HslCode,
+  'csc_hsl2rgb': _cscHsl2RgbCode,
+  'csc_hsl2yuv': _cscHsl2YuvCode,
+  'hsl_debugger': _hslDebuggerCode,
   'fluoro_leak': _fluoroLeakCode,
   'fluoro_background': _fluoroBackgroundCode,
   'fluoro_normalize': _fluoroNormalizeCode,
   'fluoro_temporal': _fluoroTemporalCode,
   'pseudo_color': _pseudoColorCode,
   'fluoro_fusion': _fluoroFusionCode,
-  'demosaic': _demosaicDispatchCode + _demosaicBilinearCode,
+  'demosaic': _demosaicDispatchCode + _demosaicBilinearCode + _demosaicAdvancedCode,
   'white_balance': _whiteBalanceCode,
   'ccm': _ccmCode,
   'gamma': _gammaCode,
+  'ahe': _aheCode,
   'preview': _previewCode,
   'histogram': _instrumentCode,
   'waveform': _instrumentCode,
@@ -1495,6 +1678,36 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'range', type: 'String', value: 'full / limited（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
+  'csc_rgb2hsl': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'csc_yuv2rgb': [
+    CodeVariable(name: 'yuv', type: 'Uint16List', value: 'YUV 帧（w*h*3）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'csc_yuv2hsl': [
+    CodeVariable(name: 'yuv', type: 'Uint16List', value: 'YUV 帧（w*h*3）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'csc_hsl2rgb': [
+    CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'csc_hsl2yuv': [
+    CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'hsl_debugger': [
+    CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
+    CodeVariable(
+        name: 'hShiftDeg', type: 'double', value: '色相偏移角度（节点参数 h_shift）'),
+    CodeVariable(
+        name: 'sGain', type: 'double', value: '饱和度增益（节点参数 s_gain）'),
+    CodeVariable(
+        name: 'lGain', type: 'double', value: '亮度增益（节点参数 l_gain）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
   'fluoro_leak': [
     CodeVariable(name: 'mono', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
     CodeVariable(name: 'level', type: 'double', value: '扣除电平（节点参数）'),
@@ -1544,6 +1757,10 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(
         name: 'pattern', type: 'BayerPattern', value: 'CFA 图案（Bayer 时）'),
     CodeVariable(
+        name: 'algorithm',
+        type: 'String',
+        value: 'bilinear/mhc/aahd/amaze/lmmse/igv（节点参数，Bayer 时）'),
+    CodeVariable(
         name: 'maxValue', type: 'int', value: '采样最大值（非 Bayer CFA）'),
     CodeVariable(
         name: 'irSubtraction', type: 'double', value: 'IR 扣除比例（RGB-IR）'),
@@ -1567,6 +1784,18 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'gamma', type: 'double', value: '伽马值（节点参数）'),
     CodeVariable(name: 'brightness', type: 'double', value: '亮度（节点参数）'),
     CodeVariable(name: 'contrast', type: 'double', value: '对比度（节点参数）'),
+  ],
+  'ahe': [
+    CodeVariable(
+        name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3，in 通路）'),
+    CodeVariable(
+        name: 'mono', type: 'Uint16List', value: 'Mono 帧（w*h，in_mono 通路）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'blockSize', type: 'int', value: '分块大小（节点参数）'),
+    CodeVariable(name: 'clipLimit', type: 'double', value: '对比度限幅（节点参数）'),
+    CodeVariable(name: 'strength', type: 'double', value: '强度（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'preview': [
     CodeVariable(
@@ -1687,6 +1916,25 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'csc_rgb2yuv': [
     CodeVariable(name: 'out', type: 'Uint16List', value: '交织 YUV（w*h*3）'),
   ],
+  'csc_rgb2hsl': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '交织 HSL（w*h*3）'),
+  ],
+  'csc_yuv2rgb': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '交织 RGB（w*h*3）'),
+  ],
+  'csc_yuv2hsl': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '交织 HSL（w*h*3）'),
+  ],
+  'csc_hsl2rgb': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '交织 RGB（w*h*3）'),
+  ],
+  'csc_hsl2yuv': [
+    CodeVariable(name: 'out', type: 'Uint16List', value: '交织 YUV（w*h*3）'),
+  ],
+  'hsl_debugger': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '调整后交织 HSL（w*h*3）'),
+  ],
   'fluoro_leak': _monoInPlaceOutputVars,
   'fluoro_background': _monoInPlaceOutputVars,
   'fluoro_normalize': _monoInPlaceOutputVars,
@@ -1716,6 +1964,12 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'gamma': [
     CodeVariable(
         name: 'out', type: 'Uint8List', value: '色调映射 RGBA（w*h*4）'),
+  ],
+  'ahe': [
+    CodeVariable(
+        name: 'rgb', type: 'Uint16List', value: '均衡后 RGB（原地修改）'),
+    CodeVariable(
+        name: 'mono', type: 'Uint16List', value: '均衡后 Mono（原地修改）'),
   ],
   'preview': [
     CodeVariable(name: 'rgba', type: 'Uint8List', value: 'RGBA8888 显示帧'),

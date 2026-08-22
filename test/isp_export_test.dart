@@ -7,6 +7,11 @@ import 'package:debug_tool_set/modules/isp_studio/pipeline/exporters.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
+  /// 8bit unpacked RAW：每像素一个 16 位小端字（LSB 对齐，与位深无关）。
+  List<int> raw8Le(Iterable<int> px) => [
+        for (final v in px) ...[v & 0xFF, (v >> 8) & 0xFF],
+      ];
+
   group('encodeJpgFfmpeg', () {
     // 4x2 渐变 RGBA。
     final rgba = Uint8List(4 * 2 * 4);
@@ -42,7 +47,7 @@ void main() {
       final dir = Directory('${Directory.systemTemp.path}/isp_export_$stamp');
       await dir.create();
       await raw.writeAsBytes(
-          List<int>.generate(w * h * frames, (i) => i % (w * h)));
+          raw8Le(List<int>.generate(w * h * frames, (i) => i % (w * h))));
       try {
         final state = IspStudioState.withDefaultGraph(); // 默认图：源→…→预览→图片输出
         final srcId = state.graph.nodes.entries
@@ -80,7 +85,7 @@ void main() {
       final out =
           File('${Directory.systemTemp.path}/isp_video_$stamp.mp4');
       await raw.writeAsBytes(
-          List<int>.generate(w * h * frames, (i) => i % (w * h)));
+          raw8Le(List<int>.generate(w * h * frames, (i) => i % (w * h))));
       try {
         final state = IspStudioState.withDefaultGraph(); // 默认图：源→…→预览
         final srcId = state.graph.nodes.entries

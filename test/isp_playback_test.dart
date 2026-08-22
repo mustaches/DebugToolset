@@ -8,6 +8,11 @@ import 'package:debug_tool_set/modules/isp_studio/pipeline/video_source.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
+  /// 8bit unpacked RAW：每像素一个 16 位小端字（LSB 对齐，与位深无关）。
+  List<int> raw8Le(Iterable<int> px) => [
+        for (final v in px) ...[v & 0xFF, (v >> 8) & 0xFF],
+      ];
+
   group('IspStudioState 连续播放', () {
     test('播放推进帧，暂停后停止并刷新状态', () async {
       // 8x8、8bit、RGGB，共 3 帧。
@@ -15,7 +20,7 @@ void main() {
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_play_$stamp.raw');
       await raw.writeAsBytes(
-          List<int>.generate(w * h * frames, (i) => i % (w * h)));
+          raw8Le(List<int>.generate(w * h * frames, (i) => i % (w * h))));
       try {
         final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
@@ -53,7 +58,7 @@ void main() {
       final raw = File('${Directory.systemTemp.path}/isp_live_$stamp.raw');
       await raw.writeAsBytes([
         for (var f = 0; f < frames; f++)
-          ...List<int>.filled(w * h, f * 80),
+          ...List<int>.filled(w * h * 2, f * 80),
       ]);
       try {
         final state = IspStudioState.withDefaultGraph();
@@ -97,7 +102,7 @@ void main() {
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_playcap_$stamp.raw');
       await raw.writeAsBytes(
-          List<int>.generate(w * h * frames, (i) => i % (w * h)));
+          raw8Le(List<int>.generate(w * h * frames, (i) => i % (w * h))));
       try {
         final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries
@@ -133,7 +138,7 @@ void main() {
       const w = 8, h = 8;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final raw = File('${Directory.systemTemp.path}/isp_play1_$stamp.raw');
-      await raw.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await raw.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final state = IspStudioState.withDefaultGraph();
         final srcId = state.graph.nodes.entries

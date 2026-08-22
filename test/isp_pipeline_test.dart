@@ -21,6 +21,11 @@ void main() {
     }
   }
 
+  /// 8bit unpacked RAW：每像素一个 16 位小端字（LSB 对齐，与位深无关）。
+  List<int> raw8Le(Iterable<int> px) => [
+        for (final v in px) ...[v & 0xFF, (v >> 8) & 0xFF],
+      ];
+
   group('compileChain', () {
     test('default graph compiles preview chain in topo order', () {
       final graph = defaultGraph();
@@ -64,7 +69,7 @@ void main() {
       const w = 4, h = 4;
       final frameBytes =
           frameByteSize(width: w, height: h, bitDepth: 8, packing: BayerPacking.unpackedLsb);
-      expect(frameBytes, w * h);
+      expect(frameBytes, w * h * 2);
       final bytes = List<int>.generate(frameBytes * 2, (i) => (i * 7) % 256);
       final tmp = File(
           '${Directory.systemTemp.path}/isp_runner_test_${DateTime.now().microsecondsSinceEpoch}.raw');
@@ -97,12 +102,111 @@ void main() {
       }
     });
 
+    test('ahe 经 in_mono 侧支路（分路器 Y 通道）不阻塞主链', () async {
+      // 复现 Bayer2RGB 流程的故障拓扑：
+      // …→yuv_splitter→ahe(in_mono)→histogram(in_mono)，且
+      // ahe.out_mono→yuv_combiner.in_y→…→preview。旧实现 ahe 只认主链帧
+      // （此时为 YUV）直接抛错，且不登记 out_mono 使合路器 Y 全零。
+      const w = 8, h = 8;
+      final tmp = File(
+          '${Directory.systemTemp.path}/isp_ahe_mono_${DateTime.now().microsecondsSinceEpoch}.raw');
+      await tmp.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
+      try {
+        List<Map<String, Object?>> baseOps() => [
+              {
+                'typeId': 'bayer_source',
+                'nodeId': 'src',
+                'params': {
+                  'filePath': tmp.path,
+                  'width': w,
+                  'height': h,
+                  'bitDepth': '8',
+                  'packing': 'unpacked_lsb',
+                  'bayerPattern': 'RGGB',
+                  'littleEndian': true,
+                  'frameIndex': 0,
+                },
+              },
+              {
+                'typeId': 'demosaic',
+                'nodeId': 'dm',
+                'params': {'algorithm': 'bilinear'},
+              },
+              {'typeId': 'csc_rgb2yuv', 'nodeId': 'yuv', 'params': {}},
+              {'typeId': 'yuv_splitter', 'nodeId': 'split', 'params': {}},
+            ];
+        Map<String, Object?> aheOp() => {
+              'typeId': 'ahe',
+              'nodeId': 'ahe',
+              'params': {'blockSize': 8, 'clipLimit': 2.0, 'strength': 1.0},
+              'inputs': {
+                'in_mono': {'fromNodeId': 'split', 'fromPort': 'out_y'},
+              },
+            };
+
+        // 链 A：ahe.out_mono → histogram.in_mono（直方图#2 场景）。
+        final chainToHist = [
+          ...baseOps(),
+          aheOp(),
+          {
+            'typeId': 'histogram',
+            'nodeId': 'hist',
+            'params': <String, Object?>{},
+            'inputs': {
+              'in_mono': {'fromNodeId': 'ahe', 'fromPort': 'out_mono'},
+            },
+          },
+        ];
+        final sinkFormats = <String>[];
+        final rgbaA = await runChainFrame(chainToHist, 0,
+            onNodeOutput: (nodeId, data, format, width, height) {
+          if (nodeId == 'hist') sinkFormats.add('$format:${data.length}');
+        });
+        expect(rgbaA.length, w * h * 4);
+        // 汇点先收到单通道 mono 帧（ahe 处理结果），最后收到 RGBA。
+        expect(sinkFormats, contains('mono:${w * h}'));
+        expect(sinkFormats.last, 'rgba:${w * h * 4}');
+
+        // 链 B：ahe.out_mono → yuv_combiner.in_y（预览#2 场景），
+        // U/V 仍由分路器直供；合路器必须拿到非零 Y。
+        final chainToPreview = [
+          ...baseOps(),
+          aheOp(),
+          {
+            'typeId': 'yuv_combiner',
+            'nodeId': 'comb',
+            'params': <String, Object?>{},
+            'inputs': {
+              'in_y': {'fromNodeId': 'ahe', 'fromPort': 'out_mono'},
+              'in_u': {'fromNodeId': 'split', 'fromPort': 'out_u'},
+              'in_v': {'fromNodeId': 'split', 'fromPort': 'out_v'},
+            },
+          },
+          {'typeId': 'preview', 'nodeId': 'pv', 'params': <String, Object?>{}},
+        ];
+        List<int>? combOut;
+        final rgbaB = await runChainFrame(chainToPreview, 0,
+            onNodeOutput: (nodeId, data, format, width, height) {
+          if (nodeId == 'comb') combOut = List<int>.of(data);
+        });
+        expect(rgbaB.length, w * h * 4);
+        expect(combOut, isNotNull);
+        var ySum = 0;
+        for (var i = 0; i < w * h; i++) {
+          ySum += combOut![i * 3];
+        }
+        expect(ySum, greaterThan(0), reason: '合路器 Y 通道应来自 ahe 输出');
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
     test('nodeTimingsUs 记录各节点执行耗时', () async {
       // 4x4、8bit、RGGB 单帧。
       const w = 4, h = 4;
       final tmp = File(
           '${Directory.systemTemp.path}/isp_timing_test_${DateTime.now().microsecondsSinceEpoch}.raw');
-      await tmp.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await tmp.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final chain = <Map<String, Object?>>[
           {
@@ -144,7 +248,7 @@ void main() {
       const w = 4, h = 4;
       final tmp = File(
           '${Directory.systemTemp.path}/isp_progress_test_${DateTime.now().microsecondsSinceEpoch}.raw');
-      await tmp.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await tmp.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final chain = <Map<String, Object?>>[
           {
@@ -205,7 +309,7 @@ void main() {
       const w = 4, h = 4;
       final tmp = File(
           '${Directory.systemTemp.path}/isp_runner_test2_${DateTime.now().microsecondsSinceEpoch}.raw');
-      await tmp.writeAsBytes(List<int>.filled(w * h, 128)); // 仅 1 帧
+      await tmp.writeAsBytes(List<int>.filled(w * h * 2, 128)); // 仅 1 帧
       try {
         final chain = <Map<String, Object?>>[
           {
@@ -233,7 +337,7 @@ void main() {
       const w = 4, h = 4;
       final tmp = File(
           '${Directory.systemTemp.path}/isp_capture_${DateTime.now().microsecondsSinceEpoch}.raw');
-      await tmp.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await tmp.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final params = <String, Object?>{
           'filePath': tmp.path,
@@ -289,7 +393,7 @@ void main() {
       const w = 4, h = 4;
       final tmp = File(
           '${Directory.systemTemp.path}/isp_value_at_${DateTime.now().microsecondsSinceEpoch}.raw');
-      await tmp.writeAsBytes(List<int>.generate(w * h, (i) => i));
+      await tmp.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => i)));
       try {
         final params = <String, Object?>{
           'filePath': tmp.path,
@@ -310,25 +414,82 @@ void main() {
           },
         ];
 
-        // 马赛克源（链截断到 n1）：(x=2, y=1) → 一维下标 6。
+        // 马赛克源（链截断到 n1）：链末端对 mosaic 按 RAW 直显规则出
+        // RGBA 灰度（monoToRgba，gamma 2.2），(x=2, y=1) → 一维下标 6。
         final mosaic = await runChainValueAtInIsolate(
             {'chain': [chain.first], 'frameIndex': 0, 'x': 2, 'y': 1, 'channel': 0});
-        expect(mosaic, 6);
+        final gray = monoToRgba(
+            Uint16List.fromList(List<int>.generate(w * h, (i) => i)),
+            maxValue: 255, gamma: 2.2);
+        expect(mosaic, gray[6 * 4]);
 
         // 链末端节点输出恒为 RGBA，A 通道恒为 255。
         final alpha = await runChainValueAtInIsolate(
             {'chain': chain, 'frameIndex': 0, 'x': 3, 'y': 2, 'channel': 3});
         expect(alpha, 255);
 
-        // 坐标越界 → RangeError；通道越界（mosaic 只有 1 通道）→ StateError。
+        // 坐标越界 → RangeError；通道越界（末端 RGBA 只有 4 通道）→ StateError。
         expect(
             () => runChainValueAtInIsolate(
                 {'chain': chain, 'frameIndex': 0, 'x': 4, 'y': 0, 'channel': 0}),
             throwsRangeError);
         expect(
             () => runChainValueAtInIsolate(
-                {'chain': [chain.first], 'frameIndex': 0, 'x': 0, 'y': 0, 'channel': 1}),
+                {'chain': [chain.first], 'frameIndex': 0, 'x': 0, 'y': 0, 'channel': 4}),
             throwsStateError);
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('preview in_raw：RAW 马赛克直显（像素值=亮度灰度图）', () async {
+      // 4x4、8bit、RGGB 单帧，像素 0..15（unpacked 固定 2 字节/像素）。
+      const w = 4, h = 4;
+      final bytes = raw8Le(List<int>.generate(w * h, (i) => i));
+      final tmp = File(
+          '${Directory.systemTemp.path}/isp_rawview_${DateTime.now().microsecondsSinceEpoch}.raw');
+      await tmp.writeAsBytes(bytes);
+      try {
+        // bayer_source.out → preview.in_raw：不去马赛克，链末端对 mosaic
+        // 格式按像素值=亮度出灰度图（默认 gamma 2.2）。
+        final chain = <Map<String, Object?>>[
+          {
+            'typeId': 'bayer_source',
+            'nodeId': 'src',
+            'params': {
+              'filePath': tmp.path,
+              'width': w,
+              'height': h,
+              'bitDepth': '8',
+              'packing': 'unpacked_lsb',
+              'bayerPattern': 'RGGB',
+              'littleEndian': true,
+              'frameIndex': 0,
+            }
+          },
+          {
+            'typeId': 'preview',
+            'nodeId': 'pv',
+            'params': <String, Object?>{},
+            'inputs': {
+              'in_raw': {'fromNodeId': 'src', 'fromPort': 'out'},
+            },
+          },
+        ];
+        final rgba = await runChainFrame(chain, 0);
+        expect(rgba.length, w * h * 4);
+        // 灰度：每像素 R==G==B。
+        for (var p = 0; p < w * h; p++) {
+          expect(rgba[p * 4], rgba[p * 4 + 1], reason: 'pixel $p G');
+          expect(rgba[p * 4 + 1], rgba[p * 4 + 2], reason: 'pixel $p B');
+        }
+        // 与 monoToRgba(unpackBayer(...)) 的输出逐字节相等。
+        final mosaic = unpackBayer(Uint8List.fromList(bytes),
+            width: w,
+            height: h,
+            bitDepth: 8,
+            packing: BayerPacking.unpackedLsb);
+        expect(rgba, monoToRgba(mosaic, maxValue: 255, gamma: 2.2));
       } finally {
         await deleteQuietly(tmp);
       }
@@ -558,7 +719,7 @@ void main() {
       const w = 4, h = 2;
       final tmp = File(
           '${Directory.systemTemp.path}/isp_mono_${DateTime.now().microsecondsSinceEpoch}.raw');
-      await tmp.writeAsBytes(List<int>.filled(w * h, 128));
+      await tmp.writeAsBytes(List<int>.filled(w * h * 2, 128));
       try {
         final graph = IspGraph();
         final src = graph.addNode('cis_mono', 0, 0);
@@ -588,7 +749,9 @@ void main() {
       final bytes = <int>[];
       for (var y = 0; y < h; y++) {
         for (var x = 0; x < w; x++) {
-          bytes.add((x & 1) == 0 && (y & 1) == 0 ? 60 : 180);
+          final v = (x & 1) == 0 && (y & 1) == 0 ? 60 : 180;
+          bytes.add(v & 0xFF);
+          bytes.add((v >> 8) & 0xFF);
         }
       }
       final tmp = File(
@@ -637,7 +800,7 @@ void main() {
         () async {
       const w = 8, h = 8;
       final tmp = await tempRaw(
-          List<int>.generate(w * h, (i) => 20 + (i * 3) % 200), 'raw');
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)), 'raw');
       try {
         final graph = IspGraph();
         var prev = graph.addNode('bayer_source', 0, 0);
@@ -673,7 +836,7 @@ void main() {
       const w = 8, h = 8;
       // 两帧，验证时域 IIR 的历史帧累积路径（frame 0 直通、frame 1 混合）。
       final tmp =
-          await tempRaw(List<int>.filled(w * h * 2, 100), 'mono_chain');
+          await tempRaw(List<int>.filled(w * h * 4, 100), 'mono_chain');
       try {
         final graph = IspGraph();
         final src = graph.addNode('cis_mono', 0, 0);
@@ -702,9 +865,9 @@ void main() {
     test('双源 fluoro_fusion 链（白光 bayer + 荧光 mono）端到端', () async {
       const w = 8, h = 8;
       final wlTmp =
-          await tempRaw(List<int>.filled(w * h, 100), 'fusion_wl');
+          await tempRaw(List<int>.filled(w * h * 2, 100), 'fusion_wl');
       final flTmp =
-          await tempRaw(List<int>.filled(w * h, 255), 'fusion_fl');
+          await tempRaw(List<int>.filled(w * h * 2, 255), 'fusion_fl');
       try {
         final graph = IspGraph();
         final wl = graph.addNode('bayer_source', 0, 0);

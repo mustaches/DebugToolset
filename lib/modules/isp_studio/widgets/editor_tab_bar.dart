@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
-import '../models/isp_node.dart';
 
 /// 多标签栏：首标签为节点流程图（标题用工程名，默认图显示「缺省流程」），
 /// 其后为已打开的节点代码标签（标题为节点名，可关闭）。
@@ -44,11 +43,11 @@ class IspEditorTabBar extends StatelessWidget {
     );
   }
 
-  /// 代码标签标题：节点显示名；节点已删除时退化为 id。
+  /// 代码标签标题：节点实例名；节点已删除时退化为 id。
   static String _nodeTitle(IspStudioState state, String nodeId) {
     final node = state.graph.nodes[nodeId];
     if (node == null) return nodeId;
-    return IspNodeRegistry.byId(node.typeId)?.displayName ?? node.typeId;
+    return node.name;
   }
 }
 

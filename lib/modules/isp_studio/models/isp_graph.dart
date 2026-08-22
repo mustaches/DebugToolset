@@ -24,29 +24,60 @@ class IspConnection {
   });
 }
 
+/// 节点编组：同组节点选中联动（点选一个即全选），画布上显示包围框。
+/// 随流程保存。一个节点至多属于一个组。
+class IspNodeGroup {
+  final String id; // 形如 'g1'
+  final Set<String> nodeIds;
+
+  IspNodeGroup(this.id, this.nodeIds);
+}
+
 /// ISP 节点图。
 class IspGraph {
   final Map<String, IspNode> nodes = {};
   final List<IspConnection> connections = [];
+  final List<IspNodeGroup> groups = [];
   int nextId = 1;
 
   IspGraph();
 
   /// 添加节点，返回节点 id（形如 'n7'）。类型不存在时抛 [ArgumentError]。
+  /// 节点实例名按同类型自动编号（「直方图#2」），图中唯一。
   String addNode(String typeId, double x, double y) {
     final type = IspNodeRegistry.byId(typeId);
     if (type == null) {
       throw ArgumentError('未知节点类型: $typeId');
     }
     final id = 'n${nextId++}';
-    nodes[id] = IspNode.create(type, id, x, y);
+    nodes[id] = IspNode.create(type, id, x, y, name: _uniqueNodeName(type));
     return id;
   }
 
-  /// 删除节点，并级联删除其所有连接。
+  /// 生成图中唯一的节点实例名：「显示名#序号」，序号取同类型现有
+  /// 节点的最大序号 +1（删除后不复用，保证不重名）。
+  String _uniqueNodeName(IspNodeType type) {
+    final prefix = '${type.displayName}#';
+    var max = 0;
+    for (final n in nodes.values) {
+      if (n.typeId != type.typeId) continue;
+      final s = n.name.startsWith(prefix)
+          ? int.tryParse(n.name.substring(prefix.length))
+          : null;
+      if (s != null && s > max) max = s;
+    }
+    return '$prefix${max + 1}';
+  }
+
+  /// 删除节点，并级联删除其所有连接与编组成员关系
+  /// （组成员不足 2 个时编组自动解散）。
   void removeNode(String id) {
     nodes.remove(id);
     connections.removeWhere((c) => c.fromNodeId == id || c.toNodeId == id);
+    for (final g in groups) {
+      g.nodeIds.remove(id);
+    }
+    groups.removeWhere((g) => g.nodeIds.length < 2);
   }
 
   /// 建立连接。成功返回 null，失败返回中文错误信息。
@@ -80,7 +111,7 @@ class IspGraph {
       return '端口类型不匹配';
     }
     if (!videoInputPortAvailable(toNodeId, toPort)) {
-      return 'RGB/YUV/HSL/Mono 输入只能接入一路，请先断开已有连接';
+      return 'RGB/YUV/HSL/Mono/RAW 输入只能接入一路，请先断开已有连接';
     }
     if (_wouldCreateCycle(fromNodeId, toNodeId)) {
       return '不允许形成环路';
@@ -193,6 +224,7 @@ class IspGraph {
               'y': n.y,
               'width': n.width,
               'extraHeight': n.extraHeight,
+              'name': n.name,
               'params': n.paramValues,
             },
         ],
@@ -206,6 +238,13 @@ class IspGraph {
               'toPort': c.toPort,
             },
         ],
+        'groups': [
+          for (final g in groups)
+            {
+              'id': g.id,
+              'nodes': g.nodeIds.toList(),
+            },
+        ],
         'nextId': nextId,
       };
 
@@ -213,13 +252,22 @@ class IspGraph {
   /// 引用缺失节点的连接直接跳过。
   factory IspGraph.fromJson(Map<String, Object?> json) {
     final graph = IspGraph();
+    // 旧流程文件没有 name 字段：按同类型出现顺序补编号。
+    final nameSeqs = <String, int>{};
     for (final raw in json['nodes'] as List? ?? const []) {
       final m = (raw as Map).cast<String, Object?>();
       final typeId = m['typeId'] as String;
-      if (IspNodeRegistry.byId(typeId) == null) {
+      final type = IspNodeRegistry.byId(typeId);
+      if (type == null) {
         throw FormatException('未知节点类型: $typeId');
       }
       final id = m['id'] as String;
+      var name = m['name'] as String? ?? '';
+      if (name.isEmpty) {
+        final seq = (nameSeqs[typeId] ?? 0) + 1;
+        nameSeqs[typeId] = seq;
+        name = '${type.displayName}#$seq';
+      }
       graph.nodes[id] = IspNode(
         id: id,
         typeId: typeId,
@@ -228,6 +276,7 @@ class IspGraph {
         width: (m['width'] as num?)?.toDouble() ?? kNodeWidth,
         extraHeight:
             (m['extraHeight'] as num?)?.toDouble() ?? kDefaultNodeExtraHeight,
+        name: name,
         paramValues: Map<String, Object?>.from(m['params'] as Map? ?? const {}),
       );
     }
@@ -247,6 +296,17 @@ class IspGraph {
       ));
     }
     graph.nextId = (json['nextId'] as num?)?.toInt() ?? graph._deriveNextId();
+    // 编组：旧文件无此字段；成员引用缺失节点时剔除，不足 2 人解散。
+    for (final raw in json['groups'] as List? ?? const []) {
+      final m = (raw as Map).cast<String, Object?>();
+      final members = <String>{
+        for (final id in m['nodes'] as List? ?? const [])
+          if (graph.nodes.containsKey(id)) id as String,
+      };
+      if (members.length < 2) continue;
+      graph.groups
+          .add(IspNodeGroup(m['id'] as String? ?? 'g${graph.nextId++}', members));
+    }
     return graph;
   }
 

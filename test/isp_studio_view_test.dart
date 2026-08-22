@@ -31,9 +31,9 @@ void main() {
     // 属性面板空选中提示
     expect(find.text('点击节点查看参数'), findsOneWidget);
     // 默认图节点标题（至少能看到 Bayer RAW 源 / 预览 / 图片输出）
-    expect(find.text('Bayer RAW 源'), findsWidgets);
-    expect(find.text('预览'), findsWidgets);
-    expect(find.text('图片输出'), findsWidgets);
+    expect(find.textContaining('Bayer RAW 源'), findsWidgets);
+    expect(find.textContaining('预览'), findsWidgets);
+    expect(find.textContaining('图片输出'), findsWidgets);
   });
 
   testWidgets('点击节点后属性面板显示参数', (tester) async {
@@ -362,7 +362,7 @@ void main() {
     final startX = node.x;
     final startY = node.y;
     final nodeFinder = find.ancestor(
-        of: find.text('Bayer RAW 源'), matching: find.byType(IspNodeWidget));
+        of: find.textContaining('Bayer RAW 源'), matching: find.byType(IspNodeWidget));
     expect(nodeFinder, findsOneWidget);
 
     // 左键拖标题栏 → 节点移动，且不触发删除。
@@ -459,8 +459,8 @@ void main() {
     expect(node.x, 12);
     expect(node.y, 12);
     expect(node.width, 1200 - 24);
-    // 附加区高 = 视口高 - 边距 - 标题/端口/留白（30 + 4*22 + 8）。
-    expect(state.previewExtraHeight(previewId), 800 - 24 - 126);
+    // 附加区高 = 视口高 - 边距 - 标题/端口/留白（30 + 5*22 + 8）。
+    expect(state.previewExtraHeight(previewId), 800 - 24 - 148);
 
     // 切换最大化：旧节点几何还原。
     state.toggleMaximize(histId, rect);
@@ -505,7 +505,7 @@ void main() {
     final oldW = node.width;
     final oldX = node.x;
     final nodeFinder = find.ancestor(
-        of: find.text('预览'), matching: find.byType(IspNodeWidget));
+        of: find.textContaining('预览'), matching: find.byType(IspNodeWidget));
     expect(nodeFinder, findsOneWidget);
 
     // 点击最大化按钮 → 节点铺满视口且置顶。

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import '../models/isp_graph.dart';
 import 'dng_source.dart';
+import 'demosaic_advanced.dart';
 import 'frame3d.dart';
 import 'image_source.dart';
 import 'video_source.dart';
@@ -235,6 +236,14 @@ class _Frame {
 
   void requireMono(String opName) {
     if (format != 'mono') throw StateError('$opName需要 Mono 输入');
+  }
+
+  void requireYuv(String opName) {
+    if (format != 'yuv') throw StateError('$opName需要 YUV 输入');
+  }
+
+  void requireHsl(String opName) {
+    if (format != 'hsl') throw StateError('$opName需要 HSL 输入');
   }
 
   /// RAW 域算子：Bayer 马赛克或 16 位 mono 均可（mono 时按全像素邻域）。
@@ -657,6 +666,84 @@ Future<Uint8List> runChainFrame(
           height: h,
           maxValue: max,
         );
+      case 'csc_rgb2hsl':
+        frame.requireRgb('RGB→HSL 转换');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: rgbToHsl(frame.data, maxValue: max),
+          format: 'hsl',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      case 'csc_yuv2rgb':
+        frame.requireYuv('YUV→RGB 转换');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: yuvToRgb(frame.data, maxValue: max),
+          format: 'rgb',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      case 'csc_yuv2hsl':
+        frame.requireYuv('YUV→HSL 转换');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: yuvToHsl(frame.data, maxValue: max),
+          format: 'hsl',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      case 'csc_hsl2rgb':
+        frame.requireHsl('HSL→RGB 转换');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: hslToRgb(frame.data, maxValue: max),
+          format: 'rgb',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      case 'csc_hsl2yuv':
+        frame.requireHsl('HSL→YUV 转换');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: hslToYuv(frame.data, maxValue: max),
+          format: 'yuv',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- HSL 调试器：HSL 域调参（恒等参数时核内直通不拷贝）----
+      case 'hsl_debugger':
+        frame.requireHsl('HSL调试器');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: adjustHsl(frame.data,
+              maxValue: max,
+              hShiftDeg: _double(p, 'h_shift'),
+              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+              sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,
+              lGain: (p['l_gain'] as num?)?.toDouble() ?? 1.0),
+          format: 'hsl',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
       // ---- 荧光 mono 域算子 ----
       case 'fluoro_leak':
         frame.requireMono('激发泄漏扣除');
@@ -758,8 +845,37 @@ Future<Uint8List> runChainFrame(
         final data = frame.data;
         frame = _Frame(
           data: switch (frame.cfa) {
-            'bayer' => demosaicBilinear(data,
-                width: w, height: h, pattern: frame.bayerPattern!),
+            'bayer' => switch (_str(p, 'algorithm')) {
+                // 空（默认）/ bilinear：双线性。
+                '' || 'bilinear' => demosaicBilinear(data,
+                    width: w, height: h, pattern: frame.bayerPattern!),
+                'mhc' => demosaicMhc(data,
+                    width: w,
+                    height: h,
+                    pattern: frame.bayerPattern!,
+                    maxValue: max),
+                'aahd' => demosaicAahd(data,
+                    width: w,
+                    height: h,
+                    pattern: frame.bayerPattern!,
+                    maxValue: max),
+                'amaze' => demosaicAmaze(data,
+                    width: w,
+                    height: h,
+                    pattern: frame.bayerPattern!,
+                    maxValue: max),
+                'lmmse' => demosaicLmmse(data,
+                    width: w,
+                    height: h,
+                    pattern: frame.bayerPattern!,
+                    maxValue: max),
+                'igv' => demosaicIgv(data,
+                    width: w,
+                    height: h,
+                    pattern: frame.bayerPattern!,
+                    maxValue: max),
+                _ => throw StateError('未知去马赛克算法: ${_str(p, 'algorithm')}'),
+              },
             'rccb' => demosaicRccb(data, width: w, height: h, maxValue: max),
             'rccg' => demosaicRccb(data,
                 width: w, height: h, rccg: true, maxValue: max),
@@ -803,6 +919,45 @@ Future<Uint8List> runChainFrame(
             gamma: _double(p, 'gamma') <= 0 ? 2.2 : _double(p, 'gamma'),
             brightness: _double(p, 'brightness'),
             contrast: _double(p, 'contrast') <= 0 ? 1.0 : _double(p, 'contrast'));
+      case 'ahe':
+        // RGB 与 Mono 双通路（in / in_mono 互斥，只能接入一路）。
+        final monoIn = getPortData(op, 'in_mono');
+        if (monoIn != null) {
+          // in_mono 侧支路（如 YUV 分路器的 Y 通道接入）：处理的是端口
+          // 数据而非主链帧，结果登记 out_mono 供下游（合路器/仪器）
+          // 取用，主链帧原样透传。必须拷贝后处理：上游端口数据可能被
+          // 其它节点共享（如分路器 out_y 同时接直方图），原地修改会
+          // 污染旁路。
+          final mono = Uint16List.fromList(monoIn);
+          applyClaheMono(mono,
+              width: frame.width,
+              height: frame.height,
+              blockSize: _int(p, 'blockSize'),
+              clipLimit: _double(p, 'clipLimit'),
+              strength: _double(p, 'strength'),
+              maxValue: frame.maxValue);
+          portOutputs[nodeId] = {'out_mono': mono};
+        } else if (frame.format == 'rgb') {
+          applyClahe(frame.data,
+              width: frame.width,
+              height: frame.height,
+              blockSize: _int(p, 'blockSize'),
+              clipLimit: _double(p, 'clipLimit'),
+              strength: _double(p, 'strength'),
+              maxValue: frame.maxValue);
+          portOutputs[nodeId] = {'out': frame.data};
+        } else if (frame.format == 'mono') {
+          applyClaheMono(frame.data,
+              width: frame.width,
+              height: frame.height,
+              blockSize: _int(p, 'blockSize'),
+              clipLimit: _double(p, 'clipLimit'),
+              strength: _double(p, 'strength'),
+              maxValue: frame.maxValue);
+          portOutputs[nodeId] = {'out': frame.data, 'out_mono': frame.data};
+        } else {
+          throw StateError('自适应直方图均衡需要 RGB 或 Mono 输入');
+        }
       case 'rgb_splitter':
         final w = frame.width;
         final h = frame.height;
@@ -1131,6 +1286,10 @@ Future<Uint8List> runChainFrame(
                 maxValue: frame.maxValue, gamma: defaultGamma),
         'hsl' => tonemapToRgba(hslToRgb(frame.data, maxValue: frame.maxValue),
             maxValue: frame.maxValue, gamma: defaultGamma),
+        // RAW 马赛克直显（预览节点 in_raw 接入）：不做去马赛克，每个像素
+        // 的值直接作为亮度出灰度图（棋盘格原样可见）。
+        'mosaic' => monoToRgba(frame.data,
+            maxValue: frame.maxValue, gamma: defaultGamma),
         _ => throw StateError('流水线末端不是图像数据（缺少去马赛克）'),
       };
   // 汇点（预览）节点的最终输出恒为 RGBA；链末默认色调映射的耗时
@@ -1170,6 +1329,9 @@ Future<Uint8List> runChainFrame(
           'yuv' =>
             yuvToRgba(f0.data, maxValue: f0.maxValue, gamma: defaultGamma),
           'hsl' => tonemapToRgba(hslToRgb(f0.data, maxValue: f0.maxValue),
+              maxValue: f0.maxValue, gamma: defaultGamma),
+          // RAW 马赛克直显：像素值即亮度。
+          'mosaic' => monoToRgba(f0.data,
               maxValue: f0.maxValue, gamma: defaultGamma),
           _ => null, // 非图像格式：不捕获，由调用方回退单独执行该链
         };
