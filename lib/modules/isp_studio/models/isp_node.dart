@@ -291,7 +291,7 @@ abstract final class IspNodeRegistry {
     IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
   ];
 
-  static final Map<String, IspNodeType> types = {
+  static final Map<String, IspNodeType> types = _injectBypass({
     'bayer_source': IspNodeType(
       typeId: 'bayer_source',
       displayName: 'Bayer RAW 源',
@@ -1505,7 +1505,68 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
       ],
     ),
+  });
+
+  /// Process 分组（含 Fluorescence 子分组）的处理节点类型：全部注入
+  /// Bypass 参数（勾选后输入原样直通输出，见 pipeline_runner /
+  /// gpu_pipeline 的 bypass 分支）。
+  static const processTypeIds = {
+    'black_level',
+    'dpc',
+    'fpn',
+    'lsc',
+    'grgb_balance',
+    'bayer_dnr',
+    'highlight',
+    'demosaic',
+    'white_balance',
+    'ccm',
+    'rgb_dnr',
+    'sharpen',
+    'gamma',
+    'ahe',
+    'csc_rgb2yuv',
+    'csc_rgb2hsl',
+    'csc_yuv2rgb',
+    'csc_yuv2hsl',
+    'csc_hsl2rgb',
+    'csc_hsl2yuv',
+    'hsl_debugger',
+    'fluoro_leak',
+    'fluoro_background',
+    'fluoro_normalize',
+    'fluoro_temporal',
+    'pseudo_color',
+    'fluoro_fusion',
   };
+
+  /// Bypass（直通）参数规格，注入到 [processTypeIds] 每个类型的参数表首位。
+  static const bypassParam = IspParamSpec(
+    key: 'bypass',
+    label: 'Bypass 直通',
+    type: IspParamType.boolean,
+    defaultValue: false,
+  );
+
+  /// 是否为 Process 类处理节点（带 Bypass 开关）。
+  static bool isProcessType(String typeId) => processTypeIds.contains(typeId);
+
+  /// 给 Process 类节点类型的参数表注入 Bypass 参数（幂等）。
+  static Map<String, IspNodeType> _injectBypass(Map<String, IspNodeType> m) {
+    for (final id in processTypeIds) {
+      final t = m[id];
+      if (t == null || t.params.any((p) => p.key == 'bypass')) continue;
+      m[id] = IspNodeType(
+        typeId: t.typeId,
+        displayName: t.displayName,
+        inputs: t.inputs,
+        outputs: t.outputs,
+        params: [bypassParam, ...t.params],
+        colorValue: t.colorValue,
+      );
+    }
+    return m;
+  }
 
   static IspNodeType? byId(String typeId) => types[typeId];
 }

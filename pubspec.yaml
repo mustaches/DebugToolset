@@ -76,6 +76,32 @@ flutter:
 
   shaders:
     - shaders/yuv_planes.frag
+    - shaders/isp/isp_passthrough.frag
+    - shaders/isp/isp_inc16.frag
+    - shaders/isp/isp_black_level.frag
+    - shaders/isp/isp_grgb_balance.frag
+    - shaders/isp/isp_demosaic_bilinear.frag
+    - shaders/isp/isp_apply_gains.frag
+    - shaders/isp/isp_rgb2hsl.frag
+    - shaders/isp/isp_hsl_adjust.frag
+    - shaders/isp/isp_hsl2yuv.frag
+    - shaders/isp/isp_extract_channel.frag
+    - shaders/isp/isp_clahe_apply.frag
+    - shaders/isp/isp_combine_yuv.frag
+    - shaders/isp/isp_yuv2rgb.frag
+    - shaders/isp/isp_tonemap.frag
+    - shaders/isp/isp_dpc.frag
+    - shaders/isp/isp_bayer_dnr.frag
+    - shaders/isp/isp_highlight.frag
+    - shaders/isp/isp_lsc.frag
+    - shaders/isp/isp_ccm.frag
+    - shaders/isp/isp_rgb2yuv.frag
+    - shaders/isp/isp_rgb_dnr_luma.frag
+    - shaders/isp/isp_rgb_dnr_chroma.frag
+    - shaders/isp/isp_luma_extract.frag
+    - shaders/isp/isp_sharpen_apply.frag
+    - shaders/isp/isp_yuv2hsl.frag
+    - shaders/isp/isp_hsl2rgb.frag
 
   # To add assets to your application, add an assets section, like this:
   # assets:

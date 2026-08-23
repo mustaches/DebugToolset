@@ -365,6 +365,33 @@ Future<_Frame> _decodeDngSource(
 /// compute() 单次 isolate 路径无历史则直通，行为安全。
 final _temporalHistory = <String, Map<String, Object?>>{};
 
+/// RAW 源解码结果（GPU 链执行器复用的公共形式，语义同内部 _Frame）。
+typedef RawSourceFrame = ({
+  Uint16List data,
+  String format, // 'mosaic' | 'mono'
+  int width,
+  int height,
+  int maxValue,
+  BayerPattern? bayerPattern,
+  String cfa,
+});
+
+/// 解码 RAW 源节点的一帧（读文件 + 解包），供 GPU 链执行器复用；
+/// 行为与链内源节点解码完全一致。
+Future<RawSourceFrame> decodeRawSourceFrame(
+    String typeId, Map<String, Object?> params, int frameIndex) async {
+  final f = await _decodeRawSource(typeId, params, frameIndex);
+  return (
+    data: f.data,
+    format: f.format,
+    width: f.width,
+    height: f.height,
+    maxValue: f.maxValue,
+    bayerPattern: f.bayerPattern,
+    cfa: f.cfa ?? 'bayer',
+  );
+}
+
 /// 视频格式输入组端口名（与 IspNodeType.videoInputGroupPorts 一致；
 /// 本地保留一份以保持本文件无模型依赖）。
 const _videoInputPorts = ['in', 'in_yuv', 'in_hsl', 'in_mono'];
@@ -552,6 +579,22 @@ Future<Uint8List> runChainFrame(
           }
         }
       }
+    }
+    // Bypass（Process 类节点的直通开关）：主帧原样下传；in_mono 支路
+    // 数据直通 out_mono（如 AHE 的 Y 支路），链语义保持不变。
+    if (p['bypass'] == true) {
+      final outs = portOutputs.putIfAbsent(nodeId, () => {});
+      outs['out'] = frame.data;
+      if (frame.format == 'mono') outs['out_mono'] = frame.data;
+      final monoIn = getPortData(op, 'in_mono');
+      if (monoIn != null) outs['out_mono'] = monoIn;
+      if (nodeTimingsUs != null) {
+        nodeTimingsUs[nodeId] =
+            (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
+      }
+      onNodeOutput?.call(
+          nodeId, frame.data, frame.format, frame.width, frame.height);
+      continue;
     }
     switch (typeId) {
       case 'black_level':

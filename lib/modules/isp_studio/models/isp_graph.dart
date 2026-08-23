@@ -30,7 +30,10 @@ class IspNodeGroup {
   final String id; // 形如 'g1'
   final Set<String> nodeIds;
 
-  IspNodeGroup(this.id, this.nodeIds);
+  /// 编组名（显示在包围框左上角）：默认「编组#N」。
+  String name;
+
+  IspNodeGroup(this.id, this.nodeIds, {this.name = '编组'});
 }
 
 /// ISP 节点图。
@@ -63,6 +66,19 @@ class IspGraph {
       if (n.typeId != type.typeId) continue;
       final s = n.name.startsWith(prefix)
           ? int.tryParse(n.name.substring(prefix.length))
+          : null;
+      if (s != null && s > max) max = s;
+    }
+    return '$prefix${max + 1}';
+  }
+
+  /// 生成图中唯一的编组名：「编组#序号」，取现有编组名的最大序号 +1。
+  String uniqueGroupName() {
+    const prefix = '编组#';
+    var max = 0;
+    for (final g in groups) {
+      final s = g.name.startsWith(prefix)
+          ? int.tryParse(g.name.substring(prefix.length))
           : null;
       if (s != null && s > max) max = s;
     }
@@ -242,6 +258,7 @@ class IspGraph {
           for (final g in groups)
             {
               'id': g.id,
+              'name': g.name,
               'nodes': g.nodeIds.toList(),
             },
         ],
@@ -304,8 +321,10 @@ class IspGraph {
           if (graph.nodes.containsKey(id)) id as String,
       };
       if (members.length < 2) continue;
-      graph.groups
-          .add(IspNodeGroup(m['id'] as String? ?? 'g${graph.nextId++}', members));
+      graph.groups.add(IspNodeGroup(
+          m['id'] as String? ?? 'g${graph.nextId++}', members,
+          // 旧文件无编组名：按现有最大序号补默认名。
+          name: m['name'] as String? ?? graph.uniqueGroupName()));
     }
     return graph;
   }

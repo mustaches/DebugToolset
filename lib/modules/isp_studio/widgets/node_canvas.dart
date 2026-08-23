@@ -10,10 +10,73 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
+import '../models/isp_graph.dart';
 import '../models/isp_node.dart';
 import 'connection_painter.dart';
 import 'node_layout.dart';
 import 'node_widget.dart';
+
+/// 编组名显示带的高度（包围框顶部向上延伸的净空区，保证组名不被
+/// 成员节点遮挡；连线在框下层绘制，名字带内衬底后同样遮不住）。
+const double kGroupNameStripHeight = 16;
+
+/// 编组包围框（成员节点包围盒外扩 8px，顶部再向上延伸组名显示带）：
+/// painter 与命中测试共用。
+Rect? ispGroupBounds(IspGraph graph, IspNodeGroup group) {
+  Rect? bounds;
+  for (final id in group.nodeIds) {
+    final node = graph.nodes[id];
+    if (node == null) continue;
+    final type = IspNodeRegistry.byId(node.typeId);
+    final h = type == null
+        ? 0.0
+        : nodeHeight(type, previewExtraHeight: node.extraHeight);
+    final r = Rect.fromLTWH(node.x, node.y, node.width, h);
+    bounds = bounds == null ? r : bounds.expandToInclude(r);
+  }
+  if (bounds == null) return null;
+  var r = bounds.inflate(8);
+  if (group.name.isNotEmpty) {
+    r = Rect.fromLTRB(
+        r.left, r.top - kGroupNameStripHeight, r.right, r.bottom);
+  }
+  return r;
+}
+
+/// 编组命名对话框：预填默认名「编组#N」，确定后以该名编组当前多选
+/// 节点（空名回退默认名）。工具栏编组按钮与节点右键菜单「编组」共用。
+Future<void> showIspGroupNamingDialog(
+    BuildContext context, IspStudioState state) async {
+  final controller =
+      TextEditingController(text: state.graph.uniqueGroupName());
+  final name = await showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF2E2E2E),
+      title: const Text('编组命名',
+          style: TextStyle(color: Colors.white, fontSize: 14)),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(hintText: '编组名'),
+        onSubmitted: (v) => Navigator.of(ctx).pop(v),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消')),
+        TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: const Text('确定')),
+      ],
+    ),
+  );
+  final trimmed = name?.trim();
+  if (trimmed != null) {
+    state.groupSelectedNodes(name: trimmed.isEmpty ? null : trimmed);
+  }
+}
 
 /// 节点画布。节点与连线绘制在画布（未缩放）坐标系中，
 /// 通过外层 Transform.translate + Transform.scale 映射到屏幕。
@@ -133,10 +196,25 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
         hitTestWire(state.graph, pos, kWireHitTolerance / state.canvasZoom);
     if (hitId != null) {
       state.selectConnection(hitId);
-    } else {
-      state.selectNode(null);
-      state.selectConnection(null);
+      return;
     }
+    // 编组框内单击：选中整组（而不是清空选择）。
+    final hitGroup = _groupAt(state, pos);
+    if (hitGroup != null) {
+      state.selectNode(hitGroup.nodeIds.first);
+      return;
+    }
+    state.selectNode(null);
+    state.selectConnection(null);
+  }
+
+  /// 画布坐标下的编组框命中（后建组优先）：框内左键拖动整个编组。
+  IspNodeGroup? _groupAt(IspStudioState state, Offset canvasPos) {
+    for (final g in state.graph.groups.reversed) {
+      final bounds = ispGroupBounds(state.graph, g);
+      if (bounds != null && bounds.contains(canvasPos)) return g;
+    }
+    return null;
   }
 
   /// 左键拖拽的目标节点 id；null 表示拖动画布或框选。
@@ -176,10 +254,22 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
   }
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is KeyDownEvent &&
-        (event.logicalKey == LogicalKeyboardKey.delete ||
-            event.logicalKey == LogicalKeyboardKey.backspace)) {
-      context.read<IspStudioState>().removeSelected();
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final state = context.read<IspStudioState>();
+    final ctrl = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    // Ctrl/Cmd+C 复制选中节点，Ctrl/Cmd+V 粘贴（级联偏移）。
+    if (ctrl && event.logicalKey == LogicalKeyboardKey.keyC) {
+      state.copySelectedNodes();
+      return KeyEventResult.handled;
+    }
+    if (ctrl && event.logicalKey == LogicalKeyboardKey.keyV) {
+      state.pasteNodes();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.delete ||
+        event.logicalKey == LogicalKeyboardKey.backspace) {
+      state.removeSelected();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -205,8 +295,10 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
           const PopupMenuItem(value: 'ungroup', child: Text('取消编组')),
       ],
     ).then((v) {
+      if (!mounted) return;
       if (v == 'group') {
-        state.groupSelectedNodes();
+        // 弹命名对话框（默认「编组#N」）后编组。
+        showIspGroupNamingDialog(context, state);
       } else if (v == 'ungroup' && groupId != null) {
         state.ungroup(groupId);
       }
@@ -250,7 +342,18 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
             } else {
               final cardNodeId = _nodeCardAt(state, canvasPos);
               if (cardNodeId == null) {
-                _boxSelectStartCanvasPos = canvasPos;
+                // 编组框内（未命中任何节点卡片）左键：选中并拖动整个
+                // 编组，框选让位于编组拖动。
+                final group = _groupAt(state, canvasPos);
+                if (group != null) {
+                  final member = group.nodeIds.first;
+                  state.selectNode(member); // 编组联动：全选整组
+                  state.beginNodeDrag(member);
+                  _dragNodeId = member;
+                  _boxSelectStartCanvasPos = null;
+                } else {
+                  _boxSelectStartCanvasPos = canvasPos;
+                }
               } else {
                 _boxSelectStartCanvasPos = null;
               }
@@ -493,9 +596,9 @@ class _DotGridPainter extends CustomPainter {
       oldDelegate.offset != offset || oldDelegate.zoom != zoom;
 }
 
-/// 编组包围框：成员节点包围盒外扩一圈的圆角矩形（半透明填充 +
-/// 描边），与框选蓝色区分用青绿色。节点拖动/缩放时画布整体重建，
-/// 此处 shouldRepaint 恒真即可（每帧至多数个矩形，开销可忽略）。
+/// 编组包围框：成员节点包围盒外扩一圈（顶部额外延伸组名显示带）的
+/// 圆角矩形（半透明填充 + 描边），与框选蓝色区分用青绿色。节点拖动/
+/// 缩放时画布整体重建，此处 shouldRepaint 恒真即可。
 class _GroupFramesPainter extends CustomPainter {
   final IspStudioState state;
 
@@ -504,20 +607,10 @@ class _GroupFramesPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (final g in state.graph.groups) {
-      Rect? bounds;
-      for (final id in g.nodeIds) {
-        final node = state.graph.nodes[id];
-        if (node == null) continue;
-        final type = IspNodeRegistry.byId(node.typeId);
-        final h = type == null
-            ? 0.0
-            : nodeHeight(type, previewExtraHeight: node.extraHeight);
-        final r = Rect.fromLTWH(node.x, node.y, node.width, h);
-        bounds = bounds == null ? r : bounds.expandToInclude(r);
-      }
+      final bounds = ispGroupBounds(state.graph, g);
       if (bounds == null) continue;
       final rrect =
-          RRect.fromRectAndRadius(bounds.inflate(8), const Radius.circular(8));
+          RRect.fromRectAndRadius(bounds, const Radius.circular(8));
       canvas.drawRRect(
           rrect,
           Paint()
@@ -529,6 +622,23 @@ class _GroupFramesPainter extends CustomPainter {
             ..color = const Color(0xFF26A69A)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.5);
+      // 编组名：框左上角的名字带内（包围盒已在顶部延伸净空），带不透明
+      // 衬底防止连线干扰阅读；随框移动（画布坐标系绘制）。
+      if (g.name.isNotEmpty) {
+        final tp = TextPainter(
+          text: TextSpan(
+              text: g.name,
+              style: const TextStyle(
+                  color: Color(0xFF26A69A), fontSize: 11, height: 1.0)),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final textPos = bounds.topLeft + const Offset(8, 2.5);
+        canvas.drawRect(
+            Rect.fromLTWH(textPos.dx - 2, textPos.dy - 1,
+                tp.width + 4, tp.height + 2),
+            Paint()..color = const Color(0xFF1E1E1E));
+        tp.paint(canvas, textPos);
+      }
     }
   }
 

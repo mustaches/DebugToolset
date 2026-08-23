@@ -21,6 +21,7 @@ import '../modules/isp_studio/pipeline/instruments.dart';
 import '../modules/isp_studio/pipeline/pipeline_runner.dart';
 import '../modules/isp_studio/pipeline/pipeline_worker.dart';
 import '../modules/isp_studio/pipeline/dng_source.dart';
+import '../modules/isp_studio/pipeline/gpu/gpu_pipeline.dart';
 import '../modules/isp_studio/pipeline/raw_sidecar.dart';
 import '../modules/isp_studio/pipeline/video_source.dart';
 import '../modules/isp_studio/widgets/node_layout.dart';
@@ -199,6 +200,22 @@ class IspStudioState extends ChangeNotifier {
   /// 供节点卡片标题栏显示节点工作时间；与 [nodeOutputCaptures]
   /// 同样规则过期（图被修改后清空）。
   Map<String, int> nodeRunTimesUs = {};
+
+  /// GPU 预览加速开关（默认开）：单帧预览的算子链优先在 GPU 上执行
+  /// （16 位打包纹理 + FragmentShader），任一环节不支持/失败自动回退
+  /// CPU isolate 路径，行为不变。
+  bool gpuPreviewEnabled = true;
+
+  /// GPU 链执行器（懒加载；加载失败置 [_gpuUnavailable] 不再重试）。
+  GpuPipeline? _gpu;
+  bool _gpuUnavailable = false;
+
+  Future<GpuPipeline?> _gpuPipeline() async {
+    if (!gpuPreviewEnabled || _gpuUnavailable) return null;
+    final g = _gpu ??= await GpuPipeline.tryCreate();
+    if (g == null) _gpuUnavailable = true;
+    return g;
+  }
 
   /// 仪器节点最近一次分析结果（nodeId → analyzeInstrumentInIsolate 的
   /// 返回 map），随预览运行刷新；直方图数据由节点控件直接绘制。
@@ -379,12 +396,110 @@ class IspStudioState extends ChangeNotifier {
       removeConnection(connId);
       return;
     }
-    final id = selectedNodeId;
-    if (id != null) removeNode(id);
+    // 多选时删除全部选中节点（而非仅黄色高亮的主选中节点）。
+    final ids = selectedNodeIds.toList();
+    if (ids.isEmpty) {
+      final id = selectedNodeId;
+      if (id != null) removeNode(id);
+      return;
+    }
+    for (final id in ids) {
+      removeNode(id);
+    }
+    selectedNodeIds.clear();
+    selectedNodeId = null;
   }
 
   static double snapToGrid(double val, {double step = 10.0}) {
     return (val / step).round() * step;
+  }
+
+  // ---- 节点复制 / 粘贴 ----
+
+  /// 节点剪贴板（应用内，不随流程保存）：节点快照 + 选中集内部连线 +
+  /// 被完整包含的编组。
+  List<Map<String, Object?>>? _nodeClipboard;
+  List<IspConnection>? _connClipboard;
+  List<({Set<String> nodeIds, String name})>? _groupClipboard;
+
+  /// 粘贴次数（每次粘贴级联偏移，避免与原节点/上次粘贴重叠）。
+  int _pasteSerial = 0;
+
+  /// 复制选中节点：选中集内部的连线与完整包含的编组一并入剪贴板。
+  void copySelectedNodes() {
+    final ids = selectedNodeIds
+        .where((id) => graph.nodes.containsKey(id))
+        .toSet();
+    if (ids.isEmpty) return;
+    _nodeClipboard = [
+      for (final id in ids)
+        {
+          'ref': id,
+          'typeId': graph.nodes[id]!.typeId,
+          'x': graph.nodes[id]!.x,
+          'y': graph.nodes[id]!.y,
+          'width': graph.nodes[id]!.width,
+          'extraHeight': graph.nodes[id]!.extraHeight,
+          'params': Map<String, Object?>.from(graph.nodes[id]!.paramValues),
+        },
+    ];
+    _connClipboard = [
+      for (final c in graph.connections)
+        if (ids.contains(c.fromNodeId) && ids.contains(c.toNodeId)) c,
+    ];
+    _groupClipboard = [
+      for (final g in graph.groups)
+        if (ids.containsAll(g.nodeIds))
+          (nodeIds: Set<String>.of(g.nodeIds), name: g.name),
+    ];
+    _pasteSerial = 0;
+    statusMessage = '已复制 ${ids.length} 个节点';
+    notifyListeners();
+  }
+
+  /// 粘贴剪贴板节点：新 id 新实例名（自动编号），位置按粘贴次数级联
+  /// 偏移（+20×N），内部连线与完整编组一并复制，粘贴后选中新节点。
+  void pasteNodes() {
+    final clip = _nodeClipboard;
+    if (clip == null || clip.isEmpty) return;
+    _pasteSerial++;
+    final d = 20.0 * _pasteSerial;
+    final idMap = <String, String>{};
+    for (final e in clip) {
+      final newId = graph.addNode(e['typeId'] as String,
+          (e['x'] as num).toDouble() + d, (e['y'] as num).toDouble() + d);
+      final node = graph.nodes[newId]!;
+      node.width = (e['width'] as num).toDouble();
+      node.extraHeight = (e['extraHeight'] as num).toDouble();
+      node.paramValues
+        ..clear()
+        ..addAll((e['params'] as Map).cast<String, Object?>());
+      idMap[e['ref'] as String] = newId;
+    }
+    for (final c in _connClipboard ?? const <IspConnection>[]) {
+      graph.connections.add(IspConnection(
+        id: 'c${graph.nextId++}',
+        fromNodeId: idMap[c.fromNodeId]!,
+        fromPort: c.fromPort,
+        toNodeId: idMap[c.toNodeId]!,
+        toPort: c.toPort,
+      ));
+    }
+    for (final g in _groupClipboard ??
+        const <({Set<String> nodeIds, String name})>[]) {
+      graph.groups.add(IspNodeGroup(
+          'g${graph.nextId++}', {for (final id in g.nodeIds) idMap[id]!},
+          name: g.name));
+    }
+    // 选中新节点（编组联动可能造成整组已选，contains 判重防止反复反选）。
+    selectNode(null);
+    for (final id in idMap.values) {
+      if (!selectedNodeIds.contains(id)) {
+        selectNode(id, multiSelect: true);
+      }
+    }
+    statusMessage = '已粘贴 ${idMap.length} 个节点';
+    notifyListeners();
   }
 
   Size? canvasViewport;
@@ -613,7 +728,8 @@ class IspStudioState extends ChangeNotifier {
 
   /// 把当前多选节点编为一组。一个节点至多属于一个组：成员先从
   /// 旧组摘除，旧组剩余不足 2 个节点时自动解散。
-  void groupSelectedNodes() {
+  /// [name] 缺省时自动生成「编组#N」。
+  void groupSelectedNodes({String? name}) {
     final members =
         selectedNodeIds.where((id) => graph.nodes.containsKey(id)).toSet();
     if (members.length < 2) return;
@@ -621,8 +737,20 @@ class IspStudioState extends ChangeNotifier {
       g.nodeIds.removeAll(members);
     }
     graph.groups.removeWhere((g) => g.nodeIds.length < 2);
-    graph.groups.add(IspNodeGroup('g${graph.nextId++}', members));
+    graph.groups.add(IspNodeGroup('g${graph.nextId++}', members,
+        name: name ?? graph.uniqueGroupName()));
     notifyListeners();
+  }
+
+  /// 重命名编组。
+  void renameGroup(String groupId, String name) {
+    for (final g in graph.groups) {
+      if (g.id == groupId) {
+        g.name = name;
+        notifyListeners();
+        return;
+      }
+    }
   }
 
   /// 解散指定编组。
@@ -1148,6 +1276,116 @@ class IspStudioState extends ChangeNotifier {
     return limit > 0 && limit < total ? limit : total;
   }
 
+  /// GPU 快路径：从可编译预览链中选最长的 GPU 支持链单次执行，
+  /// 其余「链为其前缀」的预览节点经 displayCaptures 顺带捕获出图，
+  /// 已连接仪器经 RGBA 回读端口馈源。返回被覆盖的 key（预览节点 id
+  /// 及 'id#in' 输入链 key），调用方跳过这些链的 CPU 执行。
+  /// 任何失败抛异常，由调用方整体回退 CPU。
+  Future<Set<String>> _tryGpuPreview(
+    Map<String, List<Map<String, Object?>>> chains,
+    Map<String, List<Map<String, Object?>>> inputChains,
+    int frame,
+    void Function(String nodeId)? onNodeStart,
+  ) async {
+    final gpu = await _gpuPipeline();
+    if (gpu == null) return const {};
+    // 最长 GPU 支持链为主链。
+    String? mainSink;
+    List<Map<String, Object?>>? mainChain;
+    for (final e in chains.entries) {
+      final c = e.value;
+      if (GpuPipeline.isSupportedChain(c) &&
+          (mainChain == null || c.length > mainChain.length)) {
+        mainChain = c;
+        mainSink = e.key;
+      }
+    }
+    if (mainChain == null || mainSink == null) return const {};
+    final mainIds = [for (final op in mainChain) op['nodeId'] as String];
+
+    // 透传汇点（preview/histogram）不参与处理比对：其显示 = 前一节点
+    // 输出帧的默认色调映射；hsl_debugger 汇点的显示 = 自身输出。
+    List<Map<String, Object?>> procOf(List<Map<String, Object?>> chain) =>
+        switch (chain.last['typeId']) {
+          'preview' || 'histogram' => chain.sublist(0, chain.length - 1),
+          _ => chain,
+        };
+
+    bool isPrefixOfMain(List<Map<String, Object?>> sub) {
+      final proc = procOf(sub);
+      if (proc.length > mainIds.length) return false;
+      for (var i = 0; i < proc.length; i++) {
+        // 含 gamma 的链出图参数与默认色调映射不同，不做合并捕获。
+        if (proc[i]['typeId'] == 'gamma') return false;
+        if (proc[i]['nodeId'] != mainIds[i]) return false;
+      }
+      return true;
+    }
+
+    final displayCaptures = <String, String>{};
+    final covered = <String>{};
+    for (final e in chains.entries) {
+      if (e.key == mainSink) continue;
+      if (!isPrefixOfMain(e.value)) continue;
+      displayCaptures[e.key] = procOf(e.value).last['nodeId'] as String;
+      covered.add(e.key);
+    }
+    for (final e in inputChains.entries) {
+      if (!isPrefixOfMain(e.value)) continue;
+      displayCaptures['${e.key}#in'] = procOf(e.value).last['nodeId'] as String;
+      covered.add('${e.key}#in');
+    }
+    // 仪器馈源回读端口（指向主链节点的连接）。
+    final readbackPorts = <String>{};
+    final mainIdSet = mainIds.toSet();
+    for (final node in graph.nodes.values) {
+      if (!allInstrumentTypes.contains(node.typeId) ||
+          audioInstrumentTypes.contains(node.typeId)) {
+        continue;
+      }
+      final type = IspNodeRegistry.byId(node.typeId)!;
+      for (final spec in type.inputs) {
+        final conn = graph.connectionAt(node.id, spec.name);
+        if (conn != null && mainIdSet.contains(conn.fromNodeId)) {
+          readbackPorts.add('${conn.fromNodeId}:${conn.fromPort}');
+        }
+      }
+    }
+
+    final result = await gpu.run(mainChain, frame,
+        onNodeStart: onNodeStart,
+        displayCaptures: displayCaptures,
+        rgbaReadbackPorts: readbackPorts);
+
+    // 产物合并：主图 + 捕获图 + 耗时 + 采样 + 仪器馈源。
+    previewImages.remove(mainSink)?.dispose();
+    previewImages[mainSink] = result.image;
+    result.displayImages.forEach((key, img) {
+      if (key.endsWith('#in')) {
+        final base = key.substring(0, key.length - 3);
+        previewInputImages.remove(base)?.dispose();
+        previewInputImages[base] = img;
+      } else {
+        previewImages.remove(key)?.dispose();
+        previewImages[key] = img;
+      }
+    });
+    nodeRunTimesUs = {...nodeRunTimesUs, ...result.timingsUs};
+    // 采样覆盖主链全部节点（CPU 路径仅首预览链有 captures，此为超集）。
+    nodeOutputCaptures = result.captures;
+    result.portRgba.forEach((key, rgba) {
+      final sep = key.indexOf(':');
+      final entry = nodeOutputCaptures.putIfAbsent(key.substring(0, sep), () => {});
+      entry[key.substring(sep + 1)] = {
+        'data': rgba,
+        'width': result.width,
+        'height': result.height,
+      };
+    });
+    covered.add(mainSink);
+    return covered;
+  }
+
   /// 运行所有有效预览节点并更新预览图（previewImages 映射 + 向后兼容的
   /// _legacyPreviewImage/previewImage 入口）。
   Future<void> runPreview() async {
@@ -1252,10 +1490,40 @@ class IspStudioState extends ChangeNotifier {
       // 求和 / 总算子数（totalChainLen），链完成后置为链全长。
       final chainDoneOps = <String, int>{};
 
+      // ---- GPU 快路径：最长支持链单次执行，前缀预览链顺带捕获 ----
+      var gpuCovered = <String>{};
+      try {
+        gpuCovered =
+            await _tryGpuPreview(chains, inputChains, frame, (nodeId) {
+          if (token != _runToken) return;
+          final nodeType = graph.nodes[nodeId]?.typeId;
+          final name = nodeType == null
+              ? nodeId
+              : (IspNodeRegistry.byId(nodeType)?.displayName ?? nodeId);
+          statusMessage = '正在运行（GPU）：$name…';
+          notifyListeners();
+        });
+        if (token != _runToken) return;
+      } catch (e) {
+        debugPrint('[isp] GPU 预览失败，回退 CPU 路径: $e');
+        gpuCovered = {};
+      }
+      // 被覆盖链的进度按全长计入。
+      for (final key in gpuCovered) {
+        final base = key.endsWith('#in') ? key.substring(0, key.length - 3) : key;
+        final len = (key.endsWith('#in') ? inputChains[base] : chains[base])
+                ?.length ??
+            0;
+        chainDoneOps[key] = len;
+        completedWeight += len;
+        if (!key.endsWith('#in')) completedCount++;
+      }
+
       // 所有预览节点并行执行。
       await Future.wait([
         for (final pvNode in previewNodes)
-          () async {
+          if (!gpuCovered.contains(pvNode.id))
+            () async {
             try {
               final chain = chains[pvNode.id];
               if (chain == null) return;
@@ -1293,7 +1561,8 @@ class IspStudioState extends ChangeNotifier {
               // Future 创建即启动，两条链实际并行执行。
               final outFuture = runChainFrameWithProgress(chain, frame,
                   onNodeStart: progressOf(pvNode.id));
-              final inFuture = inputChain == null
+              final inFuture = inputChain == null ||
+                      gpuCovered.contains('${pvNode.id}#in')
                   ? null
                   : runChainFrameWithProgress(inputChain, frame,
                           onNodeStart: progressOf(inKey))

@@ -14,7 +14,7 @@
 | 3 | 文本对比 / 补丁 | `lib/modules/text_editor/` | 文本编辑、语法高亮、文件/文件夹 diff、补丁生成与套用 |
 | 4 | 字库提取 | `lib/modules/font_extractor/` | 从 TTF/OTF 提取点阵字库（EBDT 解析、字符集管理、字形预览），导出 C 数组/bin |
 | 5 | UI 设计器 | `lib/modules/ui_designer/` | 嵌入式 UI 拖拽设计器：控件箱 → 画布编辑 → 预览交互 → 导出 C99 代码（无动态分配、弱符号回调）。详见 `docs/UI_Designer.md` |
-| 6 | ISP Studio | `lib/modules/isp_studio/` | 图像信号处理流水线节点图编辑器：节点画布 + 每节点代码页，支持 RAW 图像/视频源、ISP 算法核、仪器仪表（矢量示波器、音频分析等）、Worker 池并行计算、ffmpeg 视频导出 |
+| 6 | ISP Studio | `lib/modules/isp_studio/` | 图像信号处理流水线节点图编辑器：节点画布 + 每节点代码页，支持 RAW 图像/视频源、ISP 算法核、仪器仪表（矢量示波器、音频分析等）、Worker 池并行计算、ffmpeg 视频导出；单帧预览可走 GPU 快路径（`pipeline/gpu/`：16 位打包纹理 + FragmentShader，仅 UI isolate，失败自动回退 CPU isolate 路径） |
 
 应用强制暗色主题（`lib/main.dart` 中 `themeMode: ThemeMode.dark`），默认窗口 1658×869。
 

@@ -181,6 +181,15 @@ class IspStudioView extends StatelessWidget {
             onPressed: () => state.resetView(),
           ),
           IconButton(
+            icon: const Icon(Icons.group_add, size: 18),
+            tooltip: '编组所选节点',
+            color: Colors.white,
+            // 多选 ≥2 时可用：弹命名对话框（默认「编组#N」）后编组。
+            onPressed: state.selectedNodeIds.length >= 2
+                ? () => showIspGroupNamingDialog(context, state)
+                : null,
+          ),
+          IconButton(
             icon: const Icon(Icons.layers_clear_outlined, size: 18),
             tooltip: '清除画布',
             color: Colors.white,

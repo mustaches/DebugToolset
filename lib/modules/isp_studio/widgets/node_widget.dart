@@ -49,6 +49,12 @@ class IspNodeWidget extends StatelessWidget {
     required this.inputPortKeyFor,
   });
 
+  /// 节点处于 Bypass（直通）模式：Process 类节点且 bypass 参数勾选。
+  /// 置灰显示表示节点失效。
+  bool get _bypassed =>
+      IspNodeRegistry.isProcessType(type.typeId) &&
+      node.paramValues['bypass'] == true;
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<IspStudioState>();
@@ -123,17 +129,27 @@ class IspNodeWidget extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildTitleBar(state),
-            for (var i = 0; i < rows; i++) _buildPortRow(state, i),
-            if (type.typeId == 'preview') _buildPreviewExtra(state),
-            if (type.typeId == 'hsl_debugger') _buildHslDebugExtra(state),
-            if (allInstrumentTypes.contains(type.typeId))
-              _buildInstrumentExtra(state),
-            if (type.typeId == 'image_output')
-              _buildExportButton(
-                  state, '导出图片', () => state.exportImages(node.id)),
-            if (type.typeId == 'video_output')
-              _buildExportButton(
-                  state, '导出 MP4', () => state.exportVideo(node.id)),
+            // Bypass 模式：端口与附加区整体半透明，表示节点失效。
+            Opacity(
+              opacity: _bypassed ? 0.4 : 1.0,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < rows; i++) _buildPortRow(state, i),
+                  if (type.typeId == 'preview') _buildPreviewExtra(state),
+                  if (type.typeId == 'hsl_debugger')
+                    _buildHslDebugExtra(state),
+                  if (allInstrumentTypes.contains(type.typeId))
+                    _buildInstrumentExtra(state),
+                  if (type.typeId == 'image_output')
+                    _buildExportButton(
+                        state, '导出图片', () => state.exportImages(node.id)),
+                  if (type.typeId == 'video_output')
+                    _buildExportButton(
+                        state, '导出 MP4', () => state.exportVideo(node.id)),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -406,7 +422,8 @@ class IspNodeWidget extends StatelessWidget {
     return Container(
       height: kNodeTitleHeight,
       decoration: BoxDecoration(
-        color: Color(type.colorValue),
+        // Bypass 模式：标题栏置灰（暗灰 #2D2D2D），表示节点失效（直通）。
+        color: _bypassed ? const Color(0xFF2D2D2D) : Color(type.colorValue),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -422,6 +439,35 @@ class IspNodeWidget extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          // Bypass 直通勾选框（Process 类节点）：与属性面板的开关读写
+          // 同一 paramValues['bypass']，经 setParam 自动双向同步。
+          if (IspNodeRegistry.isProcessType(type.typeId))
+            Tooltip(
+              message: 'Bypass 直通',
+              child: InkWell(
+                onTap: () => state.setParam(
+                    node.id, 'bypass', !(node.paramValues['bypass'] == true)),
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 3),
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: node.paramValues['bypass'] == true
+                          ? Colors.white
+                          : Colors.transparent,
+                      border: Border.all(color: Colors.white70),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                    // Bypass 生效打叉（✗）：打勾易误读为「启用」。
+                    child: node.paramValues['bypass'] == true
+                        ? const Icon(Icons.close,
+                            size: 10, color: Colors.black)
+                        : null,
+                  ),
+                ),
+              ),
+            ),
           // 节点工作时间（最近一次运行预览测得；未运行时不显示）。
           if (state.nodeRunTimesUs[node.id] != null)
             Tooltip(

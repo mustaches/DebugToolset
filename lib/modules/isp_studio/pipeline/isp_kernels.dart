@@ -1384,10 +1384,23 @@ void applyDpc(
   }
 }
 
-int _medianOf(List<int> vals) {
-  if (vals.isEmpty) return 0;
-  vals.sort();
-  return vals[vals.length ~/ 2];
+/// 残差中位数的桶计数实现：corr 最终限幅 ±maxCorr，故只需精确分辨
+/// [-maxCorr, maxCorr] 内的中位数——桶 0 收下溢、末桶收上溢、中间每
+/// 整数值一桶，累计定位第 n~/2 项。O(n) 无排序，且行优先缓存友好。
+/// [count] 回调由调用方逐桶填入计数。
+double _clampedMedian(int n, int ceilM, Int32List buckets) {
+  if (n == 0) return 0;
+  final k = n >> 1;
+  var cum = 0;
+  for (var b = 0; b < buckets.length; b++) {
+    cum += buckets[b];
+    if (cum > k) {
+      if (b == 0) return -ceilM.toDouble() - 1; // 下溢（调用方限幅）
+      if (b == buckets.length - 1) return ceilM.toDouble() + 1; // 上溢
+      return (b - ceilM - 1).toDouble();
+    }
+  }
+  return 0;
 }
 
 /// FPN 校正（W08–W11、N10–N13）：行/列固定图案噪声的稳健估计与扣除。
@@ -1417,7 +1430,12 @@ void applyFpn(
   double clampCorr(num c) =>
       c < -maxCorr ? -maxCorr : (c > maxCorr ? maxCorr : c).toDouble();
   final edgeThresh = 2 * maxCorr; // 超过它的梯度视为内容边缘而非 FPN
-  final res = <int>[];
+  // 桶计数中位数用的分桶：桶 0 收下溢、末桶收上溢、中间每整数一桶
+  //（corr 限幅 ±maxCorr，超出部分无需精确分辨）。
+  final ceilM = maxCorr.ceil();
+  final nb = 2 * ceilM + 3;
+  int bucketOf(int r) =>
+      r < -maxCorr ? 0 : (r > maxCorr ? nb - 1 : r + ceilM + 1);
   if (row) {
     final low = _verticalBoxMean(buf, width, height, radius);
     // 水平边缘（垂直梯度）的垂直膨胀掩膜：这些像素的垂直低通被边缘
@@ -1426,14 +1444,17 @@ void applyFpn(
         _gradientEdge(buf, width, height, edgeThresh, vertical: true),
         width, height, radius,
         vertical: true);
+    final buckets = Int32List(nb);
     for (var y = 0; y < height; y++) {
-      res.clear();
+      buckets.fillRange(0, nb, 0);
+      var n = 0;
       final base = y * width;
       for (var x = 0; x < width; x++) {
         if (mask[base + x] != 0) continue;
-        res.add(buf[base + x] - low[base + x].round());
+        buckets[bucketOf(buf[base + x] - low[base + x].round())]++;
+        n++;
       }
-      final corr = clampCorr(_medianOf(res));
+      final corr = clampCorr(_clampedMedian(n, ceilM, buckets));
       if (corr == 0) continue;
       for (var x = 0; x < width; x++) {
         final i = base + x;
@@ -1448,18 +1469,36 @@ void applyFpn(
         _gradientEdge(buf, width, height, edgeThresh, vertical: false),
         width, height, radius,
         vertical: false);
-    for (var x = 0; x < width; x++) {
-      res.clear();
+    // 分块列统计：按 64 列一块、行优先对各列残差做桶计数（逐列跨步
+    // 收集在 12MP 下缓存不命中是大头），统计与施加逐块完成。
+    const tile = 64;
+    final counts = Int32List(tile);
+    var buckets = Int32List(tile * nb);
+    for (var x0 = 0; x0 < width; x0 += tile) {
+      final x1 = x0 + tile < width ? x0 + tile : width;
+      final tw = x1 - x0;
+      if (buckets.length < tw * nb) buckets = Int32List(tw * nb);
+      counts.fillRange(0, tw, 0);
+      buckets.fillRange(0, tw * nb, 0);
       for (var y = 0; y < height; y++) {
-        if (mask[y * width + x] != 0) continue;
-        res.add(buf[y * width + x] - low[y * width + x].round());
+        final base = y * width;
+        for (var x = x0; x < x1; x++) {
+          if (mask[base + x] != 0) continue;
+          final cx = x - x0;
+          buckets[cx * nb + bucketOf(buf[base + x] - low[base + x].round())]++;
+          counts[cx]++;
+        }
       }
-      final corr = clampCorr(_medianOf(res));
-      if (corr == 0) continue;
-      for (var y = 0; y < height; y++) {
-        final i = y * width + x;
-        final v = buf[i] - corr;
-        buf[i] = v <= 0 ? 0 : v.round();
+      for (var cx = 0; cx < tw; cx++) {
+        final corr = clampCorr(_clampedMedian(counts[cx], ceilM,
+            Int32List.sublistView(buckets, cx * nb, (cx + 1) * nb)));
+        if (corr == 0) continue;
+        final x = x0 + cx;
+        for (var y = 0; y < height; y++) {
+          final i = y * width + x;
+          final v = buf[i] - corr;
+          buf[i] = v <= 0 ? 0 : v.round();
+        }
       }
     }
   }
@@ -1492,21 +1531,37 @@ Uint8List _gradientEdge(Uint16List buf, int w, int h, double thresh,
 }
 
 /// 边缘图按 [radius] 做滑窗膨胀（vertical=true 沿垂直方向）。
+/// 垂直方向用逐列计数数组 + 行优先遍历（列优先在 12MP 下缓存不命中
+/// 是主要耗时）。
 Uint8List _dilateMask(Uint8List edge, int w, int h, int radius,
     {required bool vertical}) {
   final out = Uint8List(w * h);
   if (vertical) {
-    for (var x = 0; x < w; x++) {
-      var cnt = 0;
-      for (var y = 0; y <= radius && y < h; y++) {
-        cnt += edge[y * w + x];
+    final colCnt = Int32List(w);
+    for (var y = 0; y <= radius && y < h; y++) {
+      final base = y * w;
+      for (var x = 0; x < w; x++) {
+        colCnt[x] += edge[base + x];
       }
-      for (var y = 0; y < h; y++) {
-        out[y * w + x] = cnt > 0 ? 1 : 0;
-        final add = y + radius + 1;
-        final del = y - radius;
-        if (add < h) cnt += edge[add * w + x];
-        if (del >= 0) cnt -= edge[del * w + x];
+    }
+    for (var y = 0; y < h; y++) {
+      final base = y * w;
+      for (var x = 0; x < w; x++) {
+        out[base + x] = colCnt[x] > 0 ? 1 : 0;
+      }
+      final add = y + radius + 1;
+      final del = y - radius;
+      if (add < h) {
+        final ab = add * w;
+        for (var x = 0; x < w; x++) {
+          colCnt[x] += edge[ab + x];
+        }
+      }
+      if (del >= 0) {
+        final db = del * w;
+        for (var x = 0; x < w; x++) {
+          colCnt[x] -= edge[db + x];
+        }
       }
     }
   } else {
@@ -1529,26 +1584,38 @@ Uint8List _dilateMask(Uint8List edge, int w, int h, int radius,
 }
 
 /// 垂直方向滑窗盒式均值（每列独立，窗口 [y-radius, y+radius] 截断）。
+/// 逐列和数组 + 行优先遍历（语义与逐列滑动完全一致，缓存友好）。
 Float32List _verticalBoxMean(Uint16List buf, int w, int h, int radius) {
   final out = Float32List(w * h);
-  for (var x = 0; x < w; x++) {
-    var sum = 0, count = 0;
-    for (var y = 0; y <= radius && y < h; y++) {
-      sum += buf[y * w + x];
+  final colSum = Int32List(w);
+  var count = 0;
+  for (var y = 0; y <= radius && y < h; y++) {
+    final base = y * w;
+    for (var x = 0; x < w; x++) {
+      colSum[x] += buf[base + x];
+    }
+    count++;
+  }
+  for (var y = 0; y < h; y++) {
+    final base = y * w;
+    for (var x = 0; x < w; x++) {
+      out[base + x] = colSum[x] / count;
+    }
+    final add = y + radius + 1;
+    final del = y - radius;
+    if (add < h) {
+      final ab = add * w;
+      for (var x = 0; x < w; x++) {
+        colSum[x] += buf[ab + x];
+      }
       count++;
     }
-    for (var y = 0; y < h; y++) {
-      out[y * w + x] = sum / count;
-      final add = y + radius + 1;
-      final del = y - radius;
-      if (add < h) {
-        sum += buf[add * w + x];
-        count++;
+    if (del >= 0) {
+      final db = del * w;
+      for (var x = 0; x < w; x++) {
+        colSum[x] -= buf[db + x];
       }
-      if (del >= 0) {
-        sum -= buf[del * w + x];
-        count--;
-      }
+      count--;
     }
   }
   return out;
@@ -1915,6 +1982,13 @@ double _claheBilinear(Float64List luts, int tilesX, int tilesY, int blockSize,
   final bottom = l10 + (l11 - l10) * wx;
   return top + (bottom - top) * wy;
 }
+
+/// CLAHE 分块 LUT 的公开入口（GPU 链执行器复用：tile 直方图统计/CDF
+/// 仍在 CPU 计算，逐像素双线性插值放 shader）。bin 数恒为 256，
+/// 返回长度 tilesX*tilesY*256，布局见 [_claheTileLuts]。
+Float64List claheTileLuts(Uint16List ys, int width, int height,
+        int blockSize, double clipLimit, int maxValue) =>
+    _claheTileLuts(ys, width, height, blockSize, clipLimit, maxValue);
 
 /// 自适应直方图均衡（CLAHE，对比度受限）：对亮度做分块直方图均衡，
 /// 三通道按亮度缩放比例等比缩放（保持 hue/sat 不变），原地修改。

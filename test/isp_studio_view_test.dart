@@ -202,36 +202,28 @@ void main() {
 
     final palette = find.byType(IspNodePalette);
     expect(palette, findsOneWidget);
-    // 分组标题：Source / CIS Src / Process / Output / Instrument。
-    for (final name in ['Source', 'CIS Src', 'Process', 'Output', 'Instrument']) {
-      expect(find.descendant(of: palette, matching: find.text(name)),
-          findsOneWidget);
-    }
-    // ICG 荧光内窥镜方案的 Process 新算子与 Fluorescence 子分组。
+    // 大类分组默认收起：五个顶级分组标题可见，节点项不可见。
     for (final name in [
-      '坏点校正',
-      'FPN 校正',
-      '镜头阴影校正',
-      'Gr/Gb 均衡',
-      'Bayer 降噪',
-      '高光恢复',
-      'RGB 降噪',
-      '锐化',
-      'RGB→YUV 转换',
-      'Fluorescence',
-      '激发泄漏扣除',
-      '背景扣除',
-      '激发归一化',
-      '时域 IIR 降噪',
-      '伪彩映射',
-      '荧光融合',
+      'Source', 'Process', 'Datapath', 'Output', 'Instrument'
     ]) {
       expect(find.descendant(of: palette, matching: find.text(name)),
           findsOneWidget);
     }
-    // image_source 节点名为 Image。
-    expect(find.descendant(of: palette, matching: find.text('Image')),
-        findsOneWidget);
+    expect(find.descendant(of: palette, matching: find.text('色彩校正 CCM')),
+        findsNothing);
+
+    // 展开指定分组（点击标题）。
+    Future<void> expand(String name) async {
+      await tester.tap(find.descendant(of: palette, matching: find.text(name)));
+      await tester.pumpAndSettle();
+    }
+
+    await expand('Source');
+    // Source 展开后：CIS Src 嵌套子组（默认展开）与 Image/Video。
+    for (final name in ['CIS Src', 'Image', 'Video']) {
+      expect(find.descendant(of: palette, matching: find.text(name)),
+          findsOneWidget);
+    }
     // CIS Src 6 个子类。
     for (final name in [
       'Bayer RGGB',
@@ -244,16 +236,42 @@ void main() {
       expect(find.descendant(of: palette, matching: find.text(name)),
           findsOneWidget);
     }
-    // Process / Output 分组的节点（Bayer RAW 源不在工具栏，与 CIS Src 的
-    // Bayer RGGB 重复）。
-    expect(find.descendant(of: palette, matching: find.text('Bayer RAW 源')),
-        findsNothing);
+
+    await expand('Process');
+    // Process 算子与 Fluorescence 子分组（嵌套默认展开）。
     for (final name in [
       '黑电平校正',
+      '坏点校正',
+      'FPN 校正',
+      '镜头阴影校正',
+      'Gr/Gb 均衡',
+      'Bayer 降噪',
+      '高光恢复',
       '去马赛克',
       '白平衡',
       '色彩校正 CCM',
+      'RGB 降噪',
+      '锐化',
       'Gamma/色调',
+      'ColorTrans',
+      'RGB→YUV 转换',
+      'RGB→HSL 转换',
+      'YUV→RGB 转换',
+      'Fluorescence',
+      '激发泄漏扣除',
+      '背景扣除',
+      '激发归一化',
+      '时域 IIR 降噪',
+      '伪彩映射',
+      '荧光融合',
+    ]) {
+      expect(find.descendant(of: palette, matching: find.text(name)),
+          findsOneWidget);
+    }
+
+    await expand('Output');
+    await expand('Instrument');
+    for (final name in [
       '预览',
       '图片输出',
       '视频输出',
@@ -267,6 +285,10 @@ void main() {
       expect(find.descendant(of: palette, matching: find.text(name)),
           findsWidgets);
     }
+
+    // Bayer RAW 源不在工具栏（与 CIS Src 的 Bayer RGGB 重复）。
+    expect(find.descendant(of: palette, matching: find.text('Bayer RAW 源')),
+        findsNothing);
 
     // 默认图已有 1 个 CCM 节点，点击工具栏再添加 1 个。
     int ccmCount() =>
