@@ -168,14 +168,12 @@ class IspGraph {
   bool videoInputPortAvailable(String nodeId, String port) {
     final node = nodes[nodeId];
     final type = node == null ? null : IspNodeRegistry.byId(node.typeId);
-    if (type == null ||
-        !type.hasVideoInputGroup ||
-        !IspNodeType.videoInputGroupPorts.contains(port)) {
+    final group = IspNodeType.inputMutexGroupOf(port);
+    if (type == null || !type.hasVideoInputGroup || group == null) {
       return true;
     }
     for (final p in type.inputs) {
-      if (p.name == port ||
-          !IspNodeType.videoInputGroupPorts.contains(p.name)) {
+      if (p.name == port || !group.contains(p.name)) {
         continue;
       }
       if (connectionAt(nodeId, p.name) != null) return false;

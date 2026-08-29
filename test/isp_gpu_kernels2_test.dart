@@ -314,6 +314,43 @@ void main() {
     expectClose(bytes.buffer.asUint16List(), cpu, 4, 'sharpen');
   });
 
+  test('morphology（水平+垂直两趟，RGB/Mono × 腐蚀/膨胀）', () async {
+    // 可分离两趟：同一 shader 先 uDir=0（水平）后 uDir=1（垂直）。
+    // 极小/极大滤波为纯整数选择，GPU 必须与 CPU 精确一致（容差 0）。
+    Future<Uint16List> morphGpu(Uint16List src, int channels, bool erode,
+        int radius) async {
+      final hPass = await runShader(
+          prog('morphology'),
+          [
+            w * channels / 2, h.toDouble(), w.toDouble(), channels.toDouble(),
+            0.0, erode ? 1.0 : 0.0, radius.toDouble(),
+          ],
+          [src], [channels], channels);
+      return runShader(
+          prog('morphology'),
+          [
+            w * channels / 2, h.toDouble(), w.toDouble(), channels.toDouble(),
+            1.0, erode ? 1.0 : 0.0, radius.toDouble(),
+          ],
+          [hPass], [channels], channels);
+    }
+
+    for (final (channels, erode, radius, seed) in [
+      (3, false, 2, 41), // RGB 膨胀 r=2
+      (3, true, 1, 42), // RGB 腐蚀 r=1
+      (1, true, 3, 43), // Mono 腐蚀 r=3
+      (1, false, 2, 44), // Mono 膨胀 r=2
+    ]) {
+      final src = randFrame(w * h * channels, seed);
+      final cpu = Uint16List.fromList(src);
+      applyMorphology(cpu,
+          width: w, height: h, channels: channels, erode: erode, radius: radius);
+      final gpuOut = await morphGpu(src, channels, erode, radius);
+      expectClose(gpuOut, cpu, 0,
+          'morphology ch=$channels ${erode ? "erode" : "dilate"} r=$radius');
+    }
+  });
+
   test('csc_rgb2yuv（bt601/bt709 × full/limited）', () async {
     final src = randFrame(w * h * 3, 27);
     for (final standard in ['bt601', 'bt709']) {
@@ -350,5 +387,17 @@ void main() {
         [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble()],
         [src], [3], 3);
     expectClose(gpuOut, cpu, 2, 'hsl2rgb');
+  });
+
+  test('yuv_gains（YUV 调节器：Y 增益 + U/V 中点缩放）', () async {
+    final src = randFrame(w * h * 3, 30);
+    final cpu = adjustYuv(src,
+        maxValue: maxValue, yGain: 1.3, uGain: 0.6, vGain: 1.8);
+    final gpuOut = await runShader(
+        prog('yuv_gains'),
+        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
+         (maxValue >> 1).toDouble(), 1.3, 0.6, 1.8],
+        [src], [3], 3);
+    expectClose(gpuOut, cpu, 1, 'yuv_gains');
   });
 }

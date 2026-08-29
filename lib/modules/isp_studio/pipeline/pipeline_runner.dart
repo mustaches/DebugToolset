@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../models/isp_graph.dart';
+import 'color_temp.dart';
 import 'dng_source.dart';
 import 'demosaic_advanced.dart';
 import 'frame3d.dart';
@@ -11,6 +12,27 @@ import 'image_source.dart';
 import 'video_source.dart';
 import 'instruments.dart';
 import 'isp_kernels.dart';
+import 'levels_curve.dart';
+
+export 'levels_curve.dart'
+    show
+        kLevelsMax,
+        kLevelsIdentityPoints,
+        levelsPointsFromParam,
+        normalizeLevelsPoints,
+        levelsCurveIsIdentity,
+        levelsCurveEval,
+        levelsCurveLut;
+
+export 'color_temp.dart'
+    show
+        kColorTempMin,
+        kColorTempMax,
+        kColorTempDefault,
+        cctToWhitePoint,
+        colorTempGains,
+        colorTempCcm,
+        measureCctFromRgba;
 
 export 'isp_kernels.dart'
     show
@@ -52,7 +74,23 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
   if (!graph.nodes.containsKey(sinkNodeId)) {
     throw StateError('目标节点不存在');
   }
-  final upstream = graph.upstreamOf(sinkNodeId).toSet()..add(sinkNodeId);
+  // 上游追溯：多路选择器（mux4）未选中的输入支路是死路——不追溯、
+  // 不参与编译（不解码、不计入源节点数）。'in$sel' 前缀同时覆盖
+  // in1/in1_yuv/in1_hsl/in1_mono（组内互斥保证只有一条连接）。
+  final upstream = <String>{sinkNodeId};
+  final queue = [sinkNodeId];
+  while (queue.isNotEmpty) {
+    final id = queue.removeLast();
+    final node = graph.nodes[id]!;
+    final muxSel = node.typeId == 'mux4'
+        ? (node.paramValues['select'] as num?)?.toInt() ?? 1
+        : 0;
+    for (final c in graph.connections) {
+      if (c.toNodeId != id) continue;
+      if (muxSel > 0 && !c.toPort.startsWith('in$muxSel')) continue;
+      if (upstream.add(c.fromNodeId)) queue.add(c.fromNodeId);
+    }
+  }
   final order = graph.topologicalOrder();
   if (order.isEmpty) {
     throw StateError('图中存在环路，无法执行');
@@ -82,10 +120,20 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
   if (sources == 0) {
     throw StateError('流水线缺少源节点');
   }
-  // 含荧光融合节点的链允许 2 个源节点（白光 + 荧光双路），其余链单源。
-  final hasFusion = chain.any((op) => op['typeId'] == 'fluoro_fusion');
-  if (sources > (hasFusion ? 2 : 1)) {
-    throw StateError(hasFusion ? '一条流水线最多两个源节点' : '一条流水线只能有一个源节点');
+  // 含荧光融合/乘法器/加法器/混叠器节点的链允许 2 个源节点（双路
+  // 输入），多路选择器允许 4 个（源1~源4），其余链单源。
+  final maxSources = chain.any((op) => op['typeId'] == 'mux4')
+      ? 4
+      : chain.any((op) =>
+              op['typeId'] == 'fluoro_fusion' ||
+              op['typeId'] == 'multiplier' ||
+              op['typeId'] == 'adder' ||
+              op['typeId'] == 'blender')
+          ? 2
+          : 1;
+  if (sources > maxSources) {
+    throw StateError(
+        maxSources > 1 ? '一条流水线最多 $maxSources 个源节点' : '一条流水线只能有一个源节点');
   }
   if (!sourceTypes.contains(chain.first['typeId'])) {
     throw StateError('源节点必须位于流水线起点');
@@ -394,7 +442,7 @@ Future<RawSourceFrame> decodeRawSourceFrame(
 
 /// 视频格式输入组端口名（与 IspNodeType.videoInputGroupPorts 一致；
 /// 本地保留一份以保持本文件无模型依赖）。
-const _videoInputPorts = ['in', 'in_yuv', 'in_hsl', 'in_mono'];
+const _videoInputPorts = ['in', 'in_yuv', 'in_hsl', 'in_mono', 'in_raw'];
 
 /// 平面 8 位 YUV → 16 位量级交织（值域 0..255 直通）：平面轨道与仅
 /// 支持交织数据的算子（如 RGB 分路器）衔接时的兜底物化。
@@ -521,11 +569,12 @@ Future<Uint8List> runChainFrame(
     'out_hsl': frame.data,
   };
 
-  // 多源链（含荧光融合节点，compileChain 已校验最多 2 个源）：每个算子
-  // 按其视频组输入连接（'in'/'in_mono' 等）从 frames 取输入帧，第二个
-  // 源节点在循环内按需解码；单源链行为完全不变（线性 frame 路径）。
-  final multiSource =
-      chain.where((op) => sourceTypes.contains(op['typeId'])).length > 1;
+  // 分支感知取帧：每个算子按其视频组输入连接（'in'/'in_mono' 等）从
+  // frames 取输入帧，第二个源节点（荧光/乘法器支路，compileChain 已
+  // 校验最多 2 个源）在循环内按需解码。单源分支链（同源多分支）同样
+  // 依赖此路径：线性主帧携带的是拓扑前驱的输出，分支节点的前驱可能
+  // 属于另一分支（如 源→边缘提取 与 源→分路器 并存时，分路器会错拿
+  // 边缘图）。线性链中连接的上游即拓扑前驱，行为与旧线性路径一致。
   final frames = <String, _Frame>{firstNodeId: frame};
 
   List<int>? getPortData(Map<String, Object?> op, String inputPortName) {
@@ -549,35 +598,60 @@ Future<Uint8List> runChainFrame(
     final p = (op['params'] as Map?)?.cast<String, Object?>() ?? const {};
     onNodeStart?.call(nodeId);
     final opSw = nodeTimingsUs == null ? null : (Stopwatch()..start());
-    if (multiSource) {
-      if (sourceTypes.contains(typeId)) {
-        // 第二个源节点（荧光支路）：仅支持 RAW 源，解码后入 frames。
-        if (!rawSourceTypes.contains(typeId)) {
-          throw StateError('多源链的额外源节点仅支持 RAW 源');
-        }
-        frame = await _decodeRawSource(typeId, p, frameIndex);
-        frames[nodeId] = frame;
-        portOutputs[nodeId] = {'out': frame.data};
-        if (nodeTimingsUs != null) {
-          nodeTimingsUs[nodeId] =
-              (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
-        }
-        onNodeOutput?.call(
-            nodeId, frame.data, frame.format, frame.width, frame.height);
-        continue;
+    if (sourceTypes.contains(typeId)) {
+      // 第二个源节点（荧光/乘法器支路）：仅支持 RAW 源，解码后入 frames。
+      // 单源链经 chain.skip(1) 不会再到源节点（compileChain 已校验）。
+      if (!rawSourceTypes.contains(typeId)) {
+        throw StateError('多源链的额外源节点仅支持 RAW 源');
       }
-      // 按视频组输入连接从 frames 取本算子的输入帧。
-      final inputs = op['inputs'] as Map<String, Object?>?;
-      if (inputs != null) {
-        for (final port in _videoInputPorts) {
-          final conn = inputs[port] as Map<String, Object?>?;
-          final from = conn?['fromNodeId'] as String?;
-          final upstream = from == null ? null : frames[from];
-          if (upstream != null) {
-            frame = upstream;
-            break;
-          }
+      frame = await _decodeRawSource(typeId, p, frameIndex);
+      frames[nodeId] = frame;
+      portOutputs[nodeId] = {'out': frame.data};
+      if (nodeTimingsUs != null) {
+        nodeTimingsUs[nodeId] =
+            (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
+      }
+      onNodeOutput?.call(
+          nodeId, frame.data, frame.format, frame.width, frame.height);
+      continue;
+    }
+    // 按视频组输入连接从 frames 取本算子的输入帧（分支感知，见上文）。
+    final inputs = op['inputs'] as Map<String, Object?>?;
+    if (inputs != null) {
+      for (final port in _videoInputPorts) {
+        final conn = inputs[port] as Map<String, Object?>?;
+        final from = conn?['fromNodeId'] as String?;
+        if (from == null) continue;
+        final upstream = frames[from];
+        if (upstream == null) continue;
+        // 单通道端口（分路器 out_y / edge_extract out_mono 等）：端口数据
+        // 长度 = w*h 且不是上游主帧的别名时，构造 mono 帧作为本算子输入，
+        // 而不是把上游的多通道整帧塞进来（否则 in_mono 接入分路器 Y 时
+        // 下游会拿到 YUV 整帧，格式与数据都错）。
+        final pdata = portOutputs[from]?[conn!['fromPort'] as String? ?? ''];
+        if (pdata != null &&
+            !identical(pdata, upstream.data) &&
+            pdata.length == upstream.width * upstream.height &&
+            upstream.format != 'mono' &&
+            upstream.format != 'mosaic') {
+          frame = pdata is Uint8List
+              ? _Frame(
+                  data: Uint16List(0),
+                  format: 'mono',
+                  width: upstream.width,
+                  height: upstream.height,
+                  maxValue: upstream.maxValue,
+                  mono8: pdata)
+              : _Frame(
+                  data: pdata as Uint16List,
+                  format: 'mono',
+                  width: upstream.width,
+                  height: upstream.height,
+                  maxValue: upstream.maxValue);
+        } else {
+          frame = upstream;
         }
+        break;
       }
     }
     // Bypass（Process 类节点的直通开关）：主帧原样下传；in_mono 支路
@@ -588,6 +662,7 @@ Future<Uint8List> runChainFrame(
       if (frame.format == 'mono') outs['out_mono'] = frame.data;
       final monoIn = getPortData(op, 'in_mono');
       if (monoIn != null) outs['out_mono'] = monoIn;
+      frames[nodeId] = frame; // 直通帧也要入表，下游按连接取帧
       if (nodeTimingsUs != null) {
         nodeTimingsUs[nodeId] =
             (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
@@ -692,6 +767,91 @@ Future<Uint8List> runChainFrame(
             amount: _double(p, 'amount'),
             threshold: _double(p, 'threshold'),
             maxValue: frame.maxValue);
+      // ---- 高频边缘提取：亮度高通输出黑底白线边缘图（detail 按邻域
+      // 均值归一化为相对对比度 rel，相对门限 + gain×√rel×maxValue
+      // 显示压缩；RGB/YUV/HSL 三域通用，输出保持输入格式；非恒等
+      // 算子，始终输出新帧）----
+      case 'edge_extract':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final fmt = frame.format;
+        if (fmt != 'rgb' && fmt != 'yuv' && fmt != 'hsl') {
+          throw StateError('高频边缘提取需要 RGB/YUV/HSL 输入');
+        }
+        // YUV 平面轨道先物化为交织（兜底路径，非常规连接）。
+        final data = frame.yuvPlanes8 != null
+            ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
+            : frame.data;
+        frame = _Frame(
+          data: extractHighFreq(data,
+              width: w,
+              height: h,
+              format: fmt,
+              // 增益缺省按 1.0 处理（参数缺失时不至于输出纯中灰）。
+              gain: (p['gain'] as num?)?.toDouble() ?? 1.0,
+              threshold: (p['threshold'] as num?)?.toDouble() ?? 4.0,
+              maxValue: max),
+          format: fmt,
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+        // out_mono：单通道边缘亮度图（w*h）。RGB/YUV 的边缘值在 0 通道
+        // （RGB 三通道同值），HSL 在 L（2 通道）；从交织输出提取。
+        final monoEdge = Uint16List(w * h);
+        final ch = fmt == 'hsl' ? 2 : 0;
+        final edgeData = frame.data;
+        for (var i = 0, j = ch; i < w * h; i++, j += 3) {
+          monoEdge[i] = edgeData[j];
+        }
+        portOutputs[nodeId] = {'out_mono': monoEdge};
+      // ---- 腐蚀/膨胀：方形结构元逐通道极小/极大滤波，RGB 与 Mono 双
+      // 通路（in / in_mono 互斥，只能接入一路），输出保持输入格式 ----
+      case 'morphology':
+        final monoIn = getPortData(op, 'in_mono');
+        final erode = _str(p, 'mode') != 'dilate';
+        final radius = _int(p, 'radius');
+        if (monoIn != null) {
+          // in_mono 侧支路：处理端口数据而非主链帧，拷贝后处理避免污染
+          // 旁路（同 ahe），结果登记 out_mono 供下游取用。
+          final mono = Uint16List.fromList(monoIn);
+          applyMorphology(mono,
+              width: frame.width,
+              height: frame.height,
+              erode: erode,
+              radius: radius);
+          // in_mono 单接时主帧就是该 mono 的构造帧：必须同步更新主帧，
+          // 否则循环末公用登记段（frame.format=='mono' 时
+          // opOuts['out_mono']=frame.data）会用未处理数据覆盖 out_mono。
+          // in 主链并存时主帧为 RGB，只登记 out_mono 即可。
+          if (frame.format == 'mono') {
+            frame = _Frame(
+                data: mono,
+                format: 'mono',
+                width: frame.width,
+                height: frame.height,
+                maxValue: frame.maxValue);
+          }
+          portOutputs[nodeId] = {'out_mono': mono};
+        } else if (frame.format == 'rgb') {
+          applyMorphology(frame.data,
+              width: frame.width,
+              height: frame.height,
+              channels: 3,
+              erode: erode,
+              radius: radius);
+          portOutputs[nodeId] = {'out': frame.data};
+        } else if (frame.format == 'mono') {
+          applyMorphology(frame.data,
+              width: frame.width,
+              height: frame.height,
+              erode: erode,
+              radius: radius);
+          portOutputs[nodeId] = {'out': frame.data, 'out_mono': frame.data};
+        } else {
+          throw StateError('腐蚀/膨胀需要 RGB 或 Mono 输入');
+        }
       case 'csc_rgb2yuv':
         frame.requireRgb('RGB→YUV 转换');
         final w = frame.width;
@@ -769,9 +929,8 @@ Future<Uint8List> runChainFrame(
           height: h,
           maxValue: max,
         );
-      // ---- HSL 调试器：HSL 域调参（恒等参数时核内直通不拷贝）----
-      case 'hsl_debugger':
-        frame.requireHsl('HSL调试器');
+      // ---- HSL 调节器：HSL 域调参（恒等参数时核内直通不拷贝）----
+      case 'hsl_debugger':        frame.requireHsl('HSL调节器');
         final w = frame.width;
         final h = frame.height;
         final max = frame.maxValue;
@@ -783,6 +942,196 @@ Future<Uint8List> runChainFrame(
               sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,
               lGain: (p['l_gain'] as num?)?.toDouble() ?? 1.0),
           format: 'hsl',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- RGB 调节器：RGB 域通道增益（恒等参数时核内直通不拷贝）----
+      case 'rgb_debugger':
+        frame.requireRgb('RGB调节器');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: adjustRgb(frame.data,
+              maxValue: max,
+              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+              rGain: (p['r_gain'] as num?)?.toDouble() ?? 1.0,
+              gGain: (p['g_gain'] as num?)?.toDouble() ?? 1.0,
+              bGain: (p['b_gain'] as num?)?.toDouble() ?? 1.0),
+          format: 'rgb',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- YUV 调节器：YUV 域调参（恒等参数时核内直通不拷贝）----
+      case 'yuv_debugger':
+        frame.requireYuv('YUV调节器');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          data: adjustYuv(frame.data,
+              maxValue: max,
+              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+              yGain: (p['y_gain'] as num?)?.toDouble() ?? 1.0,
+              uGain: (p['u_gain'] as num?)?.toDouble() ?? 1.0,
+              vGain: (p['v_gain'] as num?)?.toDouble() ?? 1.0),
+          format: 'yuv',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- 色饱和度/亮度调节器：RGB/YUV/HSL 三域通用调参，输出保持输入
+      // 格式（恒等参数时核内直通不拷贝）----
+      case 'sat_bright_adjuster':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final fmt = frame.format;
+        if (fmt != 'rgb' && fmt != 'yuv' && fmt != 'hsl') {
+          throw StateError('色饱和度/亮度调节器需要 RGB/YUV/HSL 输入');
+        }
+        // YUV 平面轨道先物化为交织（兜底路径，非常规连接）。
+        final data = frame.yuvPlanes8 != null
+            ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
+            : frame.data;
+        frame = _Frame(
+          data: adjustSatBright(data,
+              format: fmt,
+              maxValue: max,
+              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+              satGain: (p['sat_gain'] as num?)?.toDouble() ?? 1.0,
+              brightGain: (p['bright_gain'] as num?)?.toDouble() ?? 1.0),
+          format: fmt,
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- 亮度/对比度调节器：RGB/YUV/HSL/Mono 四域亮度/对比度调参，输出
+      // 保持输入格式（bright=100 且 gain=100 时核内直通不拷贝）----
+      case 'bright_contrast_adjuster':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final fmt = frame.format;
+        if (fmt != 'rgb' && fmt != 'yuv' && fmt != 'hsl' && fmt != 'mono') {
+          throw StateError('亮度/对比度调节器需要 RGB/YUV/HSL/Mono 输入');
+        }
+        // YUV 平面轨道先物化为交织（兜底路径，非常规连接）；mono8 轨道
+        // （视频分路的 8 位单通道）物化为 16 位单通道。
+        final data = frame.yuvPlanes8 != null
+            ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
+            : frame.mono8 != null
+                ? Uint16List.fromList(frame.mono8!)
+                : frame.data;
+        frame = _Frame(
+          data: adjustBrightContrast(data,
+              format: fmt,
+              maxValue: max,
+              // 缺省按恒等（100/50/100）处理。
+              brightPct: (p['bright'] as num?)?.toDouble() ?? 100.0,
+              baselinePct: (p['baseline'] as num?)?.toDouble() ?? 50.0,
+              gainPct: (p['gain'] as num?)?.toDouble() ?? 100.0),
+          format: fmt,
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+        // out_mono：非 mono 输入时取输出帧的亮度通道（yuv→Y、hsl→L、
+        // rgb→BT.601 亮度）登记为单通道端口，供蒙版等 mono 侧端口消费
+        // （mono 输入由循环末统一登记 out=out_mono=主帧）。
+        if (fmt != 'mono') {
+          final data = frame.data;
+          final mono = Uint16List(w * h);
+          if (fmt == 'rgb') {
+            for (var i = 0, j = 0; i < w * h; i++, j += 3) {
+              mono[i] = (19595 * data[j] +
+                      38470 * data[j + 1] +
+                      7471 * data[j + 2] +
+                      32768) >>
+                  16;
+            }
+          } else {
+            final ch = fmt == 'hsl' ? 2 : 0;
+            for (var i = 0, j = ch; i < w * h; i++, j += 3) {
+              mono[i] = data[j];
+            }
+          }
+          portOutputs[nodeId] = {'out_mono': mono};
+        }
+      // ---- 曲线调节器：RGB 域传递函数（曲线控制点参数 points，0..4095
+      // 域；curveMode 选择生成公式：spline 单调三次样条 / bezier 贝塞尔
+      // / linear 线段 / gamma（y=max·(x/max)^(1/γ)，取 gamma 参数）；
+      // 恒等曲线时直通不拷贝）----
+      case 'levels_curves':
+        frame.requireRgb('曲线调节器');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final points = levelsPointsFromParam(p['points']);
+        final mode = levelsCurveModeFromParam(p['curveMode']);
+        final gamma = (p['gamma'] as num?)?.toDouble() ?? 1.0;
+        // gamma 模式以 γ==1 为恒等；其余模式以控制点是否全在对角线上判定。
+        final identity = mode == LevelsCurveMode.gamma
+            ? gamma == 1.0
+            : levelsCurveIsIdentity(points);
+        frame = _Frame(
+          data: identity
+              ? frame.data
+              : applyLevelsCurve(
+                  frame.data, levelsCurveLut(points, mode: mode, gamma: gamma),
+                  maxValue: max),
+          format: 'rgb',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- 色彩平衡：RGB/YUV/HSL 三域中间调加性偏移，输出保持输入格式
+      // （cyan_red/magenta_green/yellow_blue 三滑杆，全 0 直通不拷贝）----
+      case 'color_balance':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final fmt = frame.format;
+        if (fmt != 'rgb' && fmt != 'yuv' && fmt != 'hsl') {
+          throw StateError('色彩平衡需要 RGB/YUV/HSL 输入');
+        }
+        // YUV 平面轨道先物化为交织（兜底路径，非常规连接）。
+        final data = frame.yuvPlanes8 != null
+            ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
+            : frame.data;
+        frame = _Frame(
+          data: applyColorBalance(data,
+              format: fmt,
+              maxValue: max,
+              cyanRed: _double(p, 'cyan_red'),
+              magentaGreen: _double(p, 'magenta_green'),
+              yellowBlue: _double(p, 'yellow_blue')),
+          format: fmt,
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- 色温调节器：RGB 域 von Kries 对角增益（目标色温 temperature
+      // 相对参考色温 measured_cct —— 隐式参数，点击节点上的测量值按钮
+      // 时写入（applyMeasuredColorTemp），缺省/未设定按 6500K；增益全 1
+      // 时 adjustRgb 直通不拷贝）----
+      case 'color_temp_adjuster':
+        frame.requireRgb('色温调节器');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final gains = colorTempGains(
+            (p['temperature'] as num?)?.toDouble() ?? kColorTempDefault,
+            _int(p, 'measured_cct'));
+        frame = _Frame(
+          data: adjustRgb(frame.data,
+              maxValue: max,
+              rGain: gains[0],
+              gGain: gains[1],
+              bGain: gains[2]),
+          format: 'rgb',
           width: w,
           height: h,
           maxValue: max,
@@ -880,6 +1229,187 @@ Future<Uint8List> runChainFrame(
           );
         }
         // 荧光输入未连接或尺寸不符：白光直通。
+      // ---- 乘法器：（输入源1+offset1）×（输入源2+offset2）逐像素
+      // 归一化相乘（out = (a+offset1)×(b+offset2)/maxValue），输出
+      // Mono；两路输入分辨率必须一致 ----
+      case 'multiplier':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        // 两路输入都按端口取数（与合路器同）：单源链的线性主帧不跟踪
+        // in_mono 支路（支路末端可能是其他格式，如分路器的 YUV 帧），
+        // 不能对主帧 requireMono。in_mono 未连接时才回退线性帧。
+        var d1 = getPortData(op, 'in_mono');
+        if (d1 == null) {
+          frame.requireMono('乘法器');
+          d1 = frame.data;
+        }
+        final d2 = getPortData(op, 'in_mono2');
+        if (d2 == null) {
+          throw StateError('乘法器需要接入输入源2（in_mono2 端口）');
+        }
+        // 分辨率一致性校验：多源链可取上游帧的精确宽高，否则按数据
+        // 长度兜底（同 fluoro_fusion 的尺寸约定）。
+        final conn2 = (op['inputs'] as Map<String, Object?>?)?['in_mono2']
+            as Map<String, Object?>?;
+        final up2 = conn2 == null
+            ? null
+            : frames[conn2['fromNodeId'] as String? ?? ''];
+        final sameResolution = up2 != null
+            ? up2.width == w && up2.height == h
+            : d1.length == w * h && d2.length == w * h;
+        if (!sameResolution) {
+          throw StateError(up2 != null
+              ? '乘法器两路输入分辨率必须一致（源1: $w×$h，源2: ${up2.width}×${up2.height}）'
+              : '乘法器两路输入分辨率必须一致（源1: $w×$h）');
+        }
+        frame = _Frame(
+            data: multiplyMono(d1, d2,
+                offset1: _double(p, 'offset1'),
+                offset2: _double(p, 'offset2'),
+                maxValue: max),
+            format: 'mono',
+            width: w,
+            height: h,
+            maxValue: max);
+      // ---- 加法器：源1×balance + 源2×(1−balance) 平衡加权混合，两路
+      // mono 逐像素相加（增益总和恒为 1）；取数/校验口径同乘法器 ----
+      case 'adder':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        // 两路输入都按端口取数（与乘法器同）：in_mono 未连接时回退线性帧。
+        var d1 = getPortData(op, 'in_mono');
+        if (d1 == null) {
+          frame.requireMono('加法器');
+          d1 = frame.data;
+        }
+        final d2 = getPortData(op, 'in_mono2');
+        if (d2 == null) {
+          throw StateError('加法器需要接入输入源2（in_mono2 端口）');
+        }
+        final conn2 = (op['inputs'] as Map<String, Object?>?)?['in_mono2']
+            as Map<String, Object?>?;
+        final up2 = conn2 == null
+            ? null
+            : frames[conn2['fromNodeId'] as String? ?? ''];
+        final sameResolution = up2 != null
+            ? up2.width == w && up2.height == h
+            : d1.length == w * h && d2.length == w * h;
+        if (!sameResolution) {
+          throw StateError(up2 != null
+              ? '加法器两路输入分辨率必须一致（源1: $w×$h，源2: ${up2.width}×${up2.height}）'
+              : '加法器两路输入分辨率必须一致（源1: $w×$h）');
+        }
+        frame = _Frame(
+            data: blendMono(d1, d2,
+                // 缺省按平衡中点 0.5（参数缺失时不至于把源2 清零）。
+                balance: (p['balance'] as num?)?.toDouble() ?? 0.5,
+                maxValue: max),
+            format: 'mono',
+            width: w,
+            height: h,
+            maxValue: max);
+      // ---- 混叠器：基图 + 混叠图×蒙版/maxValue×混叠强度（正常模式），
+      // 输出保持基图格式（RGB/YUV/HSL/Mono）；混叠图/蒙版按侧向端口
+      // 取数（同乘法器 in_mono2 口径），分辨率必须与基图一致 ----
+      case 'blender':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final fmt = frame.format;
+        if (fmt != 'rgb' && fmt != 'yuv' && fmt != 'hsl' && fmt != 'mono') {
+          throw StateError('混叠器需要 RGB/YUV/HSL/Mono 基图输入');
+        }
+        // YUV 平面轨道先物化为交织（兜底路径，非常规连接）；mono8 轨道
+        // 物化为 16 位单通道（同 bright_contrast_adjuster）。
+        final baseData = frame.yuvPlanes8 != null
+            ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
+            : frame.mono8 != null
+                ? Uint16List.fromList(frame.mono8!)
+                : frame.data;
+        final mask = getPortData(op, 'in_mask');
+        if (mask == null) {
+          throw StateError('混叠器需要接入蒙版（in_mask 端口）');
+        }
+        // 混叠图四域端口（in_blend/in_blend_yuv/in_blend_hsl/in_blend_mono）
+        // 选一接入；通道数按数据长度判定（w*h*3 → 三通道，w*h → mono），
+        // 兼容旧流程文件 in_blend 直接接 mono 的连法。
+        List<int>? blend;
+        for (final bp in const [
+          'in_blend', 'in_blend_yuv', 'in_blend_hsl', 'in_blend_mono']) {
+          blend = getPortData(op, bp);
+          if (blend != null) break;
+        }
+        if (blend == null) {
+          throw StateError('混叠器需要接入混叠图（in_blend 端口）');
+        }
+        final blendChannels = blend.length == w * h * 3
+            ? 3
+            : blend.length == w * h
+                ? 1
+                : 0;
+        if (mask.length != w * h || blendChannels == 0) {
+          throw StateError('混叠器蒙版/混叠图分辨率必须与基图一致');
+        }
+        frame = _Frame(
+            data: blendMaskMono(baseData, blend, mask,
+                format: fmt,
+                blendChannels: blendChannels,
+                // 缺省按全强度 1.0（参数缺失时不至于没有混叠效果）。
+                strength: (p['strength'] as num?)?.toDouble() ?? 1.0,
+                maxValue: max),
+            format: fmt,
+            width: w,
+            height: h,
+            maxValue: max);
+      // ---- 多路选择器（4选1）：把 select 选中的那路源输入透传到输出
+      // （不改数据，输出格式 = 所选输入格式；端口数据与上游主帧不同
+      // 时按单通道端口构造 mono 帧，与取帧逻辑同口径）----
+      case 'mux4':
+        final sel = ((p['select'] as num?)?.toInt() ?? 1).clamp(1, 4);
+        final base = 'in$sel';
+        Map<String, Object?>? conn;
+        for (final suffix in const ['', '_yuv', '_hsl', '_mono']) {
+          final c = (op['inputs'] as Map<String, Object?>?)?['$base$suffix']
+              as Map<String, Object?>?;
+          if (c != null) {
+            conn = c;
+            break;
+          }
+        }
+        if (conn == null) {
+          throw StateError('多路选择器的源$sel 未接入输入');
+        }
+        final from = conn['fromNodeId'] as String? ?? '';
+        final upstream = frames[from];
+        if (upstream == null) {
+          throw StateError('多路选择器的源$sel 上游帧缺失');
+        }
+        final pdata = portOutputs[from]?[conn['fromPort'] as String? ?? ''];
+        if (pdata != null &&
+            !identical(pdata, upstream.data) &&
+            pdata.length == upstream.width * upstream.height &&
+            upstream.format != 'mono' &&
+            upstream.format != 'mosaic') {
+          // 单通道端口（分路器 out_y 等）：构造 mono 帧透传。
+          frame = pdata is Uint8List
+              ? _Frame(
+                  data: Uint16List(0),
+                  format: 'mono',
+                  width: upstream.width,
+                  height: upstream.height,
+                  maxValue: upstream.maxValue,
+                  mono8: pdata)
+              : _Frame(
+                  data: pdata as Uint16List,
+                  format: 'mono',
+                  width: upstream.width,
+                  height: upstream.height,
+                  maxValue: upstream.maxValue);
+        } else {
+          frame = upstream;
+        }
       case 'demosaic':
         frame.requireMosaic('去马赛克');
         final w = frame.width;
@@ -979,6 +1509,18 @@ Future<Uint8List> runChainFrame(
               clipLimit: _double(p, 'clipLimit'),
               strength: _double(p, 'strength'),
               maxValue: frame.maxValue);
+          // in_mono 单接时主帧就是该 mono 的构造帧：必须同步更新主帧，
+          // 否则循环末公用登记段（frame.format=='mono' 时
+          // opOuts['out_mono']=frame.data）会用未处理数据覆盖 out_mono。
+          // in 主链并存时主帧为 RGB，只登记 out_mono 即可。
+          if (frame.format == 'mono') {
+            frame = _Frame(
+                data: mono,
+                format: 'mono',
+                width: frame.width,
+                height: frame.height,
+                maxValue: frame.maxValue);
+          }
           portOutputs[nodeId] = {'out_mono': mono};
         } else if (frame.format == 'rgb') {
           applyClahe(frame.data,
@@ -1201,6 +1743,7 @@ Future<Uint8List> runChainFrame(
       case 'histogram':
       case 'waveform':
       case 'vectorscope':
+      case 'psnr':
       case 'image_output':
       case 'video_output':
         final monoData = getPortData(op, 'in_mono');
@@ -1293,7 +1836,7 @@ Future<Uint8List> runChainFrame(
     opOuts['out'] = frame.data;
     // mono 帧同时登记 out_mono，供下游 in_mono/in_fluoro 连接取数。
     if (frame.format == 'mono') opOuts['out_mono'] = frame.data;
-    if (multiSource) frames[nodeId] = frame;
+    frames[nodeId] = frame; // 分支感知取帧：每个节点输出都入表
     if (nodeTimingsUs != null) {
       nodeTimingsUs[nodeId] =
           (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
@@ -1430,7 +1973,8 @@ Future<Map<String, Object?>> runChainFrameCapturedInIsolate(
 }
 
 /// [runChainFrameWithProgress] 的 worker isolate 入口。
-/// 启动参数 `[SendPort, chain, frameIndex]`；每个节点开始执行前回
+/// 启动参数 `[SendPort, chain, frameIndex, sourceRgba?, sourceWidth?,
+/// sourceHeight?]`；每个节点开始执行前回
 /// `{'type':'nodeStart', 'nodeId':..., 'index':..., 'total':...}`，
 /// 完成回 `{'type':'done', 'rgba':..., 'captures':..., 'timings':...}`
 /// （与 [runChainFrameCapturedInIsolate] 的返回同构），失败回
@@ -1445,6 +1989,9 @@ Future<void> _chainFrameProgressWorker(List<Object?> args) async {
     final total = chain.length;
     var index = 0;
     final rgba = await runChainFrame(chain, args[2] as int,
+        sourceRgba: args.length > 3 ? args[3] as Uint8List? : null,
+        sourceWidth: args.length > 4 ? args[4] as int? : null,
+        sourceHeight: args.length > 5 ? args[5] as int? : null,
         nodeTimingsUs: timings,
         onNodeStart: (nodeId) {
       send.send(<String, Object?>{
@@ -1481,10 +2028,16 @@ Future<void> _chainFrameProgressWorker(List<Object?> args) async {
 /// （nodeId、链内序号 index、链节点总数 total）。
 /// 与 compute() 的区别：compute 一次性返回结果，无法流式回报进度；
 /// 这里用 Isolate.spawn + ReceivePort 换进度回报能力。
+/// [sourceRgba]/[sourceWidth]/[sourceHeight] 非空时注入预解码的
+/// RGBA8888 源帧（同 [runChainFrame] 的对应参数），跳过源节点解码——
+/// 供「一次解码、多链共享」的调用方使用。
 Future<Map<String, Object?>> runChainFrameWithProgress(
   List<Map<String, Object?>> chain,
   int frameIndex, {
   void Function(String nodeId, int index, int total)? onNodeStart,
+  Uint8List? sourceRgba,
+  int? sourceWidth,
+  int? sourceHeight,
 }) async {
   final port = ReceivePort();
   final completer = Completer<Map<String, Object?>>();
@@ -1501,8 +2054,8 @@ Future<Map<String, Object?>> runChainFrameWithProgress(
             StateError(msg['message']?.toString() ?? '流水线执行失败'));
     }
   });
-  final isolate = await Isolate.spawn(
-      _chainFrameProgressWorker, [port.sendPort, chain, frameIndex]);
+  final isolate = await Isolate.spawn(_chainFrameProgressWorker,
+      [port.sendPort, chain, frameIndex, sourceRgba, sourceWidth, sourceHeight]);
   try {
     return await completer.future;
   } finally {

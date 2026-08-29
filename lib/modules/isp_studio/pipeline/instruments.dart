@@ -447,3 +447,24 @@ void _drawChannelInto(
     }
   }
 }
+
+/// PSNR（峰值信噪比）：两幅 RGBA8888 图（同尺寸，长度按短者截断）
+/// RGB 三通道的均方误差 MSE 与 PSNR(dB) = 10·log10(255²/MSE)。
+/// 两图完全相同（MSE=0）时 PSNR 为 [double.infinity]。
+/// 用于评估图像噪声/处理保真度：数值越大越接近参考图。
+(double mse, double psnr) psnrRgba(Uint8List a, Uint8List b) {
+  final n = math.min(a.length, b.length) & ~3;
+  var sum = 0.0;
+  var count = 0;
+  for (var i = 0; i < n; i += 4) {
+    for (var c = 0; c < 3; c++) {
+      final d = a[i + c] - b[i + c];
+      sum += d * d;
+      count++;
+    }
+  }
+  if (count == 0) return (0.0, double.infinity);
+  final mse = sum / count;
+  if (mse == 0) return (0.0, double.infinity);
+  return (mse, 10 * math.log(255 * 255 / mse) / math.ln10);
+}

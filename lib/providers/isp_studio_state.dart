@@ -16,6 +16,7 @@ import '../modules/isp_studio/models/isp_node.dart';
 import '../modules/isp_studio/pipeline/audio_analysis.dart';
 import '../modules/isp_studio/pipeline/audio_player.dart';
 import '../modules/isp_studio/pipeline/exporters.dart';
+import '../modules/isp_studio/pipeline/image_source.dart';
 import '../modules/isp_studio/pipeline/instrument_worker.dart';
 import '../modules/isp_studio/pipeline/instruments.dart';
 import '../modules/isp_studio/pipeline/pipeline_runner.dart';
@@ -47,6 +48,55 @@ class PlanePreviewFrame {
       this.packed, this.mode, this.width, this.height, this.limited);
 }
 
+/// GPU 前缀覆盖去重的处理链视图：透传汇点（preview/histogram）不参与
+/// 处理比对——其显示 = 前一节点输出帧的默认色调映射；调节器汇点的
+/// 显示 = 自身输出。
+List<Map<String, Object?>> gpuProcChainOf(List<Map<String, Object?>> chain) =>
+    switch (chain.last['typeId']) {
+      'preview' || 'histogram' => chain.sublist(0, chain.length - 1),
+      _ => chain,
+    };
+
+/// GPU 主链覆盖判定：[sub] 链（的处理段）是否为 [mainIds] 主链的前缀、
+/// 可由主链顺带捕获出图。含 gamma 的链出图参数与默认色调映射不同，
+/// 不做合并捕获。
+///
+/// 透传汇点（preview/histogram）不在主链上时的额外约束：汇点的显示 =
+/// 其**输入端口**数据，而前缀覆盖的捕获点落在处理链末端节点的**主帧**。
+/// 仅当汇点输入来自上游主帧别名端口（out / out_rgb / out_yuv /
+/// out_hsl）时两者才等价；输入来自侧向端口（分路器 out_y/out_u/out_v、
+/// edge_extract out_mono 等）时数据与主帧不同，拒绝覆盖——该链另作
+/// GPU 主链独立执行（否则单通道预览会错显示为上游主帧，如 Y 通道
+/// 预览显示成全彩 YUV 图）。汇点在主链上时捕获点即汇点自身（GPU
+/// 执行到该节点时 frame 正是其输入帧），无此问题。
+bool gpuChainPrefixCovered(
+    List<Map<String, Object?>> sub, List<String> mainIds) {
+  final proc = gpuProcChainOf(sub);
+  if (proc.length > mainIds.length) return false;
+  for (var i = 0; i < proc.length; i++) {
+    // 含 gamma 的链出图参数与默认色调映射不同，不做合并捕获。
+    if (proc[i]['typeId'] == 'gamma') return false;
+    if (proc[i]['nodeId'] != mainIds[i]) return false;
+  }
+  final sink = sub.last;
+  if ((sink['typeId'] == 'preview' || sink['typeId'] == 'histogram') &&
+      !mainIds.contains(sink['nodeId'])) {
+    const mainAliases = {'out', 'out_rgb', 'out_yuv', 'out_hsl'};
+    final sinkInputs = sink['inputs'] as Map<String, Object?>?;
+    if (sinkInputs != null) {
+      for (final port
+          in const ['in', 'in_yuv', 'in_hsl', 'in_mono', 'in_raw']) {
+        final conn = sinkInputs[port] as Map<String, Object?>?;
+        if (conn == null) continue;
+        final fromPort = conn['fromPort'] as String? ?? 'out';
+        if (!mainAliases.contains(fromPort)) return false;
+        break;
+      }
+    }
+  }
+  return true;
+}
+
 /// ISP Studio 模块状态：节点图、画布变换、执行与导出编排。
 class IspStudioState extends ChangeNotifier {
   /// 创建空图（画布无预置节点）的初始状态。
@@ -63,6 +113,11 @@ class IspStudioState extends ChangeNotifier {
   static const double kGridSize = 10.0;
 
   final List<String> selectedNodeIds = [];
+
+  /// 多选连线集合（链路选中高亮）：由 [selectChain] 整链设置；普通
+  /// 点选节点/连线时清空。与单选 [selectedConnectionId] 互斥使用，
+  /// 多选连线不显示删除控制点（避免满链删除按钮）。
+  final Set<String> selectedConnectionIds = {};
 
   String? get primarySelectedNodeId =>
       selectedNodeIds.isNotEmpty ? selectedNodeIds.first : selectedNodeId;
@@ -201,6 +256,33 @@ class IspStudioState extends ChangeNotifier {
   /// 同样规则过期（图被修改后清空）。
   Map<String, int> nodeRunTimesUs = {};
 
+  /// 最近一次预览运行各节点的执行后端（nodeId → true 为 GPU 快路径、
+  /// false 为 CPU isolate 路径；GPU 主链节点优先，CPU 闭包用
+  /// putIfAbsent 合并不覆盖）。供右侧面板的流程摘要显示。
+  Map<String, bool> nodeRunOnGpu = {};
+
+  /// 图片源解码缓存：filePath → (RGBA8888, 宽, 高, 文件修改时间ms, 文件大小)。
+  /// 大图（如 20MP JPEG）纯 Dart 解码需秒级；同一文件在一次运行中被
+  /// 多条预览链引用时只解码一次（各链经 sourceRgba 注入共享），跨次
+  /// 运行文件未变（按 mtime+大小校验）也直接复用。
+  final Map<String, (Uint8List, int, int, int, int)> _imageSourceRgbaCache = {};
+
+  /// 取图片源的 RGBA8888 解码结果（缓存命中直接返回；未命中后台
+  /// isolate 解码并缓存）。文件不存在/无法解码时抛 [StateError]。
+  Future<(Uint8List, int, int)> _imageSourceRgba(String filePath) async {
+    final stat = await File(filePath).stat();
+    final mtime = stat.modified.millisecondsSinceEpoch;
+    final cached = _imageSourceRgbaCache[filePath];
+    if (cached != null && cached.$4 == mtime && cached.$5 == stat.size) {
+      return (cached.$1, cached.$2, cached.$3);
+    }
+    // 简易容量上限：图片帧很大（20MP ≈ 81MB），不长期累积。
+    if (_imageSourceRgbaCache.length >= 4) _imageSourceRgbaCache.clear();
+    final (rgba, w, h) = await compute(decodeImageFileToRgba8, filePath);
+    _imageSourceRgbaCache[filePath] = (rgba, w, h, mtime, stat.size);
+    return (rgba, w, h);
+  }
+
   /// GPU 预览加速开关（默认开）：单帧预览的算子链优先在 GPU 上执行
   /// （16 位打包纹理 + FragmentShader），任一环节不支持/失败自动回退
   /// CPU isolate 路径，行为不变。
@@ -274,11 +356,21 @@ class IspStudioState extends ChangeNotifier {
   static const double kMinPreviewNodeWidth = 140;
   static const double kMaxPreviewNodeWidth = 800;
 
-  /// 节点宽度上限：HSL 调试器为双联对比预览需要更宽，
+  /// 节点宽度上限：调节器（HSL/RGB/YUV、色饱和度/亮度、亮度/对比度、
+  /// 色彩平衡、色温）、高频边缘提取与曲线调节器为附加显示区需要更宽，
   /// 放宽到全局上限的 1.6 倍，其余节点用全局上限。
-  static double maxNodeWidthFor(String typeId) => typeId == 'hsl_debugger'
-      ? kMaxPreviewNodeWidth * 1.6
-      : kMaxPreviewNodeWidth;
+  static double maxNodeWidthFor(String typeId) =>
+      (typeId == 'hsl_debugger' ||
+          typeId == 'rgb_debugger' ||
+          typeId == 'yuv_debugger' ||
+          typeId == 'sat_bright_adjuster' ||
+          typeId == 'bright_contrast_adjuster' ||
+          typeId == 'color_balance' ||
+          typeId == 'color_temp_adjuster' ||
+          typeId == 'edge_extract' ||
+          typeId == 'levels_curves')
+          ? kMaxPreviewNodeWidth * 1.6
+          : kMaxPreviewNodeWidth;
   final Map<String, double> _previewExtraHeights = {};
 
   int _runToken = 0;
@@ -379,9 +471,18 @@ class IspStudioState extends ChangeNotifier {
     closeCodeTab(id);
     nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 运行值已过期
+    nodeRunOnGpu = {}; // 同上
     _instrumentSrcCache.clear();
     instrumentResults.remove(id);
     instrumentImages.remove(id)?.dispose();
+    brightContrastWaveforms.remove(id)?.dispose();
+    brightContrastInputWaveforms.remove(id)?.dispose();
+    hslVectorscopes.remove(id)?.dispose();
+    hslInputVectorscopes.remove(id)?.dispose();
+    levelsHistograms.remove(id);
+    levelsOutputHistograms.remove(id);
+    measuredColorTemps.remove(id);
+    colorTempHistograms.remove(id);
     _histogramChannels.remove(id);
     if (selectedNodeId == id) selectedNodeId = null;
     if (maximizedNodeId == id) maximizedNodeId = null;
@@ -506,10 +607,66 @@ class IspStudioState extends ChangeNotifier {
 
   final Map<String, ui.Image> previewImages = {};
 
-  /// HSL 调试器节点的「调整前」输入对比图（仅 hsl_debugger 使用，
-  /// 键为调试器节点 id）。所有权与释放规则同 [previewImages]：
+  /// 调节器节点的「调整前」输入对比图（hsl_debugger / rgb_debugger /
+  /// yuv_debugger / sat_bright_adjuster / bright_contrast_adjuster /
+  /// color_balance / color_temp_adjuster / edge_extract 使用，键为节点
+  /// id）。
+  /// 所有权与释放规则同 [previewImages]：
   /// 替换前先 dispose 旧值，统一清理由 _replaceGraph / dispose 负责。
   final Map<String, ui.Image> previewInputImages = {};
+
+  /// 亮度/对比度调节器节点的 Y 通道波形图（bright_contrast_adjuster
+  /// 使用，键为节点 id；由输出链末端 RGBA 经 waveformLuma 统计渲染）。
+  /// 所有权与释放规则同 [previewImages]。
+  final Map<String, ui.Image> brightContrastWaveforms = {};
+
+  /// 亮度/对比度调节器的「调整前」输入波形图（由输入链末端 RGBA 统计，
+  /// 示波器左半区显示）。所有权与释放规则同 [previewImages]。
+  final Map<String, ui.Image> brightContrastInputWaveforms = {};
+
+  /// HSL 调节器节点的矢量示波器图（hsl_debugger 使用，键为节点 id；
+  /// 由输出链末端 RGBA 经 vectorscope 统计渲染，与 vectorscope 仪器
+  /// 同一口径）。所有权与释放规则同 [previewImages]。
+  final Map<String, ui.Image> hslVectorscopes = {};
+
+  /// HSL 调节器的「调整前」输入矢量示波器图（由输入链末端 RGBA 统计，
+  /// 左半区显示）。所有权与释放规则同 [previewImages]。
+  final Map<String, ui.Image> hslInputVectorscopes = {};
+
+  /// 曲线调节器节点的输入 Y 直方图（levels_curves 使用，键为节点 id；
+  /// 由输入链末端 RGBA 经 histogramRgb 统计，曲线编辑器背景显示）。
+  /// 纯计数表，无需 dispose。
+  final Map<String, Uint32List> levelsHistograms = {};
+
+  /// 曲线调节器节点的输出（调节后）Y 直方图（键为节点 id；由该节点
+  /// 输出链末端 RGBA 经 histogramRgb 统计，与输入直方图同口径，
+  /// 曲线编辑器中叠加显示）。纯计数表，无需 dispose。
+  final Map<String, Uint32List> levelsOutputHistograms = {};
+
+  /// 色温调节器节点的实测色温（键为节点 id，开尔文）：运行预览时由
+  /// 输入链末端 RGBA 经 McCamy 公式估计（measureCctFromRgba），节点
+  /// 附加区显示为可点击按钮——点击后滑块设为该测量值（见
+  /// [applyMeasuredColorTemp]）。
+  final Map<String, int> measuredColorTemps = {};
+
+  /// 色温调节器节点的调整后 RGB 直方图（键为节点 id，R/G/B 三个 256
+  /// 桶计数表；由该节点输出链末端 RGBA 经 histogramRgb 统计，节点
+  /// 右下角显示）。纯计数表，无需 dispose。
+  final Map<String, (Uint32List, Uint32List, Uint32List)>
+      colorTempHistograms = {};
+
+  /// 把色温调节器的滑块（目标色温）设定为实测色温：同时把参考色温
+  /// 隐式参数 measured_cct 设为同一值（目标==参考 → 增益恒等，即以
+  /// 当前测量为基准），然后重跑预览。未测量（未运行）时无操作。
+  /// 返回重跑的 Future（UI 点击可忽略，测试可 await）。
+  Future<void> applyMeasuredColorTemp(String nodeId) async {
+    final m = measuredColorTemps[nodeId];
+    final node = graph.nodes[nodeId];
+    if (m == null || node == null) return;
+    setParam(nodeId, 'measured_cct', m);
+    setParam(nodeId, 'temperature', m.toDouble());
+    await runPreview();
+  }
 
   final Map<String, Set<String>> _waveformChannels = {};
 
@@ -653,7 +810,62 @@ class IspStudioState extends ChangeNotifier {
   }
 
 
-  void beginNodeResize(String nodeId) {}
+  /// 一次节点尺寸拖动的累计位移（beginNodeResize 清零）：用于判断
+  /// 主拖动方向，决定比例适配时哪一维跟随另一维。
+  Offset _resizeDragAcc = Offset.zero;
+
+  /// 节点显示区内容的长宽比（内容区宽/高）；null 表示内容自适应填充
+  /// 或尚无运行结果（不约束）。供拖动调整尺寸时对齐内容比例。
+  double? _displayContentAspect(IspNode node) {
+    switch (node.typeId) {
+      case 'preview':
+        final img = previewImages[node.id];
+        if (img != null && img.height > 0) return img.width / img.height;
+        final plane = previewPlanes[node.id];
+        if (plane != null && plane.height > 0) {
+          return plane.width / plane.height;
+        }
+        return null;
+      case 'rgb_debugger':
+      case 'yuv_debugger':
+      case 'sat_bright_adjuster':
+      case 'color_balance':
+      case 'color_temp_adjuster':
+      case 'edge_extract':
+        // 双联对比图（左调整前/右调整后），每格内容为图像本身。
+        final img = previewImages[node.id] ?? previewInputImages[node.id];
+        if (img != null && img.height > 0) return 2.0 * img.width / img.height;
+        return null;
+      case 'hsl_debugger':
+        return 2.0; // 双联方形矢量示波器
+      case 'levels_curves':
+      case 'vectorscope':
+        return 1.0; // 方形内容区（曲线编辑器 / 矢量示波器）
+      default:
+        return null; // 波形/直方图/音频仪器等自适应填充，无固定比例
+    }
+  }
+
+  /// 显示区的固定装饰开销（横向内边距，纵向控制条/滑块行/手柄等）：
+  /// 内容区 = (node.width − w) × (extraHeight − h)。
+  /// 双窗格类型的横向开销含两格之间 4px 间隔。
+  static (double, double) _displayChrome(String typeId) => switch (typeId) {
+        'preview' => (16.0, 40.0), // 横 8+8；纵 4+控制条 26+手柄 10
+        'rgb_debugger' ||
+        'yuv_debugger' ||
+        'hsl_debugger' ||
+        'color_balance' =>
+          (20.0, 86.0), // 横 8+4+8；纵 4+滑块 24*3+手柄 10
+        'sat_bright_adjuster' => (20.0, 62.0), // 滑块 24*2
+        'edge_extract' => (20.0, 62.0), // 滑块 24*2
+        'color_temp_adjuster' => (20.0, 126.0), // 温度行 24+滑块 24+底行 64
+        _ => (16.0, 14.0), // levels_curves/vectorscope：纵 4+手柄 10
+      };
+
+  void beginNodeResize(String nodeId) {
+    _resizeDragAcc = Offset.zero;
+  }
+
   void resizeNodeBy(String nodeId, Offset delta) {
     final node = graph.nodes[nodeId];
     if (node == null) return;
@@ -662,7 +874,7 @@ class IspStudioState extends ChangeNotifier {
     // Snap the absolute right edge: rightX = node.x + width → snap rightX.
     final oldRight = node.x + node.width;
     final snappedRight = snapToGrid(oldRight + delta.dx);
-    final newWidth = (snappedRight - node.x)
+    var newWidth = (snappedRight - node.x)
         .clamp(kMinPreviewNodeWidth, maxNodeWidthFor(node.typeId));
 
     // Snap the absolute bottom edge: bottomY = node.y + baseHeight + extraHeight.
@@ -671,14 +883,33 @@ class IspStudioState extends ChangeNotifier {
     final baseHeight = type != null ? nodeHeight(type, previewExtraHeight: 0) : 0.0;
     final oldBottom = node.y + baseHeight + oldExtra;
     final snappedBottom = snapToGrid(oldBottom + delta.dy);
-    final newExtra = (snappedBottom - node.y - baseHeight)
+    var newExtra = (snappedBottom - node.y - baseHeight)
         .clamp(kMinPreviewExtraHeight, kMaxPreviewExtraHeight);
+
+    // 内容比例适配：显示内容有固定长宽比时，非主拖动维自动跟随，
+    // 使内容区恰好匹配内容比例，消除显示区留白（提高画布利用率）。
+    // 主方向按本次拖动的累计位移判断；比例适配优先于网格吸附。
+    final aspect = _displayContentAspect(node);
+    if (aspect != null) {
+      _resizeDragAcc += delta;
+      final (chromeW, chromeH) = _displayChrome(node.typeId);
+      if (_resizeDragAcc.dx.abs() >= _resizeDragAcc.dy.abs()) {
+        // 横向为主：高度跟随宽度。
+        newExtra = ((newWidth - chromeW) / aspect + chromeH)
+            .clamp(kMinPreviewExtraHeight, kMaxPreviewExtraHeight);
+      } else {
+        // 纵向为主（中部手柄恒为纵向）：宽度跟随高度。
+        newWidth = ((newExtra - chromeH) * aspect + chromeW)
+            .clamp(kMinPreviewNodeWidth, maxNodeWidthFor(node.typeId));
+      }
+    }
 
     node.width = newWidth;
     node.extraHeight = newExtra;
     _previewExtraHeights[nodeId] = newExtra;
     notifyListeners();
   }
+
   void endNodeResize() {}
 
   void selectNode(String? id, {bool multiSelect = false}) {
@@ -715,6 +946,32 @@ class IspStudioState extends ChangeNotifier {
       selectedNodeId = id;
     }
     selectedConnectionId = null;
+    selectedConnectionIds.clear();
+    notifyListeners();
+  }
+
+  /// 选中汇点链路：该链（compileChain 实际编译结果）上的全部节点与
+  /// 连线一并选中高亮（右侧流程摘要点击链路时调用）。链不可编译
+  /// （缺源/多源/环等）时无操作。
+  void selectChain(String sinkNodeId) {
+    final List<Map<String, Object?>> chain;
+    try {
+      chain = compileChain(graph, sinkNodeId);
+    } catch (_) {
+      return;
+    }
+    final ids = {for (final op in chain) op['nodeId'] as String};
+    selectedNodeIds
+      ..clear()
+      ..addAll(ids);
+    selectedNodeId = sinkNodeId;
+    selectedConnectionId = null;
+    selectedConnectionIds
+      ..clear()
+      ..addAll([
+        for (final c in graph.connections)
+          if (ids.contains(c.fromNodeId) && ids.contains(c.toNodeId)) c.id,
+      ]);
     notifyListeners();
   }
 
@@ -963,6 +1220,7 @@ class IspStudioState extends ChangeNotifier {
         selectedNodeId = null;
         selectedNodeIds.clear();
       }
+      selectedConnectionIds.clear();
       notifyListeners();
     }
   }
@@ -972,6 +1230,10 @@ class IspStudioState extends ChangeNotifier {
     final id = selectedConnectionId;
     if (id != null && !graph.connections.any((c) => c.id == id)) {
       selectedConnectionId = null;
+    }
+    if (selectedConnectionIds.isNotEmpty) {
+      selectedConnectionIds
+          .removeWhere((cid) => !graph.connections.any((c) => c.id == cid));
     }
   }
 
@@ -1012,6 +1274,7 @@ class IspStudioState extends ChangeNotifier {
     totalFrames = null; // 源参数可能变了
     nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 运行值已过期
+    nodeRunOnGpu = {}; // 同上
     notifyListeners();
     // RAW 源设置了文件路径：DNG 解析文件头自动填充尺寸/位深/排列/
     // 黑电平；普通 RAW 尝试从同名 txt 自动填充尺寸与黑电平。
@@ -1105,6 +1368,7 @@ class IspStudioState extends ChangeNotifier {
     if (changed) {
       nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 运行值已过期
+    nodeRunOnGpu = {}; // 同上
       statusMessage =
           '已从 ${p.basename(p.setExtension(rawPath, '.txt'))} 读取参数'
           '${w != null && h != null ? '（${w}x$h）' : ''}';
@@ -1179,6 +1443,7 @@ class IspStudioState extends ChangeNotifier {
       totalFrames = null; // 单帧字节数变了
       nodeOutputCaptures = {};
       nodeRunTimesUs = {}; // 运行值已过期
+      nodeRunOnGpu = {}; // 同上
       var lensNote = '';
       if (info.gainMaps.isNotEmpty) {
         lensNote = '，镜头阴影校正表已加载（解码时自动应用）';
@@ -1222,6 +1487,7 @@ class IspStudioState extends ChangeNotifier {
     if (error == null) {
       nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 连接变了，运行值已过期
+      nodeRunOnGpu = {}; // 同上
       _instrumentSrcCache.clear();
       final type = graph.nodes[toNodeId]?.typeId;
       if (type == 'histogram' || type == 'waveform') {
@@ -1242,6 +1508,7 @@ class IspStudioState extends ChangeNotifier {
     graph.disconnectInput(nodeId, port);
     nodeOutputCaptures = {};
     nodeRunTimesUs = {};
+    nodeRunOnGpu = {};
     _instrumentSrcCache.clear();
     _clearStaleConnectionSelection();
     notifyListeners();
@@ -1252,6 +1519,7 @@ class IspStudioState extends ChangeNotifier {
     graph.disconnect(connectionId);
     nodeOutputCaptures = {};
     nodeRunTimesUs = {};
+    nodeRunOnGpu = {};
     _instrumentSrcCache.clear();
     if (selectedConnectionId == connectionId) selectedConnectionId = null;
     notifyListeners();
@@ -1285,105 +1553,348 @@ class IspStudioState extends ChangeNotifier {
     Map<String, List<Map<String, Object?>>> chains,
     Map<String, List<Map<String, Object?>>> inputChains,
     int frame,
-    void Function(String nodeId)? onNodeStart,
-  ) async {
+    void Function(String nodeId)? onNodeStart, {
+    Map<String, (Uint8List, int, int)> imageSources = const {},
+  }) async {
     final gpu = await _gpuPipeline();
     if (gpu == null) return const {};
-    // 最长 GPU 支持链为主链。
-    String? mainSink;
-    List<Map<String, Object?>>? mainChain;
-    for (final e in chains.entries) {
-      final c = e.value;
-      if (GpuPipeline.isSupportedChain(c) &&
-          (mainChain == null || c.length > mainChain.length)) {
-        mainChain = c;
-        mainSink = e.key;
-      }
-    }
-    if (mainChain == null || mainSink == null) return const {};
-    final mainIds = [for (final op in mainChain) op['nodeId'] as String];
-
     // 透传汇点（preview/histogram）不参与处理比对：其显示 = 前一节点
-    // 输出帧的默认色调映射；hsl_debugger 汇点的显示 = 自身输出。
-    List<Map<String, Object?>> procOf(List<Map<String, Object?>> chain) =>
-        switch (chain.last['typeId']) {
-          'preview' || 'histogram' => chain.sublist(0, chain.length - 1),
-          _ => chain,
-        };
+    // 输出帧的默认色调映射；调节器汇点的显示 = 自身输出。覆盖判定见
+    // 顶层函数 gpuChainPrefixCovered（含侧向输入端口约束）。
 
-    bool isPrefixOfMain(List<Map<String, Object?>> sub) {
-      final proc = procOf(sub);
-      if (proc.length > mainIds.length) return false;
-      for (var i = 0; i < proc.length; i++) {
-        // 含 gamma 的链出图参数与默认色调映射不同，不做合并捕获。
-        if (proc[i]['typeId'] == 'gamma') return false;
-        if (proc[i]['nodeId'] != mainIds[i]) return false;
-      }
-      return true;
-    }
-
-    final displayCaptures = <String, String>{};
+    // GPU 主链集合：全部 GPU 支持链按链长降序，未被已选主链前缀覆盖
+    // 的各自作为主链独立执行——多源/多分支流程（如 ICG 荧光融合的
+    // 融合预览链 + 伪彩预览链）可多条链全 GPU；同源分叉链的共享前缀
+    // 节点会重复执行，产物等价、以耗时换通用性。
+    final candidates = [
+      for (final e in chains.entries)
+        if (GpuPipeline.isSupportedChain(e.value)) e,
+    ]..sort((a, b) => b.value.length - a.value.length);
+    if (candidates.isEmpty) return const {};
     final covered = <String>{};
-    for (final e in chains.entries) {
-      if (e.key == mainSink) continue;
-      if (!isPrefixOfMain(e.value)) continue;
-      displayCaptures[e.key] = procOf(e.value).last['nodeId'] as String;
-      covered.add(e.key);
-    }
-    for (final e in inputChains.entries) {
-      if (!isPrefixOfMain(e.value)) continue;
-      displayCaptures['${e.key}#in'] = procOf(e.value).last['nodeId'] as String;
-      covered.add('${e.key}#in');
-    }
-    // 仪器馈源回读端口（指向主链节点的连接）。
-    final readbackPorts = <String>{};
-    final mainIdSet = mainIds.toSet();
-    for (final node in graph.nodes.values) {
-      if (!allInstrumentTypes.contains(node.typeId) ||
-          audioInstrumentTypes.contains(node.typeId)) {
-        continue;
+    // 链 key → 覆盖它的主链 sink：选择阶段只定归属，displayCaptures/
+    // 馈源等覆盖产物在各自主链的执行阶段生成。
+    final coveredBy = <String, String>{};
+    final mains = <MapEntry<String, List<Map<String, Object?>>>>[];
+    for (final e in candidates) {
+      if (coveredBy.containsKey(e.key)) continue;
+      mains.add(e);
+      final ids = [for (final op in e.value) op['nodeId'] as String];
+      for (final o in candidates) {
+        if (o.key == e.key || coveredBy.containsKey(o.key)) continue;
+        if (gpuChainPrefixCovered(o.value, ids)) coveredBy[o.key] = e.key;
       }
-      final type = IspNodeRegistry.byId(node.typeId)!;
-      for (final spec in type.inputs) {
-        final conn = graph.connectionAt(node.id, spec.name);
-        if (conn != null && mainIdSet.contains(conn.fromNodeId)) {
-          readbackPorts.add('${conn.fromNodeId}:${conn.fromPort}');
+    }
+
+    // 单条主链的执行与产物合并（多主链时逐条调用）。
+    Future<void> runMainChain(
+        String mainSink, List<Map<String, Object?>> mainChain) async {
+      final mainIds = [for (final op in mainChain) op['nodeId'] as String];
+      // GPU 主链节点的执行后端标记（供右侧面板流程摘要显示）。
+      for (final id in mainIds) {
+        nodeRunOnGpu[id] = true;
+      }
+      covered.add(mainSink);
+
+      final displayCaptures = <String, String>{};
+      for (final e in chains.entries) {
+        if (e.key == mainSink || coveredBy[e.key] != mainSink) continue;
+        if (!gpuChainPrefixCovered(e.value, mainIds)) continue;
+        final last = e.value.last;
+        final sinkId = last['nodeId'] as String;
+        // 汇点预览本身是主链中间节点（分支出图，如分路器后的单通道预览，
+        // 其输入不是主帧）时，捕获点设在预览节点自身——GPU 执行到该节点
+        // 时 frame 正是其输入帧；否则捕获处理链末端（主帧即汇点输入，
+        // 与在汇点捕获等价；输入来自侧向端口的汇点已在
+        // gpuChainPrefixCovered 中拒绝覆盖，不会走到这里）。
+        final isPassthroughSink =
+            last['typeId'] == 'preview' || last['typeId'] == 'histogram';
+        displayCaptures[e.key] = isPassthroughSink && mainIds.contains(sinkId)
+            ? sinkId
+            : gpuProcChainOf(e.value).last['nodeId'] as String;
+        covered.add(e.key);
+        // 前缀覆盖链的出图同样由 GPU 主链顺带产生：汇点预览标记 GPU 后端，
+        // 避免「不在主链又跳过 CPU」导致后端/耗时栏空白。
+        nodeRunOnGpu[sinkId] = true;
+      }
+      for (final e in inputChains.entries) {
+        final inKey = '${e.key}#in';
+        // 输入链不参与主链竞选：第一个能前缀覆盖它的主链认领。
+        if (coveredBy[inKey] != null && coveredBy[inKey] != mainSink) continue;
+        if (!gpuChainPrefixCovered(e.value, mainIds)) continue;
+        displayCaptures[inKey] =
+            gpuProcChainOf(e.value).last['nodeId'] as String;
+        coveredBy[inKey] = mainSink;
+        covered.add(inKey);
+      }
+      // 仪器馈源回读端口（指向主链节点的连接）。
+      final readbackPorts = <String>{};
+      final mainIdSet = mainIds.toSet();
+      for (final node in graph.nodes.values) {
+        if (!allInstrumentTypes.contains(node.typeId) ||
+            audioInstrumentTypes.contains(node.typeId)) {
+          continue;
+        }
+        final type = IspNodeRegistry.byId(node.typeId)!;
+        for (final spec in type.inputs) {
+          final conn = graph.connectionAt(node.id, spec.name);
+          if (conn != null && mainIdSet.contains(conn.fromNodeId)) {
+            readbackPorts.add('${conn.fromNodeId}:${conn.fromPort}');
+          }
+        }
+      }
+      // HSL 调节器矢量示波器馈源：被 GPU 覆盖的 hsl_debugger 节点不再走
+      // CPU 闭包（其矢量图在那里由链末端 RGBA 统计），此处对其自身输出
+      // 与输入链末端端口做同样的 RGBA 回读，运行后据此渲染矢量图。
+      // 键为回读端口 'nodeId:port'，值为目标缓存 key（节点 id = 调整后，
+      // 'id#in' = 调整前）。
+      final hslScopeFeeds = <String, String>{};
+      for (final node in graph.nodes.values) {
+        if (node.typeId != 'hsl_debugger') continue;
+        if (covered.contains(node.id) || node.id == mainSink) {
+          final key = '${node.id}:out';
+          readbackPorts.add(key);
+          hslScopeFeeds[key] = node.id;
+        }
+        if (covered.contains('${node.id}#in')) {
+          final conn = graph.connectionAt(node.id, 'in');
+          if (conn != null && mainIdSet.contains(conn.fromNodeId)) {
+            final key = '${conn.fromNodeId}:${conn.fromPort}';
+            readbackPorts.add(key);
+            hslScopeFeeds[key] = '${node.id}#in';
+          }
+        }
+      }
+      // 曲线调节器馈源（链被 GPU 覆盖时不走 CPU 闭包，回读补齐）：
+      // 输入链末端端口 → 输入 Y 直方图；自身输出端口 → 调整后 Y 直方图
+      // （与 CPU 闭包同一口径，均为 histogramRgb 的第 4 路）。
+      final levelsHistFeeds = <String, String>{}; // 'nodeId:port' -> 节点 id
+      final levelsOutFeeds = <String, String>{}; // 同上，自身输出端口
+      for (final node in graph.nodes.values) {
+        if (node.typeId != 'levels_curves') continue;
+        if (covered.contains('${node.id}#in')) {
+          final conn = graph.connectionAt(node.id, 'in');
+          if (conn != null && mainIdSet.contains(conn.fromNodeId)) {
+            final key = '${conn.fromNodeId}:${conn.fromPort}';
+            readbackPorts.add(key);
+            levelsHistFeeds[key] = node.id;
+          }
+        }
+        if (covered.contains(node.id) || node.id == mainSink) {
+          final key = '${node.id}:out';
+          readbackPorts.add(key);
+          levelsOutFeeds[key] = node.id;
+        }
+      }
+      // 色温调节器馈源：链被 GPU 覆盖时不走 CPU 闭包（测量/调整后直方图
+      // 在那里由链 RGBA 统计），此处回读上游端口（色温测量）与自身输出
+      // 端口（调整后 RGB 直方图）补齐。
+      final colorTempFeeds = <String, String>{}; // 'nodeId:port' -> 节点 id
+      final colorTempOutFeeds = <String, String>{}; // 同上，自身输出端口
+      for (final node in graph.nodes.values) {
+        if (node.typeId != 'color_temp_adjuster') continue;
+        if (covered.contains('${node.id}#in')) {
+          final conn = graph.connectionAt(node.id, 'in');
+          if (conn != null && mainIdSet.contains(conn.fromNodeId)) {
+            final key = '${conn.fromNodeId}:${conn.fromPort}';
+            readbackPorts.add(key);
+            colorTempFeeds[key] = node.id;
+          }
+        }
+        if (covered.contains(node.id) || node.id == mainSink) {
+          final key = '${node.id}:out';
+          readbackPorts.add(key);
+          colorTempOutFeeds[key] = node.id;
+        }
+      }
+      // 亮度/对比度调节器波形馈源：同理——GPU 覆盖时其双联波形（左
+      // 调整前/右调整后）由 CPU 闭包统计，此处对输入连接端口与自身
+      // 输出做 RGBA 回读补齐。键为回读端口，值为目标缓存 key（节点
+      // id = 调整后，'id#in' = 调整前）。
+      final brightContrastFeeds = <String, String>{};
+      for (final node in graph.nodes.values) {
+        if (node.typeId != 'bright_contrast_adjuster') continue;
+        if (covered.contains('${node.id}#in')) {
+          final conn = graph.connectionAt(node.id, 'in') ??
+              graph.connectionAt(node.id, 'in_yuv') ??
+              graph.connectionAt(node.id, 'in_hsl') ??
+              graph.connectionAt(node.id, 'in_mono');
+          if (conn != null && mainIdSet.contains(conn.fromNodeId)) {
+            final key = '${conn.fromNodeId}:${conn.fromPort}';
+            readbackPorts.add(key);
+            brightContrastFeeds[key] = '${node.id}#in';
+          }
+        }
+        if (covered.contains(node.id) || node.id == mainSink) {
+          final key = '${node.id}:out';
+          readbackPorts.add(key);
+          brightContrastFeeds[key] = node.id;
+        }
+      }
+
+      final result = await gpu.run(mainChain, frame,
+          onNodeStart: onNodeStart,
+          displayCaptures: displayCaptures,
+          rgbaReadbackPorts: readbackPorts,
+          imageSources: imageSources);
+
+      // 产物合并：主图 + 捕获图 + 耗时 + 采样 + 仪器馈源。
+      previewImages.remove(mainSink)?.dispose();
+      previewImages[mainSink] = result.image;
+      result.displayImages.forEach((key, img) {
+        if (key.endsWith('#in')) {
+          final base = key.substring(0, key.length - 3);
+          previewInputImages.remove(base)?.dispose();
+          previewInputImages[base] = img;
+        } else {
+          previewImages.remove(key)?.dispose();
+          previewImages[key] = img;
+        }
+      });
+      nodeRunTimesUs = {...nodeRunTimesUs, ...result.timingsUs};
+      // 采样覆盖主链全部节点（CPU 路径仅首预览链有 captures，此为超集；
+      // 多主链时逐链合并）。
+      nodeOutputCaptures = {...nodeOutputCaptures, ...result.captures};
+      result.portRgba.forEach((key, rgba) {
+        final sep = key.indexOf(':');
+        final entry = nodeOutputCaptures.putIfAbsent(key.substring(0, sep), () => {});
+        entry[key.substring(sep + 1)] = {
+          'data': rgba,
+          'width': result.width,
+          'height': result.height,
+        };
+      });
+      // HSL 调节器矢量示波器：由回读 RGBA 统计 Cb/Cr 并渲染成图
+      // （与 CPU 闭包同一渲染口径）。统计走仪器 worker 池（降采样 +
+      // 后台 isolate）；Future 创建即启动，先全部发出再逐个收取。
+      final hslScopeJobs = <(String, Future<ui.Image?>)>[
+        for (final e in hslScopeFeeds.entries)
+          if (result.portRgba[e.key] != null)
+            (e.value,
+                _hslVectorscopeImage(
+                    result.portRgba[e.key]!, result.width, result.height)),
+      ];
+      for (final (target, job) in hslScopeJobs) {
+        final img = await job;
+        if (img == null) continue;
+        if (target.endsWith('#in')) {
+          final base = target.substring(0, target.length - 3);
+          hslInputVectorscopes.remove(base)?.dispose();
+          hslInputVectorscopes[base] = img;
+        } else {
+          hslVectorscopes.remove(target)?.dispose();
+          hslVectorscopes[target] = img;
+        }
+      }
+      // 曲线调节器：回读 RGBA 统计输入 Y 直方图（与 CPU 闭包同一口径）。
+      for (final e in levelsHistFeeds.entries) {
+        final rgba = result.portRgba[e.key];
+        if (rgba == null) continue;
+        final src = result.width > 64 && result.height > 64
+            ? downsampleRgba82x(rgba, result.width, result.height)
+            : (rgba, result.width, result.height);
+        levelsHistograms[e.value] = histogramRgb(src.$1).$4;
+      }
+      // 曲线调节器：自身输出端口回读统计调整后 Y 直方图（同一口径）。
+      for (final e in levelsOutFeeds.entries) {
+        final rgba = result.portRgba[e.key];
+        if (rgba == null) continue;
+        final src = result.width > 64 && result.height > 64
+            ? downsampleRgba82x(rgba, result.width, result.height)
+            : (rgba, result.width, result.height);
+        levelsOutputHistograms[e.value] = histogramRgb(src.$1).$4;
+      }
+      // 色温调节器：回读 RGBA 估计输入色温（与 CPU 闭包同一口径）。
+      for (final e in colorTempFeeds.entries) {
+        final rgba = result.portRgba[e.key];
+        if (rgba == null) continue;
+        final src = result.width > 64 && result.height > 64
+            ? downsampleRgba82x(rgba, result.width, result.height)
+            : (rgba, result.width, result.height);
+        final m = measureCctFromRgba(src.$1, src.$2, src.$3);
+        if (m != null) measuredColorTemps[e.value] = m;
+      }
+      // 色温调节器：自身输出端口回读统计调整后 RGB 直方图（同一口径）。
+      for (final e in colorTempOutFeeds.entries) {
+        final rgba = result.portRgba[e.key];
+        if (rgba == null) continue;
+        final src = result.width > 64 && result.height > 64
+            ? downsampleRgba82x(rgba, result.width, result.height)
+            : (rgba, result.width, result.height);
+        final hr = histogramRgb(src.$1);
+        colorTempHistograms[e.value] = (hr.$1, hr.$2, hr.$3);
+      }
+      // 亮度/对比度调节器：回读 RGBA 统计 Y 波形并渲染（与 CPU 闭包同一
+      // 口径），补齐 GPU 覆盖链的双联示波器（右半调整后/左半调整前）。
+      for (final e in brightContrastFeeds.entries) {
+        final rgba = result.portRgba[e.key];
+        if (rgba == null) continue;
+        final img =
+            await _brightWaveformImage(rgba, result.width, result.height);
+        final target = e.value;
+        if (target.endsWith('#in')) {
+          final base = target.substring(0, target.length - 3);
+          brightContrastInputWaveforms.remove(base)?.dispose();
+          brightContrastInputWaveforms[base] = img;
+        } else {
+          brightContrastWaveforms.remove(target)?.dispose();
+          brightContrastWaveforms[target] = img;
         }
       }
     }
 
-    final result = await gpu.run(mainChain, frame,
-        onNodeStart: onNodeStart,
-        displayCaptures: displayCaptures,
-        rgbaReadbackPorts: readbackPorts);
-
-    // 产物合并：主图 + 捕获图 + 耗时 + 采样 + 仪器馈源。
-    previewImages.remove(mainSink)?.dispose();
-    previewImages[mainSink] = result.image;
-    result.displayImages.forEach((key, img) {
-      if (key.endsWith('#in')) {
-        final base = key.substring(0, key.length - 3);
-        previewInputImages.remove(base)?.dispose();
-        previewInputImages[base] = img;
-      } else {
-        previewImages.remove(key)?.dispose();
-        previewImages[key] = img;
-      }
-    });
-    nodeRunTimesUs = {...nodeRunTimesUs, ...result.timingsUs};
-    // 采样覆盖主链全部节点（CPU 路径仅首预览链有 captures，此为超集）。
-    nodeOutputCaptures = result.captures;
-    result.portRgba.forEach((key, rgba) {
-      final sep = key.indexOf(':');
-      final entry = nodeOutputCaptures.putIfAbsent(key.substring(0, sep), () => {});
-      entry[key.substring(sep + 1)] = {
-        'data': rgba,
-        'width': result.width,
-        'height': result.height,
-      };
-    });
-    covered.add(mainSink);
+    for (final me in mains) {
+      await runMainChain(me.key, me.value);
+    }
     return covered;
+  }
+
+  /// 亮度/对比度调节器的 Y 通道波形图（与 waveform 仪器同一口径；
+  /// GPU 回读馈源使用，与 runPreview CPU 闭包的渲染路径一致）。
+  Future<ui.Image> _brightWaveformImage(Uint8List rgba, int w, int h) {
+    final (counts, cols) = waveformLuma(rgba, w, h);
+    final wrgba = waveformIntensityRgba(
+        {'counts': counts}, cols, kWaveformLevels, {'y'});
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(wrgba, cols, kWaveformLevels,
+        ui.PixelFormat.rgba8888, completer.complete);
+    return completer.future;
+  }
+
+  /// HSL 调节器矢量示波器出图：与 vectorscope 仪器同一口径——先按步长
+  /// 抽样把输入压到 ~240p 高（抗锯齿连线成本与像素数成正比，全帧 4K
+  /// 在 UI isolate 上统计需数秒，降采样后统计视觉等效），分析放仪器
+  /// worker 池（UI isolate 不做全帧扫描，多核隔行条带并行），并行
+  /// 路径失败回退单 worker；亮度图优先用 worker 侧渲染的 bmp。
+  Future<ui.Image?> _hslVectorscopeImage(Uint8List rgba, int w, int h) async {
+    if (w <= 0 || h <= 0) return null;
+    var src = rgba;
+    var sw = w, sh = h;
+    var step = 1;
+    while (sh ~/ step > 240) {
+      step *= 2;
+    }
+    if (step > 1) {
+      (src, sw, sh) = downsampleRgba8Step(rgba, w, h, step);
+    }
+    Map<String, Object?> result;
+    try {
+      result = await _instrumentAnalyzer.analyzeVectorscopeParallel(src, sw, sh);
+    } catch (_) {
+      result =
+          await _instrumentAnalyzer.analyzeDedicated(src, sw, sh, 'vectorscope');
+    }
+    var bmp = result['bmp'] as Uint8List?;
+    if (bmp == null) {
+      final counts = result['counts'] as Uint32List?;
+      if (counts == null) return null;
+      bmp = intensityRgba(
+          counts, kVectorscopeSize, kVectorscopeSize, 70, 235, 70);
+    }
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(bmp, kVectorscopeSize, kVectorscopeSize,
+        ui.PixelFormat.rgba8888, completer.complete);
+    return completer.future;
   }
 
   /// 运行所有有效预览节点并更新预览图（previewImages 映射 + 向后兼容的
@@ -1391,11 +1902,20 @@ class IspStudioState extends ChangeNotifier {
   Future<void> runPreview() async {
     if (isProcessing) return;
 
-    // 收集所有可编译的预览节点（含 HSL 调试器：作为运行目标汇点跑链，
-    // 链末端 HSL 帧的默认色调映射出图后存入 previewImages）。
+    // 收集所有可编译的预览节点（含调节器：作为运行目标汇点跑链，
+    // 链末端帧的默认色调映射出图后存入 previewImages）。
     final previewNodes = <IspNode>[];
     for (final node in graph.nodes.values) {
-      if (node.typeId == 'preview' || node.typeId == 'hsl_debugger') {
+      if (node.typeId == 'preview' ||
+          node.typeId == 'hsl_debugger' ||
+          node.typeId == 'rgb_debugger' ||
+          node.typeId == 'yuv_debugger' ||
+          node.typeId == 'sat_bright_adjuster' ||
+          node.typeId == 'bright_contrast_adjuster' ||
+          node.typeId == 'color_balance' ||
+          node.typeId == 'color_temp_adjuster' ||
+          node.typeId == 'edge_extract' ||
+          node.typeId == 'levels_curves') {
         previewNodes.add(node);
       }
     }
@@ -1421,6 +1941,7 @@ class IspStudioState extends ChangeNotifier {
     statusMessage = '正在解析节点图与计算帧序列…';
     _lastPlaybackRgba = null; // 单次运行的节点捕获优先于过期播放帧
     nodeRunTimesUs = {}; // 重新测量各节点耗时
+    nodeRunOnGpu = {}; // 重新标记各节点执行后端
     _clearPlanePreviews();
     notifyListeners();
     final token = ++_runToken;
@@ -1428,7 +1949,7 @@ class IspStudioState extends ChangeNotifier {
       // 预编译全部预览链：既供并行执行直接复用（不再重复编译），
       // 链长（算子数）也作为各预览节点的进度权重。
       final chains = <String, List<Map<String, Object?>>>{};
-      // HSL 调试器的「调整前」输入链：到其上游节点为止（无输入连接或
+      // 调节器节点的「调整前」输入链：到其上游节点为止（无输入连接或
       // 编译失败的节点没有该条目，UI 显示占位文案）。
       final inputChains = <String, List<Map<String, Object?>>>{};
       var totalChainLen = 0;
@@ -1440,10 +1961,23 @@ class IspStudioState extends ChangeNotifier {
         } catch (_) {
           // 无法编译的节点在并行执行阶段同样跳过。
         }
-        if (pvNode.typeId == 'hsl_debugger') {
+        if (pvNode.typeId == 'hsl_debugger' ||
+            pvNode.typeId == 'rgb_debugger' ||
+            pvNode.typeId == 'yuv_debugger' ||
+            pvNode.typeId == 'sat_bright_adjuster' ||
+            pvNode.typeId == 'bright_contrast_adjuster' ||
+            pvNode.typeId == 'color_balance' ||
+            pvNode.typeId == 'color_temp_adjuster' ||
+            pvNode.typeId == 'edge_extract' ||
+            pvNode.typeId == 'levels_curves') {
           // 注意：上游是多输出节点（如分路器）时，该链渲染的是上游节点
           // 主帧，可能与具体连接端口的数据有差异（可接受的近似）。
-          final up = graph.connectionAt(pvNode.id, 'in');
+          // 色饱和度/亮度调节器等的输入可能接在 in/in_yuv/in_hsl/in_mono
+          // 任一端口（互斥组），依次取第一个已连接者。
+          final up = graph.connectionAt(pvNode.id, 'in') ??
+              graph.connectionAt(pvNode.id, 'in_yuv') ??
+              graph.connectionAt(pvNode.id, 'in_hsl') ??
+              graph.connectionAt(pvNode.id, 'in_mono');
           if (up != null) {
             try {
               final c = compileChain(graph, up.fromNodeId);
@@ -1472,7 +2006,21 @@ class IspStudioState extends ChangeNotifier {
       totalFrames = await _previewFrameCount(firstPreview, srcTypeId, srcParams);
       final frame = previewFrame.clamp(0, totalFrames! - 1);
       previewFrame = frame;
-      final (w, h) = await sourceDimensions(srcTypeId, srcParams);
+      // 图片源整图只解码一次：各预览链（含调节器「调整前」输入链）经
+      // sourceRgba 注入共享同一解码结果，避免每条链独立完整解码同一
+      // 文件（大图纯 Dart 解码为秒级，多链时成倍放大）。
+      final imageSrcRgba = <String, (Uint8List, int, int)>{}; // 源 nodeId → 帧
+      for (final c in [...chains.values, ...inputChains.values]) {
+        if (c.first['typeId'] != 'image_source') continue;
+        final srcId = c.first['nodeId'] as String;
+        if (imageSrcRgba.containsKey(srcId)) continue;
+        final p = (c.first['params'] as Map).cast<String, Object?>();
+        imageSrcRgba[srcId] = await _imageSourceRgba('${p['filePath'] ?? ''}');
+      }
+      final firstSrcId = firstChain.first['nodeId'] as String;
+      final (w, h) = srcTypeId == 'image_source'
+          ? (imageSrcRgba[firstSrcId]!.$2, imageSrcRgba[firstSrcId]!.$3)
+          : await sourceDimensions(srcTypeId, srcParams);
 
       // 按图里实际内容分配进度区段：探针(帧数/尺寸)固定 8%，仪器
       // 有则占 18%，其余归预览节点（按链长加权）；无仪器时预览区段
@@ -1502,7 +2050,7 @@ class IspStudioState extends ChangeNotifier {
               : (IspNodeRegistry.byId(nodeType)?.displayName ?? nodeId);
           statusMessage = '正在运行（GPU）：$name…';
           notifyListeners();
-        });
+        }, imageSources: imageSrcRgba);
         if (token != _runToken) return;
       } catch (e) {
         debugPrint('[isp] GPU 预览失败，回退 CPU 路径: $e');
@@ -1527,7 +2075,7 @@ class IspStudioState extends ChangeNotifier {
             try {
               final chain = chains[pvNode.id];
               if (chain == null) return;
-              // 节点粒度进度回报（key 区分输出链与 HSL 调试器的输入链）：
+              // 节点粒度进度回报（key 区分输出链与 HSL 调节器的输入链）：
               // 该节点刚要开始，视为前面 index 个算子已完成；与已完成链
               // 的算子数求和得总进度。
               void Function(String, int, int) progressOf(String key) {
@@ -1552,20 +2100,31 @@ class IspStudioState extends ChangeNotifier {
               }
 
               chainDoneOps[pvNode.id] = 0;
-              // HSL 调试器：与输出链并行跑「到上游节点为止」的输入链（即
+              // HSL 调节器：与输出链并行跑「到上游节点为止」的输入链（即
               // 输出链去掉末节点的前缀，末端 HSL 帧走既有默认色调映射），
               // 出「调整前」对比图；输入链独立容错，失败只少对比图。
               final inputChain = inputChains[pvNode.id];
               final inKey = '${pvNode.id}#in';
               if (inputChain != null) chainDoneOps[inKey] = 0;
+              // 图片源注入共享解码帧（见上方 imageSrcRgba），跳过链内解码。
+              final injected = imageSrcRgba[chain.first['nodeId'] as String];
+              final inInjected = inputChain == null
+                  ? null
+                  : imageSrcRgba[inputChain.first['nodeId'] as String];
               // Future 创建即启动，两条链实际并行执行。
               final outFuture = runChainFrameWithProgress(chain, frame,
-                  onNodeStart: progressOf(pvNode.id));
+                  onNodeStart: progressOf(pvNode.id),
+                  sourceRgba: injected?.$1,
+                  sourceWidth: injected?.$2,
+                  sourceHeight: injected?.$3);
               final inFuture = inputChain == null ||
                       gpuCovered.contains('${pvNode.id}#in')
                   ? null
                   : runChainFrameWithProgress(inputChain, frame,
-                          onNodeStart: progressOf(inKey))
+                          onNodeStart: progressOf(inKey),
+                          sourceRgba: inInjected?.$1,
+                          sourceWidth: inInjected?.$2,
+                          sourceHeight: inInjected?.$3)
                       .then<Map<String, Object?>?>((r) => r,
                           onError: (_) => null);
               final result = await outFuture;
@@ -1579,6 +2138,12 @@ class IspStudioState extends ChangeNotifier {
                 ...nodeRunTimesUs,
                 ...(result['timings'] as Map).cast<String, int>(),
               };
+              // CPU 闭包跑出的节点标记为 CPU 后端（GPU 主链已标记的
+              // 节点不覆盖——其耗时以 GPU 侧为准）。
+              for (final id
+                  in (result['timings'] as Map).cast<String, int>().keys) {
+                nodeRunOnGpu.putIfAbsent(id, () => false);
+              }
               if (pvNode.id == firstPreview.id) {
                 nodeOutputCaptures =
                     (result['captures'] as Map).cast<String, Map<String, Object?>>();
@@ -1595,9 +2160,50 @@ class IspStudioState extends ChangeNotifier {
               final inputRgba = inputResult?['rgba'] as Uint8List?;
               final inputImage =
                   inputRgba == null ? null : await decode(inputRgba);
+              // 亮度/对比度调节器：由输出链/输入链末端 RGBA 分别统计
+              // Y 通道波形（与 waveform 仪器同一口径），渲染成图供节点
+              // 示波器右半（调整后）/左半（调整前）显示。
+              Future<ui.Image> decodeWaveform(Uint8List src) async {
+                final (counts, cols) = waveformLuma(src, w, h);
+                final wrgba = waveformIntensityRgba(
+                    {'counts': counts}, cols, kWaveformLevels, {'y'});
+                final completer = Completer<ui.Image>();
+                ui.decodeImageFromPixels(wrgba, cols, kWaveformLevels,
+                    ui.PixelFormat.rgba8888, completer.complete);
+                return completer.future;
+              }
+
+              ui.Image? waveformImage;
+              ui.Image? inputWaveformImage;
+              if (pvNode.typeId == 'bright_contrast_adjuster') {
+                waveformImage = await decodeWaveform(rgba);
+                if (inputRgba != null) {
+                  inputWaveformImage = await decodeWaveform(inputRgba);
+                }
+              }
+              // HSL 调节器：由输出链/输入链末端 RGBA 分别统计 Cb/Cr
+              // 矢量示波器（与 vectorscope 仪器同一口径），渲染成图供
+              // 节点右半（调整后）/左半（调整前）显示。统计走仪器
+              // worker 池（降采样 + 后台 isolate），两图并行。
+              ui.Image? vectorscopeImage;
+              ui.Image? inputVectorscopeImage;
+              if (pvNode.typeId == 'hsl_debugger') {
+                final outScope = _hslVectorscopeImage(rgba, w, h);
+                final inScope = inputRgba == null
+                    ? null
+                    : _hslVectorscopeImage(inputRgba, w, h);
+                vectorscopeImage = await outScope;
+                if (inScope != null) {
+                  inputVectorscopeImage = await inScope;
+                }
+              }
               if (token != _runToken) {
                 image.dispose();
                 inputImage?.dispose();
+                waveformImage?.dispose();
+                inputWaveformImage?.dispose();
+                vectorscopeImage?.dispose();
+                inputVectorscopeImage?.dispose();
                 return;
               }
               previewImages.remove(pvNode.id)?.dispose();
@@ -1605,6 +2211,63 @@ class IspStudioState extends ChangeNotifier {
               previewInputImages.remove(pvNode.id)?.dispose();
               if (inputImage != null) {
                 previewInputImages[pvNode.id] = inputImage;
+              }
+              if (pvNode.typeId == 'bright_contrast_adjuster') {
+                brightContrastWaveforms.remove(pvNode.id)?.dispose();
+                if (waveformImage != null) {
+                  brightContrastWaveforms[pvNode.id] = waveformImage;
+                }
+                brightContrastInputWaveforms.remove(pvNode.id)?.dispose();
+                if (inputWaveformImage != null) {
+                  brightContrastInputWaveforms[pvNode.id] =
+                      inputWaveformImage;
+                }
+              }
+              if (pvNode.typeId == 'hsl_debugger') {
+                hslVectorscopes.remove(pvNode.id)?.dispose();
+                if (vectorscopeImage != null) {
+                  hslVectorscopes[pvNode.id] = vectorscopeImage;
+                }
+                hslInputVectorscopes.remove(pvNode.id)?.dispose();
+                if (inputVectorscopeImage != null) {
+                  hslInputVectorscopes[pvNode.id] = inputVectorscopeImage;
+                }
+              }
+              // 曲线调节器：输入链末端 RGBA 统计 Y 直方图（2x2 降采样
+              // 后统计视觉等效），曲线编辑器背景显示。输入链被 GPU
+              // 覆盖时 inputRgba 为空，由 _tryGpuPreview 的回读补齐。
+              if (pvNode.typeId == 'levels_curves') {
+                if (inputRgba != null) {
+                  final src = w > 64 && h > 64
+                      ? downsampleRgba82x(inputRgba, w, h).$1
+                      : inputRgba;
+                  levelsHistograms[pvNode.id] = histogramRgb(src).$4;
+                } else if (!gpuCovered.contains('${pvNode.id}#in')) {
+                  levelsHistograms.remove(pvNode.id);
+                }
+                // 输出（调节后）Y 直方图：本节点输出链末端 RGBA 同一口径
+                // 统计，与输入直方图叠加显示。输出链被 GPU 覆盖时本闭包
+                // 不执行，由 _tryGpuPreview 的 levelsOutFeeds 回读补齐。
+                final outSrc =
+                    w > 64 && h > 64 ? downsampleRgba82x(rgba, w, h).$1 : rgba;
+                levelsOutputHistograms[pvNode.id] = histogramRgb(outSrc).$4;
+              }
+              // 色温调节器：由输入链末端 RGBA 自动测量色温（McCamy 估计），
+              // 存 measuredColorTemps 供节点显示；滑块不自动跟随——用户
+              // 点击节点上的测量值按钮才设定（applyMeasuredColorTemp）。
+              // 输入链被 GPU 覆盖时 inputRgba 为空，由 _tryGpuPreview
+              // 的回读补齐测量。
+              if (pvNode.typeId == 'color_temp_adjuster') {
+                if (inputRgba != null) {
+                  final m = measureCctFromRgba(inputRgba, w, h);
+                  if (m != null) measuredColorTemps[pvNode.id] = m;
+                }
+                // 调整后 RGB 直方图：输出链末端 RGBA（2x2 降采样统计），
+                // 节点右下角显示。
+                final outSrc =
+                    w > 64 && h > 64 ? downsampleRgba82x(rgba, w, h) : (rgba, w, h);
+                final hr = histogramRgb(outSrc.$1);
+                colorTempHistograms[pvNode.id] = (hr.$1, hr.$2, hr.$3);
               }
             } catch (_) {
               // 单个节点失败不影响其余节点。
@@ -1776,54 +2439,59 @@ class IspStudioState extends ChangeNotifier {
           () async {
             try {
               final type = IspNodeRegistry.byId(node.typeId);
-              Uint8List? rgba;
-              int? w, h;
-              // 优先复用播放中最近上屏的帧（暂停场景）：视频源逐仪器
-              // 重新 seek 解码要起多次 ffmpeg，耗时以秒计。
-              final lastMap = _lastPlaybackRgba;
-              if (lastMap != null && lastMap.isNotEmpty) {
-                final srcId = _instrumentSrcNodeId(node);
-                rgba = lastMap[srcId] ?? lastMap.values.first;
-                // GPU 平面馈源的 U/V chroma 平面是半尺寸，按条目取真实宽高，
-                // 不能用全分辨率 _lastPlaybackW/H 去索引。
-                final dim = _lastPlaybackDims?[srcId];
-                w = dim?.$1 ?? _lastPlaybackW;
-                h = dim?.$2 ?? _lastPlaybackH;
-              } else if (type != null) {
-                for (final inputSpec in type.inputs) {
-                  final inputConn = graph.connectionAt(node.id, inputSpec.name);
-                  if (inputConn != null) {
-                    final capture = nodeOutputCaptures[inputConn.fromNodeId]?[inputConn.fromPort];
-                    if (capture is Map) {
-                      rgba = capture['data'] as Uint8List?;
-                      w = capture['width'] as int?;
-                      h = capture['height'] as int?;
-                      if (rgba != null) break;
+              Map<String, Object?> result;
+              if (node.typeId == 'psnr') {
+                // PSNR 数字表：双输入（参考/测试），走专用双路馈源分析。
+                result = await _analyzePsnr(node, frame);
+              } else {
+                Uint8List? rgba;
+                int? w, h;
+                // 优先复用播放中最近上屏的帧（暂停场景）：视频源逐仪器
+                // 重新 seek 解码要起多次 ffmpeg，耗时以秒计。
+                final lastMap = _lastPlaybackRgba;
+                if (lastMap != null && lastMap.isNotEmpty) {
+                  final srcId = _instrumentSrcNodeId(node);
+                  rgba = lastMap[srcId] ?? lastMap.values.first;
+                  // GPU 平面馈源的 U/V chroma 平面是半尺寸，按条目取真实宽高，
+                  // 不能用全分辨率 _lastPlaybackW/H 去索引。
+                  final dim = _lastPlaybackDims?[srcId];
+                  w = dim?.$1 ?? _lastPlaybackW;
+                  h = dim?.$2 ?? _lastPlaybackH;
+                } else if (type != null) {
+                  for (final inputSpec in type.inputs) {
+                    final inputConn = graph.connectionAt(node.id, inputSpec.name);
+                    if (inputConn != null) {
+                      final capture = nodeOutputCaptures[inputConn.fromNodeId]?[inputConn.fromPort];
+                      if (capture is Map) {
+                        rgba = capture['data'] as Uint8List?;
+                        w = capture['width'] as int?;
+                        h = capture['height'] as int?;
+                        if (rgba != null) break;
+                      }
                     }
                   }
                 }
-              }
 
-              Map<String, Object?> result;
-              if (rgba != null && w != null && h != null && w > 0 && h > 0) {
-                final (srcRgba, srcW, srcH) = w > 64 && h > 64
-                    ? downsampleRgba82x(rgba, w, h)
-                    : (rgba, w, h);
-                result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
-              } else {
-                final chain = compileChain(graph, node.id);
-                // 链重跑放后台 isolate：多核 RAW 算子的长链在主 isolate
-                // 执行会冻结 UI 数秒，期间仪器 worker 的回包无法被处理，
-                // 5s 超时定时器抢先触发而误报「仪器分析超时」。
-                final chainRgba = await compute(runChainFrameInIsolate,
-                    {'chain': chain, 'frameIndex': frame});
-                final (dw, dh) = await sourceDimensions(
-                    chain.first['typeId'] as String,
-                    chain.first['params'] as Map<String, Object?>);
-                final (srcRgba, srcW, srcH) = dw > 64 && dh > 64
-                    ? downsampleRgba82x(chainRgba, dw, dh)
-                    : (chainRgba, dw, dh);
-                result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
+                if (rgba != null && w != null && h != null && w > 0 && h > 0) {
+                  final (srcRgba, srcW, srcH) = w > 64 && h > 64
+                      ? downsampleRgba82x(rgba, w, h)
+                      : (rgba, w, h);
+                  result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
+                } else {
+                  final chain = compileChain(graph, node.id);
+                  // 链重跑放后台 isolate：多核 RAW 算子的长链在主 isolate
+                  // 执行会冻结 UI 数秒，期间仪器 worker 的回包无法被处理，
+                  // 5s 超时定时器抢先触发而误报「仪器分析超时」。
+                  final chainRgba = await compute(runChainFrameInIsolate,
+                      {'chain': chain, 'frameIndex': frame});
+                  final (dw, dh) = await sourceDimensions(
+                      chain.first['typeId'] as String,
+                      chain.first['params'] as Map<String, Object?>);
+                  final (srcRgba, srcW, srcH) = dw > 64 && dh > 64
+                      ? downsampleRgba82x(chainRgba, dw, dh)
+                      : (chainRgba, dw, dh);
+                  result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
+                }
               }
               if (token != _runToken) return;
               instrumentResults[node.id] = result;
@@ -1853,6 +2521,89 @@ class IspStudioState extends ChangeNotifier {
       instrumentTick.value++;
       notifyListeners();
     }
+  }
+
+  /// PSNR 数字表分析：取参考图（in*）与测试图（in_test*）两路的链末端
+  /// 色调映射 RGBA（与直方图同一数据口径），计算 PSNR(dB)/MSE。
+  /// 任一路未接入或尺寸不一致时返回带 error 提示的结果。
+  Future<Map<String, Object?>> _analyzePsnr(IspNode node, int frame) async {
+    // 取一路输入的 RGBA：优先复用最近一次运行的端口捕获（GPU 回读）；
+    // 没有捕获则把上游节点当汇点编译链重跑（后台 isolate，同仪器
+    // 通用回退路径）。
+    Future<(Uint8List, int, int)?> feedOf(List<String> ports) async {
+      for (final pn in ports) {
+        final conn = graph.connectionAt(node.id, pn);
+        if (conn == null) continue;
+        final cap = nodeOutputCaptures[conn.fromNodeId]?[conn.fromPort];
+        if (cap is Map && cap['data'] is Uint8List) {
+          return (
+            cap['data'] as Uint8List,
+            cap['width'] as int,
+            cap['height'] as int,
+          );
+        }
+        final chain = compileChain(graph, conn.fromNodeId);
+        // 图片源：注入共享解码缓存的 RGBA8（跨运行只解码一次，mtime/
+        // 大小校验），跳过链内重复解码（20MP 解码占馈源耗时的 90%+）。
+        Map<String, Object?>? inject;
+        if (chain.first['typeId'] == 'image_source') {
+          final p0 = chain.first['params'] as Map<String, Object?>;
+          final inj =
+              await _imageSourceRgba('${p0['filePath'] ?? ''}');
+          inject = {
+            'sourceRgba': inj.$1,
+            'sourceWidth': inj.$2,
+            'sourceHeight': inj.$3,
+          };
+        }
+        // GPU 快路径：链支持时 GPU 执行（16 位帧驻留 GPU，色调映射
+        // 在 GPU 上完成，仅回读 RGBA8）；失败/不支持回退 CPU isolate。
+        final gpu = await _gpuPipeline();
+        if (gpu != null && GpuPipeline.isSupportedChain(chain)) {
+          try {
+            final r = await gpu.run(chain, frame,
+                imageSources: inject == null
+                    ? const {}
+                    : {
+                        chain.first['nodeId'] as String: (
+                          inject['sourceRgba'] as Uint8List,
+                          inject['sourceWidth'] as int,
+                          inject['sourceHeight'] as int,
+                        ),
+                      });
+            final gpuRgba = await GpuPipeline.readbackBytes(r.image);
+            r.image.dispose();
+            return (gpuRgba, r.width, r.height);
+          } catch (_) {
+            // 回退 CPU 路径。
+          }
+        }
+        final rgba = await compute(runChainFrameInIsolate,
+            {'chain': chain, 'frameIndex': frame, ...?inject});
+        final (dw, dh) = await sourceDimensions(
+            chain.first['typeId'] as String,
+            chain.first['params'] as Map<String, Object?>);
+        return (rgba, dw, dh);
+      }
+      return null;
+    }
+
+    final ref = await feedOf(const ['in', 'in_yuv', 'in_hsl', 'in_mono']);
+    final test = await feedOf(
+        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono']);
+    if (ref == null || test == null) {
+      return {'kind': 'psnr', 'error': '需要接入参考图与测试图'};
+    }
+    if (ref.$2 != test.$2 || ref.$3 != test.$3) {
+      return {'kind': 'psnr', 'error': '两路输入尺寸不一致'};
+    }
+    // 与直方图同一口径：大帧 2x 降采样后统计（视觉等效，耗时 1/4）。
+    final large = ref.$2 > 64 && ref.$3 > 64;
+    final ra = large ? downsampleRgba82x(ref.$1, ref.$2, ref.$3).$1 : ref.$1;
+    final ta =
+        large ? downsampleRgba82x(test.$1, test.$2, test.$3).$1 : test.$1;
+    final (mse, psnr) = psnrRgba(ra, ta);
+    return {'kind': 'psnr', 'psnr': psnr, 'mse': mse};
   }
 
   /// 音频仪器的 WAV PCM 缓存（WAV 路径 → 解析结果）。
@@ -2067,6 +2818,11 @@ class IspStudioState extends ChangeNotifier {
     isProcessing = true;
     isPlaying = true;
     _clearPlanePreviews(); // 避免上一段 GPU 播放的过期帧残留
+    // 播放帧由 worker isolate 的 CPU 流水线生产（GPU 仅可能用于平面
+    // 预览的显示上屏，不跑链）：单次预览测得的节点后端徽标/耗时对
+    // 播放不再适用，清空避免右侧面板残留误导。
+    nodeRunTimesUs = {};
+    nodeRunOnGpu = {};
     notifyListeners();
     final token = ++_runToken;
     try {
@@ -2759,11 +3515,21 @@ class IspStudioState extends ChangeNotifier {
   /// 最大化前的几何备份：nodeId → (x, y, width, extraHeight)。
   final Map<String, (double, double, double, double)> _maximizeBackup = {};
 
-  /// 有显示区（可最大化）的节点：预览 + HSL 调试器 + 仪器（含音频仪器）。
+  /// 有显示区（可最大化）的节点：预览 + 调节器（HSL/RGB/YUV、色饱和度/
+  /// 亮度、亮度/对比度、色彩平衡、色温）+ 高频边缘提取 + 曲线调节器 +
+  /// 仪器（含音频仪器）。
   bool canMaximize(String nodeId) {
     final t = graph.nodes[nodeId]?.typeId;
     return t == 'preview' ||
         t == 'hsl_debugger' ||
+        t == 'rgb_debugger' ||
+        t == 'yuv_debugger' ||
+        t == 'sat_bright_adjuster' ||
+        t == 'bright_contrast_adjuster' ||
+        t == 'color_balance' ||
+        t == 'color_temp_adjuster' ||
+        t == 'edge_extract' ||
+        t == 'levels_curves' ||
         allInstrumentTypes.contains(t);
   }
 
@@ -3070,6 +3836,7 @@ class IspStudioState extends ChangeNotifier {
     activeTab = 0;
     nodeOutputCaptures = {};
     nodeRunTimesUs = {};
+    nodeRunOnGpu = {};
     instrumentResults = {};
     _histogramChannels.clear();
     for (final img in instrumentImages.values) {
@@ -3088,8 +3855,29 @@ class IspStudioState extends ChangeNotifier {
       img.dispose();
     }
     previewInputImages.clear();
+    for (final img in brightContrastWaveforms.values) {
+      img.dispose();
+    }
+    brightContrastWaveforms.clear();
+    for (final img in brightContrastInputWaveforms.values) {
+      img.dispose();
+    }
+    brightContrastInputWaveforms.clear();
+    for (final img in hslVectorscopes.values) {
+      img.dispose();
+    }
+    hslVectorscopes.clear();
+    for (final img in hslInputVectorscopes.values) {
+      img.dispose();
+    }
+    hslInputVectorscopes.clear();
+    levelsHistograms.clear();
+    levelsOutputHistograms.clear();
+    measuredColorTemps.clear();
+    colorTempHistograms.clear();
     selectedNodeId = null;
     selectedConnectionId = null;
+    selectedConnectionIds.clear();
     _previewExtraHeights.clear();
     errors.clear();
     resetView();
@@ -3106,6 +3894,18 @@ class IspStudioState extends ChangeNotifier {
       img.dispose();
     }
     for (final img in previewInputImages.values) {
+      img.dispose();
+    }
+    for (final img in brightContrastWaveforms.values) {
+      img.dispose();
+    }
+    for (final img in brightContrastInputWaveforms.values) {
+      img.dispose();
+    }
+    for (final img in hslVectorscopes.values) {
+      img.dispose();
+    }
+    for (final img in hslInputVectorscopes.values) {
       img.dispose();
     }
     for (final img in instrumentImages.values) {

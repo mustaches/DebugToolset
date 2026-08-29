@@ -128,7 +128,7 @@ void main() {
             {'typeId': 'csc_yuv2rgb', 'nodeId': 'rgb', 'params': {}},
             {'typeId': 'preview', 'nodeId': 'pv', 'params': {}},
           ];
-      // bypass 的 ahe：in_mono → out_mono 直通。
+      // 链路语义：bypass 的 ahe：in_mono → out_mono 直通。
       final bypassed = await runChainFrame(
           [src(tmp, w, h),
            {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
@@ -140,6 +140,81 @@ void main() {
            {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
            {'typeId': 'csc_rgb2yuv', 'nodeId': 'yuv', 'params': {}},
            ...tail('sp', 'out_y')], 0);
+      expect(bypassed, equals(direct));
+    } finally {
+      await tmp.delete();
+    }
+  });
+
+  test('CPU 链：rgb_debugger 通道增益与恒等直通', () async {
+    const w = 8, h = 8;
+    final tmp = await tempRaw(w, h);
+    try {
+      List<Map<String, Object?>> chain(Map<String, Object?>? dbg) => [
+            src(tmp, w, h),
+            {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
+            ?dbg,
+            {'typeId': 'preview', 'nodeId': 'pv', 'params': {}},
+          ];
+      // 无参（恒等增益）：与无该节点的链逐字节一致。
+      final identity = await runChainFrame(
+          chain({'typeId': 'rgb_debugger', 'nodeId': 'rd', 'params': {}}), 0);
+      final direct = await runChainFrame(chain(null), 0);
+      expect(identity, equals(direct));
+      // R 增益 ×2：结果不同。
+      final gained = await runChainFrame(
+          chain({
+            'typeId': 'rgb_debugger',
+            'nodeId': 'rd',
+            'params': {'r_gain': 2.0},
+          }),
+          0);
+      expect(gained, isNot(equals(direct)));
+      // bypass：与无该节点一致。
+      final bypassed = await runChainFrame(
+          chain({
+            'typeId': 'rgb_debugger',
+            'nodeId': 'rd',
+            'params': {'r_gain': 2.0, 'bypass': true},
+          }),
+          0);
+      expect(bypassed, equals(direct));
+    } finally {
+      await tmp.delete();
+    }
+  });
+
+  test('CPU 链：yuv_debugger 增益与恒等/bypass 直通', () async {
+    const w = 8, h = 8;
+    final tmp = await tempRaw(w, h);
+    try {
+      List<Map<String, Object?>> chain(Map<String, Object?>? dbg) => [
+            src(tmp, w, h),
+            {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
+            {'typeId': 'csc_rgb2yuv', 'nodeId': 'yuv', 'params': {}},
+            ?dbg,
+            {'typeId': 'csc_yuv2rgb', 'nodeId': 'rgb', 'params': {}},
+            {'typeId': 'preview', 'nodeId': 'pv', 'params': {}},
+          ];
+      final identity = await runChainFrame(
+          chain({'typeId': 'yuv_debugger', 'nodeId': 'yd', 'params': {}}), 0);
+      final direct = await runChainFrame(chain(null), 0);
+      expect(identity, equals(direct));
+      final gained = await runChainFrame(
+          chain({
+            'typeId': 'yuv_debugger',
+            'nodeId': 'yd',
+            'params': {'y_gain': 1.5, 'u_gain': 0.5},
+          }),
+          0);
+      expect(gained, isNot(equals(direct)));
+      final bypassed = await runChainFrame(
+          chain({
+            'typeId': 'yuv_debugger',
+            'nodeId': 'yd',
+            'params': {'y_gain': 1.5, 'bypass': true},
+          }),
+          0);
       expect(bypassed, equals(direct));
     } finally {
       await tmp.delete();
@@ -191,6 +266,152 @@ void main() {
       expect(maxDiff, lessThanOrEqualTo(1));
       // bypass 节点耗时应接近 0。
       expect(result.timingsUs['bl']! < 20000, isTrue);
+    } finally {
+      await tmp.delete();
+    }
+  });
+
+  test('GPU 链：morphology 与 CPU 结果一致（RGB 主链 + in_mono 支路）', () async {
+    const w = 8, h = 8;
+    final tmp = await tempRaw(w, h);
+    try {
+      final gpu = await GpuPipeline.tryCreate();
+      expect(gpu, isNotNull);
+
+      Future<void> expectGpuMatchesCpu(
+          List<Map<String, Object?>> chain, String tag) async {
+        expect(GpuPipeline.isSupportedChain(chain), isTrue, reason: tag);
+        final result = await gpu!.run(chain, 0);
+        final gpuRgba = await GpuPipeline.readbackBytes(result.image);
+        result.image.dispose();
+        final cpuRgba = await runChainFrame(chain, 0);
+        expect(gpuRgba.length, cpuRgba.length, reason: tag);
+        var maxDiff = 0;
+        for (var i = 0; i < gpuRgba.length; i++) {
+          final d = (gpuRgba[i] - cpuRgba[i]).abs();
+          if (d > maxDiff) maxDiff = d;
+        }
+        // 形态学为整数精确；容差 1 仅覆盖链末色调映射的浮点差。
+        expect(maxDiff, lessThanOrEqualTo(1), reason: tag);
+      }
+
+      Map<String, Object?> src() => {
+            'typeId': 'cis_bayer_rggb',
+            'nodeId': 'src',
+            'params': {
+              'filePath': tmp.path,
+              'width': w,
+              'height': h,
+              'bitDepth': '8',
+              'packing': 'unpacked_lsb',
+              'bayerPattern': 'RGGB',
+              'littleEndian': true,
+              'frameIndex': 0,
+            },
+          };
+
+      // RGB 主链：src → demosaic → morphology(dilate r=1) → preview。
+      await expectGpuMatchesCpu([
+        src(),
+        {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
+        {
+          'typeId': 'morphology',
+          'nodeId': 'mp',
+          'params': {'mode': 'dilate', 'radius': 1},
+        },
+        {'typeId': 'preview', 'nodeId': 'pv', 'params': {}},
+      ], 'rgb 主链膨胀');
+
+      // in_mono 支路：edge_extract.out_mono → morphology.in_mono（腐蚀）
+      // → preview.in_mono。
+      await expectGpuMatchesCpu([
+        src(),
+        {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
+        {
+          'typeId': 'edge_extract',
+          'nodeId': 'edge',
+          'params': {'gain': 4.0, 'threshold': 0.0},
+        },
+        {
+          'typeId': 'morphology',
+          'nodeId': 'mp',
+          'params': {'mode': 'erode', 'radius': 1},
+          'inputs': {
+            'in_mono': {'fromNodeId': 'edge', 'fromPort': 'out_mono'},
+          },
+        },
+        {
+          'typeId': 'preview',
+          'nodeId': 'pv',
+          'params': {},
+          'inputs': {
+            'in_mono': {'fromNodeId': 'mp', 'fromPort': 'out_mono'},
+          },
+        },
+      ], 'in_mono 支路腐蚀');
+    } finally {
+      await tmp.delete();
+    }
+  });
+
+  test('GPU 链：mux4 透传与 CPU 一致（RGB 源1 / mono 源2）', () async {
+    const w = 8, h = 8;
+    final tmp = await tempRaw(w, h);
+    try {
+      final gpu = await GpuPipeline.tryCreate();
+      expect(gpu, isNotNull);
+      for (final select in [1, 2]) {
+        final chain = <Map<String, Object?>>[
+          {
+            'typeId': 'cis_bayer_rggb',
+            'nodeId': 'src',
+            'params': {
+              'filePath': tmp.path,
+              'width': w,
+              'height': h,
+              'bitDepth': '8',
+              'packing': 'unpacked_lsb',
+              'bayerPattern': 'RGGB',
+              'littleEndian': true,
+              'frameIndex': 0,
+            },
+          },
+          {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
+          {'typeId': 'csc_rgb2yuv', 'nodeId': 'yuv', 'params': {}},
+          {'typeId': 'yuv_splitter', 'nodeId': 'sp', 'params': {}},
+          {
+            'typeId': 'mux4',
+            'nodeId': 'mux',
+            'params': {'select': select},
+            'inputs': {
+              'in1': {'fromNodeId': 'dm', 'fromPort': 'out'},
+              'in2_mono': {'fromNodeId': 'sp', 'fromPort': 'out_y'},
+            },
+          },
+          {
+            'typeId': 'preview',
+            'nodeId': 'pv',
+            'params': <String, Object?>{},
+            'inputs': {
+              'in': {'fromNodeId': 'mux', 'fromPort': 'out_rgb'},
+            },
+          },
+        ];
+        expect(GpuPipeline.isSupportedChain(chain), isTrue,
+            reason: 'select=$select');
+        final result = await gpu!.run(chain, 0);
+        final gpuRgba = await GpuPipeline.readbackBytes(result.image);
+        result.image.dispose();
+        final cpuRgba = await runChainFrame(chain, 0);
+        expect(gpuRgba.length, cpuRgba.length, reason: 'select=$select');
+        var maxDiff = 0;
+        for (var i = 0; i < gpuRgba.length; i++) {
+          final d = (gpuRgba[i] - cpuRgba[i]).abs();
+          if (d > maxDiff) maxDiff = d;
+        }
+        // 透传无计算；容差 1 仅覆盖链末色调映射的浮点差。
+        expect(maxDiff, lessThanOrEqualTo(1), reason: 'select=$select');
+      }
     } finally {
       await tmp.delete();
     }

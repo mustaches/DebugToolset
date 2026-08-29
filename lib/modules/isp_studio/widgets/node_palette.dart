@@ -34,9 +34,18 @@ const _processTypeIds = [
   'ccm',
   'rgb_dnr',
   'sharpen',
+  'edge_extract',
+  'morphology',
   'gamma',
   'ahe',
   'hsl_debugger',
+  'rgb_debugger',
+  'yuv_debugger',
+  'sat_bright_adjuster',
+  'bright_contrast_adjuster',
+  'levels_curves',
+  'color_balance',
+  'color_temp_adjuster',
 ];
 
 /// 「ColorTrans」分组：色彩空间转换（RGB/YUV/HSL 互转）。
@@ -59,7 +68,7 @@ const _fluorescenceTypeIds = [
   'fluoro_fusion',
 ];
 
-/// 「Datapath」分组：分路器与合路器。
+/// 「Datapath」分组：分路器、合路器与乘法器。
 const _datapathTypeIds = [
   'rgb_splitter',
   'yuv_splitter',
@@ -67,6 +76,10 @@ const _datapathTypeIds = [
   'rgb_combiner',
   'yuv_combiner',
   'hsl_combiner',
+  'multiplier',
+  'adder',
+  'blender',
+  'mux4',
 ];
 
 /// 「Output」分组：预览与导出汇点。
@@ -81,6 +94,7 @@ const _instrumentTypeIds = [
   'histogram',
   'waveform',
   'vectorscope',
+  'psnr',
   'audio_level',
   'audio_waveform',
   'audio_eq',
@@ -165,38 +179,43 @@ class IspNodePalette extends StatelessWidget {
 
   Widget _item(IspStudioState state, String typeId) {
     final type = IspNodeRegistry.byId(typeId)!;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: InkWell(
-        onTap: () => state.addNodeAt(type.typeId, onPickCenter()),
-        child: Container(
-          // 紧凑条目：行高压到 1.0、垂直 padding 1，高度约为默认一半。
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-          decoration: BoxDecoration(
-            color: const Color(0xFF303030),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: const Color(0xFF3A3A3A)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Color(type.colorValue),
+    // 条目宽度有限，长名称会省略号截断；悬浮气泡显示完整节点名。
+    return Tooltip(
+      message: type.displayName,
+      waitDuration: const Duration(milliseconds: 400),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: InkWell(
+          onTap: () => state.addNodeAt(type.typeId, onPickCenter()),
+          child: Container(
+            // 紧凑条目：行高压到 1.0、垂直 padding 1，高度约为默认一半。
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+            decoration: BoxDecoration(
+              color: const Color(0xFF303030),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0xFF3A3A3A)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color(type.colorValue),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  type.displayName,
-                  style: const TextStyle(
-                      fontSize: 11, height: 1.0, color: Colors.white70),
-                  overflow: TextOverflow.ellipsis,
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    type.displayName,
+                    style: const TextStyle(
+                        fontSize: 11, height: 1.0, color: Colors.white70),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

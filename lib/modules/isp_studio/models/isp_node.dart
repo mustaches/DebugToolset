@@ -88,6 +88,10 @@ class IspParamSpec {
   /// choice 类型的可选值（存 key；显示文案可与 key 相同或为中文）。
   final List<String>? options;
 
+  /// choice 选项 key → 双语显示文案（如 'erode' → '腐蚀（erode）'）；
+  /// 缺省直接显示 key。仅存 key，不影响 .ispflow 文件格式。
+  final Map<String, String>? optionLabels;
+
   const IspParamSpec({
     required this.key,
     required this.label,
@@ -96,6 +100,7 @@ class IspParamSpec {
     this.min,
     this.max,
     this.options,
+    this.optionLabels,
   });
 }
 
@@ -141,10 +146,48 @@ class IspNodeType {
     'in_raw',
   };
 
-  /// 是否带视频格式输入组（具备该组两个及以上端口，如仪器/预览/
-  /// 输出节点）。同组端口互斥：接入一路后其余置灰、不允许再连。
+  /// 混叠图输入组（混叠器 in_blend*，RGB/YUV/HSL/Mono 四域选一）：
+  /// 组内互斥，与视频输入组互不干扰（基图与混叠图可同时接入）。
+  static const blendInputGroupPorts = {
+    'in_blend',
+    'in_blend_yuv',
+    'in_blend_hsl',
+    'in_blend_mono',
+  };
+
+  /// 测试图输入组（PSNR 数字表 in_test*，RGB/YUV/HSL/Mono 四域选一）：
+  /// 组内互斥，与参考图视频输入组互不干扰（两路可同时接入）。
+  static const testInputGroupPorts = {
+    'in_test',
+    'in_test_yuv',
+    'in_test_hsl',
+    'in_test_mono',
+  };
+
+  /// 多路选择器的四路源输入组（in1*/in2*/in3*/in4*，各四域选一）：
+  /// 组内互斥，组间可同时接入。
+  static const muxInputGroupPorts = [
+    {'in1', 'in1_yuv', 'in1_hsl', 'in1_mono'},
+    {'in2', 'in2_yuv', 'in2_hsl', 'in2_mono'},
+    {'in3', 'in3_yuv', 'in3_hsl', 'in3_mono'},
+    {'in4', 'in4_yuv', 'in4_hsl', 'in4_mono'},
+  ];
+
+  /// 端口所属的互斥输入组（不属于任何组返回 null）。
+  static Set<String>? inputMutexGroupOf(String port) {
+    if (videoInputGroupPorts.contains(port)) return videoInputGroupPorts;
+    if (blendInputGroupPorts.contains(port)) return blendInputGroupPorts;
+    if (testInputGroupPorts.contains(port)) return testInputGroupPorts;
+    for (final g in muxInputGroupPorts) {
+      if (g.contains(port)) return g;
+    }
+    return null;
+  }
+
+  /// 是否带互斥输入组（具备任一互斥组的两个及以上端口，如仪器/预览/
+  /// 输出节点、混叠器）。同组端口互斥：接入一路后其余置灰、不允许再连。
   bool get hasVideoInputGroup =>
-      inputs.where((p) => videoInputGroupPorts.contains(p.name)).length > 1;
+      inputs.where((p) => inputMutexGroupOf(p.name) != null).length > 1;
 
   IspPortSpec? inputPort(String name) {
     for (final p in inputs) {
@@ -210,11 +253,34 @@ class IspNode {
       typeId: type.typeId,
       x: x,
       y: y,
-      // HSL 调试器内嵌「调整前/调整后」双联预览，默认宽度加倍；
-      // 其附加区比预览多 3 行滑块，默认高度相应加大。
-      width: type.typeId == 'hsl_debugger' ? kNodeWidth * 2 : kNodeWidth,
-      extraHeight:
-          type.typeId == 'hsl_debugger' ? 280 : kDefaultNodeExtraHeight,
+      // HSL/RGB/YUV、色饱和度/亮度、亮度/对比度、色彩平衡、色温调节器、
+      // 高频边缘提取与曲线调节器内嵌附加显示区（双联预览、波形示波器或
+      // 曲线编辑器），默认宽度加倍；加法器的平衡控制条需要更长行程，
+      // 默认宽度 3 倍。其附加区比预览多若干行滑块，默认高度相应加大。
+      width: type.typeId == 'adder'
+          ? kNodeWidth * 3
+          : type.typeId == 'hsl_debugger' ||
+                  type.typeId == 'rgb_debugger' ||
+                  type.typeId == 'yuv_debugger' ||
+                  type.typeId == 'sat_bright_adjuster' ||
+                  type.typeId == 'bright_contrast_adjuster' ||
+                  type.typeId == 'color_balance' ||
+                  type.typeId == 'color_temp_adjuster' ||
+                  type.typeId == 'edge_extract' ||
+                  type.typeId == 'levels_curves'
+              ? kNodeWidth * 2
+              : kNodeWidth,
+      extraHeight: type.typeId == 'hsl_debugger' ||
+              type.typeId == 'rgb_debugger' ||
+              type.typeId == 'yuv_debugger' ||
+              type.typeId == 'sat_bright_adjuster' ||
+              type.typeId == 'bright_contrast_adjuster' ||
+              type.typeId == 'color_balance' ||
+              type.typeId == 'color_temp_adjuster' ||
+              type.typeId == 'edge_extract' ||
+              type.typeId == 'levels_curves'
+          ? 280
+          : kDefaultNodeExtraHeight,
       name: name,
       paramValues: values,
     );
@@ -750,6 +816,83 @@ abstract final class IspNodeRegistry {
         ),
       ],
     ),
+    // ---- 高频边缘提取：亮度高通黑底白线边缘图（detail 按邻域均值
+    // 归一化为相对对比度 rel，相对门限 rel < threshold/maxValue 置零，
+    // 输出 gain×√rel×maxValue 显示压缩；与 sharpen 同一 detail 定义，
+    // 暗区/弱反差边缘与亮区强边缘同样可见）。RGB/YUV/HSL 三域
+    // 通用（互斥输入组 + 同格式三路输出 + Mono 单通道边缘图输出 +
+    // 双联对比预览 + 增益/门限双滑块）----
+    'edge_extract': IspNodeType(
+      typeId: 'edge_extract',
+      displayName: '高频边缘提取',
+      colorValue: 0xFF5A6660,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+        // 单通道边缘亮度图（w*h）：供 mono 汇点（预览/仪器）与乘法器
+        // 等 mono 输入节点直接消费。
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'gain',
+          label: '增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0.1,
+          max: 8,
+        ),
+        IspParamSpec(
+          key: 'threshold',
+          label: '噪声门限',
+          type: IspParamType.doubleNumber,
+          defaultValue: 4.0,
+          min: 0,
+          max: 256,
+        ),
+      ],
+    ),
+    // ---- 腐蚀/膨胀：形态学方形结构元 (2×radius+1)² 逐通道极小/极大
+    // 滤波（RGB 三通道独立 / Mono 单通道灰度形态学，in 与 in_mono
+    // 互斥；可分离两趟实现，见 applyMorphology）----
+    'morphology': IspNodeType(
+      typeId: 'morphology',
+      displayName: '腐蚀/膨胀',
+      colorValue: 0xFF66605A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        // mono 输入（单通道信号，如边缘图/荧光 Mono 链）：与 in 互斥。
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'mode',
+          label: '模式',
+          type: IspParamType.choice,
+          defaultValue: 'erode',
+          options: ['erode', 'dilate'],
+          optionLabels: {'erode': '腐蚀（erode）', 'dilate': '膨胀（dilate）'},
+        ),
+        IspParamSpec(
+          key: 'radius',
+          label: '半径',
+          type: IspParamType.intNumber,
+          defaultValue: 1,
+          min: 1,
+          max: 8,
+        ),
+      ],
+    ),
     'csc_rgb2yuv': IspNodeType(
       typeId: 'csc_rgb2yuv',
       displayName: 'RGB→YUV 转换',
@@ -838,10 +981,10 @@ abstract final class IspNodeRegistry {
       ],
       params: [],
     ),
-    // ---- HSL 调试器：HSL 域交互调参（节点内嵌 H/S/L 滑块 + 预览窗）----
+    // ---- HSL 调节器：HSL 域交互调参（节点内嵌 H/S/L 滑块 + 预览窗）----
     'hsl_debugger': IspNodeType(
       typeId: 'hsl_debugger',
-      displayName: 'HSL调试器',
+      displayName: 'HSL调节器',
       colorValue: 0xFF565E6A,
       inputs: [
         IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
@@ -873,6 +1016,263 @@ abstract final class IspNodeRegistry {
           defaultValue: 1.0,
           min: 0,
           max: 5,
+        ),
+      ],
+    ),
+    // ---- RGB 调节器：RGB 域交互调参（节点内嵌 R/G/B 增益滑块 + 双联预览）----
+    'rgb_debugger': IspNodeType(      typeId: 'rgb_debugger',
+      displayName: 'RGB调节器',
+      colorValue: 0xFF6A5E56,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'r_gain',
+          label: 'R 增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+        IspParamSpec(
+          key: 'g_gain',
+          label: 'G 增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+        IspParamSpec(
+          key: 'b_gain',
+          label: 'B 增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+      ],
+    ),
+    // ---- YUV 调节器：YUV 域交互调参（Y 增益 + U/V 色度增益滑块 + 双联预览）----
+    'yuv_debugger': IspNodeType(
+      typeId: 'yuv_debugger',
+      displayName: 'YUV调节器',
+      colorValue: 0xFF56566A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'y_gain',
+          label: 'Y 增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+        IspParamSpec(
+          key: 'u_gain',
+          label: 'U 增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+        IspParamSpec(
+          key: 'v_gain',
+          label: 'V 增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+      ],
+    ),
+    // ---- 色饱和度/亮度调节器：RGB/YUV/HSL 三域通用调参（互斥输入组 +
+    // 同格式三路输出 + 色饱和度/亮度双滑块 + 双联预览）----
+    'sat_bright_adjuster': IspNodeType(
+      typeId: 'sat_bright_adjuster',
+      displayName: '色饱和度/亮度调节器',
+      colorValue: 0xFF5E566A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'sat_gain',
+          label: '色饱和度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 8,
+        ),
+        IspParamSpec(
+          key: 'bright_gain',
+          label: '亮度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 32,
+        ),
+      ],
+    ),
+    // ---- 亮度/对比度调节器：RGB/YUV/HSL/Mono 四域亮度/对比度调参（互斥输入组 +
+    // 同格式四路输出 + Y 通道波形示波器 + 亮度/基线/增益三滑块）----
+    'bright_contrast_adjuster': IspNodeType(
+      typeId: 'bright_contrast_adjuster',
+      displayName: '亮度/对比度调节器',
+      colorValue: 0xFF6A6656,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'bright',
+          label: '亮度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 100.0,
+          min: 0,
+          max: 1000,
+        ),
+        IspParamSpec(
+          key: 'baseline',
+          label: '基线',
+          type: IspParamType.doubleNumber,
+          defaultValue: 50.0,
+          min: 0,
+          max: 100,
+        ),
+        IspParamSpec(
+          key: 'gain',
+          label: '增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 100.0,
+          min: 0,
+          max: 1000,
+        ),
+      ],
+    ),
+    // ---- 曲线调节器：RGB 域传递函数（节点内嵌 Y 直方图背景曲线编辑器；
+    // 控制点参数 points 为隐式参数 [[x,y],…]，0..4095 域，端点 A1/C1
+    // 固定；curveMode 选择生成公式：单调三次样条/贝塞尔/线段）----
+    'levels_curves': IspNodeType(
+      typeId: 'levels_curves',
+      displayName: '曲线调节器',
+      colorValue: 0xFF5E566A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'curveMode',
+          label: '曲线公式',
+          type: IspParamType.choice,
+          defaultValue: 'spline',
+          options: ['spline', 'bezier', 'linear', 'gamma'],
+        ),
+        // 仅 curveMode == gamma 时生效：y = max·(x/max)^(1/γ)，γ=1 恒等。
+        IspParamSpec(
+          key: 'gamma',
+          label: 'Gamma',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0.1,
+          max: 10,
+        ),
+      ],
+    ),
+    // ---- 色彩平衡：RGB/YUV/HSL 三域中间调加性偏移（互斥输入组 + 同格式
+    // 三路输出；节点内嵌双联对比预览 + 青↔红 / 洋红↔绿 / 黄↔蓝 三行渐变
+    // 滑杆调试块；三值全 0 直通）----
+    'color_balance': IspNodeType(
+      typeId: 'color_balance',
+      displayName: '色彩平衡',
+      colorValue: 0xFF66584C,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'cyan_red',
+          label: '青色 ↔ 红色',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -100,
+          max: 100,
+        ),
+        IspParamSpec(
+          key: 'magenta_green',
+          label: '洋红 ↔ 绿色',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -100,
+          max: 100,
+        ),
+        IspParamSpec(
+          key: 'yellow_blue',
+          label: '黄色 ↔ 蓝色',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -100,
+          max: 100,
+        ),
+      ],
+    ),
+    // ---- 色温调节器：RGB 域色温调整（节点内嵌双联对比预览 + 暖→冷渐变
+    // 色温滑杆 + 实测色温显示 + CCM 对角阵显示；运行时自动测量输入帧
+    // 色温写入隐式参数 measured_cct，滑块未手动调整时跟随测量值）----
+    'color_temp_adjuster': IspNodeType(
+      typeId: 'color_temp_adjuster',
+      displayName: '色温调节器',
+      colorValue: 0xFF6A5A46,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+      ],
+      params: [
+        // 色温值域 1800~12000K、默认 D65 6500K（与 pipeline/color_temp.dart
+        // 的 kColorTempMin/Max/Default 一致；models 层不引 pipeline，常量内联）。
+        IspParamSpec(
+          key: 'temperature',
+          label: '色温 (K)',
+          type: IspParamType.doubleNumber,
+          defaultValue: 6500.0,
+          min: 1800,
+          max: 12000,
         ),
       ],
     ),
@@ -1081,6 +1481,161 @@ abstract final class IspNodeRegistry {
         ),
       ],
     ),
+    // ---- 乘法器：两路 Mono 逐像素归一化相乘（out = (源1+offset1)×
+    // (源2+offset2)/maxValue），两路输入分辨率必须一致；输出 Mono，
+    // 预览链末端按亮度灰度出图 ----
+    'multiplier': IspNodeType(
+      typeId: 'multiplier',
+      displayName: '乘法器',
+      colorValue: 0xFF6E5E7E,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '源1 Mono'),
+        // 输入源2 不在视频互斥组（'in'/'in_yuv'/'in_hsl'/'in_mono'）内，
+        // 可与 in_mono 同时接入（双源链，同 fluoro_fusion 的 in_fluoro）。
+        IspPortSpec(name: 'in_mono2', type: IspPortType.mono, label: '源2 Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'offset1',
+          label: '源1 偏移',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -65535,
+          max: 65535,
+        ),
+        IspParamSpec(
+          key: 'offset2',
+          label: '源2 偏移',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -65535,
+          max: 65535,
+        ),
+      ],
+    ),
+    // ---- 加法器：两路 mono 平衡加权混合 out = 源1×balance + 源2×
+    // (1−balance)（两路增益总和恒为 1；节点内嵌平衡控制条，左源1右源2，
+    // 默认 0.5 居中）。双 mono 输入同 multiplier（in_mono2 不在视频
+    // 互斥组，可与 in_mono 同时接入双源链）----
+    'adder': IspNodeType(
+      typeId: 'adder',
+      displayName: '加法器',
+      colorValue: 0xFF7E6E5E,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '源1 Mono'),
+        // 输入源2 不在视频互斥组（'in'/'in_yuv'/'in_hsl'/'in_mono'）内，
+        // 可与 in_mono 同时接入（双源链，同 multiplier 的 in_mono2）。
+        IspPortSpec(name: 'in_mono2', type: IspPortType.mono, label: '源2 Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'balance',
+          label: '平衡增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.5,
+          min: 0,
+          max: 1,
+        ),
+      ],
+    ),
+    // ---- 混叠器：基图（RGB/YUV/HSL/Mono 四域互斥输入，输出保持基图
+    // 格式）+ 蒙版 mono + 混叠图（RGB/YUV/HSL/Mono 四域选一）三路输入。
+    // 正常模式：out = 基图 + 混叠图×蒙版/maxValue×混叠强度（归一化
+    // 相乘同 multiplier 口径）。混叠图为 mono 时按基图格式选目标通道
+    // （YUV→Y、HSL→L、RGB→全通道）；为三通道交织时逐通道对应叠加。
+    // in_mask/in_blend* 不在视频互斥组，可跨支路接入（双源链同
+    // multiplier/adder）----
+    'blender': IspNodeType(
+      typeId: 'blender',
+      displayName: '混叠器',
+      colorValue: 0xFF5E7E6A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '基图 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '基图 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '基图 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '基图 Mono'),
+        IspPortSpec(name: 'in_mask', type: IspPortType.mono, label: '蒙版 Mono'),
+        // 混叠图四域互斥输入组（blendInputGroupPorts，组内只接一路，
+        // 与基图视频输入组互不干扰）。
+        IspPortSpec(name: 'in_blend', type: IspPortType.rgb, label: '混叠 RGB'),
+        IspPortSpec(name: 'in_blend_yuv', type: IspPortType.yuv, label: '混叠 YUV'),
+        IspPortSpec(name: 'in_blend_hsl', type: IspPortType.hsl, label: '混叠 HSL'),
+        IspPortSpec(name: 'in_blend_mono', type: IspPortType.mono, label: '混叠 Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'mode',
+          label: '混叠方式',
+          type: IspParamType.choice,
+          defaultValue: 'normal',
+          options: ['normal'],
+          optionLabels: {'normal': '正常（normal）'},
+        ),
+        IspParamSpec(
+          key: 'strength',
+          label: '混叠强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 4,
+        ),
+      ],
+    ),
+    // ---- 多路选择器（4选1）：四路源输入（源1~源4 各 RGB/YUV/HSL/Mono
+    // 四域互斥组，组间可同时接入），输出保持所选输入的格式。节点内嵌
+    // 源1~源4 单选开关（select 参数，默认 1=源1），切换即把输出切到
+    // 对应输入（透传不改数据）。允许最多 4 个源节点（compileChain）----
+    'mux4': IspNodeType(
+      typeId: 'mux4',
+      displayName: '多路选择器',
+      colorValue: 0xFF6A6E5E,
+      inputs: [
+        IspPortSpec(name: 'in1', type: IspPortType.rgb, label: '源1 RGB'),
+        IspPortSpec(name: 'in1_yuv', type: IspPortType.yuv, label: '源1 YUV'),
+        IspPortSpec(name: 'in1_hsl', type: IspPortType.hsl, label: '源1 HSL'),
+        IspPortSpec(name: 'in1_mono', type: IspPortType.mono, label: '源1 Mono'),
+        IspPortSpec(name: 'in2', type: IspPortType.rgb, label: '源2 RGB'),
+        IspPortSpec(name: 'in2_yuv', type: IspPortType.yuv, label: '源2 YUV'),
+        IspPortSpec(name: 'in2_hsl', type: IspPortType.hsl, label: '源2 HSL'),
+        IspPortSpec(name: 'in2_mono', type: IspPortType.mono, label: '源2 Mono'),
+        IspPortSpec(name: 'in3', type: IspPortType.rgb, label: '源3 RGB'),
+        IspPortSpec(name: 'in3_yuv', type: IspPortType.yuv, label: '源3 YUV'),
+        IspPortSpec(name: 'in3_hsl', type: IspPortType.hsl, label: '源3 HSL'),
+        IspPortSpec(name: 'in3_mono', type: IspPortType.mono, label: '源3 Mono'),
+        IspPortSpec(name: 'in4', type: IspPortType.rgb, label: '源4 RGB'),
+        IspPortSpec(name: 'in4_yuv', type: IspPortType.yuv, label: '源4 YUV'),
+        IspPortSpec(name: 'in4_hsl', type: IspPortType.hsl, label: '源4 HSL'),
+        IspPortSpec(name: 'in4_mono', type: IspPortType.mono, label: '源4 Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'select',
+          label: '选择源',
+          type: IspParamType.intNumber,
+          defaultValue: 1,
+          min: 1,
+          max: 4,
+        ),
+      ],
+    ),
     'demosaic': IspNodeType(
       typeId: 'demosaic',
       displayName: '去马赛克',
@@ -1282,6 +1837,25 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
+    // ---- PSNR 数字表：双输入仪器——参考图（in*，视频互斥组）与测试图
+    // （in_test*，独立互斥组），各四域选一；比较链末端色调映射后的
+    // RGBA（与直方图同一数据口径），显示 PSNR(dB) 与 MSE，评估图像
+    // 噪声/处理保真度。只进不出 ----
+    'psnr': IspNodeType(
+      typeId: 'psnr',
+      displayName: 'PSNR 数字表',
+      colorValue: 0xFF4A5E7A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
       ],
     ),
     'waveform': IspNodeType(
@@ -1523,6 +2097,7 @@ abstract final class IspNodeRegistry {
     'ccm',
     'rgb_dnr',
     'sharpen',
+    'morphology',
     'gamma',
     'ahe',
     'csc_rgb2yuv',
@@ -1532,6 +2107,11 @@ abstract final class IspNodeRegistry {
     'csc_hsl2rgb',
     'csc_hsl2yuv',
     'hsl_debugger',
+    'rgb_debugger',
+    'yuv_debugger',
+    'sat_bright_adjuster',
+    'bright_contrast_adjuster',
+    'levels_curves',
     'fluoro_leak',
     'fluoro_background',
     'fluoro_normalize',
@@ -1573,7 +2153,7 @@ abstract final class IspNodeRegistry {
 
 /// 仪器类节点（直方图/示波器/矢量示波器）：只进不出的分析汇点，
 /// 节点内嵌分析结果显示区。
-const instrumentTypes = {'histogram', 'waveform', 'vectorscope'};
+const instrumentTypes = {'histogram', 'waveform', 'vectorscope', 'psnr'};
 
 /// 音频类仪器节点（电平/波形/EQ 频谱）：数据来自视频音轨 PCM 而非
 /// 图像帧，走独立的刷新路径（isp_studio_state._runAudioInstruments）。

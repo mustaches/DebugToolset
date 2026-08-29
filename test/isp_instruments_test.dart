@@ -35,6 +35,24 @@ void main() {
       expect(y.fold<int>(0, (s, c) => s + c), 2);
     });
 
+    test('psnrRgba：完全相同为 ∞，已知噪声幅度符合定义', () {
+      final a = Uint8List.fromList([100, 150, 200, 255, 50, 60, 70, 255]);
+      // 完全相同 → MSE=0，PSNR=∞。
+      final (mse0, psnr0) = psnrRgba(a, Uint8List.fromList(a));
+      expect(mse0, 0);
+      expect(psnr0, double.infinity);
+      // 每通道差 10：MSE=100 → PSNR = 10·log10(255²/100) ≈ 28.13 dB。
+      final b = Uint8List.fromList([110, 160, 210, 255, 60, 70, 80, 255]);
+      final (mse1, psnr1) = psnrRgba(a, b);
+      expect(mse1, closeTo(100.0, 1e-9));
+      expect(psnr1, closeTo(28.1308, 1e-3));
+      // 差 1：MSE=1 → PSNR = 10·log10(255²) ≈ 48.13 dB。
+      final c = Uint8List.fromList([101, 151, 201, 255, 51, 61, 71, 255]);
+      final (mse2, psnr2) = psnrRgba(a, c);
+      expect(mse2, closeTo(1.0, 1e-9));
+      expect(psnr2, closeTo(48.1308, 1e-3));
+    });
+
     test('waveformLuma 纯色帧所有计数落在同一亮度级', () {
       // 4x2 纯灰 128 → Y=128，每列计数 = 高度 × 驻留权重刻度。
       final rgba = Uint8List(4 * 2 * 4);

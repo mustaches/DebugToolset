@@ -9,6 +9,30 @@ import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
 import '../models/isp_node.dart';
+import '../pipeline/levels_curve.dart';
+import '../pipeline/pipeline_runner.dart';
+import 'node_widget.dart' show formatNodeRunTime;
+
+/// 流程摘要列出的汇点类型：预览类节点（与 IspStudioState.runPreview 的
+/// 收集口径一致，新增预览类节点类型时需同步）+ 图像仪器（直方图/
+/// 示波器/矢量示波器/PSNR——其链在仪器分析时实际编译执行；音频仪器
+/// 不走帧流水线，不列出）。
+const _flowSinkTypeIds = {
+  'preview',
+  'hsl_debugger',
+  'rgb_debugger',
+  'yuv_debugger',
+  'sat_bright_adjuster',
+  'bright_contrast_adjuster',
+  'color_balance',
+  'color_temp_adjuster',
+  'edge_extract',
+  'levels_curves',
+  'histogram',
+  'waveform',
+  'vectorscope',
+  'psnr',
+};
 
 /// 右侧固定宽度属性面板。
 class NodePropertyPanel extends StatelessWidget {
@@ -28,10 +52,7 @@ class NodePropertyPanel extends StatelessWidget {
         border: Border(left: BorderSide(color: Colors.grey.shade800)),
       ),
       child: node == null || type == null
-          ? const Center(
-              child: Text('点击节点查看参数',
-                  style: TextStyle(fontSize: 12, color: Colors.grey)),
-            )
+          ? _FlowSummaryPanel(state: state)
           : ListView(
               padding: const EdgeInsets.all(12),
               children: [
@@ -61,7 +82,10 @@ class NodePropertyPanel extends StatelessWidget {
 
   Widget _editorFor(BuildContext context, IspStudioState state, IspNode node,
       IspParamSpec spec) {
-    final value = node.paramValues[spec.key];
+    // 参数缺失时回退默认值：旧版 .ispflow 存档的节点没有后加的参数
+    //（如曲线调节器的 curveMode/gamma），缺省下拉框会显示为空白，
+    // 与运行时的缺省口径（levelsCurveModeFromParam 回退 spline）一致。
+    final value = node.paramValues[spec.key] ?? spec.defaultValue;
     switch (spec.type) {
       case IspParamType.intNumber:
       case IspParamType.doubleNumber:
@@ -73,7 +97,16 @@ class NodePropertyPanel extends StatelessWidget {
             isInt: spec.type == IspParamType.intNumber,
             min: spec.min,
             max: spec.max,
-            onCommit: (v) => state.setParam(node.id, spec.key, v),
+            onCommit: (v) {
+              state.setParam(node.id, spec.key, v);
+              // 曲线调节器的 gamma / 色温调节器的 temperature：数值提交后
+              // 立即重跑预览（与滑块/控制点拖动松手重跑一致）。
+              if ((node.typeId == 'levels_curves' && spec.key == 'gamma') ||
+                  (node.typeId == 'color_temp_adjuster' &&
+                      spec.key == 'temperature')) {
+                state.runPreview();
+              }
+            },
           ),
         );
       case IspParamType.boolean:
@@ -88,7 +121,7 @@ class NodePropertyPanel extends StatelessWidget {
           ],
         );
       case IspParamType.choice:
-        final current = value?.toString();
+        final current = value.toString();
         final options = spec.options ?? const <String>[];
         return Row(
           children: [
@@ -101,10 +134,33 @@ class NodePropertyPanel extends StatelessWidget {
                 for (final o in options)
                   DropdownMenuItem(
                       value: o,
-                      child: Text(o, style: const TextStyle(fontSize: 12))),
+                      child: Text(spec.optionLabels?[o] ?? o,
+                          style: const TextStyle(fontSize: 12))),
               ],
               onChanged: (v) {
-                if (v != null) state.setParam(node.id, spec.key, v);
+                if (v == null) return;
+                state.setParam(node.id, spec.key, v);
+                // 曲线调节器的生成公式：切换后立即重跑预览看效果
+                //（与拖动控制点松手重跑一致）。切到 gamma 时把控制点
+                // 收敛为唯一中间点：保留首个中间点的 x（缺省 1024），
+                // y 由 gamma 曲线推出（点恒落在曲线上）。
+                if (node.typeId == 'levels_curves' &&
+                    spec.key == 'curveMode') {
+                  if (v == 'gamma') {
+                    final pts =
+                        levelsPointsFromParam(node.paramValues['points']);
+                    final x = pts.length > 2 ? pts[1][0] : 1024.0;
+                    final g =
+                        (node.paramValues['gamma'] as num?)?.toDouble() ??
+                            1.0;
+                    state.setParam(node.id, 'points', [
+                      [0.0, 0.0],
+                      [x, gammaCurveEval(x, g)],
+                      [kLevelsMax.toDouble(), kLevelsMax.toDouble()],
+                    ]);
+                  }
+                  state.runPreview();
+                }
               },
             ),
           ],
@@ -246,6 +302,153 @@ class NodePropertyPanel extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// 无选中节点时的流程摘要：按汇点列出实际编译的节点链（拓扑序），
+/// 每个节点标注执行后端（GPU/CPU）与最近一次运行的耗时（未运行过
+/// 显示 —）。
+class _FlowSummaryPanel extends StatelessWidget {
+  final IspStudioState state;
+
+  const _FlowSummaryPanel({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final sinks = [
+      for (final n in state.graph.nodes.values)
+        if (_flowSinkTypeIds.contains(n.typeId)) n
+    ];
+    if (sinks.isEmpty) {
+      return const Center(
+        child: Text('点击节点查看参数',
+            style: TextStyle(fontSize: 12, color: Colors.grey)),
+      );
+    }
+    final ranOnce = state.nodeRunTimesUs.isNotEmpty;
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        const Text('节点流程图',
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
+        Text(
+          ranOnce ? '最近一次运行的实际链路与耗时' : '尚未运行预览（耗时待运行后显示）',
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        Divider(height: 20, color: Colors.grey.shade800),
+        for (final sink in sinks) ..._chainSection(sink),
+        const SizedBox(height: 8),
+        const Text('点击节点查看参数；点击上方链路选中高亮该链',
+            style: TextStyle(fontSize: 11, color: Colors.grey)),
+      ],
+    );
+  }
+
+  List<Widget> _chainSection(IspNode sink) {
+    List<Map<String, Object?>> chain;
+    try {
+      chain = compileChain(state.graph, sink.id);
+    } catch (e) {
+      return [
+        Text(sink.name,
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white70)),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Text(
+              e.toString().replaceFirst('Bad state: ', ''),
+              style: const TextStyle(fontSize: 11, color: Colors.redAccent)),
+        ),
+      ];
+    }
+    return [
+      // 整条链路区域可点击：选中高亮该链全部节点与连线（selectChain）。
+      InkWell(
+        onTap: () => state.selectChain(sink.id),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(sink.name,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white70)),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(
+                children: [
+                  for (var i = 0; i < chain.length; i++)
+                    _nodeRow(chain[i]['nodeId'] as String, i),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  Widget _nodeRow(String nodeId, int index) {
+    final node = state.graph.nodes[nodeId];
+    if (node == null) return const SizedBox.shrink();
+    final onGpu = state.nodeRunOnGpu[nodeId];
+    final us = state.nodeRunTimesUs[nodeId];
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 16,
+            child: Text('${index + 1}',
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          ),
+          Expanded(
+            child: Text(node.name,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 11, color: Colors.white70)),
+          ),
+          _backendBadge(onGpu),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 52,
+            child: Text(
+              us == null ? '—' : formatNodeRunTime(us),
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _backendBadge(bool? onGpu) {
+    if (onGpu == null) {
+      return const SizedBox(
+          width: 30,
+          child: Text('—',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 9, color: Colors.grey)));
+    }
+    return Container(
+      width: 30,
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      decoration: BoxDecoration(
+        color: onGpu ? const Color(0xFF2E5E3A) : const Color(0xFF3A4A5E),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(
+        onGpu ? 'GPU' : 'CPU',
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 9, color: Colors.white70),
+      ),
     );
   }
 }

@@ -126,6 +126,8 @@ class IspConnectionPainter extends CustomPainter {
       final geo = resolveWireGeometry(state.graph, conn);
       if (geo == null) continue;
       final selected = conn.id == state.selectedConnectionId;
+      // 链路多选高亮（selectChain）：同样补色发光，但不画删除控制点。
+      final chainSelected = state.selectedConnectionIds.contains(conn.id);
       if (selected) {
         // 选中高亮：补色宽底光 + 补色主线。
         final hi = complementaryColor(geo.color);
@@ -133,6 +135,10 @@ class IspConnectionPainter extends CustomPainter {
         _drawWire(canvas, geo.start, geo.end, hi, 1.0);
         _drawDeleteControl(
             canvas, wireMidpoint(geo.start, geo.end));
+      } else if (chainSelected) {
+        final hi = complementaryColor(geo.color);
+        _drawWire(canvas, geo.start, geo.end, hi, 0.35, width: 5.5);
+        _drawWire(canvas, geo.start, geo.end, hi, 1.0);
       } else {
         _drawWire(canvas, geo.start, geo.end, geo.color, 1.0);
       }

@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 51 种节点类型', () {
+    test('包含全部 65 种节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -26,6 +26,8 @@ void main() {
         'highlight',
         'rgb_dnr',
         'sharpen',
+        'edge_extract',
+        'morphology',
         'csc_rgb2yuv',
         'csc_rgb2hsl',
         'csc_yuv2rgb',
@@ -33,12 +35,23 @@ void main() {
         'csc_hsl2rgb',
         'csc_hsl2yuv',
         'hsl_debugger',
+        'rgb_debugger',
+        'yuv_debugger',
+        'sat_bright_adjuster',
+        'bright_contrast_adjuster',
+        'levels_curves',
+        'color_balance',
+        'color_temp_adjuster',
         'fluoro_leak',
         'fluoro_background',
         'fluoro_normalize',
         'fluoro_temporal',
         'pseudo_color',
         'fluoro_fusion',
+        'multiplier',
+        'adder',
+        'blender',
+        'mux4',
         'demosaic',
         'white_balance',
         'ccm',
@@ -48,6 +61,7 @@ void main() {
         'histogram',
         'waveform',
         'vectorscope',
+        'psnr',
         'image_output',
         'video_output',
         'audio_level',
@@ -57,7 +71,7 @@ void main() {
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 51);
+      expect(IspNodeRegistry.types.length, 65);
     });
 
     test('端口类型符合预期', () {
@@ -151,7 +165,7 @@ void main() {
 
     test('hsl_debugger 注册信息与参数默认值', () {
       final type = IspNodeRegistry.byId('hsl_debugger')!;
-      expect(type.displayName, 'HSL调试器');
+      expect(type.displayName, 'HSL调节器');
       // HSL 入、HSL 出。
       expect(type.inputs.single.type, IspPortType.hsl);
       expect(type.outputs.single.type, IspPortType.hsl);
@@ -160,6 +174,84 @@ void main() {
       expect(node.paramValues['s_gain'], 1.0);
       expect(node.paramValues['l_gain'], 1.0);
       // 双联对比预览：默认宽度加倍，附加区含 3 行滑块故默认更高。
+      expect(node.width, kNodeWidth * 2);
+      expect(node.extraHeight, greaterThan(kDefaultNodeExtraHeight));
+    });
+
+    test('sat_bright_adjuster 注册信息与参数默认值', () {
+      final type = IspNodeRegistry.byId('sat_bright_adjuster')!;
+      expect(type.displayName, '色饱和度/亮度调节器');
+      // RGB/YUV/HSL 三路输入（互斥视频输入组）+ 三路同格式输出。
+      expect(type.inputs.map((p) => p.type),
+          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl]);
+      expect(type.outputs.map((p) => p.type),
+          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl]);
+      expect(type.hasVideoInputGroup, isTrue);
+      final node = IspNode.create(type, 'n1', 0, 0);
+      expect(node.paramValues['sat_gain'], 1.0);
+      expect(node.paramValues['bright_gain'], 1.0);
+      // 处理类节点自动注入 Bypass 参数。
+      expect(node.paramValues['bypass'], false);
+      // 双联对比预览：默认宽度加倍，附加区默认更高。
+      expect(node.width, kNodeWidth * 2);
+      expect(node.extraHeight, greaterThan(kDefaultNodeExtraHeight));
+    });
+
+    test('bright_contrast_adjuster 注册信息与参数默认值', () {
+      final type = IspNodeRegistry.byId('bright_contrast_adjuster')!;
+      expect(type.displayName, '亮度/对比度调节器');
+      // RGB/YUV/HSL/Mono 四路输入（互斥视频输入组）+ 四路同格式输出。
+      expect(type.inputs.map((p) => p.type),
+          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl, IspPortType.mono]);
+      expect(type.outputs.map((p) => p.type),
+          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl, IspPortType.mono]);
+      expect(type.hasVideoInputGroup, isTrue);
+      final node = IspNode.create(type, 'n1', 0, 0);
+      expect(node.paramValues['bright'], 100.0);
+      expect(node.paramValues['baseline'], 50.0);
+      expect(node.paramValues['gain'], 100.0);
+      // 处理类节点自动注入 Bypass 参数。
+      expect(node.paramValues['bypass'], false);
+      // 内嵌示波器显示区：默认宽度加倍，附加区默认更高。
+      expect(node.width, kNodeWidth * 2);
+      expect(node.extraHeight, greaterThan(kDefaultNodeExtraHeight));
+    });
+
+    test('multiplier 注册信息：双 Mono 输入（非互斥）+ Mono 输出', () {
+      final type = IspNodeRegistry.byId('multiplier')!;
+      expect(type.displayName, '乘法器');
+      expect(type.inputs.map((p) => p.name), ['in_mono', 'in_mono2']);
+      expect(type.inputs.map((p) => p.type),
+          [IspPortType.mono, IspPortType.mono]);
+      expect(type.outputs.single.type, IspPortType.mono);
+      // 输入源2（in_mono2）不在视频互斥组：两路可同时接入。
+      expect(type.hasVideoInputGroup, isFalse);
+      // 每路输入各带一个偏移参数，默认 0。
+      final node = IspNode.create(type, 'n1', 0, 0);
+      expect(node.paramValues['offset1'], 0.0);
+      expect(node.paramValues['offset2'], 0.0);
+      final g = IspGraph();
+      final m = g.addNode('multiplier', 0, 0);
+      final s1 = g.addNode('cis_mono', 0, 0);
+      final s2 = g.addNode('cis_mono', 0, 100);
+      expect(g.connect(s1, 'out', m, 'in_mono'), isNull);
+      expect(g.connect(s2, 'out', m, 'in_mono2'), isNull);
+    });
+
+    test('edge_extract 注册信息与参数默认值', () {
+      final type = IspNodeRegistry.byId('edge_extract')!;
+      expect(type.displayName, '高频边缘提取');
+      // RGB/YUV/HSL 三路输入（互斥视频输入组）+ 三路同格式输出 +
+      // Mono 单通道边缘图输出。
+      expect(type.inputs.map((p) => p.type),
+          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl]);
+      expect(type.outputs.map((p) => p.type),
+          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl, IspPortType.mono]);
+      expect(type.hasVideoInputGroup, isTrue);
+      final node = IspNode.create(type, 'n1', 0, 0);
+      expect(node.paramValues['gain'], 1.0);
+      expect(node.paramValues['threshold'], 4.0);
+      // 双联对比预览：默认宽度加倍（同 HSL 调节器），附加区默认更高。
       expect(node.width, kNodeWidth * 2);
       expect(node.extraHeight, greaterThan(kDefaultNodeExtraHeight));
     });

@@ -13,7 +13,15 @@ import 'package:provider/provider.dart';
 import '../../../providers/isp_studio_state.dart';
 import '../models/isp_node.dart';
 import '../pipeline/audio_analysis.dart';
+import '../pipeline/color_temp.dart';
+import '../pipeline/levels_curve.dart';
 import 'node_layout.dart';
+
+/// ISP Studio 节点控制条（Slider）的统一主题：滑钮（控制点）直径为
+/// Material 默认的一半（半径 10 → 5），所有带控制条的节点共用。
+const SliderThemeData kIspSliderTheme = SliderThemeData(
+  thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
+);
 
 /// 单个节点的可视化卡片。
 ///
@@ -135,10 +143,37 @@ class IspNodeWidget extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (var i = 0; i < rows; i++) _buildPortRow(state, i),
+                  for (var i = 0; i < rows; i++) ...[
+                    // 端口分组间隔行（如混叠器的基图/蒙版/混叠图分组，
+                    // 几何偏移见 node_layout.kPortGroupGapRows）。
+                    if ((kPortGroupGapRows[type.typeId] ?? const <int>[])
+                        .contains(i))
+                      const SizedBox(height: kPortRowHeight),
+                    _buildPortRow(state, i),
+                  ],
+                  if (type.typeId == 'multiplier')
+                    _buildMultiplierOffsets(state),
+                  if (type.typeId == 'adder') _buildAdderBalance(state),
+                  if (type.typeId == 'mux4') _buildMux4Select(state),
                   if (type.typeId == 'preview') _buildPreviewExtra(state),
                   if (type.typeId == 'hsl_debugger')
                     _buildHslDebugExtra(state),
+                  if (type.typeId == 'rgb_debugger')
+                    _buildRgbDebugExtra(state),
+                  if (type.typeId == 'yuv_debugger')
+                    _buildYuvDebugExtra(state),
+                  if (type.typeId == 'sat_bright_adjuster')
+                    _buildSatBrightExtra(state),
+                  if (type.typeId == 'bright_contrast_adjuster')
+                    _buildBrightContrastExtra(state),
+                  if (type.typeId == 'levels_curves')
+                    _buildLevelsExtra(state),
+                  if (type.typeId == 'color_balance')
+                    _buildColorBalanceExtra(state),
+                  if (type.typeId == 'color_temp_adjuster')
+                    _buildColorTempExtra(state),
+                  if (type.typeId == 'edge_extract')
+                    _buildEdgeExtractExtra(state),
                   if (allInstrumentTypes.contains(type.typeId))
                     _buildInstrumentExtra(state),
                   if (type.typeId == 'image_output')
@@ -243,6 +278,56 @@ class IspNodeWidget extends StatelessWidget {
             ),
           );
         },
+      );
+    } else if (type.typeId == 'psnr') {
+      // PSNR 数字表：大字号 dB 值 + MSE；未运行/缺输入/尺寸不一致
+      // 分别显示提示。完全相同（∞）以绿色突出。
+      final result = state.instrumentResults[node.id];
+      final err = result?['error'] as String?;
+      final psnr = result?['psnr'] as double?;
+      final mse = result?['mse'] as double?;
+      content = Center(
+        child: result == null
+            ? hint
+            : err != null
+                ? Text(err,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.orangeAccent))
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // dB 跟在数值后面（同一行，基线对齐）。
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          Text(
+                            psnr!.isInfinite
+                                ? '∞'
+                                : psnr.toStringAsFixed(2),
+                            style: TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: psnr.isInfinite
+                                  ? const Color(0xFF50C080)
+                                  : Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text('dB',
+                              style: TextStyle(
+                                  fontSize: 20,
+                                  color: Colors.grey.shade400)),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text('MSE ${mse!.toStringAsFixed(2)}',
+                          style: TextStyle(
+                              fontSize: 10, color: Colors.grey.shade500)),
+                    ],
+                  ),
       );
     } else if (type.typeId == 'audio_level') {
       final result = state.instrumentResults[node.id];
@@ -492,9 +577,16 @@ class IspNodeWidget extends StatelessWidget {
               ),
             ),
           ),
-          // 最大化/还原（仅有显示区的节点：预览/HSL 调试器/仪器）。
+          // 最大化/还原（仅有显示区的节点：预览/调节器/高频边缘提取/
+          // 曲线调节器/仪器）。
           if (type.typeId == 'preview' ||
               type.typeId == 'hsl_debugger' ||
+              type.typeId == 'rgb_debugger' ||
+              type.typeId == 'yuv_debugger' ||
+              type.typeId == 'sat_bright_adjuster' ||
+              type.typeId == 'bright_contrast_adjuster' ||
+              type.typeId == 'edge_extract' ||
+              type.typeId == 'levels_curves' ||
               allInstrumentTypes.contains(type.typeId))
             Tooltip(
               message:
@@ -693,18 +785,21 @@ class IspNodeWidget extends StatelessWidget {
                 ),
                 if (total > 1)
                   Expanded(
-                    child: Slider(
-                      value: state.previewFrame
-                          .clamp(0, total - 1)
-                          .toDouble(),
-                      min: 0,
-                      max: (total - 1).toDouble(),
-                      // 播放中禁用拖帧。
-                      onChanged: state.isPlaying
-                          ? null
-                          : (v) => state.setPreviewFrame(v.round()),
-                      onChangeEnd:
+                    child: SliderTheme(
+                      data: kIspSliderTheme,
+                      child: Slider(
+                        value: state.previewFrame
+                            .clamp(0, total - 1)
+                            .toDouble(),
+                        min: 0,
+                        max: (total - 1).toDouble(),
+                        // 播放中禁用拖帧。
+                        onChanged: state.isPlaying
+                            ? null
+                            : (v) => state.setPreviewFrame(v.round()),
+                        onChangeEnd:
                             state.isPlaying ? null : (_) => state.runPreview(),
+                      ),
                     ),
                   ),
               ],
@@ -717,10 +812,10 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
-  /// HSL 调试器附加区：双联对比预览图（左调整前/右调整后）+ H/S/L
-  /// 三行紧凑滑块 + 底部拖动手柄。
-  /// 拖动滑块只写参数（实时刷新数值），松手才重跑流水线更新预览图；
-  /// 预览图刷新走 [IspStudioState.frameTick]，只有本区重建。
+  /// HSL 调节器附加区：双联矢量示波器（左调整前/右调整后，与
+  /// vectorscope 仪器同一布局）+ H/S/L 三行紧凑滑块 + 底部拖动手柄。
+  /// 拖动滑块只写参数（实时刷新数值），松手才重跑流水线更新示波器图；
+  /// 图刷新走 [IspStudioState.frameTick]，只有本区重建。
   Widget _buildHslDebugExtra(IspStudioState state) {
     return ValueListenableBuilder<int>(
       valueListenable: state.frameTick,
@@ -729,6 +824,98 @@ class IspNodeWidget extends StatelessWidget {
   }
 
   Widget _buildHslDebugExtraContent(IspStudioState state) {
+    final scopeImage = state.hslVectorscopes[node.id];
+    final inputScopeImage = state.hslInputVectorscopes[node.id];
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null;
+    final extra = state.previewExtraHeight(node.id);
+    // 3 行滑块各 24，顶部留白 4，底部手柄 10，其余归示波器区。
+    final scopeHeight = math.max(0.0, extra - 4 - 24 * 3 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: scopeHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链统计）；右半：调整后（输出链统计）。
+                  Expanded(
+                      child: _buildHslVectorscopePane(inputScopeImage, '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslVectorscopePane(
+                          scopeImage, '调整后', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'H', 'h_shift', -180, 180, 0,
+              (v) => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(0)}°'),
+          _buildHslSliderRow(state, 'S', 's_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          _buildHslSliderRow(state, 'L', 'l_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// HSL 调节器矢量示波器的半区：矢量示波器坐标格 + 迹线图（无图时
+  /// 显示占位文案 [hint]），左上角叠加半透明小标签 [label]
+  /// （「调整前」/「调整后」）。布局与 vectorscope 仪器一致：数据区
+  /// 是居中、边长为短边 82% 的正方形，迹线铺满该正方形。
+  Widget _buildHslVectorscopePane(ui.Image? image, String label, String hint) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final side =
+            math.min(constraints.maxWidth, constraints.maxHeight) * 0.82;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            CustomPaint(
+              foregroundPainter: const VectorscopeGraticule(),
+              child: Container(
+                color: Colors.black,
+                alignment: Alignment.center,
+                child: SizedBox(
+                  width: side,
+                  height: side,
+                  child: image == null
+                      ? Center(
+                          child: Text(hint,
+                              style: const TextStyle(
+                                  fontSize: 11, color: Colors.grey)))
+                      : RawImage(image: image, fit: BoxFit.fill),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 2,
+              top: 2,
+              child: Text(label,
+                  style:
+                      const TextStyle(fontSize: 10, color: Colors.white54)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// RGB 调节器附加区：与 HSL 调节器同构（双联对比预览 + 3 行增益滑块）。
+  Widget _buildRgbDebugExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildRgbDebugExtraContent(state),
+    );
+  }
+
+  Widget _buildRgbDebugExtraContent(IspStudioState state) {
     final image = state.previewImages[node.id];
     final inputImage = state.previewInputImages[node.id];
     final hasInput = state.graph.connectionAt(node.id, 'in') != null;
@@ -757,11 +944,11 @@ class IspNodeWidget extends StatelessWidget {
               ),
             ),
           ),
-          _buildHslSliderRow(state, 'H', 'h_shift', -180, 180, 0,
-              (v) => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(0)}°'),
-          _buildHslSliderRow(state, 'S', 's_gain', 0, 5, 1,
+          _buildHslSliderRow(state, 'R', 'r_gain', 0, 5, 1,
               (v) => '×${v.toStringAsFixed(2)}'),
-          _buildHslSliderRow(state, 'L', 'l_gain', 0, 5, 1,
+          _buildHslSliderRow(state, 'G', 'g_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          _buildHslSliderRow(state, 'B', 'b_gain', 0, 5, 1,
               (v) => '×${v.toStringAsFixed(2)}'),
           // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
           _buildResizeBar(state),
@@ -770,7 +957,705 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
-  /// HSL 调试器对比窗格的半区：黑底图（无图时显示占位文案 [hint]），
+  /// YUV 调节器附加区：与 HSL/RGB 调节器同构（双联对比预览 +
+  /// Y 增益与 U/V 色度增益滑块）。
+  Widget _buildYuvDebugExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildYuvDebugExtraContent(state),
+    );
+  }
+
+  Widget _buildYuvDebugExtraContent(IspStudioState state) {
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null;
+    final extra = state.previewExtraHeight(node.id);
+    // 3 行滑块各 24，顶部留白 4，底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 * 3 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: imageHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链出图）；右半：调整后（输出链出图）。
+                  Expanded(
+                      child: _buildHslComparePane(inputImage, '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslComparePane(
+                          image, '调整后', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'Y', 'y_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          _buildHslSliderRow(state, 'U', 'u_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          _buildHslSliderRow(state, 'V', 'v_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 高频边缘提取附加区：与色饱和度/亮度调节器同构（双联对比预览 +
+  /// 增益/噪声门限两行滑块），输入可为 RGB/YUV/HSL 任一种。
+  Widget _buildEdgeExtractExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildEdgeExtractExtraContent(state),
+    );
+  }
+
+  Widget _buildEdgeExtractExtraContent(IspStudioState state) {
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    // 互斥输入组：in(RGB)/in_yuv/in_hsl 任一已连接即视为有输入。
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null ||
+        state.graph.connectionAt(node.id, 'in_yuv') != null ||
+        state.graph.connectionAt(node.id, 'in_hsl') != null;
+    final extra = state.previewExtraHeight(node.id);
+    // 2 行滑块各 24，顶部留白 4，底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 * 2 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: imageHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链出图）；右半：提取后（输出链出图）。
+                  Expanded(
+                      child: _buildHslComparePane(inputImage, '输入',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslComparePane(
+                          image, '输出', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'Gain', 'gain', 0.1, 8, 1,
+              (v) => '×${v.toStringAsFixed(2)}', labelWidth: 40),
+          _buildHslSliderRow(state, 'Thr', 'threshold', 0, 256, 4,
+              (v) => v.toStringAsFixed(1), labelWidth: 40),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 色饱和度/亮度调节器附加区：与 HSL 调节器同构（双联对比预览 +
+  /// 色饱和度/亮度两行滑块），输入可为 RGB/YUV/HSL 任一种。
+  Widget _buildSatBrightExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildSatBrightExtraContent(state),
+    );
+  }
+
+  /// 亮度/对比度调节器附加区：Y 通道波形示波器（调整后输出帧）+
+  /// 基线绿色虚线与左缘三角滑块 + 亮度/基线/增益三行紧凑滑块 +
+  /// 底部拖动手柄。拖动滑块或三角只写参数，松手才重跑流水线。
+  Widget _buildBrightContrastExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) =>
+          _buildBrightContrastExtraContent(state),
+    );
+  }
+
+  Widget _buildBrightContrastExtraContent(IspStudioState state) {
+    final waveform = state.brightContrastWaveforms[node.id];
+    final inputWaveform = state.brightContrastInputWaveforms[node.id];
+    // 互斥输入组：in(RGB)/in_yuv/in_hsl/in_mono 任一已连接即视为有输入。
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null ||
+        state.graph.connectionAt(node.id, 'in_yuv') != null ||
+        state.graph.connectionAt(node.id, 'in_hsl') != null ||
+        state.graph.connectionAt(node.id, 'in_mono') != null;
+    final baseline =
+        (node.paramValues['baseline'] as num?)?.toDouble() ?? 50.0;
+    final extra = state.previewExtraHeight(node.id);
+    // 3 行滑块各 24，顶部留白 4，示波器与滑块之间留白 8，底部手柄 10，
+    // 其余归示波器区。
+    final scopeHeight = math.max(0.0, extra - 4 - 8 - 24 * 3 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            child: SizedBox(
+              height: scopeHeight,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 黑底双联波形：左半调整前（输入链）、右半调整后（输出
+                  // 链），与波形仪器同一布局（左侧级标区 labelWidth）。
+                  CustomPaint(
+                    foregroundPainter: const WaveformGraticule(),
+                    child: Container(
+                      color: Colors.black,
+                      padding: const EdgeInsets.only(
+                          left: WaveformGraticule.labelWidth),
+                      child: Row(
+                        children: [
+                          Expanded(
+                              child: _buildWaveformHalf(
+                                  inputWaveform,
+                                  '调整前',
+                                  hasInput ? '运行预览后显示' : '未连接输入')),
+                          // 左右波形之间的 10px 灰色间隔。
+                          Container(width: _kWaveformHalfGap, color: _kWaveformGapColor),
+                          Expanded(
+                              child: _buildWaveformHalf(
+                                  waveform, '调整后', '运行预览后显示效果')),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // 基线叠加：绿色 1px 虚线 + 左缘三角形滑块。
+                  IgnorePointer(
+                    child: CustomPaint(
+                        painter: _BaselineOverlayPainter(baseline)),
+                  ),
+                  // 左缘竖条手势区：垂直拖动/点按调整基线（等价于拖基线
+                  // 滑块），松手重跑流水线刷新波形。
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: WaveformGraticule.labelWidth + 8,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onVerticalDragUpdate: (d) => _baselineDragTo(
+                          state, d.localPosition.dy, scopeHeight),
+                      onTapDown: (d) =>
+                          _baselineDragTo(state, d.localPosition.dy, scopeHeight),
+                      onVerticalDragEnd: (_) => state.runPreview(),
+                      onTapUp: (_) => state.runPreview(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'Bright', 'bright', 0, 1000, 100,
+              (v) => '${v.toStringAsFixed(0)}%', labelWidth: 52),
+          _buildHslSliderRow(state, 'Baseline', 'baseline', 0, 100, 50,
+              (v) => '${v.toStringAsFixed(0)}%', labelWidth: 52),
+          _buildHslSliderRow(state, 'Gain', 'gain', 0, 1000, 100,
+              (v) => '${v.toStringAsFixed(0)}%', labelWidth: 52),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 亮度/对比度调节器示波器的半区：波形图（无图时显示占位文案
+  /// [hint]），左上角叠加半透明小标签 [label]（「调整前」/「调整后」）。
+  Widget _buildWaveformHalf(ui.Image? image, String label, String hint) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 波形图必须占满整个半区（紧约束 + BoxFit.fill 拉伸），其 256 行
+        // 才与 WaveformGraticule 的 0..100 级标逐行对齐；套 Center 会让
+        // RawImage 退回固有宽高比、上下留边，导致迹线与 Y 级标错位。
+        if (image != null)
+          Positioned.fill(child: RawImage(image: image, fit: BoxFit.fill))
+        else
+          Center(
+            child: Text(hint,
+                style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          ),
+        Positioned(
+          left: 2,
+          top: 2,
+          child: Text(label,
+              style: const TextStyle(fontSize: 10, color: Colors.white54)),
+        ),
+      ],
+    );
+  }
+
+  /// 示波器左缘基线拖动：把竖向位置换算为基线百分比（0% 在底，
+  /// 100% 在顶）写入参数；不重跑流水线（松手由调用方触发）。
+  void _baselineDragTo(IspStudioState state, double dy, double scopeHeight) {
+    if (scopeHeight <= 0) return;
+    final v = (100 - dy / scopeHeight * 100).clamp(0.0, 100.0);
+    state.setParam(node.id, 'baseline', v);
+  }
+
+  /// 色彩平衡附加区：双联对比预览（左调整前/右调整后，与 RGB 调节器
+  /// 同一布局）+ 青↔红 / 洋红↔绿 / 黄↔蓝 三行渐变滑杆 + 底部拖动手柄。
+  /// 数值输入走右侧属性面板（三个 doubleNumber 参数）。拖动滑块只写
+  /// 参数，松手才重跑流水线；图刷新走 [IspStudioState.frameTick]。
+  Widget _buildColorBalanceExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildColorBalanceExtraContent(state),
+    );
+  }
+
+  Widget _buildColorBalanceExtraContent(IspStudioState state) {
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    // 互斥输入组：in(RGB)/in_yuv/in_hsl 任一已连接即视为有输入。
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null ||
+        state.graph.connectionAt(node.id, 'in_yuv') != null ||
+        state.graph.connectionAt(node.id, 'in_hsl') != null;
+    final extra = state.previewExtraHeight(node.id);
+    // 3 行滑杆各 24，顶部留白 4，底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 * 3 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: imageHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链出图）；右半：调整后（输出链出图）。
+                  Expanded(
+                      child: _buildHslComparePane(inputImage, '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslComparePane(
+                          image, '调整后', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          _buildBalanceSliderRow(state, 'cyan_red', '青色',
+              const Color(0xFF40C0C0), '红色', const Color(0xFFE05050)),
+          _buildBalanceSliderRow(state, 'magenta_green', '洋红',
+              const Color(0xFFD050D0), '绿色', const Color(0xFF50C050)),
+          _buildBalanceSliderRow(state, 'yellow_blue', '黄色',
+              const Color(0xFFD8D050), '蓝色', const Color(0xFF5070E0)),
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 色彩平衡单行：左标签 + 渐变轨道滑杆 + 右标签 + 当前值。渐变轨道
+  /// 画在滑杆下层（Slider 自身轨道透明），直观表达偏移方向。左侧补
+  /// 与右侧数值区等宽的 34px 间隔，使左右装饰对称、滑杆轨道（及 0 值
+  /// 中心点）与调试块中心对齐。
+  Widget _buildBalanceSliderRow(IspStudioState state, String key,
+      String leftLabel, Color leftColor, String rightLabel, Color rightColor) {
+    final value = (node.paramValues[key] as num?)?.toDouble() ?? 0.0;
+    final labelStyle = TextStyle(fontSize: 10, color: Colors.grey.shade400);
+    return SizedBox(
+      height: 24,
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          // 与右侧「当前值 34px」等宽的对称间隔，保证轨道居中。
+          const SizedBox(width: 34),
+          SizedBox(width: 26, child: Text(leftLabel, style: labelStyle)),
+          Expanded(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Container(
+                    height: 4,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(2),
+                      gradient:
+                          LinearGradient(colors: [leftColor, rightColor]),
+                    ),
+                  ),
+                ),
+                SliderTheme(
+                  data: const SliderThemeData(
+                    activeTrackColor: Colors.transparent,
+                    inactiveTrackColor: Colors.transparent,
+                    trackHeight: 4,
+                    // 滑钮直径减半（与 kIspSliderTheme 一致）。
+                    thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
+                  ),
+                  child: Slider(
+                    value: value.clamp(-100.0, 100.0),
+                    min: -100,
+                    max: 100,
+                    // 拖动中只写参数（实时刷新数值），松手才重跑。
+                    onChanged: (v) => state.setParam(node.id, key, v),
+                    onChangeEnd: (_) => state.runPreview(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+              width: 26,
+              child: Text(rightLabel, style: labelStyle)),
+          SizedBox(
+            width: 34,
+            child: Text(value.toStringAsFixed(0),
+                style: const TextStyle(fontSize: 10, color: Colors.white70)),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
+  /// 色温调节器附加区：双联对比预览（左调整前/右调整后）+ 实测色温
+  /// 按钮（点击把滑块设为测量值）/目标色温行 + 暖→冷渐变色温滑杆
+  ///（1800~12000K）+ 底行（左下 CCM 3x3 方框 / 右下调整后 RGB 直方图）
+  /// + 底部拖动手柄。图刷新走 [IspStudioState.frameTick]；拖动滑块只写
+  /// 参数，松手重跑流水线。
+  Widget _buildColorTempExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildColorTempExtraContent(state),
+    );
+  }
+
+  Widget _buildColorTempExtraContent(IspStudioState state) {
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null;
+    final extra = state.previewExtraHeight(node.id);
+    final measured = state.measuredColorTemps[node.id];
+    final target =
+        (node.paramValues['temperature'] as num?)?.toDouble() ?? 6500.0;
+    final refCct = (node.paramValues['measured_cct'] as num?)?.toInt() ?? 0;
+    final ccm = colorTempCcm(colorTempGains(target, refCct));
+    // 温度行 24 + 滑杆行 24 + 底行（CCM 方框 / 直方图）64，顶部留白 4，
+    // 底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 - 24 - 64 - 10);
+    const textStyle = TextStyle(fontSize: 10, color: Colors.white70);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: imageHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链出图）；右半：调整后（输出链出图）。
+                  Expanded(
+                      child: _buildHslComparePane(inputImage, '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslComparePane(
+                          image, '调整后', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          // 实测/目标色温行：测量值是可点击按钮（点击把滑块设为测量值）。
+          SizedBox(
+            height: 24,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Tooltip(
+                        message: measured != null ? '点击将色温设为测量值' : '运行预览后显示测量值',
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: measured != null
+                              ? () => state.applyMeasuredColorTemp(node.id)
+                              : null,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: measured != null
+                                  ? const Color(0xFF3A3A3A)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(3),
+                              border: measured != null
+                                  ? Border.all(color: const Color(0xFF5A5A5A))
+                                  : null,
+                            ),
+                            child: Text(
+                              measured != null ? '测量: $measured K' : '测量: 未运行',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  color: measured != null
+                                      ? const Color(0xFFFFC890)
+                                      : Colors.grey),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Text('目标: ${target.toStringAsFixed(0)} K',
+                      style: textStyle),
+                ],
+              ),
+            ),
+          ),
+          _buildColorTempSliderRow(state, target),
+          // 底行：左下 CCM 3x3 方框（9 个长方框），右下调整后 RGB 直方图。
+          SizedBox(
+            height: 64,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  Expanded(child: _buildCcmGrid(ccm)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    // SizedBox.expand：有数据时 CustomPaint 无 child，
+                    // Row 的松散高度约束下会塌缩成 0 高（与仪器区同理）。
+                    child: SizedBox.expand(
+                      child: CustomPaint(
+                        key: const ValueKey('colorTempHist'),
+                        painter: _RgbHistMiniPainter(
+                            state.colorTempHistograms[node.id]),
+                        child: state.colorTempHistograms[node.id] == null
+                            ? const Center(
+                                child: Text('未运行',
+                                    style: TextStyle(
+                                        fontSize: 9, color: Colors.grey)))
+                            : null,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 色温调节器左下角的 CCM 显示：9 个长方框按 3x3 各显示一个矩阵值
+  ///（当前色温增益对角阵，行优先）。每行背景用对应通道的 RGB 颜色
+  ///（R 行红底 / G 行绿底 / B 行蓝底，半透明保证文字可读）。
+  Widget _buildCcmGrid(List<double> ccm) {
+    // 行 → 通道颜色（R/G/B）。
+    const rowColors = [
+      Color(0xFFE05353),
+      Color(0xFF53E553),
+      Color(0xFF5383E5),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(
+            height: 12,
+            child:
+                Text('CCM', style: TextStyle(fontSize: 9, color: Colors.grey))),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var r = 0; r < 3; r++) ...[
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var c = 0; c < 3; c++) ...[
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              // 对应 RGB 通道色半透明背景；对角元（增益
+                              // 所在）略亮一档。
+                              color: rowColors[r].withValues(
+                                  alpha: r == c ? 0.45 : 0.22),
+                              border: Border.all(
+                                  color: rowColors[r].withValues(alpha: 0.6)),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              ccm[r * 3 + c].toStringAsFixed(3),
+                              style: const TextStyle(
+                                  fontSize: 8,
+                                  fontFamily: 'monospace',
+                                  color: Colors.white70),
+                            ),
+                          ),
+                        ),
+                        if (c < 2) const SizedBox(width: 2),
+                      ],
+                    ],
+                  ),
+                ),
+                if (r < 2) const SizedBox(height: 2),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 色温滑杆行：暖（橙）→冷（蓝）渐变轨道 + 两端色温标签 + 当前值。
+  /// 渐变画在滑杆下层（Slider 自身轨道透明），左右装饰等宽保证轨道居中。
+  Widget _buildColorTempSliderRow(IspStudioState state, double value) {
+    const labelStyle = TextStyle(fontSize: 9, color: Colors.grey);
+    return SizedBox(
+      height: 24,
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          const SizedBox(width: 30, child: Text('1800K', style: labelStyle)),
+          Expanded(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Container(
+                    height: 4,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(2),
+                      // 暖色（低色温橙）→ 冷色（高色温蓝）。
+                      gradient: const LinearGradient(colors: [
+                        Color(0xFFFFA040),
+                        Color(0xFFFFF4E0),
+                        Color(0xFF5090FF),
+                      ]),
+                    ),
+                  ),
+                ),
+                SliderTheme(
+                  data: const SliderThemeData(
+                    activeTrackColor: Colors.transparent,
+                    inactiveTrackColor: Colors.transparent,
+                    trackHeight: 4,
+                    // 滑钮直径减半（与 kIspSliderTheme 一致）。
+                    thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5),
+                  ),
+                  child: Slider(
+                    value: value.clamp(1800.0, 12000.0),
+                    min: 1800,
+                    max: 12000,
+                    // 拖动中只写参数（实时刷新数值），松手才重跑。
+                    onChanged: (v) =>
+                        state.setParam(node.id, 'temperature', v),
+                    onChangeEnd: (_) => state.runPreview(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 30, child: Text('12000K', style: labelStyle)),
+          SizedBox(
+            width: 44,
+            child: Text('${value.toStringAsFixed(0)}K',
+                style: const TextStyle(fontSize: 10, color: Colors.white70)),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
+  /// 曲线调节器附加区：传递函数曲线编辑器（黑色背景 + 输入 Y 直方图 +
+  /// 输出（调节后）Y 直方图 + 四分网格 + 单调三次样条曲线；单击空白
+  /// 加点、拖动移点、双击删点，端点 A1/C1 的 x 固定）+ 底部拖动手柄。拖动只写参数，松手重跑
+  /// 流水线；直方图刷新走 [IspStudioState.frameTick]。
+  Widget _buildLevelsExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildLevelsExtraContent(state),
+    );
+  }
+
+  Widget _buildLevelsExtraContent(IspStudioState state) {
+    final extra = state.previewExtraHeight(node.id);
+    // 顶部留白 4，底部手柄 10，其余归曲线编辑区。
+    final editorHeight = math.max(0.0, extra - 4 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: editorHeight,
+              child: _LevelsCurveEditor(state: state, node: node),
+            ),
+          ),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSatBrightExtraContent(IspStudioState state) {
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    // 互斥输入组：in(RGB)/in_yuv/in_hsl 任一已连接即视为有输入。
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null ||
+        state.graph.connectionAt(node.id, 'in_yuv') != null ||
+        state.graph.connectionAt(node.id, 'in_hsl') != null;
+    final extra = state.previewExtraHeight(node.id);
+    // 2 行滑块各 24，顶部留白 4，底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 * 2 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: imageHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链出图）；右半：调整后（输出链出图）。
+                  Expanded(
+                      child: _buildHslComparePane(inputImage, '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslComparePane(
+                          image, '调整后', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'S', 'sat_gain', 0, 8, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          _buildHslSliderRow(state, 'L', 'bright_gain', 0, 32, 1,
+              (v) => '×${v.toStringAsFixed(2)}'),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// HSL 调节器对比窗格的半区：黑底图（无图时显示占位文案 [hint]），
   /// 左上角叠加半透明小标签 [label]（「调整前」/「调整后」）。
   Widget _buildHslComparePane(ui.Image? image, String label, String hint) {
     return Container(
@@ -795,11 +1680,193 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
-  /// HSL 调试器的单行紧凑滑块：窄标签 + Slider + 数值文本。
+  /// 乘法器的偏移行：源1/源2 偏移各一行「− 带符号值 +」步进控件，
+  /// 点击写参数并重跑预览（与滑块松手重跑同一语义）。
+  Widget _buildMultiplierOffsets(IspStudioState state) {
+    return Column(
+      children: [
+        _buildOffsetStepperRow(state, '源1偏移', 'offset1'),
+        _buildOffsetStepperRow(state, '源2偏移', 'offset2'),
+      ],
+    );
+  }
+
+  /// 加法器平衡控制条：上方居中显示平衡值，下方左「源1」右「源2」
+  /// 渐变轨道，控制点位置即平衡增益（0..1，默认 0.5 居中）。
+  /// 拖动中只写参数（实时刷新数值），松手才重跑（同色彩平衡滑杆）。
+  Widget _buildAdderBalance(IspStudioState state) {
+    final value = (node.paramValues['balance'] as num?)?.toDouble() ?? 0.5;
+    final labelStyle = TextStyle(fontSize: 10, color: Colors.grey.shade400);
+    return Column(
+      children: [
+        // 平衡值显示行（控制条上方，居中）。
+        SizedBox(
+          height: 14,
+          child: Center(
+            child: Text(value.toStringAsFixed(2),
+                style: const TextStyle(fontSize: 10, color: Colors.white70)),
+          ),
+        ),
+        SizedBox(
+          height: 24,
+          child: Row(
+            children: [
+              const SizedBox(width: 8),
+              SizedBox(width: 26, child: Text('源1', style: labelStyle)),
+              Expanded(
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Container(
+                        height: 4,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(2),
+                          gradient: const LinearGradient(colors: [
+                            Color(0xFF50A0B0),
+                            Color(0xFF807060),
+                          ]),
+                        ),
+                      ),
+                    ),
+                    SliderTheme(
+                      data: const SliderThemeData(
+                        activeTrackColor: Colors.transparent,
+                        inactiveTrackColor: Colors.transparent,
+                        trackHeight: 4,
+                        // 滑钮直径减半（与 kIspSliderTheme 一致）。
+                        thumbShape:
+                            RoundSliderThumbShape(enabledThumbRadius: 5),
+                      ),
+                      child: Slider(
+                        value: value.clamp(0.0, 1.0),
+                        min: 0,
+                        max: 1,
+                        // 拖动中只写参数（实时刷新数值），松手才重跑。
+                        onChanged: (v) =>
+                            state.setParam(node.id, 'balance', v),
+                        onChangeEnd: (_) => state.runPreview(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 26, child: Text('源2', style: labelStyle)),
+              const SizedBox(width: 8),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 多路选择器源选择开关：源1~源4 单选（select 参数，默认 1），
+  /// 点击即切换输出通道并重跑预览。
+  Widget _buildMux4Select(IspStudioState state) {
+    final sel = (node.paramValues['select'] as num?)?.toInt() ?? 1;
+    return SizedBox(
+      height: 24,
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          for (var i = 1; i <= 4; i++) ...[
+            Expanded(
+              child: GestureDetector(
+                onTap: () {
+                  if (sel == i) return;
+                  state.setParam(node.id, 'select', i);
+                  state.runPreview();
+                },
+                child: Container(
+                  height: 18,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: sel == i
+                        ? const Color(0xFF4A6E8E)
+                        : const Color(0xFF333333),
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(
+                        color: sel == i
+                            ? const Color(0xFF6A9EC0)
+                            : Colors.grey.shade800),
+                  ),
+                  child: Text('源$i',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: sel == i
+                              ? Colors.white
+                              : Colors.grey.shade500)),
+                ),
+              ),
+            ),
+            if (i < 4) const SizedBox(width: 4),
+          ],
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOffsetStepperRow(
+      IspStudioState state, String label, String key) {
+    final value = (node.paramValues[key] as num?)?.toDouble() ?? 0.0;
+    // 带显式正负号的紧凑格式：整数去小数点（+120 / -30.5 / +0）。
+    String fmt(double v) {
+      final abs = v.abs();
+      final s = abs == abs.roundToDouble()
+          ? abs.toInt().toString()
+          : abs.toStringAsFixed(1);
+      return v < 0 ? '-$s' : '+$s';
+    }
+
+    void step(double d) {
+      state.setParam(
+          node.id, key, (value + d).clamp(-65535.0, 65535.0));
+      state.runPreview();
+    }
+
+    return SizedBox(
+      height: 24,
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 46,
+            child: Text(label,
+                style: const TextStyle(fontSize: 11, color: Colors.white70)),
+          ),
+          _offsetStepperButton(Icons.remove, () => step(-1)),
+          Expanded(
+            child: Center(
+              child: Text(fmt(value),
+                  style:
+                      const TextStyle(fontSize: 11, color: Colors.white70)),
+            ),
+          ),
+          _offsetStepperButton(Icons.add, () => step(1)),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _offsetStepperButton(IconData icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(3),
+        child: Icon(icon, size: 14, color: Colors.white70),
+      ),
+    );
+  }
+
+  /// HSL 调节器的单行紧凑滑块：窄标签 + Slider + 数值文本。
   /// [fallback] 为参数缺失时的显示值（增益类参数应取恒等 1.0），
   /// [format] 把参数值格式化为显示文本（H 带符号角度，S/L 增益倍数）。
   Widget _buildHslSliderRow(IspStudioState state, String label, String key,
-      double min, double max, double fallback, String Function(double) format) {
+      double min, double max, double fallback, String Function(double) format,
+      {double labelWidth = 12}) {
     final value = (node.paramValues[key] as num?)?.toDouble() ?? fallback;
     return SizedBox(
       height: 24,
@@ -807,18 +1874,21 @@ class IspNodeWidget extends StatelessWidget {
         children: [
           const SizedBox(width: 8),
           SizedBox(
-            width: 12,
+            width: labelWidth,
             child: Text(label,
                 style: const TextStyle(fontSize: 11, color: Colors.white70)),
           ),
           Expanded(
-            child: Slider(
-              value: value.clamp(min, max),
-              min: min,
-              max: max,
-              // 拖动中只写参数（不重跑流水线），松手才重跑。
-              onChanged: (v) => state.setParam(node.id, key, v),
-              onChangeEnd: (_) => state.runPreview(),
+            child: SliderTheme(
+              data: kIspSliderTheme,
+              child: Slider(
+                value: value.clamp(min, max),
+                min: min,
+                max: max,
+                // 拖动中只写参数（不重跑流水线），松手才重跑。
+                onChanged: (v) => state.setParam(node.id, key, v),
+                onChangeEnd: (_) => state.runPreview(),
+              ),
             ),
           ),
           SizedBox(
@@ -833,7 +1903,7 @@ class IspNodeWidget extends StatelessWidget {
   }
 
   /// 底部手柄条：中间上下拖调整高度，右下角控制点双向调整宽高。
-  /// 预览、HSL 调试器与仪器节点共用。
+  /// 预览、HSL 调节器与仪器节点共用。
   Widget _buildResizeBar(IspStudioState state) {
     return SizedBox(
       height: 10,
@@ -1259,6 +2329,55 @@ class WaveformGraticule extends CustomPainter {
 
   @override
   bool shouldRepaint(WaveformGraticule old) => false;
+}
+
+/// 亮度/对比度调节器示波器左右波形之间的间隔（灰色竖条）。
+const double _kWaveformHalfGap = 10.0;
+const Color _kWaveformGapColor = Color(0xFF616161);
+
+/// 亮度/对比度调节器示波器的基线叠加层：按基线百分比 [baselinePct]
+/// 画绿色 1px 水平虚线（0% 在底、100% 在顶），**只画在左半「调整前」
+/// 波形区**；左缘画实心三角形滑块（指向右，垂直居中于基线）。
+class _BaselineOverlayPainter extends CustomPainter {
+  final double baselinePct;
+
+  const _BaselineOverlayPainter(this.baselinePct);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(WaveformGraticule.labelWidth, 0,
+        size.width - WaveformGraticule.labelWidth, size.height);
+    if (rect.width <= 0 || rect.height <= 0) return;
+    // 左半「调整前」波形区宽度（减去中间灰色间隔后两等分）。
+    final leftHalfRight =
+        rect.left + (rect.width - _kWaveformHalfGap) / 2;
+    if (leftHalfRight <= rect.left) return;
+    final y = rect.top +
+        rect.height * (100 - baselinePct.clamp(0.0, 100.0)) / 100;
+    const green = Color(0xFF00FF00);
+    // 绿色 1px 水平虚线（4px 线 / 3px 间隔），仅覆盖左半波形区。
+    final linePaint = Paint()
+      ..color = green
+      ..strokeWidth = 1;
+    const dash = 4.0;
+    const gap = 3.0;
+    for (var x = rect.left; x < leftHalfRight; x += dash + gap) {
+      canvas.drawLine(
+          Offset(x, y), Offset(math.min(x + dash, leftHalfRight), y),
+          linePaint);
+    }
+    // 左缘三角形滑块（尺寸随全局控制点减半约定：10x7 → 5x3.5）。
+    final tri = Path()
+      ..moveTo(rect.left, y - 2.5)
+      ..lineTo(rect.left, y + 2.5)
+      ..lineTo(rect.left + 3.5, y)
+      ..close();
+    canvas.drawPath(tri, Paint()..color = green);
+  }
+
+  @override
+  bool shouldRepaint(_BaselineOverlayPainter old) =>
+      old.baselinePct != baselinePct;
 }
 
 /// 音频类仪器（电平/波形/EQ）中所有字符的统一颜色：亮白色。
@@ -1691,4 +2810,444 @@ class _PlanePreviewPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PlanePreviewPainter old) => !identical(old.frame, frame);
+}
+
+/// 色温调节器右下角直方图：调整后 R/G/B 三通道对数刻度竖条叠加（复用
+/// 曲线调节器的直方图绘制，黑底、无坐标轴标注；未运行时不画）。
+class _RgbHistMiniPainter extends CustomPainter {
+  final (Uint32List, Uint32List, Uint32List)? hist;
+
+  const _RgbHistMiniPainter(this.hist);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.black);
+    final h = hist;
+    if (h == null) return;
+    _LevelsCurvePainter._drawHistogram(
+        canvas, size, h.$1, const Color(0x99E05353));
+    _LevelsCurvePainter._drawHistogram(
+        canvas, size, h.$2, const Color(0x9953E553));
+    _LevelsCurvePainter._drawHistogram(
+        canvas, size, h.$3, const Color(0x995383E5));
+  }
+
+  @override
+  bool shouldRepaint(_RgbHistMiniPainter old) => !identical(old.hist, hist);
+}
+
+/// 曲线调节器的曲线编辑器：黑色背景 + 输入 Y 直方图（对数刻度，半透
+/// 明白）+ 输出（调节后）Y 直方图（对数刻度，#605040）+ 四分网格 +
+/// 传递函数曲线（#FFD0B0；生成公式由 curveMode 参数选择：单调三次
+/// 样条/贝塞尔/线段）。X 为输入值、Y 为输出值，
+/// 值域 0..4095；曲线区长宽比恒定 1:1（边长取可用空间短边，整体
+/// 居中），左缘竖条为输出灰阶（上白下黑）、底缘横条为输入灰阶
+/// （左黑右白）。交互：单击空白加点、拖动移点（中间点 x 限制在
+/// 相邻点之间，端点 A1/C1 的 x 固定）、**拖住控制点移出曲线区
+/// （外扩 16px 容差，约等于移出节点附加区）即删除该点**（端点不可
+/// 删）。命中半径随画布缩放自适应（恒定 12 屏幕像素），缩放画布里
+/// 小方块也能点中。拖动只写参数（曲线实时重绘），松手才重跑流水线。
+/// gamma 模式例外：只允许一个控制点（点按/拖动任意位置即移动它），
+/// 点恒落在 y = max·(x/max)^(1/γ) 曲线上，拖动时控制点旁显示 γ 值
+/// 气泡；γ 也可在属性面板的 Gamma 参数中直接设置。
+class _LevelsCurveEditor extends StatefulWidget {
+  final IspStudioState state;
+  final IspNode node;
+
+  const _LevelsCurveEditor({required this.state, required this.node});
+
+  @override
+  State<_LevelsCurveEditor> createState() => _LevelsCurveEditorState();
+}
+
+class _LevelsCurveEditorState extends State<_LevelsCurveEditor> {
+  /// 正在拖动的控制点下标（拖动中曲线绘制为高亮）。
+  int? _dragIndex;
+
+  /// 拖出判定容差：曲线区外扩 16px 覆盖灰阶条与内边距，约等于
+  /// 「移出曲线调节器节点」。
+  static const _kDragOutMargin = 16.0;
+
+  LevelsCurveMode get _mode =>
+      levelsCurveModeFromParam(widget.node.paramValues['curveMode']);
+
+  double get _gamma =>
+      (widget.node.paramValues['gamma'] as num?)?.toDouble() ?? 1.0;
+
+  List<List<double>> get _points {
+    final pts = levelsPointsFromParam(widget.node.paramValues['points']);
+    if (_mode != LevelsCurveMode.gamma) return pts;
+    // gamma 模式只允许一个控制点：取存储的首个中间点 x（缺省 1024），
+    // y 由 gamma 曲线推出（显示的点恒落在对应的 gamma 曲线上）。
+    final x = pts.length > 2 ? pts[1][0] : 1024.0;
+    final max = kLevelsMax.toDouble();
+    return [
+      [0.0, 0.0],
+      [x, gammaCurveEval(x, _gamma)],
+      [max, max],
+    ];
+  }
+
+  void _writePoints(List<List<double>> points, {required bool rerun}) {
+    widget.state
+        .setParam(widget.node.id, 'points', normalizeLevelsPoints(points));
+    if (rerun) widget.state.runPreview();
+  }
+
+  /// gamma 模式：把唯一控制点移到值域 (x, y)，由点位置反解 γ 并同步
+  /// 写入 gamma/points 两个参数（y 落在反解出的 gamma 曲线上）。
+  void _writeGammaPoint(double x, double y, {required bool rerun}) {
+    final max = kLevelsMax.toDouble();
+    // 避开 0/max（对数无定义），γ 限制在参数范围内。
+    final cx = x.clamp(1.0, max - 1);
+    final cy = y.clamp(1.0, max - 1);
+    final g = (gammaFromPoint(cx, cy) ?? _gamma).clamp(0.1, 10.0);
+    widget.state.setParam(widget.node.id, 'gamma', g);
+    widget.state.setParam(widget.node.id, 'points', [
+      [0.0, 0.0],
+      [cx, gammaCurveEval(cx, g)],
+      [max, max],
+    ]);
+    if (rerun) widget.state.runPreview();
+  }
+
+  /// 像素坐标 → 曲线值域（x 向右 0..4095，y 向上 0..4095）。
+  List<double> _toValue(Offset pos, Size size) {
+    final max = kLevelsMax.toDouble();
+    final x = size.width <= 0 ? 0.0 : pos.dx / size.width * max;
+    final y = size.height <= 0 ? 0.0 : (1 - pos.dy / size.height) * max;
+    return [x.clamp(0.0, max), y.clamp(0.0, max)];
+  }
+
+  /// 命中测试：返回距 [pos] 一个命中半径内的控制点下标（无则 null）。
+  /// 半径恒定 12 屏幕像素（除以画布缩放换算为曲线区逻辑像素），
+  /// 画布缩小时 7px 的控制点方块也能可靠点中。
+  int? _hitPoint(Offset pos, Size size, List<List<double>> points) {
+    final max = kLevelsMax.toDouble();
+    final zoom = widget.state.canvasZoom;
+    final radius = 12.0 / (zoom > 0 ? zoom : 1.0);
+    for (var i = 0; i < points.length; i++) {
+      final px = points[i][0] / max * size.width;
+      final py = (1 - points[i][1] / max) * size.height;
+      if ((Offset(px, py) - pos).distance <= radius) return i;
+    }
+    return null;
+  }
+
+  void _tapDown(TapDownDetails d, Size size) {
+    final v = _toValue(d.localPosition, size);
+    // gamma 模式：不允许加点，点按即把唯一控制点移到该处。
+    if (_mode == LevelsCurveMode.gamma) {
+      _writeGammaPoint(v[0], v[1], rerun: true);
+      return;
+    }
+    final points = _points;
+    // 点上按下不处理（等拖动或双击）；空白处单击加点。
+    if (_hitPoint(d.localPosition, size, points) != null) return;
+    _writePoints([...points, v], rerun: true);
+  }
+
+  void _panStart(DragStartDetails d, Size size) {
+    // gamma 模式：拖动的恒为唯一中间点（点按已由 _tapDown 落位）。
+    if (_mode == LevelsCurveMode.gamma) {
+      setState(() => _dragIndex = 1);
+      return;
+    }
+    final points = _points;
+    var hit = _hitPoint(d.localPosition, size, points);
+    if (hit == null) {
+      // 空白处开始拖动：先在该处加点再拖它。
+      final v = _toValue(d.localPosition, size);
+      final next = normalizeLevelsPoints([...points, v]);
+      widget.state.setParam(widget.node.id, 'points', next);
+      hit = _hitPoint(d.localPosition, size, next) ?? next.length - 2;
+    }
+    setState(() => _dragIndex = hit);
+  }
+
+  void _panUpdate(DragUpdateDetails d, Size size) {
+    final i = _dragIndex;
+    if (i == null) return;
+    final pos = d.localPosition;
+    final v = _toValue(pos, size);
+    // gamma 模式：跟随移动唯一控制点并反解 γ（不可拖出删除）。
+    if (_mode == LevelsCurveMode.gamma) {
+      _writeGammaPoint(v[0], v[1], rerun: false);
+      return;
+    }
+    final points = [for (final p in _points) [...p]];
+    if (i >= points.length) return;
+    // 拖出曲线区（含容差）即删除该点；端点 A1/C1 不可删。
+    final out = pos.dx < -_kDragOutMargin ||
+        pos.dx > size.width + _kDragOutMargin ||
+        pos.dy < -_kDragOutMargin ||
+        pos.dy > size.height + _kDragOutMargin;
+    if (out) {
+      if (i > 0 && i < points.length - 1) {
+        _writePoints(points..removeAt(i), rerun: true);
+      }
+      setState(() => _dragIndex = null);
+      return;
+    }
+    // 端点 x 固定；中间点 x 限制在相邻点之间（保持严格递增）。
+    if (i > 0 && i < points.length - 1) {
+      points[i][0] =
+          v[0].clamp(points[i - 1][0] + 1, points[i + 1][0] - 1);
+    }
+    points[i][1] = v[1];
+    _writePoints(points, rerun: false);
+  }
+
+  void _panEnd(DragEndDetails d) {
+    if (_dragIndex == null) return;
+    setState(() => _dragIndex = null);
+    widget.state.runPreview();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final points = _points;
+    final histogram = widget.state.levelsHistograms[widget.node.id];
+    final outHistogram =
+        widget.state.levelsOutputHistograms[widget.node.id];
+    final mode = _mode;
+    final gamma = _gamma;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 曲线区长宽比恒定 1:1：灰阶条占 10+2，边长取剩余宽高的
+        // 较小值，整体居中。
+        final side = math.max(
+            0.0,
+            math.min(constraints.maxWidth - 12,
+                constraints.maxHeight - 12));
+        final plot = SizedBox(
+          width: side,
+          height: side,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (d) => _tapDown(d, Size.square(side)),
+            onPanStart: (d) => _panStart(d, Size.square(side)),
+            onPanUpdate: (d) => _panUpdate(d, Size.square(side)),
+            onPanEnd: _panEnd,
+            child: CustomPaint(
+              painter: _LevelsCurvePainter(
+                points: points,
+                mode: mode,
+                gamma: gamma,
+                // gamma 模式拖动中显示 γ 值气泡。
+                gammaBubble: mode == LevelsCurveMode.gamma &&
+                        _dragIndex != null
+                    ? gamma
+                    : null,
+                histogram: histogram,
+                outputHistogram: outHistogram,
+                dragIndex: _dragIndex,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        );
+        return Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 输出灰阶条（上白下黑，对应 Y 轴输出值）。
+              Container(
+                width: 10,
+                height: side,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.white, Colors.black],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  plot,
+                  const SizedBox(height: 2),
+                  // 输入灰阶条（左黑右白，对应 X 轴输入值）。
+                  Container(
+                    width: side,
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.black, Colors.white],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 曲线调节器曲线区绘制：黑底 + 输入 Y 直方图（对数刻度竖条，半透明白，
+/// 未运行时不画）+ 输出（调节后）Y 直方图（对数刻度竖条，#605040，叠在
+/// 输入直方图之上）+ 四分网格与框线 + 传递函数曲线（#FFD0B0，生成公式
+/// 由 [mode] 决定）+ 控制点小方块（拖动中的点实心，其余空心）。
+class _LevelsCurvePainter extends CustomPainter {
+  final List<List<double>> points;
+  final LevelsCurveMode mode;
+
+  /// gamma 模式的 γ 值（曲线由它而非控制点决定）。
+  final double gamma;
+
+  /// 非空时在拖动中的控制点旁画 γ 值气泡（gamma 模式拖动反馈）。
+  final double? gammaBubble;
+  final Uint32List? histogram;
+  final Uint32List? outputHistogram;
+  final int? dragIndex;
+
+  _LevelsCurvePainter({
+    required this.points,
+    required this.mode,
+    required this.gamma,
+    required this.gammaBubble,
+    required this.histogram,
+    required this.outputHistogram,
+    required this.dragIndex,
+  });
+
+  /// 画一幅对数刻度 Y 直方图竖条（与直方图仪器同一呈现；[hist] 为
+  /// null 或全零时不画）。
+  static void _drawHistogram(
+      Canvas canvas, Size size, Uint32List? hist, Color color) {
+    if (hist == null || hist.isEmpty) return;
+    var max = 0;
+    for (final c in hist) {
+      if (c > max) max = c;
+    }
+    if (max <= 0) return;
+    final logMax = math.log(max + 1);
+    final barWidth = size.width / hist.length;
+    final paint = Paint()..color = color;
+    for (var i = 0; i < hist.length; i++) {
+      if (hist[i] == 0) continue;
+      final h = math.log(hist[i] + 1) / logMax * size.height;
+      canvas.drawRect(
+          Rect.fromLTWH(i * barWidth, size.height - h, barWidth + 0.5, h),
+          paint);
+    }
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRect(rect, Paint()..color = Colors.black);
+
+    // 输入 Y 直方图背景 + 输出（调节后）Y 直方图叠加（对数刻度）。
+    _drawHistogram(canvas, size, histogram, const Color(0x55FFFFFF));
+    _drawHistogram(canvas, size, outputHistogram, const Color(0xFF605040));
+
+    // 四分网格与框线。格线用 hairline（strokeWidth 0 = 恒 1 物理像素，
+    // 高分屏下不会因 strokeWidth 1 糊成 2px+）。
+    final faint = Paint()
+      ..color = const Color(0x33FFFFFF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0;
+    final frame = Paint()
+      ..color = const Color(0x66FFFFFF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (var i = 1; i < 4; i++) {
+      final x = size.width * i / 4;
+      final y = size.height * i / 4;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), faint);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), faint);
+    }
+    canvas.drawRect(rect, frame);
+
+    // X=Y 参考斜线（左下 → 右上，即恒等传递函数；比格线略亮，仍为
+    // hairline，便于和实际曲线区分）。
+    canvas.drawLine(
+        Offset(0, size.height),
+        Offset(size.width, 0),
+        Paint()
+          ..color = const Color(0x55FFFFFF)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0);
+
+    // 传递函数曲线（128 段折线逼近；生成公式由 curveMode 参数决定）。
+    final max = kLevelsMax.toDouble();
+    final path = Path();
+    const segments = 128;
+    for (var i = 0; i <= segments; i++) {
+      final x = i / segments * max;
+      final y = levelsCurveEval(points, x, mode: mode, gamma: gamma)
+          .clamp(0.0, max);
+      final px = x / max * size.width;
+      final py = (1 - y / max) * size.height;
+      if (i == 0) {
+        path.moveTo(px, py);
+      } else {
+        path.lineTo(px, py);
+      }
+    }
+    canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFFFFD0B0)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
+
+    // 控制点：6px 小方块（拖动中的实心，其余黑底白框）。
+    final border = Paint()..color = Colors.white;
+    final fill = Paint()..color = Colors.black;
+    final active = Paint()..color = Colors.white;
+    for (var i = 0; i < points.length; i++) {
+      final px = points[i][0] / max * size.width;
+      final py = (1 - points[i][1] / max) * size.height;
+      final r = Rect.fromCenter(center: Offset(px, py), width: 7, height: 7);
+      canvas.drawRect(r, i == dragIndex ? active : fill);
+      canvas.drawRect(
+          r,
+          border
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1);
+    }
+
+    // gamma 模式拖动中的 γ 值气泡：跟随被拖控制点，默认在点右上方，
+    // 越界时翻转到左侧/下方。
+    final gb = gammaBubble;
+    final di = dragIndex;
+    if (gb != null && di != null && di < points.length) {
+      final px = points[di][0] / max * size.width;
+      final py = (1 - points[di][1] / max) * size.height;
+      final tp = TextPainter(
+        text: TextSpan(
+          text: 'γ = ${gb.toStringAsFixed(2)}',
+          style: const TextStyle(fontSize: 11, color: Colors.white),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      const pad = 5.0;
+      final bw = tp.width + pad * 2;
+      final bh = tp.height + pad * 2;
+      var bx = px + 10;
+      var by = py - bh - 10;
+      if (bx + bw > size.width) bx = px - bw - 10;
+      if (by < 0) by = py + 10;
+      final rrect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(bx, by, bw, bh), const Radius.circular(4));
+      canvas.drawRRect(rrect, Paint()..color = const Color(0xCC000000));
+      canvas.drawRRect(
+          rrect,
+          Paint()
+            ..color = const Color(0xFFFFD0B0)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1);
+      tp.paint(canvas, Offset(bx + pad, by + pad));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LevelsCurvePainter old) => true;
 }

@@ -793,6 +793,17 @@ Future<void> exportMp4({
 }
 ''';
 
+/// PSNR 数字表（instruments.dart）。
+const String _psnrCode = r'''
+/// PSNR（峰值信噪比）：两幅 RGBA8888 图（同尺寸）RGB 三通道的均方
+/// 误差 MSE 与 PSNR(dB) = 10·log10(255²/MSE)；完全相同返回 ∞。
+/// 参考图（in*）与测试图（in_test*）各取链末端色调映射 RGBA
+/// （与直方图同一数据口径），评估图像噪声/处理保真度。
+(double mse, double psnr) psnrRgba(Uint8List a, Uint8List b) {
+  // MSE = mean((a-b)²)（RGB 三通道）；psnr = 10·log10(255²/MSE)。
+}
+''';
+
 /// 仪器节点共用的输入：链末端色调映射后的 RGBA8888 显示帧。
 const String _instrumentCode = r'''
 /// RGB+Y 直方图：返回 (R, G, B, Y) 四个 256 桶计数（Y 为 BT.601 亮度，
@@ -1313,6 +1324,25 @@ void applySharpen(
 }
 ''';
 
+/// 腐蚀/膨胀（isp_kernels.dart）。
+const String _morphologyCode = r'''
+/// 形态学腐蚀/膨胀：方形结构元 (2×radius+1)² 的逐通道极小（erode）/
+/// 极大（dilate）滤波，交织多通道数据逐通道独立处理（RGB 三通道独立；
+/// Mono 单通道即灰度形态学）。可分离两趟实现（水平 + 垂直），结果与
+/// 直接二维窗口完全一致；边界按可用邻域取极值。
+void applyMorphology(
+  Uint16List data, {
+  required int width,
+  required int height,
+  int channels = 1,
+  bool erode = true,
+  int radius = 1,
+}) {
+  // 水平趟：每行按 [x-radius, x+radius]（裁剪到图内）取极值入 tmp；
+  // 垂直趟：对 tmp 按列取极值写回 data。极值取自原数据，无需钳位。
+}
+''';
+
 /// RGB→YUV 转换（isp_kernels.dart，W36）。
 const String _cscCode = r'''
 /// RGB → YUV 色彩空间转换：standard 为 'bt601'/'bt709' 定点矩阵，
@@ -1394,7 +1424,7 @@ Uint16List hslToYuv(Uint16List hsl, {required int maxValue}) {
 }
 ''';
 
-/// HSL 调试器（isp_kernels.dart）：HSL 域交互调参。
+/// HSL 调节器（isp_kernels.dart）：HSL 域交互调参。
 const String _hslDebuggerCode = r'''
 /// HSL 调整：H 在 0..360° 色环上循环偏移 hShiftDeg 度，
 /// S/L 分别乘增益 sGain/lGain 后钳位到 0..maxValue。
@@ -1408,6 +1438,157 @@ Uint16List adjustHsl(Uint16List hsl,
   // H' = (H + shift) mod (maxValue + 1)（Dart % 对负数返回负值，
   // 用 ((x % m) + m) % m 修正环绕）；
   // S' = clamp(S * sGain, 0..maxValue)；L' = clamp(L * lGain, 0..maxValue)。
+}
+''';
+
+/// RGB 调节器（isp_kernels.dart）：RGB 域通道增益调参。
+const String _rgbDebuggerCode = r'''/// RGB 调节器：R/G/B 三通道分别乘增益后钳位到 0..maxValue。
+/// 三个增益均为恒等 1 时直接返回原数据（不拷贝）。
+Uint16List adjustRgb(Uint16List rgb,
+    {required int maxValue,
+    double rGain = 1.0,
+    double gGain = 1.0,
+    double bGain = 1.0}) {
+  // 逐像素：R' = clamp(R * rGain)；G' = clamp(G * gGain)；
+  // B' = clamp(B * bGain)（均四舍五入后钳位到 0..maxValue）。
+}
+''';
+
+/// YUV 调节器（isp_kernels.dart）：YUV 域增益调参。
+const String _yuvDebuggerCode = r'''
+/// YUV 调节器：Y 乘增益；U/V 围绕中点（maxValue>>1）缩放（色度增益
+/// 不改变中性色点），钳位到 0..maxValue。三个增益均为恒等 1 时直通。
+Uint16List adjustYuv(Uint16List yuv,
+    {required int maxValue,
+    double yGain = 1.0,
+    double uGain = 1.0,
+    double vGain = 1.0}) {
+  // 逐像素：Y' = clamp(Y * yGain)；
+  // U' = clamp(half + (U - half) * uGain)；
+  // V' = clamp(half + (V - half) * vGain)。
+}
+''';
+
+/// 色饱和度/亮度调节器（isp_kernels.dart）：RGB/YUV/HSL 三域通用调参。
+const String _satBrightCode = r'''
+/// 色饱和度/亮度调节器：按输入帧所在色彩域施加色饱和度增益 satGain
+/// 与亮度增益 brightGain，输出保持原格式（不跨域转换）。
+/// 两个增益均为恒等 1 时直接返回原数据（不拷贝）。
+Uint16List adjustSatBright(Uint16List data,
+    {required String format,
+    required int maxValue,
+    double satGain = 1.0,
+    double brightGain = 1.0}) {
+  // RGB 域：Y = 0.299R + 0.587G + 0.114B（BT.601 全范围亮度）；
+  //   逐通道 c' = clamp((Y + (c - Y) * satGain) * brightGain)。
+  // YUV 域：Y' = clamp(Y * brightGain)；
+  //   U/V' = clamp(half + (U/V - half) * satGain)（half = maxValue>>1）。
+  // HSL 域：H 不变；S' = clamp(S * satGain)；L' = clamp(L * brightGain)。
+}
+''';
+
+/// 亮度/对比度调节器（isp_kernels.dart）：RGB/YUV/HSL 三域亮度/对比度调参。
+const String _brightContrastCode = r'''
+/// 亮度/对比度调节：base = baselinePct/100 × maxValue；
+/// Y' = clamp(((Y × brightPct/100) − base) × gainPct/100 + base, 0..maxValue)。
+/// brightPct=100 且 gainPct=100 时为恒等（与基线无关），直通不拷贝。
+Uint16List adjustBrightContrast(Uint16List data,
+    {required String format,
+    required int maxValue,
+    double brightPct = 100,
+    double baselinePct = 50,
+    double gainPct = 100}) {
+  // YUV 域：直接作用于 Y 通道（U/V 不变）。
+  // HSL 域：作用于 L 通道（H/S 不变）。
+  // Mono 域：直接作用于单通道亮度（数据长度 w*h）。
+  // RGB 域：逐像素求 BT.601 亮度 Y = 0.299R + 0.587G + 0.114B，
+  //   算 Y' 后按 Y'/Y 等比缩放 R/G/B（Y=0 纯黑像素保持 0）。
+}
+''';
+
+/// 曲线调节器（levels_curve.dart + isp_kernels.dart）：RGB 域传递函数。
+const String _levelsCurvesCode = r'''
+/// 曲线调节器：控制点 A1(0,0) / Bn / C1(4095,4095) 按 curveMode 参数
+/// 选择的生成公式连成传递函数 y = f(x)，生成 4096 级 LUT；RGB 帧逐
+/// 通道查表（帧值按 maxValue 线性缩放到 0..4095 域，查表后再缩放回
+/// 0..maxValue）。恒等曲线（所有控制点在对角线上）直通不拷贝。
+///
+/// curveMode 四种生成公式：
+/// - spline（默认）：Fritsch–Carlson 单调三次 Hermite 插值，单调
+///   控制点产生单调曲线，段内无过冲；
+/// - bezier：控制点整体作为贝塞尔控制多边形，De Casteljau 求值，
+///   对给定 x 二分反解参数 t 后取 y(t)；曲线过首尾端点，中间控制
+///   点牵引形状但不一定经过；
+/// - linear：线段法，控制点间直线连接，不做平滑处理；
+/// - gamma：y = max·(x/max)^(1/γ)（γ 取节点参数 'gamma'，=1 恒等，
+///   >1 提亮中间调，<1 压暗）；编辑器内只允许一个控制点，拖动它
+///   即反解并写入 γ。
+Uint16List applyLevelsCurve(Uint16List rgb, Uint16List lut,
+    {required int maxValue}) {
+  // lut 由 levelsCurveLut(points, mode: mode, gamma: gamma) 生成；points
+  // 为节点参数 'points'（[[x,y],…]，0..4095 域），mode 为 'curveMode'
+  // 参数，gamma 为 'gamma' 参数（仅 gamma 模式使用）。
+}
+''';
+
+/// 色彩平衡（isp_kernels.dart）：RGB/YUV/HSL 三域中间调加性偏移。
+const String _colorBalanceCode = r'''
+/// 色彩平衡：三个滑杆值 [-100,100] 分别对应 青↔红、洋红↔绿、黄↔蓝；
+/// 按 BT.601 亮度的中间调权重 w = 1 − |2Y−1| 加权（中间调最强，纯黑/
+/// 纯白不受影响），结果钳位到 0..maxValue。三值全 0 时直通不拷贝。
+/// RGB 域：偏移量 = 值/100 × maxValue，直接加到 R/G/B 通道。
+/// YUV 域：青↔红 → V 轴、黄↔蓝 → U 轴、洋红↔绿 → U/V 对角
+///   （绿 = −U−V）；色度偏移量 = 值/100 × maxValue/2，Y 不变。
+/// HSL 域：经 hslToRgb/rgbToHsl 往返转换施加 RGB 域偏移。
+Uint16List applyColorBalance(Uint16List data,
+    {required String format,
+    required int maxValue,
+    double cyanRed = 0,
+    double magentaGreen = 0,
+    double yellowBlue = 0}) {
+  // rgb: out[i..i+2] = clamp([r,g,b] + [dr,dg,db] × w)，dX = 值/100 × maxValue。
+  // yuv: out[i+1] = clamp(u + (du−dg) × w)；out[i+2] = clamp(v + (dv−dg) × w)。
+}
+''';
+
+/// 色温调节器（color_temp.dart + isp_kernels.dart adjustRgb）：RGB 域
+/// von Kries 对角增益。
+const String _colorTempCode = r'''
+/// 色温调节：目标色温 temperature（1800~12000K）相对参考色温
+/// measured_cct（隐式参数，运行时由输入帧 McCamy 估计自动写入，缺省
+/// 6500K）计算 RGB 通道增益：
+///   white(T) = Tanner Helland 黑体近似白点（归一化 G=1）
+///   gain[c]  = white(temperature)[c] / white(measured_cct)[c]
+/// 逐像素 R/G/B 乘增益（复用 adjustRgb），增益全 1（目标==参考）时直通
+/// 不拷贝。节点附加区显示的 CCM 为 diag(gR, gG, gB) 对角阵。
+List<double> colorTempGains(double targetCct, int referenceCct) {
+  // wt = cctToWhitePoint(target)；wr = cctToWhitePoint(reference)；
+  // return [wt.r/wr.r, 1, wt.b/wr.b]。
+}
+''';
+
+/// 高频边缘提取（isp_kernels.dart）：亮度高通灰度边缘图。
+const String _edgeExtractCode = r'''
+/// 高频边缘提取：亮度高通输出黑底白线边缘图，
+/// RGB/YUV/HSL 三域通用（format = 'rgb'/'yuv'/'hsl'）。
+/// detail = Y − 3x3 盒式模糊（与 applySharpen 同一 detail 定义），
+/// 归一化为相对对比度 rel = |detail|/邻域均值（均值下限
+/// maxValue/128 防近黑除零爆增益）；rel < threshold/maxValue 视为
+/// 噪声置零（相对门限，threshold 为满量程码值量纲）；输出 =
+/// gain×√rel×maxValue，截位到 0..maxValue——√rel 显示压缩让弱
+/// 边缘提亮、强边缘饱和，平坦区为黑、边缘（无论亮边暗边、暗区
+/// 亮区）均为亮线。
+/// 亮度来源：RGB 求 BT.601 定点亮度，YUV 取 Y 通道，HSL 取 L 通道；
+/// 输出保持输入格式的黑底白线图（RGB 三通道同值 / YUV 的 U=V=中灰 /
+/// HSL 的 H=0、S=0）。
+Uint16List extractHighFreq(Uint16List data,
+    {required int width,
+    required int height,
+    String format = 'rgb',
+    double gain = 1.0,
+    double threshold = 4.0,
+    int maxValue = 65535}) {
+  // ys = 亮度平面；rel = |ys[p] − 邻域均值| / 邻域均值；v = gain×√rel×max。
 }
 ''';
 
@@ -1522,6 +1703,73 @@ Uint16List fuseFluorescence(
 // 源节点驱动（compileChain 对含 fluoro_fusion 的链放行 2 个源节点）。
 ''';
 
+/// 乘法器（isp_kernels.dart）。
+const String _multiplierCode = r'''
+/// 乘法器：两路 Mono 帧逐像素归一化相乘，两路分辨率必须一致。
+/// out = (a+offset1)×(b+offset2)/maxValue（归一化使输出仍在原量程
+/// 内；offset 用于黑电平抬升/符号偏移，避免零值像素把另一路整体
+/// 清零），截位到 0..maxValue。输出 Mono，预览链末端按亮度灰度
+/// 出图。
+Uint16List multiplyMono(List<int> a, List<int> b,
+    {double offset1 = 0, double offset2 = 0, int maxValue = 65535}) {
+  // out[i] = clamp((a[i]+offset1) * (b[i]+offset2) / maxValue, 0, maxValue)。
+}
+
+// pipeline_runner.dart — 双源链：'in_mono' 接输入源1 支路（主帧），
+// 'in_mono2'（不在视频互斥组）接输入源2 支路；两路各自由独立源
+// 节点驱动（compileChain 对含 multiplier 的链放行 2 个源节点）。
+''';
+
+/// 加法器（isp_kernels.dart）。
+const String _adderCode = r'''
+/// 加法器：两路 Mono 帧逐像素平衡加权混合，两路分辨率必须一致。
+/// out = a×balance + b×(1−balance)（balance 为源1 平衡增益，源2 增益
+/// = 1−balance，两路增益总和恒为 1），截位到 0..maxValue。输出 Mono，
+/// 预览链末端按亮度灰度出图。
+Uint16List blendMono(List<int> a, List<int> b,
+    {double balance = 0.5, int maxValue = 65535}) {
+  // out[i] = clamp(a[i]*balance + b[i]*(1-balance), 0, maxValue)。
+}
+
+// pipeline_runner.dart — 双源链：'in_mono' 接输入源1 支路（主帧），
+// 'in_mono2'（不在视频互斥组）接输入源2 支路；两路各自由独立源
+// 节点驱动（compileChain 对含 adder 的链放行 2 个源节点）。
+''';
+
+/// 混叠器（isp_kernels.dart）。
+const String _blenderCode = r'''
+/// 混叠器（正常模式）：out = 基图 + 混叠图×蒙版/maxValue×混叠强度。
+/// 混叠图与蒙版归一化相乘（蒙版取满量程时混叠图全量通过），乘混叠
+/// 强度后逐像素叠加到基图，截位到 0..maxValue。混叠图为 mono 时按
+/// 基图格式选目标通道：YUV 只加 Y（U/V 不变，锐化不产生色偏）、
+/// HSL 只加 L、RGB 三通道同加（等效亮度叠加）、Mono 单通道；
+/// 混叠图为三通道交织（RGB/YUV/HSL）时逐通道对应叠加（Y 加到 Y、
+/// U 加到 U……）。基图支持 RGB/YUV/HSL（w*h*3 交织）/Mono（w*h），
+/// 输出保持基图格式；蒙版为单通道（w*h），分辨率必须与基图一致。
+Uint16List blendMaskMono(List<int> base, List<int> blend, List<int> mask,
+    {String format = 'rgb', int blendChannels = 1,
+     double strength = 1.0, int maxValue = 65535}) {
+  // mono：delta[p] = blend[p] * mask[p] / maxValue * strength（目标
+  // 通道见上）；三通道：delta 按通道各自计算后叠加到对应通道。
+}
+
+// pipeline_runner.dart — 三路输入：基图走视频互斥组（in/in_yuv/in_hsl/
+// in_mono），蒙版（in_mask）与混叠图（in_blend/in_blend_yuv/
+// in_blend_hsl/in_blend_mono 四域选一）为侧向端口，可跨支路接入
+// （compileChain 对含 blender 的链放行 2 个源节点）。
+''';
+
+/// 多路选择器（pipeline_runner.dart mux4 分支）。
+const String _mux4Code = r'''
+/// 多路选择器（4选1）：把 select（1~4，默认 1=源1）选中的那路源输入
+/// 透传到输出，不改数据，输出格式 = 所选输入格式。四路源各为
+/// RGB/YUV/HSL/Mono 四域互斥输入组（in1*/in2*/in3*/in4*），组间可
+/// 同时接入；节点内嵌 源1~源4 单选开关。
+// pipeline_runner.dart — mux4 分支：按 select 找到该组已连接端口，
+// 取上游帧透传；端口数据与上游主帧不同（如分路器 out_y）时构造
+// mono 帧。compileChain 对含 mux4 的链放行最多 4 个源节点。
+''';
+
 /// 节点类型 id → 只读源码片段。注册表中的每种类型都必须有对应条目。
 const Map<String, String> nodeSourceCode = {
   'bayer_source': _bayerPatternCode + _rawUnpackCode,
@@ -1542,6 +1790,8 @@ const Map<String, String> nodeSourceCode = {
   'highlight': _highlightCode,
   'rgb_dnr': _rgbDnrCode,
   'sharpen': _sharpenCode,
+  'morphology': _morphologyCode,
+  'edge_extract': _edgeExtractCode,
   'csc_rgb2yuv': _cscCode,
   'csc_rgb2hsl': _cscRgb2HslCode,
   'csc_yuv2rgb': _cscYuv2RgbCode,
@@ -1549,12 +1799,23 @@ const Map<String, String> nodeSourceCode = {
   'csc_hsl2rgb': _cscHsl2RgbCode,
   'csc_hsl2yuv': _cscHsl2YuvCode,
   'hsl_debugger': _hslDebuggerCode,
+  'rgb_debugger': _rgbDebuggerCode,
+  'yuv_debugger': _yuvDebuggerCode,
+  'sat_bright_adjuster': _satBrightCode,
+  'bright_contrast_adjuster': _brightContrastCode,
+  'levels_curves': _levelsCurvesCode,
+  'color_balance': _colorBalanceCode,
+  'color_temp_adjuster': _colorTempCode,
   'fluoro_leak': _fluoroLeakCode,
   'fluoro_background': _fluoroBackgroundCode,
   'fluoro_normalize': _fluoroNormalizeCode,
   'fluoro_temporal': _fluoroTemporalCode,
   'pseudo_color': _pseudoColorCode,
   'fluoro_fusion': _fluoroFusionCode,
+  'multiplier': _multiplierCode,
+  'adder': _adderCode,
+  'blender': _blenderCode,
+  'mux4': _mux4Code,
   'demosaic': _demosaicDispatchCode + _demosaicBilinearCode + _demosaicAdvancedCode,
   'white_balance': _whiteBalanceCode,
   'ccm': _ccmCode,
@@ -1564,6 +1825,7 @@ const Map<String, String> nodeSourceCode = {
   'histogram': _instrumentCode,
   'waveform': _instrumentCode,
   'vectorscope': _instrumentCode,
+  'psnr': _psnrCode,
   'image_output': _imageOutputCode,
   'video_output': _videoOutputCode,
   'audio_level': _audioLevelCode,
@@ -1672,6 +1934,27 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'threshold', type: 'double', value: '噪声门限（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
+  'morphology': [
+    CodeVariable(
+        name: 'data',
+        type: 'Uint16List',
+        value: '输入帧（RGB 为 w*h*3 交织，Mono 为 w*h 单通道）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'channels', type: 'int', value: '通道数（RGB=3，Mono=1）'),
+    CodeVariable(
+        name: 'erode', type: 'bool', value: 'true=腐蚀 / false=膨胀（节点参数 mode）'),
+    CodeVariable(name: 'radius', type: 'int', value: '结构元半径（节点参数）'),
+  ],
+  'edge_extract': [
+    CodeVariable(name: 'data', type: 'Uint16List', value: '输入帧（w*h*3，格式见 format）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'format', type: 'String', value: 'rgb / yuv / hsl（按接入端口）'),
+    CodeVariable(name: 'gain', type: 'double', value: '边缘增益（节点参数）'),
+    CodeVariable(name: 'threshold', type: 'double', value: '噪声门限（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
   'csc_rgb2yuv': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
     CodeVariable(name: 'standard', type: 'String', value: 'bt601 / bt709（节点参数）'),
@@ -1706,6 +1989,82 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
         name: 'sGain', type: 'double', value: '饱和度增益（节点参数 s_gain）'),
     CodeVariable(
         name: 'lGain', type: 'double', value: '亮度增益（节点参数 l_gain）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'rgb_debugger': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
+    CodeVariable(
+        name: 'rGain', type: 'double', value: 'R 增益（节点参数 r_gain）'),
+    CodeVariable(
+        name: 'gGain', type: 'double', value: 'G 增益（节点参数 g_gain）'),
+    CodeVariable(
+        name: 'bGain', type: 'double', value: 'B 增益（节点参数 b_gain）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'yuv_debugger': [
+    CodeVariable(name: 'yuv', type: 'Uint16List', value: 'YUV 帧（w*h*3）'),
+    CodeVariable(
+        name: 'yGain', type: 'double', value: 'Y 增益（节点参数 y_gain）'),
+    CodeVariable(
+        name: 'uGain', type: 'double', value: 'U 色度增益（节点参数 u_gain）'),
+    CodeVariable(
+        name: 'vGain', type: 'double', value: 'V 色度增益（节点参数 v_gain）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'sat_bright_adjuster': [
+    CodeVariable(
+        name: 'data', type: 'Uint16List', value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）'),
+    CodeVariable(name: 'format', type: 'String', value: '帧格式（rgb/yuv/hsl）'),
+    CodeVariable(
+        name: 'satGain', type: 'double', value: '色饱和度增益（节点参数 sat_gain）'),
+    CodeVariable(
+        name: 'brightGain', type: 'double', value: '亮度增益（节点参数 bright_gain）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'bright_contrast_adjuster': [
+    CodeVariable(
+        name: 'data', type: 'Uint16List', value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）'),
+    CodeVariable(name: 'format', type: 'String', value: '帧格式（rgb/yuv/hsl）'),
+    CodeVariable(
+        name: 'brightPct', type: 'double', value: '亮度百分比（节点参数 bright）'),
+    CodeVariable(
+        name: 'baselinePct', type: 'double', value: '基线百分比（节点参数 baseline）'),
+    CodeVariable(
+        name: 'gainPct', type: 'double', value: '增益百分比（节点参数 gain）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'levels_curves': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
+    CodeVariable(
+        name: 'lut',
+        type: 'Uint16List',
+        value: '传递函数 LUT（4096 级，由控制点参数 points 单调三次样条生成）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'color_balance': [
+    CodeVariable(
+        name: 'data', type: 'Uint16List', value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）'),
+    CodeVariable(name: 'format', type: 'String', value: '帧格式（rgb/yuv/hsl）'),
+    CodeVariable(
+        name: 'cyanRed', type: 'double', value: '青↔红偏移（节点参数 cyan_red，-100~100）'),
+    CodeVariable(
+        name: 'magentaGreen',
+        type: 'double',
+        value: '洋红↔绿偏移（节点参数 magenta_green，-100~100）'),
+    CodeVariable(
+        name: 'yellowBlue', type: 'double', value: '黄↔蓝偏移（节点参数 yellow_blue，-100~100）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'color_temp_adjuster': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
+    CodeVariable(
+        name: 'temperature',
+        type: 'double',
+        value: '目标色温 K（节点参数，1800~12000）'),
+    CodeVariable(
+        name: 'measuredCct',
+        type: 'int',
+        value: '参考色温 K（隐式参数 measured_cct，运行时自动测量写入，缺省 6500）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'fluoro_leak': [
@@ -1749,6 +2108,47 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'alphaMax', type: 'double', value: '最大 α（节点参数）'),
     CodeVariable(name: 'offsetX', type: 'double', value: '配准偏移 X（节点参数）'),
     CodeVariable(name: 'offsetY', type: 'double', value: '配准偏移 Y（节点参数）'),
+  ],
+  'multiplier': [
+    CodeVariable(name: 'a', type: 'Uint16List', value: '输入源1 mono 帧（w*h）'),
+    CodeVariable(name: 'b', type: 'Uint16List', value: '输入源2 mono 帧（w*h，分辨率同源1）'),
+    CodeVariable(name: 'offset1', type: 'double', value: '源1 偏移（节点参数）'),
+    CodeVariable(name: 'offset2', type: 'double', value: '源2 偏移（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'adder': [
+    CodeVariable(name: 'a', type: 'Uint16List', value: '输入源1 mono 帧（w*h）'),
+    CodeVariable(name: 'b', type: 'Uint16List', value: '输入源2 mono 帧（w*h，分辨率同源1）'),
+    CodeVariable(
+        name: 'balance', type: 'double', value: '平衡增益（节点参数，源1 权重，源2 = 1−balance）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'blender': [
+    CodeVariable(
+        name: 'base',
+        type: 'Uint16List',
+        value: '基图帧（RGB/YUV/HSL 为 w*h*3 交织，Mono 为 w*h）'),
+    CodeVariable(
+        name: 'blend',
+        type: 'Uint16List',
+        value: '混叠图帧（mono 为 w*h，RGB/YUV/HSL 为 w*h*3 交织）'),
+    CodeVariable(name: 'mask', type: 'Uint16List', value: '蒙版 mono 帧（w*h）'),
+    CodeVariable(
+        name: 'format',
+        type: 'String',
+        value: '基图格式 rgb / yuv / hsl / mono（决定 mono 混叠图的叠加目标通道）'),
+    CodeVariable(
+        name: 'blendChannels', type: 'int', value: '混叠图通道数（1 / 3）'),
+    CodeVariable(name: 'strength', type: 'double', value: '混叠强度（节点参数）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'mux4': [
+    CodeVariable(
+        name: 'select', type: 'int', value: '选择源 1~4（节点参数/单选开关）'),
+    CodeVariable(
+        name: 'in1~in4',
+        type: 'Uint16List',
+        value: '四路源输入帧（各 RGB/YUV/HSL/Mono 四域选一，只透传选中一路）'),
   ],
   'demosaic': [
     CodeVariable(name: 'bayer', type: 'Uint16List', value: '马赛克帧（w*h）'),
@@ -1805,6 +2205,14 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   'histogram': _instrumentInputs,
   'waveform': _instrumentInputs,
   'vectorscope': _instrumentInputs,
+  'psnr': [
+    CodeVariable(
+        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+    CodeVariable(
+        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
+  ],
   'image_output': [
     CodeVariable(name: 'rgba', type: 'Uint8List', value: 'RGBA8888 帧（w*h*4）'),
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
@@ -1913,6 +2321,16 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'sharpen': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: '锐化后（原地修改）'),
   ],
+  'morphology': [
+    CodeVariable(
+        name: 'data', type: 'Uint16List', value: '腐蚀/膨胀后（原地修改，格式同输入）'),
+  ],
+  'edge_extract': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '黑底白线边缘图（w*h*3，gain×√rel×maxValue，格式同输入）'),
+    CodeVariable(
+        name: 'out_mono', type: 'Uint16List', value: '单通道边缘亮度图（w*h，out_mono 端口）'),
+  ],
   'csc_rgb2yuv': [
     CodeVariable(name: 'out', type: 'Uint16List', value: '交织 YUV（w*h*3）'),
   ],
@@ -1935,6 +2353,36 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(
         name: 'out', type: 'Uint16List', value: '调整后交织 HSL（w*h*3）'),
   ],
+  'rgb_debugger': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '调整后交织 RGB（w*h*3）'),
+  ],
+  'yuv_debugger': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '调整后交织 YUV（w*h*3）'),
+  ],
+  'sat_bright_adjuster': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '调整后帧（w*h*3，格式同输入）'),
+  ],
+  'bright_contrast_adjuster': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '亮度/对比度调整后帧（w*h*3，格式同输入）'),
+  ],
+  'levels_curves': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '传递函数映射后交织 RGB（w*h*3）'),
+  ],
+  'color_balance': [
+    CodeVariable(
+        name: 'out',
+        type: 'Uint16List',
+        value: '色彩平衡调整后帧（w*h*3，格式同输入端口）'),
+  ],
+  'color_temp_adjuster': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '色温调整后交织 RGB（w*h*3）'),
+  ],
   'fluoro_leak': _monoInPlaceOutputVars,
   'fluoro_background': _monoInPlaceOutputVars,
   'fluoro_normalize': _monoInPlaceOutputVars,
@@ -1947,6 +2395,24 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   ],
   'fluoro_fusion': [
     CodeVariable(name: 'out', type: 'Uint16List', value: '融合 RGB（w*h*3）'),
+  ],
+  'multiplier': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '归一化相乘后 mono 帧（w*h）'),
+  ],
+  'adder': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '平衡加权混合后 mono 帧（w*h）'),
+  ],
+  'blender': [
+    CodeVariable(
+        name: 'out',
+        type: 'Uint16List',
+        value: '混叠叠加后帧（格式同基图：RGB/YUV/HSL 为 w*h*3，Mono 为 w*h）'),
+  ],
+  'mux4': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '所选源输入帧（透传，格式同输入）'),
   ],
   'demosaic': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: '插值 RGB（w*h*3）'),
@@ -1990,6 +2456,10 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'vectorscope': [
     CodeVariable(
         name: 'counts', type: 'Uint32List', value: 'Cb/Cr 计数（256x256）'),
+  ],
+  'psnr': [
+    CodeVariable(name: 'psnr', type: 'double', value: '峰值信噪比（dB，完全相同为 ∞）'),
+    CodeVariable(name: 'mse', type: 'double', value: 'RGB 三通道均方误差'),
   ],
   'image_output': [
     CodeVariable(

@@ -20,8 +20,11 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import '../image_source.dart';
 import '../isp_kernels.dart';
+import '../levels_curve.dart';
 import '../pipeline_runner.dart';
+import '../video_source.dart';
 
 /// GPU 链执行结果。
 class GpuChainResult {
@@ -55,14 +58,12 @@ class GpuChainResult {
   });
 }
 
-/// 端口数据引用：[tex] 为打包纹理；[channel] 非空表示该端口是
-/// 三通道纹理的单个通道（分路器 out_u/out_v 的情形，零拷贝引用）。
+/// 端口数据引用：[tex] 为打包纹理。
 final class _Port {
   ui.Image tex;
   final int texW, texH;
   final String format; // 'mosaic'|'mono'|'rgb'|'yuv'|'hsl'
-  final int? channel;
-  _Port(this.tex, this.texW, this.texH, this.format, [this.channel]);
+  _Port(this.tex, this.texW, this.texH, this.format);
 }
 
 /// GPU 链执行器。经 [tryCreate] 获取（全部 shader 加载成功才可用）。
@@ -82,10 +83,17 @@ class GpuPipeline {
     'csc_yuv2hsl',
     'csc_hsl2rgb',
     'hsl_debugger',
+    'rgb_debugger',
+    'color_temp_adjuster',
+    'yuv_debugger',
     'csc_hsl2yuv',
     'yuv_splitter',
     'ahe',
     'yuv_combiner',
+    'hsl_splitter',
+    'hsl_combiner',
+    'rgb_splitter',
+    'rgb_combiner',
     'csc_yuv2rgb',
     'gamma',
     'preview',
@@ -98,7 +106,39 @@ class GpuPipeline {
     'ccm',
     'rgb_dnr',
     'sharpen',
+    'edge_extract',
+    'morphology',
+    'multiplier',
+    'adder',
+    'mux4',
+    'blender',
+    'bright_contrast_adjuster',
+    'levels_curves',
+    'fluoro_leak',
+    'fluoro_background',
+    'fluoro_normalize',
+    'fluoro_temporal',
+    'pseudo_color',
+    'fluoro_fusion',
   };
+
+  /// 时域降噪的历史帧纹理（nodeId → 记录）：跨 run() 存活，有效性口径
+  /// 与 CPU 路径 pipeline_runner._temporalHistory 一致（帧序连续 +
+  /// 尺寸/参数不变才复用）。
+  final Map<
+      String,
+      ({
+        ui.Image tex,
+        int frame,
+        int w,
+        int h,
+        double alpha,
+        bool motion
+      })> _temporalHistory = {};
+
+  /// 视频格式输入组端口名（与 CPU 路径 pipeline_runner 一致）：
+  /// 分支感知取帧时按此顺序找第一个已连接的视频组输入。
+  static const _kVideoInputPorts = ['in', 'in_yuv', 'in_hsl', 'in_mono', 'in_raw'];
 
   static const _shaderAssets = {
     'black_level': 'shaders/isp/isp_black_level.frag',
@@ -110,7 +150,7 @@ class GpuPipeline {
     'hsl2yuv': 'shaders/isp/isp_hsl2yuv.frag',
     'extract_channel': 'shaders/isp/isp_extract_channel.frag',
     'clahe_apply': 'shaders/isp/isp_clahe_apply.frag',
-    'combine_yuv': 'shaders/isp/isp_combine_yuv.frag',
+    'combine_3ch': 'shaders/isp/isp_combine_3ch.frag',
     'yuv2rgb': 'shaders/isp/isp_yuv2rgb.frag',
     'tonemap': 'shaders/isp/isp_tonemap.frag',
     'passthrough': 'shaders/isp/isp_passthrough.frag',
@@ -126,6 +166,20 @@ class GpuPipeline {
     'sharpen_apply': 'shaders/isp/isp_sharpen_apply.frag',
     'yuv2hsl': 'shaders/isp/isp_yuv2hsl.frag',
     'hsl2rgb': 'shaders/isp/isp_hsl2rgb.frag',
+    'yuv_gains': 'shaders/isp/isp_yuv_gains.frag',
+    'edge_extract': 'shaders/isp/isp_edge_extract.frag',
+    'morphology': 'shaders/isp/isp_morphology.frag',
+    'multiply_mono': 'shaders/isp/isp_multiply_mono.frag',
+    'blend_mono': 'shaders/isp/isp_blend_mono.frag',
+    'blender': 'shaders/isp/isp_blender.frag',
+    'bright_contrast': 'shaders/isp/isp_bright_contrast.frag',
+    'levels_curve': 'shaders/isp/isp_levels_curve.frag',
+    'fluoro_leak': 'shaders/isp/isp_fluoro_leak.frag',
+    'fluoro_gain': 'shaders/isp/isp_fluoro_gain.frag',
+    'fluoro_bg_sub': 'shaders/isp/isp_fluoro_bg_sub.frag',
+    'fluoro_temporal': 'shaders/isp/isp_fluoro_temporal.frag',
+    'pseudo_color': 'shaders/isp/isp_pseudo_color.frag',
+    'fluoro_fusion': 'shaders/isp/isp_fluoro_fusion.frag',
   };
 
   /// 加载全部 shader；任一失败返回 null（调用方回退 CPU 路径）。
@@ -156,27 +210,46 @@ class GpuPipeline {
   /// 形态仍会抛异常，由调用方回退 CPU）。
   static bool isSupportedChain(List<Map<String, Object?>> chain) {
     if (chain.length < 2) return false;
-    // 源：仅 Bayer RAW 源（bayer_source / cis_bayer_rggb），宽高为偶数。
+    // 源：RAW 源（bayer_source / 各 cis_* 变体，宽高为偶数；mono 源
+    // 可带荧光 mono 链）或图片/视频源（image_source / video_source，
+    // 尺寸由解码决定，偶数宽在运行时校验）。非 Bayer CFA 的 mosaic
+    // 链运行期由算子格式校验拦截（抛异常回退 CPU）。
     final first = chain.first;
     final ft = first['typeId'] as String;
-    if (ft != 'bayer_source' && ft != 'cis_bayer_rggb') return false;
     final sp = (first['params'] as Map?)?.cast<String, Object?>() ?? const {};
-    final w = (sp['width'] as num?)?.toInt() ?? 0;
-    final h = (sp['height'] as num?)?.toInt() ?? 0;
-    if (w < 4 || h < 4 || w.isOdd || h.isOdd) return false;
+    if (ft == 'image_source' || ft == 'video_source') {
+      // 视频源仅单帧预览路径（ffmpeg 解码当前帧后上传；播放仍走 CPU
+      // worker）。尺寸由解码决定，偶数宽在运行时校验。
+      if (_str(sp, 'filePath').isEmpty) return false;
+    } else if (rawSourceTypes.contains(ft)) {
+      final w = (sp['width'] as num?)?.toInt() ?? 0;
+      final h = (sp['height'] as num?)?.toInt() ?? 0;
+      if (w < 4 || h < 4 || w.isOdd || h.isOdd) return false;
+    } else {
+      return false;
+    }
 
-    final byId = {for (final op in chain) op['nodeId'] as String: op};
     var seenGamma = false;
     for (var i = 1; i < chain.length; i++) {
       final op = chain[i];
       final typeId = op['typeId'] as String;
+      // 荧光/乘法器支路的第二个 RAW 源节点（compileChain 已校验最多 2
+      // 个源）：宽高为偶数即可，分辨率/位深一致性在运行期校验。
+      if (rawSourceTypes.contains(typeId)) {
+        final sp2 = (op['params'] as Map?)?.cast<String, Object?>() ?? const {};
+        final w2 = (sp2['width'] as num?)?.toInt() ?? 0;
+        final h2 = (sp2['height'] as num?)?.toInt() ?? 0;
+        if (w2 < 4 || h2 < 4 || w2.isOdd || h2.isOdd) return false;
+        if (seenGamma) return false;
+        continue;
+      }
       if (!supportedOps.contains(typeId)) return false;
-      final isLast = i == chain.length - 1;
       switch (typeId) {
         case 'preview':
         case 'histogram':
-          // 汇点仅允许在链末。
-          if (!isLast) return false;
+          // 链末：汇点出图；链中：纯透传（为更长链提供 out_mono 端口
+          // 引用，如 分路器→预览→乘法器 的单源分支链）。
+          break;
         case 'gamma':
           // gamma 之后只允许汇点（CPU 语义下 gamma 后的算子不影响出图，
           // GPU 路径不模拟该角落行为）。
@@ -198,24 +271,6 @@ class GpuPipeline {
           // 仅支持 in_mono 支路（Y 通道 CLAHE）；RGB 主帧 CLAHE 暂不支持。
           final inputs = op['inputs'] as Map<String, Object?>?;
           if (inputs?['in_mono'] == null) return false;
-        case 'yuv_splitter':
-        case 'yuv_combiner':
-          // 连接形态在运行期校验（分路器 out_u/out_v 必须直连合路器）。
-          break;
-      }
-      // 合路器的 U/V 必须来自分路器（或留空）。
-      if (typeId == 'yuv_combiner') {
-        final inputs = op['inputs'] as Map<String, Object?>?;
-        for (final port in ['in_u', 'in_v']) {
-          final conn = inputs?[port] as Map<String, Object?>?;
-          if (conn == null) continue;
-          final from = byId[conn['fromNodeId']];
-          if (from == null ||
-              from['typeId'] != 'yuv_splitter' ||
-              (conn['fromPort'] != 'out_u' && conn['fromPort'] != 'out_v')) {
-            return false;
-          }
-        }
       }
     }
     return true;
@@ -269,15 +324,19 @@ class GpuPipeline {
   /// 在 UI isolate 执行一帧。
   ///
   /// [displayCaptures]：key → 节点 id，处理到该节点时对其输出帧做默认
-  /// 色调映射（gamma 2.2）出图，供「链是主链前缀」的其它预览节点复用。
+  /// 色调映射出图（RAW 源 gamma 2.2，图片源 gamma 1.0 直通），供「链是
+  /// 主链前缀」的其它预览节点复用。
   /// [rgbaReadbackPorts]：'nodeId:port' 集合，对这些端口做默认色调映射
   /// 并回读 RGBA8（仪器馈源）。
+  /// [imageSources]：图片源的共享解码帧（nodeId → RGBA8+宽高，与 CPU
+  /// 路径的 sourceRgba 注入同一来源），命中时跳过链内重复解码。
   Future<GpuChainResult> run(
     List<Map<String, Object?>> chain,
     int frameIndex, {
     void Function(String nodeId)? onNodeStart,
     Map<String, String> displayCaptures = const {},
     Set<String> rgbaReadbackPorts = const {},
+    Map<String, (Uint8List, int, int)> imageSources = const {},
   }) async {
     final timings = <String, int>{};
     final captures = <String, Map<String, Object?>>{};
@@ -287,28 +346,88 @@ class GpuPipeline {
     // ---- 源节点：CPU 解码（与链内语义一致）→ 上传打包纹理 ----
     final first = chain.first;
     final firstNodeId = first['nodeId'] as String;
+    final firstType = first['typeId'] as String;
     final sp = (first['params'] as Map).cast<String, Object?>();
     onNodeStart?.call(firstNodeId);
     var sw = Stopwatch()..start();
-    final src = await decodeRawSourceFrame(
-        first['typeId'] as String, sp, frameIndex);
-    final w = src.width, h = src.height, maxValue = src.maxValue;
-    if (w.isOdd || h.isOdd) {
-      throw StateError('GPU 路径要求偶数宽高（当前 $w x $h）');
+    late final int w, h, maxValue;
+    late _Port frame;
+    late final ui.Image srcTex;
+    BayerPattern? pattern;
+    if (firstType == 'image_source' || firstType == 'video_source') {
+      // 图片/视频源：CPU 解码（图片可注入共享解码帧；视频源仅单帧预览
+      // 路径，经 ffmpeg 解码当前帧）→ 16 位 RGB 三通道上传。
+      // 两者本身都是 sRGB 显示数据，出图默认 gamma 1.0 直通（见链末）。
+      final maxV = bayerMaxValue(
+          int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')));
+      final injected = imageSources[firstNodeId];
+      final (rgb, w0, h0) = injected != null
+          ? rgba8ToRgb16(injected.$1, injected.$2, injected.$3, maxV)
+          : firstType == 'image_source'
+              ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
+                  maxValue: maxV)
+              : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
+                  maxValue: maxV, ffmpegPath: _str(sp, 'ffmpegPath'));
+      if (w0.isOdd) {
+        throw StateError('GPU 路径要求偶数宽（当前 $w0 x $h0）');
+      }
+      w = w0;
+      h = h0;
+      maxValue = maxV;
+      srcTex = await uploadPacked(rgb, w, h, 3);
+      frame = _Port(srcTex, w * 3 ~/ 2, h, 'rgb');
+      // 与 CPU 一致：按源出边端口（compileChain 附加的 outFormat）在源头
+      // 转换色彩空间——out_hsl/out_yuv 直连的下游算子（如 HSL 调节器）
+      // 拿到的帧格式与 CPU 路径相同。
+      final outFormat = first['outFormat'] as String? ?? 'rgb';
+      if (outFormat == 'hsl') {
+        frame = _Port(
+          runPass(_progs['rgb2hsl']!, [
+            frame.texW.toDouble(), frame.texH.toDouble(),
+            w.toDouble(), maxValue.toDouble(),
+          ], [srcTex], frame.texW, frame.texH),
+          frame.texW, frame.texH, 'hsl');
+      } else if (outFormat == 'yuv') {
+        frame = _Port(
+          runPass(_progs['rgb2yuv']!, [
+            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+            maxValue.toDouble(),
+            ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
+          ], [srcTex], frame.texW, frame.texH),
+          frame.texW, frame.texH, 'yuv');
+      }
+    } else {
+      final src =
+          await decodeRawSourceFrame(firstType, sp, frameIndex);
+      w = src.width;
+      h = src.height;
+      maxValue = src.maxValue;
+      if (w.isOdd || h.isOdd) {
+        throw StateError('GPU 路径要求偶数宽高（当前 $w x $h）');
+      }
+      pattern = src.bayerPattern;
+      srcTex = await uploadPacked(src.data, w, h, 1);
+      frame = _Port(srcTex, w ~/ 2, h, src.format); // 'mosaic' | 'mono'
     }
-    final srcFormat = src.format; // 'mosaic' | 'mono'
-    final srcTex = await uploadPacked(src.data, w, h, 1);
     timings[firstNodeId] = sw.elapsedMicroseconds;
+    // 链末默认色调映射 gamma：图片/视频源已是 sRGB 显示数据，gamma 1.0
+    // 直通；RAW 源为线性数据，gamma 2.2 编码（与 CPU 路径一致）。
+    final defaultGamma =
+        firstType == 'image_source' || firstType == 'video_source' ? 1.0 : 2.2;
 
     // Bayer 相位颜色（0=R,1=G,2=B），供黑电平/GrGb/去马赛克。
-    final pattern = src.bayerPattern;
     final pc = pattern == null
         ? const [0, 1, 1, 2]
         : [for (var ph = 0; ph < 4; ph++) pattern.colorAt(ph & 1, ph >> 1)];
 
-    // 主帧（链上流动的帧）与端口表。
-    _Port frame = _Port(srcTex, w ~/ 2, h, srcFormat);
-    final ports = <String, _Port>{'$firstNodeId:out': frame};
+    // 端口表：源节点的格式端口别名指向同一帧（与 CPU 路径一致，
+    // 由下游算子按需自行转换）。
+    final ports = <String, _Port>{
+      '$firstNodeId:out': frame,
+      '$firstNodeId:out_rgb': frame,
+      '$firstNodeId:out_yuv': frame,
+      '$firstNodeId:out_hsl': frame,
+    };
 
     // 捕获点反查：节点 id → displayCaptures 的 key 列表。
     final captureAtNode = <String, List<String>>{};
@@ -325,7 +444,16 @@ class GpuPipeline {
       final keys = captureAtNode[nodeId];
       if (keys == null) return;
       for (final key in keys) {
-        displayImages[key] = _tonemap(frame, w, h, maxValue, 2.2, 0, 1.0);
+        // 顺带测量捕获 pass 耗时：被覆盖的前缀预览（key 为预览节点 id）
+        // 自身不在主链上，其耗时栏只能来自这里。'id#in' 输入链 key 与
+        // CPU 路径口径一致不计耗时。注意若 key 恰为主链节点（分支出图
+        // 的汇点预览），此处 += 后会被本节点算子耗时覆盖——算子墙钟
+        // 已包含该捕获，语义不丢。
+        final csw = Stopwatch()..start();
+        displayImages[key] = _tonemap(frame, w, h, maxValue, defaultGamma, 0, 1.0);
+        if (!key.endsWith('#in')) {
+          timings[key] = (timings[key] ?? 0) + csw.elapsedMicroseconds;
+        }
       }
     }
 
@@ -340,6 +468,43 @@ class GpuPipeline {
       final inputs = (op['inputs'] as Map?)?.cast<String, Object?>() ?? const {};
       onNodeStart?.call(nodeId);
       sw = Stopwatch()..start();
+
+      // 第二个源节点（荧光/乘法器支路的 RAW 源，compileChain 已校验
+      // 最多 2 个源）：解码上传。分辨率/位深须与主源一致（GPU 链全程
+      // 共享 w/h/maxValue），不一致抛异常由调用方回退 CPU。
+      if (rawSourceTypes.contains(typeId)) {
+        final src2 = await decodeRawSourceFrame(typeId, p, frameIndex);
+        if (src2.width != w || src2.height != h) {
+          throw StateError('GPU 路径：双源分辨率必须一致'
+              '（主源 $w×$h，支路 ${src2.width}×${src2.height}）');
+        }
+        if (src2.maxValue != maxValue) {
+          throw StateError('GPU 路径：双源位深必须一致');
+        }
+        final tex2 = await uploadPacked(src2.data, w, h, 1);
+        frame = _Port(tex2, w ~/ 2, h, src2.format); // 'mosaic' | 'mono'
+        ports['$nodeId:out'] = frame;
+        if (src2.format == 'mono') ports['$nodeId:out_mono'] = frame;
+        await captureDisplays(nodeId);
+        captures[nodeId] =
+            await _sampleCapture(frame, display, w, h, maxValue);
+        timings[nodeId] = sw.elapsedMicroseconds;
+        continue;
+      }
+
+      // 分支感知取帧（与 CPU 路径一致）：按视频组输入连接取上游端口
+      // 帧——单源分支链中拓扑前驱可能属于另一分支，盲目继承主帧会
+      // 错拿数据（如分路器拿到边缘图）。线性链中连接的上游即拓扑
+      // 前驱，行为不变。
+      for (final vp in _kVideoInputPorts) {
+        final conn = inputs[vp] as Map<String, Object?>?;
+        if (conn == null) continue;
+        final ref = ports['${conn['fromNodeId']}:${conn['fromPort']}'];
+        if (ref != null) {
+          frame = ref;
+          break;
+        }
+      }
 
       _Port port(String name) {
         final conn = inputs[name] as Map<String, Object?>?;
@@ -593,6 +758,475 @@ class GpuPipeline {
           transients.add(yTex);
           frame = _Port(sharpTex, frame.texW, frame.texH, 'rgb');
           ports['$nodeId:out'] = frame;
+        // ---- 高频边缘提取：三域亮度高通黑底白线（edge_extract shader，
+        // 与 CPU extractHighFreq 同公式）；out_mono 为单通道边缘图 ----
+        case 'edge_extract':
+          final edgeFmt = frame.format;
+          if (edgeFmt != 'rgb' && edgeFmt != 'yuv' && edgeFmt != 'hsl') {
+            throw StateError('GPU 路径：高频边缘提取需要 RGB/YUV/HSL 输入');
+          }
+          if (w.isOdd) {
+            throw StateError('GPU 路径：高频边缘提取要求偶数宽（mono 输出）');
+          }
+          final edgeGain = (p['gain'] as num?)?.toDouble() ?? 1.0;
+          final edgeThr = (p['threshold'] as num?)?.toDouble() ?? 4.0;
+          frame = _Port(
+            runPass(_progs['edge_extract']!, [
+              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+              edgeFmt == 'rgb' ? 0.0 : (edgeFmt == 'yuv' ? 1.0 : 2.0),
+              edgeGain, edgeThr / maxValue, maxValue.toDouble(),
+            ], [frame.tex], frame.texW, frame.texH),
+            frame.texW, frame.texH, edgeFmt);
+          ports['$nodeId:out'] = frame;
+          // 三格式输出端口同名别名（帧格式同输入，与 CPU 一致）。
+          ports['$nodeId:out_rgb'] = frame;
+          ports['$nodeId:out_yuv'] = frame;
+          ports['$nodeId:out_hsl'] = frame;
+          // out_mono：边缘亮度单通道（rgb/yuv 在 0 通道，hsl 在 L=2 通道）。
+          final edgeMono = runPass(_progs['extract_channel']!, [
+            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+            edgeFmt == 'hsl' ? 2.0 : 0.0, (w ~/ 2).toDouble(),
+          ], [frame.tex], w ~/ 2, h);
+          ports['$nodeId:out_mono'] = _Port(edgeMono, w ~/ 2, h, 'mono');
+        // ---- 腐蚀/膨胀：可分离两趟（水平+垂直）逐通道极小/极大滤波
+        // （morphology shader 跑两遍，uDir 0/1，与 CPU applyMorphology
+        // 同口径；RGB 三通道独立 / Mono 单通道）----
+        case 'morphology':
+          final erode = _str(p, 'mode') != 'dilate';
+          var radius = (p['radius'] as num?)?.toInt() ?? 1;
+          if (radius < 1) radius = 1;
+          _Port morphPass(_Port src, int channels) {
+            final base = [
+              src.texW.toDouble(), src.texH.toDouble(), w.toDouble(),
+              channels.toDouble(),
+            ];
+            final hTex = runPass(_progs['morphology']!, [
+              ...base, 0.0, erode ? 1.0 : 0.0, radius.toDouble(),
+            ], [src.tex], src.texW, src.texH);
+            final vTex = runPass(_progs['morphology']!, [
+              ...base, 1.0, erode ? 1.0 : 0.0, radius.toDouble(),
+            ], [hTex], src.texW, src.texH);
+            transients.add(hTex);
+            return _Port(vTex, src.texW, src.texH, src.format);
+          }
+          final monoIn = inputs['in_mono'] != null ? port('in_mono') : null;
+          if (monoIn != null) {
+            // in_mono 侧支路（如边缘提取 out_mono）：处理端口纹理，结果
+            // 登记 out_mono，主帧透传（与 CPU 一致）。
+            if (monoIn.format != 'mono') {
+              throw StateError('GPU 路径：腐蚀/膨胀的 in_mono 需要单通道输入');
+            }
+            ports['$nodeId:out_mono'] = morphPass(monoIn, 1);
+            ports['$nodeId:out'] = frame; // 主帧透传
+          } else if (frame.format == 'rgb') {
+            frame = morphPass(frame, 3);
+            ports['$nodeId:out'] = frame;
+          } else if (frame.format == 'mono') {
+            frame = morphPass(frame, 1);
+            ports['$nodeId:out'] = frame;
+            ports['$nodeId:out_mono'] = frame;
+          } else {
+            throw StateError('GPU 路径：腐蚀/膨胀需要 RGB 或 Mono 输入');
+          }
+        // ---- 乘法器：(源1+offset1)×(源2+offset2)/maxValue，两路 mono
+        // 纹理逐像素相乘；分辨率必须一致 ----
+        case 'multiplier':
+          // in_mono 缺省时回退主帧（与 CPU 一致）。
+          final mulA = inputs['in_mono'] != null ? port('in_mono') : frame;
+          if (mulA.format != 'mono') {
+            throw StateError('GPU 路径：乘法器需要 Mono 输入（源1）');
+          }
+          if (inputs['in_mono2'] == null) {
+            throw StateError('乘法器需要接入输入源2（in_mono2 端口）');
+          }
+          final mulB = port('in_mono2');
+          if (mulB.format != 'mono') {
+            throw StateError('GPU 路径：乘法器需要 Mono 输入（源2）');
+          }
+          if (mulA.texW != mulB.texW || mulA.texH != mulB.texH) {
+            throw StateError('乘法器两路输入分辨率必须一致');
+          }
+          frame = _Port(
+            runPass(_progs['multiply_mono']!, [
+              mulA.texW.toDouble(), mulA.texH.toDouble(),
+              _num(p, 'offset1'), _num(p, 'offset2'), maxValue.toDouble(),
+            ], [mulA.tex, mulB.tex], mulA.texW, mulA.texH),
+            mulA.texW, mulA.texH, 'mono');
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_mono'] = frame;
+        // ---- 加法器：源1×balance + 源2×(1−balance)，两路 mono 纹理
+        // 逐像素平衡加权混合（增益总和恒为 1）；分辨率必须一致 ----
+        case 'adder':
+          // in_mono 缺省时回退主帧（与 CPU 一致）。
+          final addA = inputs['in_mono'] != null ? port('in_mono') : frame;
+          if (addA.format != 'mono') {
+            throw StateError('GPU 路径：加法器需要 Mono 输入（源1）');
+          }
+          if (inputs['in_mono2'] == null) {
+            throw StateError('加法器需要接入输入源2（in_mono2 端口）');
+          }
+          final addB = port('in_mono2');
+          if (addB.format != 'mono') {
+            throw StateError('GPU 路径：加法器需要 Mono 输入（源2）');
+          }
+          if (addA.texW != addB.texW || addA.texH != addB.texH) {
+            throw StateError('加法器两路输入分辨率必须一致');
+          }
+          frame = _Port(
+            runPass(_progs['blend_mono']!, [
+              addA.texW.toDouble(), addA.texH.toDouble(),
+              // 缺省按平衡中点 0.5（与 CPU 一致）。
+              (p['balance'] as num?)?.toDouble() ?? 0.5,
+              maxValue.toDouble(),
+            ], [addA.tex, addB.tex], addA.texW, addA.texH),
+            addA.texW, addA.texH, 'mono');
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_mono'] = frame;
+        // ---- 多路选择器（4选1）：select 选中的那路源输入透传到输出
+        // （零 pass 纯路由；输出四域同名别名，格式同所选输入）----
+        case 'mux4':
+          final sel = ((p['select'] as num?)?.toInt() ?? 1).clamp(1, 4);
+          _Port? picked;
+          for (final suffix in const ['', '_yuv', '_hsl', '_mono']) {
+            final name = 'in$sel$suffix';
+            if (inputs[name] != null) {
+              picked = port(name);
+              break;
+            }
+          }
+          if (picked == null) {
+            throw StateError('多路选择器的源$sel 未接入输入');
+          }
+          frame = picked;
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_rgb'] = frame;
+          ports['$nodeId:out_yuv'] = frame;
+          ports['$nodeId:out_hsl'] = frame;
+          if (frame.format == 'mono') ports['$nodeId:out_mono'] = frame;
+        // ---- 混叠器：基图 + 混叠图×蒙版/maxValue×混叠强度（blender
+        // shader，三路采样；mono 混叠图按基图格式选目标通道，三通道
+        // 混叠图逐通道对应叠加，与 CPU blendMaskMono 一致）----
+        case 'blender':
+          final blFmt = frame.format;
+          if (blFmt != 'rgb' && blFmt != 'yuv' && blFmt != 'hsl' &&
+              blFmt != 'mono') {
+            throw StateError('GPU 路径：混叠器需要 RGB/YUV/HSL/Mono 基图输入');
+          }
+          if (inputs['in_mask'] == null) {
+            throw StateError('混叠器需要接入蒙版（in_mask 端口）');
+          }
+          final maskP = port('in_mask');
+          if (maskP.format != 'mono') {
+            throw StateError('GPU 路径：混叠器的蒙版需要 Mono 输入');
+          }
+          _Port? blendP;
+          for (final bp in const [
+            'in_blend', 'in_blend_yuv', 'in_blend_hsl', 'in_blend_mono']) {
+            if (inputs[bp] != null) {
+              blendP = port(bp);
+              break;
+            }
+          }
+          if (blendP == null) {
+            throw StateError('混叠器需要接入混叠图（in_blend 端口）');
+          }
+          // 混叠图通道数按打包纹理宽度判定（w*3/2 → 三通道，w/2 →
+          // mono），兼容旧流程 in_blend 直接接 mono 的连法。
+          final blendChs = blendP.texW * 2 == w * 3
+              ? 3
+              : blendP.texW * 2 == w
+                  ? 1
+                  : 0;
+          if (maskP.texW * 2 != w ||
+              maskP.texH != h ||
+              blendP.texH != h ||
+              blendChs == 0) {
+            throw StateError('混叠器蒙版/混叠图分辨率必须与基图一致');
+          }
+          frame = _Port(
+            runPass(_progs['blender']!, [
+              frame.texW.toDouble(), blendP.texW.toDouble(),
+              maskP.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+              blFmt == 'mono' ? 1.0 : 3.0, blendChs.toDouble(),
+              blFmt == 'rgb'
+                  ? 0.0
+                  : blFmt == 'yuv'
+                      ? 1.0
+                      : blFmt == 'hsl'
+                          ? 2.0
+                          : 3.0,
+              // 缺省按全强度 1.0（与 CPU 一致）。
+              (p['strength'] as num?)?.toDouble() ?? 1.0,
+              maxValue.toDouble(),
+            ], [frame.tex, blendP.tex, maskP.tex], frame.texW, frame.texH),
+            frame.texW, frame.texH, blFmt);
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_rgb'] = frame;
+          ports['$nodeId:out_yuv'] = frame;
+          ports['$nodeId:out_hsl'] = frame;
+          if (blFmt == 'mono') ports['$nodeId:out_mono'] = frame;
+        // （bright_contrast shader，与 CPU adjustBrightContrast 同公式；
+        // bright=100 且 gain=100 恒等直通）----
+        case 'bright_contrast_adjuster':
+          final bcFmt = frame.format;
+          if (bcFmt != 'rgb' && bcFmt != 'yuv' && bcFmt != 'hsl' &&
+              bcFmt != 'mono') {
+            throw StateError('GPU 路径：亮度/对比度调节器需要 RGB/YUV/HSL/Mono 输入');
+          }
+          final bright = (p['bright'] as num?)?.toDouble() ?? 100.0;
+          final baseline = (p['baseline'] as num?)?.toDouble() ?? 50.0;
+          final gain = (p['gain'] as num?)?.toDouble() ?? 100.0;
+          if (bright != 100.0 || gain != 100.0) {
+            frame = _Port(
+              runPass(_progs['bright_contrast']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                bcFmt == 'mono' ? 1.0 : 3.0,
+                bcFmt == 'rgb' ? 0.0 : (bcFmt == 'yuv' ? 1.0 : 2.0),
+                bright / 100, baseline / 100 * maxValue, gain / 100,
+                maxValue.toDouble(),
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, bcFmt);
+          }
+          ports['$nodeId:out'] = frame;
+          // 四格式输出端口同名别名（帧格式同输入，与 CPU 一致）。
+          ports['$nodeId:out_rgb'] = frame;
+          ports['$nodeId:out_yuv'] = frame;
+          ports['$nodeId:out_hsl'] = frame;
+          if (bcFmt == 'mono') {
+            ports['$nodeId:out_mono'] = frame;
+          } else {
+            // out_mono：非 mono 输入时取输出帧亮度通道（yuv/hsl 抽通道、
+            // rgb 求 BT.601 亮度，与 CPU 一致），供蒙版等 mono 侧端口消费。
+            if (w.isOdd) {
+              throw StateError('GPU 路径：亮度/对比度调节器的 out_mono 要求偶数宽');
+            }
+            final bcMono = bcFmt == 'rgb'
+                ? runPass(_progs['luma_extract']!, [
+                    frame.texW.toDouble(), frame.texH.toDouble(),
+                    w.toDouble(), (w ~/ 2).toDouble(),
+                  ], [frame.tex], w ~/ 2, h)
+                : runPass(_progs['extract_channel']!, [
+                    frame.texW.toDouble(), frame.texH.toDouble(),
+                    w.toDouble(), bcFmt == 'hsl' ? 2.0 : 0.0,
+                    (w ~/ 2).toDouble(),
+                  ], [frame.tex], w ~/ 2, h);
+            ports['$nodeId:out_mono'] = _Port(bcMono, w ~/ 2, h, 'mono');
+          }
+        // ---- 激发泄漏扣除：mono 逐像素 v' = max(0, v − min(level,
+        // maxSub))（fluoro_leak shader，与 CPU applyFluoroLeak 一致）----
+        case 'fluoro_leak':
+          if (frame.format != 'mono') {
+            throw StateError('GPU 路径：激发泄漏扣除需要 Mono 输入');
+          }
+          var leakSub = _num(p, 'level');
+          final leakMaxSub = _num(p, 'maxSub');
+          if (leakMaxSub < leakSub) leakSub = leakMaxSub;
+          if (leakSub > 0) {
+            frame = _Port(
+              runPass(_progs['fluoro_leak']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), leakSub,
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'mono');
+          }
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_mono'] = frame;
+        // ---- 背景扣除：块均值是聚集统计，CPU 桥接计算（同 CLAHE 的
+        // LUT 路径）打包上传，GPU 逐像素扣除 strength × bg ----
+        case 'fluoro_background':
+          if (frame.format != 'mono') {
+            throw StateError('GPU 路径：背景扣除需要 Mono 输入');
+          }
+          final bgStrength = _num(p, 'strength');
+          if (bgStrength <= 0) {
+            ports['$nodeId:out'] = frame;
+            ports['$nodeId:out_mono'] = frame;
+            break;
+          }
+          var bgBs = (p['blockSize'] as num?)?.toInt() ?? 0;
+          if (bgBs < 2) bgBs = 2;
+          {
+            final bytes = await readbackBytes(frame.tex);
+            final data = bytes.buffer.asUint16List();
+            final bx = (w + bgBs - 1) ~/ bgBs, by = (h + bgBs - 1) ~/ bgBs;
+            final bw = bx + (bx & 1); // 打包纹理要求偶数列
+            final means = Uint16List(bw * by);
+            for (var byi = 0; byi < by; byi++) {
+              for (var bxi = 0; bxi < bx; bxi++) {
+                var sum = 0, count = 0;
+                final y0 = byi * bgBs;
+                final y1 = y0 + bgBs < h ? y0 + bgBs : h;
+                final x0 = bxi * bgBs;
+                final x1 = x0 + bgBs < w ? x0 + bgBs : w;
+                for (var yy = y0; yy < y1; yy++) {
+                  for (var xx = x0; xx < x1; xx++) {
+                    sum += data[yy * w + xx];
+                    count++;
+                  }
+                }
+                // 均值量化为 16 位（CPU 为 double 均值）：引入的误差
+                // ≤ 0.5×strength，亚 LSB 量级（同 CLAHE LUT 量化先例）。
+                means[byi * bx + bxi] = count > 0 ? (sum / count).round() : 0;
+              }
+            }
+            final meansTex = await uploadPacked(means, bw, by, 1);
+            transients.add(meansTex);
+            frame = _Port(
+              runPass(_progs['fluoro_bg_sub']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                bgBs.toDouble(), bx.toDouble(), bgStrength,
+                (bw ~/ 2).toDouble(), by.toDouble(),
+              ], [frame.tex, meansTex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'mono');
+          }
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_mono'] = frame;
+        // ---- 激发归一化：全帧均值统计 CPU 桥接（同 GrGb/自动白平衡），
+        // GPU 施加增益 v' = clamp(v × reference/mean, 0, maxValue) ----
+        case 'fluoro_normalize':
+          if (frame.format != 'mono') {
+            throw StateError('GPU 路径：激发归一化需要 Mono 输入');
+          }
+          final reference = _num(p, 'reference');
+          if (reference <= 0) {
+            ports['$nodeId:out'] = frame;
+            ports['$nodeId:out_mono'] = frame;
+            break;
+          }
+          {
+            final bytes = await readbackBytes(frame.tex);
+            final data = bytes.buffer.asUint16List();
+            var sum = 0;
+            for (final v in data) {
+              sum += v;
+            }
+            final mean = data.isEmpty ? 0.0 : sum / data.length;
+            if (mean >= _num(p, 'epsilon')) {
+              final gain = reference / mean;
+              if (gain != 1.0) {
+                frame = _Port(
+                  runPass(_progs['fluoro_gain']!, [
+                    frame.texW.toDouble(), frame.texH.toDouble(), gain,
+                    maxValue.toDouble(),
+                  ], [frame.tex], frame.texW, frame.texH),
+                  frame.texW, frame.texH, 'mono');
+              }
+            }
+          }
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_mono'] = frame;
+        // ---- 时域 IIR 降噪：历史帧纹理存 GpuPipeline 实例（跨 run
+        // 存活，有效性口径同 CPU _temporalHistory）；历史副本独立成
+        // 纹理（链上 frame 在 run 末端统一回收），旧历史延迟回收 ----
+        case 'fluoro_temporal':
+          if (frame.format != 'mono') {
+            throw StateError('GPU 路径：时域降噪需要 Mono 输入');
+          }
+          final alpha = _num(p, 'alpha').clamp(0.0, 1.0).toDouble();
+          final motion = p['motionAdapt'] != false;
+          final hist = _temporalHistory[nodeId];
+          final histValid = hist != null &&
+              hist.frame == frameIndex - 1 &&
+              hist.w == w &&
+              hist.h == h &&
+              hist.alpha == alpha &&
+              hist.motion == motion;
+          if (histValid) {
+            frame = _Port(
+              runPass(_progs['fluoro_temporal']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(),
+                alpha, motion ? maxValue / 16 : 1e9,
+              ], [frame.tex, hist.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'mono');
+          }
+          final histTex = runPass(
+              _progs['passthrough']!,
+              [frame.texW.toDouble(), frame.texH.toDouble()],
+              [frame.tex],
+              frame.texW,
+              frame.texH);
+          if (hist != null) transients.add(hist.tex); // 旧历史延迟回收
+          _temporalHistory[nodeId] = (
+            tex: histTex,
+            frame: frameIndex,
+            w: w,
+            h: h,
+            alpha: alpha,
+            motion: motion,
+          );
+          ports['$nodeId:out'] = frame;
+          ports['$nodeId:out_mono'] = frame;
+        // ---- 伪彩映射：mono → 三通道 RGB（pseudo_color shader，
+        // 与 CPU monoPseudoColor 同三张色表）----
+        case 'pseudo_color':
+          if (frame.format != 'mono') {
+            throw StateError('GPU 路径：伪彩映射需要 Mono 输入');
+          }
+          final pcTexW = w * 3 ~/ 2;
+          frame = _Port(
+            runPass(_progs['pseudo_color']!, [
+              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+              switch (_str(p, 'colormap')) {
+                'magenta' => 1.0,
+                'hot' => 2.0,
+                _ => 0.0,
+              },
+              _num(p, 'gain'), maxValue.toDouble(), pcTexW.toDouble(),
+            ], [frame.tex], pcTexW, h),
+            pcTexW, h, 'rgb');
+          ports['$nodeId:out'] = frame;
+        // ---- 荧光融合：白光 RGB × 荧光 mono（fluoro_fusion shader）；
+        // 荧光输入未连接或尺寸不符：白光直通（与 CPU 一致）----
+        case 'fluoro_fusion':
+          _requireFormat(frame, 'rgb', '荧光融合');
+          final flIn = inputs['in_fluoro'] != null ? port('in_fluoro') : null;
+          if (flIn == null ||
+              flIn.format != 'mono' ||
+              flIn.texW != w ~/ 2 ||
+              flIn.texH != h) {
+            ports['$nodeId:out'] = frame;
+            break;
+          }
+          frame = _Port(
+            runPass(_progs['fluoro_fusion']!, [
+              frame.texW.toDouble(), frame.texH.toDouble(),
+              w.toDouble(), h.toDouble(), flIn.texW.toDouble(),
+              _str(p, 'mode') == 'contour' ? 1.0 : 0.0,
+              _num(p, 'threshold'), _num(p, 'alphaMax'),
+              switch (_str(p, 'colormap')) {
+                'magenta' => 1.0,
+                'hot' => 2.0,
+                _ => 0.0,
+              },
+              _num(p, 'offsetX'), _num(p, 'offsetY'), maxValue.toDouble(),
+            ], [frame.tex, flIn.tex], frame.texW, frame.texH),
+            frame.texW, frame.texH, 'rgb');
+          ports['$nodeId:out'] = frame;
+        // ---- 曲线调节器：RGB 逐通道 LUT 映射。LUT（4096 级）由 CPU 侧
+        // levelsCurveLut 生成（与 CPU 同一函数，四种曲线公式一致），
+        // 打包上传后 GPU 逐像素查表（levels_curve shader）----
+        case 'levels_curves':
+          _requireFormat(frame, 'rgb', '曲线调节器');
+          final lvPoints = levelsPointsFromParam(p['points']);
+          final lvMode = levelsCurveModeFromParam(p['curveMode']);
+          final lvGamma = (p['gamma'] as num?)?.toDouble() ?? 1.0;
+          // gamma 模式以 γ==1 为恒等；其余模式以控制点是否全在
+          // 对角线上判定（与 CPU 一致）。
+          final lvIdentity = lvMode == LevelsCurveMode.gamma
+              ? lvGamma == 1.0
+              : levelsCurveIsIdentity(lvPoints);
+          if (!lvIdentity) {
+            final lut =
+                levelsCurveLut(lvPoints, mode: lvMode, gamma: lvGamma);
+            final lutTex = await uploadPacked(lut, kLevelsMax + 1, 1, 1);
+            transients.add(lutTex);
+            frame = _Port(
+              runPass(_progs['levels_curve']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(),
+                maxValue.toDouble(), ((kLevelsMax + 1) ~/ 2).toDouble(),
+              ], [frame.tex, lutTex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'rgb');
+          }
+          ports['$nodeId:out'] = frame;
         case 'demosaic':
           if (frame.format != 'mosaic') {
             throw StateError('GPU 路径：去马赛克需要马赛克输入');
@@ -628,7 +1262,7 @@ class GpuPipeline {
           frame = _Port(
             runPass(_progs['apply_gains']!, [
               frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              maxValue.toDouble(), rGain, bGain,
+              maxValue.toDouble(), rGain, 1.0, bGain,
             ], [frame.tex], frame.texW, frame.texH),
             frame.texW, frame.texH, frame.format);
           ports['$nodeId:out'] = frame;
@@ -671,7 +1305,7 @@ class GpuPipeline {
             frame.texW, frame.texH, 'hsl');
           ports['$nodeId:out'] = frame;
         case 'hsl_debugger':
-          _requireFormat(frame, 'hsl', 'HSL调试器');
+          _requireFormat(frame, 'hsl', 'HSL调节器');
           final hShift = _num(p, 'h_shift');
           final sGain = (p['s_gain'] as num?)?.toDouble() ?? 1.0;
           final lGain = (p['l_gain'] as num?)?.toDouble() ?? 1.0;
@@ -685,6 +1319,53 @@ class GpuPipeline {
               frame.texW, frame.texH, 'hsl');
           }
           ports['$nodeId:out'] = frame;
+        case 'rgb_debugger':
+          _requireFormat(frame, 'rgb', 'RGB调节器');
+          final rGain = (p['r_gain'] as num?)?.toDouble() ?? 1.0;
+          final gGain = (p['g_gain'] as num?)?.toDouble() ?? 1.0;
+          final bGain = (p['b_gain'] as num?)?.toDouble() ?? 1.0;
+          if (rGain != 1.0 || gGain != 1.0 || bGain != 1.0) {
+            frame = _Port(
+              runPass(_progs['apply_gains']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                maxValue.toDouble(), rGain, gGain, bGain,
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'rgb');
+          }
+          ports['$nodeId:out'] = frame;
+        case 'color_temp_adjuster':
+          _requireFormat(frame, 'rgb', '色温调节器');
+          // von Kries 对角增益（color_temp.dart），复用白平衡/RGB 调节器
+          // 的 apply_gains shader（与 CPU 的 adjustRgb 同一语义）。
+          final gains = colorTempGains(
+              (p['temperature'] as num?)?.toDouble() ?? kColorTempDefault,
+              (p['measured_cct'] as num?)?.toInt() ?? 0);
+          if (gains[0] != 1.0 || gains[1] != 1.0 || gains[2] != 1.0) {
+            frame = _Port(
+              runPass(_progs['apply_gains']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                maxValue.toDouble(), gains[0], gains[1], gains[2],
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'rgb');
+          }
+          ports['$nodeId:out'] = frame;
+          // 声明端口名为 out_rgb：同时按声明名注册，供下游端口查找。
+          ports['$nodeId:out_rgb'] = frame;
+        case 'yuv_debugger':
+          _requireFormat(frame, 'yuv', 'YUV调节器');
+          final yGain = (p['y_gain'] as num?)?.toDouble() ?? 1.0;
+          final uGain = (p['u_gain'] as num?)?.toDouble() ?? 1.0;
+          final vGain = (p['v_gain'] as num?)?.toDouble() ?? 1.0;
+          if (yGain != 1.0 || uGain != 1.0 || vGain != 1.0) {
+            frame = _Port(
+              runPass(_progs['yuv_gains']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                maxValue.toDouble(), (maxValue >> 1).toDouble(),
+                yGain, uGain, vGain,
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'yuv');
+          }
+          ports['$nodeId:out'] = frame;
         case 'csc_hsl2yuv':
           _requireFormat(frame, 'hsl', 'HSL→YUV 转换');
           frame = _Port(
@@ -695,18 +1376,30 @@ class GpuPipeline {
             frame.texW, frame.texH, 'yuv');
           ports['$nodeId:out'] = frame;
         case 'yuv_splitter':
+          if (frame.format == 'rgb') {
+            // 与 CPU 一致：RGB 输入先内部转 YUV（BT.601 全范围）。
+            frame = _Port(
+              runPass(_progs['rgb2yuv']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                maxValue.toDouble(),
+                ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'yuv');
+          }
           if (frame.format != 'yuv') {
             throw StateError('GPU 路径：YUV 分路器需要 YUV 输入');
           }
-          // Y 抽取为独立 mono 纹理（下游 AHE/合路器/仪器取用）；
-          // U/V 零拷贝引用主帧纹理（channel 标记）。
-          final yTex = runPass(_progs['extract_channel']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-            0.0, (w ~/ 2).toDouble(),
-          ], [frame.tex], w ~/ 2, h);
-          ports['$nodeId:out_y'] = _Port(yTex, w ~/ 2, h, 'mono');
-          ports['$nodeId:out_u'] = _Port(frame.tex, frame.texW, frame.texH, 'yuv', 1);
-          ports['$nodeId:out_v'] = _Port(frame.tex, frame.texW, frame.texH, 'yuv', 2);
+          // Y/U/V 各抽取为独立 mono 纹理（下游 AHE/预览/仪器/合路器
+          // 取用；与 HSL/RGB 分路器同一形态，下游可任意中转）。
+          const yuvOutPorts = ['out_y', 'out_u', 'out_v'];
+          for (var ch = 0; ch < 3; ch++) {
+            final tex = runPass(_progs['extract_channel']!, [
+              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+              ch.toDouble(), (w ~/ 2).toDouble(),
+            ], [frame.tex], w ~/ 2, h);
+            ports['$nodeId:${yuvOutPorts[ch]}'] =
+                _Port(tex, w ~/ 2, h, 'mono');
+          }
           ports['$nodeId:out'] = frame;
         case 'ahe':
           final monoIn = inputs['in_mono'] != null ? port('in_mono') : null;
@@ -716,7 +1409,7 @@ class GpuPipeline {
           var clipLimit = _num(p, 'clipLimit');
           if (clipLimit <= 0) clipLimit = 1.0;
           if (monoIn != null) {
-            if (monoIn.format != 'mono' || monoIn.channel != null) {
+            if (monoIn.format != 'mono') {
               throw StateError('GPU 路径：AHE 的 in_mono 需要单通道输入');
             }
             if (strength <= 0) {
@@ -736,39 +1429,155 @@ class GpuPipeline {
           } else {
             throw StateError('GPU 路径：AHE 仅支持 in_mono 或 mono 主帧');
           }
+        // ---- YUV 合路器：三路 mono 打包纹理交织为 YUV 三通道帧
+        // （combine_3ch shader；Y 未连接填 0、U/V 未连接填色度中点，
+        // 与 CPU 一致）----
         case 'yuv_combiner':
           final yIn = inputs['in_y'] != null ? port('in_y') : null;
           final uIn = inputs['in_u'] != null ? port('in_u') : null;
           final vIn = inputs['in_v'] != null ? port('in_v') : null;
-          ui.Image? uvTex;
-          var uvTexW = 0, uvTexH = 0;
-          if (uIn != null && vIn != null) {
-            if (!identical(uIn.tex, vIn.tex) ||
-                uIn.channel == null ||
-                vIn.channel == null) {
-              throw StateError('GPU 路径：合路器 U/V 必须同源（分路器直连）');
+          for (final chIn in [yIn, uIn, vIn]) {
+            if (chIn == null) continue;
+            if (chIn.format != 'mono') {
+              throw StateError('GPU 路径：YUV 合路器需要 Mono 输入');
             }
-            uvTex = uIn.tex;
-            uvTexW = uIn.texW;
-            uvTexH = uIn.texH;
-          } else if (uIn != null || vIn != null) {
-            throw StateError('GPU 路径：合路器 U/V 需同时连接或同时留空');
+            if (chIn.texW != w ~/ 2 || chIn.texH != h) {
+              throw StateError('YUV 合路器三路输入分辨率必须一致');
+            }
           }
-          final hasY = yIn != null;
-          final hasUv = uvTex != null;
+          final yuvOutTexW = w * 3 ~/ 2;
+          final uMid = (maxValue >> 1).toDouble();
+          frame = _Port(
+            runPass(_progs['combine_3ch']!, [
+              (w ~/ 2).toDouble(), h.toDouble(),
+              yIn != null ? 1.0 : 0.0,
+              uIn != null ? 1.0 : 0.0,
+              vIn != null ? 1.0 : 0.0,
+              0.0, uMid, uMid,
+              yuvOutTexW.toDouble(),
+            ], [
+              yIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
+              uIn?.tex ?? frame.tex,
+              vIn?.tex ?? frame.tex,
+            ], yuvOutTexW, h),
+            yuvOutTexW, h, 'yuv');
+          ports['$nodeId:out'] = frame;
+        // ---- HSL 分路器：RGB 输入先内部转 HSL（与 CPU 一致），H/S/L
+        // 各抽取为独立 mono 纹理（下游预览/仪器/合路器取用）----
+        case 'hsl_splitter':
+          if (frame.format == 'rgb') {
+            frame = _Port(
+              runPass(_progs['rgb2hsl']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(),
+                w.toDouble(), maxValue.toDouble(),
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'hsl');
+          }
+          if (frame.format != 'hsl') {
+            throw StateError('GPU 路径：HSL 分路器需要 HSL 输入');
+          }
+          const hslOutPorts = ['out_h', 'out_s', 'out_l'];
+          for (var ch = 0; ch < 3; ch++) {
+            final tex = runPass(_progs['extract_channel']!, [
+              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+              ch.toDouble(), (w ~/ 2).toDouble(),
+            ], [frame.tex], w ~/ 2, h);
+            ports['$nodeId:${hslOutPorts[ch]}'] =
+                _Port(tex, w ~/ 2, h, 'mono');
+          }
+          ports['$nodeId:out'] = frame;
+        // ---- HSL 合路器：三路 mono 打包纹理交织为 HSL 三通道帧
+        // （combine_hsl shader；未连接通道填 0，与 CPU 一致）----
+        case 'hsl_combiner':
+          final hIn = inputs['in_h'] != null ? port('in_h') : null;
+          final sIn = inputs['in_s'] != null ? port('in_s') : null;
+          final lIn = inputs['in_l'] != null ? port('in_l') : null;
+          for (final chIn in [hIn, sIn, lIn]) {
+            if (chIn == null) continue;
+            if (chIn.format != 'mono') {
+              throw StateError('GPU 路径：HSL 合路器需要 Mono 输入');
+            }
+            if (chIn.texW != w ~/ 2 || chIn.texH != h) {
+              throw StateError('HSL 合路器三路输入分辨率必须一致');
+            }
+          }
           final outTexW = w * 3 ~/ 2;
           frame = _Port(
-            runPass(_progs['combine_yuv']!, [
-              (hasY ? yIn.texW : 1).toDouble(),
-              (hasY ? yIn.texH : 1).toDouble(),
-              uvTexW.toDouble(), uvTexH.toDouble(), w.toDouble(),
-              hasY ? 1.0 : 0.0, hasUv ? 1.0 : 0.0,
-              (maxValue >> 1).toDouble(), outTexW.toDouble(),
+            runPass(_progs['combine_3ch']!, [
+              (w ~/ 2).toDouble(), h.toDouble(),
+              hIn != null ? 1.0 : 0.0,
+              sIn != null ? 1.0 : 0.0,
+              lIn != null ? 1.0 : 0.0,
+              0.0, 0.0, 0.0, // 未连接通道填 0（HSL 语义）
+              outTexW.toDouble(),
             ], [
-              hasY ? yIn.tex : frame.tex, // 占位 sampler（uHasY=0 不采样）
-              hasUv ? uvTex : frame.tex,
+              hIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
+              sIn?.tex ?? frame.tex,
+              lIn?.tex ?? frame.tex,
             ], outTexW, h),
-            outTexW, h, 'yuv');
+            outTexW, h, 'hsl');
+          ports['$nodeId:out'] = frame;
+        // ---- RGB 分路器：YUV/HSL 输入先转 RGB（与 CPU 一致），R/G/B
+        // 各抽取为独立 mono 纹理（extract_channel，同 HSL 分路器）----
+        case 'rgb_splitter':
+          if (frame.format == 'yuv') {
+            frame = _Port(
+              runPass(_progs['yuv2rgb']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                maxValue.toDouble(), (maxValue >> 1).toDouble(),
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'rgb');
+          } else if (frame.format == 'hsl') {
+            frame = _Port(
+              runPass(_progs['hsl2rgb']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(),
+                w.toDouble(), maxValue.toDouble(),
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'rgb');
+          }
+          if (frame.format != 'rgb') {
+            throw StateError('GPU 路径：RGB 分路器需要 RGB 输入');
+          }
+          const rgbOutPorts = ['out_r', 'out_g', 'out_b'];
+          for (var ch = 0; ch < 3; ch++) {
+            final tex = runPass(_progs['extract_channel']!, [
+              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+              ch.toDouble(), (w ~/ 2).toDouble(),
+            ], [frame.tex], w ~/ 2, h);
+            ports['$nodeId:${rgbOutPorts[ch]}'] =
+                _Port(tex, w ~/ 2, h, 'mono');
+          }
+          ports['$nodeId:out'] = frame;
+        // ---- RGB 合路器：三路 mono 打包纹理交织为 RGB 三通道帧
+        // （combine_3ch shader；未连接通道填 0，与 CPU 一致）----
+        case 'rgb_combiner':
+          final rIn = inputs['in_r'] != null ? port('in_r') : null;
+          final gIn = inputs['in_g'] != null ? port('in_g') : null;
+          final bIn = inputs['in_b'] != null ? port('in_b') : null;
+          for (final chIn in [rIn, gIn, bIn]) {
+            if (chIn == null) continue;
+            if (chIn.format != 'mono') {
+              throw StateError('GPU 路径：RGB 合路器需要 Mono 输入');
+            }
+            if (chIn.texW != w ~/ 2 || chIn.texH != h) {
+              throw StateError('RGB 合路器三路输入分辨率必须一致');
+            }
+          }
+          final rgbOutTexW = w * 3 ~/ 2;
+          frame = _Port(
+            runPass(_progs['combine_3ch']!, [
+              (w ~/ 2).toDouble(), h.toDouble(),
+              rIn != null ? 1.0 : 0.0,
+              gIn != null ? 1.0 : 0.0,
+              bIn != null ? 1.0 : 0.0,
+              0.0, 0.0, 0.0, // 未连接通道填 0（RGB 语义）
+              rgbOutTexW.toDouble(),
+            ], [
+              rIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
+              gIn?.tex ?? frame.tex,
+              bIn?.tex ?? frame.tex,
+            ], rgbOutTexW, h),
+            rgbOutTexW, h, 'rgb');
           ports['$nodeId:out'] = frame;
         case 'csc_yuv2rgb':
           _requireFormat(frame, 'yuv', 'YUV→RGB 转换');
@@ -797,6 +1606,14 @@ class GpuPipeline {
           throw StateError('GPU 路径不支持的节点: $typeId');
       }
 
+      // 与 CPU 一致的通用端口登记：mono 帧同时提供 out_mono 别名，供
+      // 下游 in_mono/in_fluoro 分支感知取帧——双源链的交错拓扑序下，
+      // 缺别名将回退「继承上一节点帧」，可能错拿另一分支的异格式帧。
+      ports.putIfAbsent('$nodeId:out', () => frame);
+      if (frame.format == 'mono') {
+        ports.putIfAbsent('$nodeId:out_mono', () => frame);
+      }
+
       // 该节点输出处的显示捕获（前缀覆盖的其它预览节点）。
       await captureDisplays(nodeId);
       // 调试变量表采样（微回读，同时充当逐节点 GPU 同步点）。
@@ -804,9 +1621,10 @@ class GpuPipeline {
       timings[nodeId] = sw.elapsedMicroseconds;
     }
 
-    // ---- 链末出图：gamma 已出图则用之，否则默认色调映射（RAW 源 gamma 2.2）----
+    // ---- 链末出图：gamma 已出图则用之，否则默认色调映射（RAW 源
+    // gamma 2.2，图片源 gamma 1.0 直通）----
     sw = Stopwatch()..start();
-    display ??= _tonemap(frame, w, h, maxValue, 2.2, 0, 1.0);
+    display ??= _tonemap(frame, w, h, maxValue, defaultGamma, 0, 1.0);
     final sinkNodeId = chain.last['nodeId'] as String;
     timings[sinkNodeId] = (timings[sinkNodeId] ?? 0) + sw.elapsedMicroseconds;
     captures[sinkNodeId] = await _sampleCapture(frame, display, w, h, maxValue);
@@ -815,19 +1633,9 @@ class GpuPipeline {
     for (final key in rgbaReadbackPorts) {
       final ref = ports[key];
       if (ref == null) continue;
-      var mono = ref;
-      if (ref.channel != null) {
-        // 三通道纹理的单通道端口：先抽取。
-        final ex = runPass(_progs['extract_channel']!, [
-          ref.texW.toDouble(), ref.texH.toDouble(), w.toDouble(),
-          ref.channel!.toDouble(), (w ~/ 2).toDouble(),
-        ], [ref.tex], w ~/ 2, h);
-        mono = _Port(ex, w ~/ 2, h, 'mono');
-      }
-      final img = _tonemap(mono, w, h, maxValue, 2.2, 0, 1.0);
+      final img = _tonemap(ref, w, h, maxValue, defaultGamma, 0, 1.0);
       portRgba[key] = await readbackBytes(img);
       img.dispose();
-      if (!identical(mono.tex, ref.tex)) mono.tex.dispose();
     }
 
     // 纹理回收（显示图交给调用方，不在此 dispose）。

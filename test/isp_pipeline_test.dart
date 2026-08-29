@@ -61,6 +61,39 @@ void main() {
           .key;
       expect(() => compileChain(graph, previewId), throwsStateError);
     });
+
+    test('mux4 未选中的输入支路不参与编译（死支路剔除）', () {
+      // 源1~源4 各接一个独立源：只有 select 选中的支路参与编译
+      //（未选中支路不解码、不计入源节点数）。
+      final graph = IspGraph();
+      final mux = graph.addNode('mux4', 0, 0);
+      final pv = graph.addNode('preview', 0, 0);
+      final srcs = [
+        for (var i = 0; i < 4; i++) graph.addNode('image_source', 0, 0),
+      ];
+      const ports = ['in1', 'in2', 'in3', 'in4'];
+      for (var i = 0; i < 4; i++) {
+        expect(graph.connect(srcs[i], 'out_rgb', mux, ports[i]), isNull);
+      }
+      expect(graph.connect(mux, 'out_rgb', pv, 'in'), isNull);
+
+      List<String> chainSrcIds(int select) {
+        graph.nodes[mux]!.paramValues['select'] = select;
+        return [
+          for (final op in compileChain(graph, pv))
+            if (op['typeId'] == 'image_source') op['nodeId'] as String,
+        ];
+      }
+
+      expect(chainSrcIds(1), [srcs[0]]);
+      expect(chainSrcIds(3), [srcs[2]]);
+      // 未选中的支路节点不在链中。
+      final ids = [
+        for (final op in compileChain(graph, pv)) op['nodeId'] as String,
+      ];
+      expect(ids, isNot(contains(srcs[1])));
+      expect(ids, contains(mux));
+    });
   });
 
   group('sourceFrameCount / runChainFrame', () {
@@ -196,6 +229,82 @@ void main() {
           ySum += combOut![i * 3];
         }
         expect(ySum, greaterThan(0), reason: '合路器 Y 通道应来自 ahe 输出');
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('morphology 经 in_mono 侧支路（边缘提取 out_mono）处理生效', () async {
+      // 回归：旧实现 in_mono 单接时，处理结果只登记 portOutputs['out_mono']，
+      // 循环末公用登记段（frame.format=='mono' → opOuts['out_mono']=
+      // frame.data）用未处理的主帧数据将其覆盖，节点表现为完全无效。
+      const w = 8, h = 8;
+      final tmp = File(
+          '${Directory.systemTemp.path}/isp_morph_mono_${DateTime.now().microsecondsSinceEpoch}.raw');
+      await tmp.writeAsBytes(raw8Le(List<int>.generate(w * h, (i) => (i * 37) % 256)));
+      try {
+        List<Map<String, Object?>> chain(Map<String, Object?> morphParams) => [
+              {
+                'typeId': 'bayer_source',
+                'nodeId': 'src',
+                'params': {
+                  'filePath': tmp.path,
+                  'width': w,
+                  'height': h,
+                  'bitDepth': '8',
+                  'packing': 'unpacked_lsb',
+                  'bayerPattern': 'RGGB',
+                  'littleEndian': true,
+                  'frameIndex': 0,
+                },
+              },
+              {
+                'typeId': 'demosaic',
+                'nodeId': 'dm',
+                'params': {'algorithm': 'bilinear'},
+              },
+              {
+                'typeId': 'edge_extract',
+                'nodeId': 'edge',
+                'params': {'gain': 4.0, 'threshold': 0.0},
+              },
+              {
+                'typeId': 'morphology',
+                'nodeId': 'morph',
+                'params': morphParams,
+                'inputs': {
+                  'in_mono': {'fromNodeId': 'edge', 'fromPort': 'out_mono'},
+                },
+              },
+              {
+                'typeId': 'preview',
+                'nodeId': 'pv',
+                'params': <String, Object?>{},
+                'inputs': {
+                  'in_mono': {'fromNodeId': 'morph', 'fromPort': 'out_mono'},
+                },
+              },
+            ];
+
+        int nonzero(Uint8List rgba) {
+          var n = 0;
+          for (var i = 0; i < rgba.length; i += 4) {
+            if (rgba[i] != 0) n++;
+          }
+          return n;
+        }
+
+        final dilate =
+            await runChainFrame(chain({'mode': 'dilate', 'radius': 1}), 0);
+        final erode =
+            await runChainFrame(chain({'mode': 'erode', 'radius': 1}), 0);
+        final bypass = await runChainFrame(
+            chain({'bypass': true, 'mode': 'dilate', 'radius': 1}), 0);
+
+        expect(dilate, isNot(equals(bypass)), reason: '膨胀结果应与直通不同');
+        expect(erode, isNot(equals(bypass)), reason: '腐蚀结果应与直通不同');
+        expect(nonzero(dilate), greaterThan(nonzero(erode)),
+            reason: '膨胀的非零像素应多于腐蚀');
       } finally {
         await deleteQuietly(tmp);
       }
@@ -907,6 +1016,451 @@ void main() {
       } finally {
         await deleteQuietly(wlTmp);
         await deleteQuietly(flTmp);
+      }
+    });
+
+    test('双源 multiplier 链（mono × mono）端到端，分辨率不一致报错',
+        () async {
+      const w = 8, h = 8;
+      final t1 = await tempRaw(raw8Le(List<int>.filled(w * h, 200)), 'mul_a');
+      final t2 = await tempRaw(raw8Le(List<int>.filled(w * h, 128)), 'mul_b');
+      final tSmall =
+          await tempRaw(raw8Le(List<int>.filled(w * h ~/ 2, 128)), 'mul_s');
+      try {
+        final graph = IspGraph();
+        final s1 = graph.addNode('cis_mono', 0, 0);
+        setRawParams(graph, s1, t1.path, w, h);
+        final s2 = graph.addNode('cis_mono', 0, 0);
+        setRawParams(graph, s2, t2.path, w, h);
+        final mul = graph.addNode('multiplier', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(s1, 'out', mul, 'in_mono'), isNull);
+        expect(graph.connect(s2, 'out', mul, 'in_mono2'), isNull);
+        expect(graph.connect(mul, 'out_mono', prev, 'in_mono'), isNull);
+        // 含 multiplier 的链允许 2 个源节点。
+        final chain = compileChain(graph, prev);
+        expect(
+            chain.where((op) => sourceTypes.contains(op['typeId'])).length, 2);
+        final rgba = await runChainFrame(chain, 0);
+        expect(rgba.length, w * h * 4);
+        // 亮度灰度出图：三通道相等；200×128/255 ≈ 100，gamma 2.2 后提亮。
+        expect(rgba[0], rgba[1]);
+        expect(rgba[1], rgba[2]);
+        expect(rgba[0], greaterThan(100));
+
+        // 输入源2 未接入：执行时报错。
+        graph.disconnectInput(mul, 'in_mono2');
+        final chainUnconnected = compileChain(graph, prev);
+        await expectLater(
+            runChainFrame(chainUnconnected, 0), throwsStateError);
+
+        // 分辨率不一致（源2 换成 8×4）：执行时报错。
+        expect(graph.connect(s2, 'out', mul, 'in_mono2'), isNull);
+        setRawParams(graph, s2, tSmall.path, w, h ~/ 2);
+        final chainMismatch = compileChain(graph, prev);
+        await expectLater(
+            runChainFrame(chainMismatch, 0), throwsStateError);
+      } finally {
+        await deleteQuietly(t1);
+        await deleteQuietly(t2);
+        await deleteQuietly(tSmall);
+      }
+    });
+
+    test('edge_extract 的 out_mono 单通道输出接预览：按亮度灰度出图',
+        () async {
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)),
+          'edge_mono');
+      try {
+        final graph = IspGraph();
+        final src = graph.addNode('bayer_source', 0, 0);
+        setRawParams(graph, src, tmp.path, w, h);
+        final dem = graph.addNode('demosaic', 0, 0);
+        final edge = graph.addNode('edge_extract', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(src, 'out', dem, 'in'), isNull);
+        expect(graph.connect(dem, 'out', edge, 'in'), isNull);
+        expect(graph.connect(edge, 'out_mono', prev, 'in_mono'), isNull);
+        final rgba = await runChainFrame(compileChain(graph, prev), 0);
+        expect(rgba.length, w * h * 4);
+        for (var i = 0; i < rgba.length; i += 4) {
+          // 单通道亮度图：三通道相等。
+          expect(rgba[i], rgba[i + 1]);
+          expect(rgba[i + 1], rgba[i + 2]);
+        }
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('cis_mono→bright_contrast_adjuster(in_mono)→preview mono 链端到端',
+        () async {
+      const w = 8, h = 8;
+      final tmp =
+          await tempRaw(raw8Le(List<int>.filled(w * h, 100)), 'bc_mono');
+      try {
+        final graph = IspGraph();
+        final src = graph.addNode('cis_mono', 0, 0);
+        setRawParams(graph, src, tmp.path, w, h);
+        final bc = graph.addNode('bright_contrast_adjuster', 0, 0);
+        graph.nodes[bc]!.paramValues['bright'] = 200.0; // 提亮一倍
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(src, 'out', bc, 'in_mono'), isNull);
+        expect(graph.connect(bc, 'out_mono', prev, 'in_mono'), isNull);
+        final rgba = await runChainFrame(compileChain(graph, prev), 0);
+        expect(rgba.length, w * h * 4);
+        // 灰度出图：三通道相等；100×2 = 200，gamma 2.2 后明显提亮。
+        expect(rgba[0], rgba[1]);
+        expect(rgba[1], rgba[2]);
+        expect(rgba[0], greaterThan(150));
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('分路器单通道端口(out_y)接入 mono 算子：bright_contrast→multiplier',
+        () async {
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)),
+          'bc_mul_branch');
+      try {
+        final graph = IspGraph();
+        final src = graph.addNode('bayer_source', 0, 0);
+        setRawParams(graph, src, tmp.path, w, h);
+        final dem = graph.addNode('demosaic', 0, 0);
+        final edge = graph.addNode('edge_extract', 0, 0);
+        final csc = graph.addNode('csc_rgb2yuv', 0, 0);
+        final split = graph.addNode('yuv_splitter', 0, 0);
+        final bc = graph.addNode('bright_contrast_adjuster', 0, 0);
+        graph.nodes[bc]!.paramValues['bright'] = 150.0;
+        final mul = graph.addNode('multiplier', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(src, 'out', dem, 'in'), isNull);
+        expect(graph.connect(dem, 'out', edge, 'in'), isNull);
+        expect(graph.connect(dem, 'out', csc, 'in'), isNull);
+        expect(graph.connect(csc, 'out', split, 'in'), isNull);
+        // 单通道端口 out_y 接入 mono 输入：应构造 mono 帧而非拿 YUV 整帧。
+        expect(graph.connect(split, 'out_y', bc, 'in_mono'), isNull);
+        expect(graph.connect(edge, 'out_mono', mul, 'in_mono'), isNull);
+        expect(graph.connect(bc, 'out_mono', mul, 'in_mono2'), isNull);
+        expect(graph.connect(mul, 'out_mono', prev, 'in_mono'), isNull);
+        final outs = <String, List<int>>{};
+        final rgba = await runChainFrame(compileChain(graph, prev), 0,
+            onNodeOutput: (nodeId, data, format, w0, h0) {
+          outs[nodeId] = data;
+        });
+        expect(rgba.length, w * h * 4);
+        for (var i = 0; i < rgba.length; i += 4) {
+          expect(rgba[i], rgba[i + 1]);
+          expect(rgba[i + 1], rgba[i + 2]);
+        }
+        // 亮度/对比度输出必须是单通道 mono（w*h），乘法器才能取到。
+        expect(outs[bc]!.length, w * h, reason: 'bright_contrast mono 输出');
+        expect(outs[mul]!.length, w * h, reason: 'multiplier mono 输出');
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('multiplier 单源分支链：edge_extract.out_mono × 分路器 Y'
+        '（经预览透传），主帧非 Mono 也能正确取数', () async {
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)),
+          'mul_branch');
+      try {
+        final graph = IspGraph();
+        final src = graph.addNode('bayer_source', 0, 0);
+        setRawParams(graph, src, tmp.path, w, h);
+        final dem = graph.addNode('demosaic', 0, 0);
+        final edge = graph.addNode('edge_extract', 0, 0);
+        final csc = graph.addNode('csc_rgb2yuv', 0, 0);
+        final split = graph.addNode('yuv_splitter', 0, 0);
+        final prevY = graph.addNode('preview', 0, 0);
+        final mul = graph.addNode('multiplier', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(src, 'out', dem, 'in'), isNull);
+        expect(graph.connect(dem, 'out', edge, 'in'), isNull);
+        expect(graph.connect(dem, 'out', csc, 'in'), isNull);
+        expect(graph.connect(csc, 'out', split, 'in'), isNull);
+        expect(graph.connect(split, 'out_y', prevY, 'in_mono'), isNull);
+        expect(graph.connect(edge, 'out_mono', mul, 'in_mono'), isNull);
+        expect(graph.connect(prevY, 'out_mono', mul, 'in_mono2'), isNull);
+        expect(graph.connect(mul, 'out_mono', prev, 'in_mono'), isNull);
+        // 拓扑序下乘法器的线性主帧是分路器留下的 YUV 帧（非 Mono）：
+        // 两路输入必须按端口取数，不能对主帧 requireMono。
+        // 同时验证分支感知取帧：乘法器结果不得等于边缘图本身
+        // （旧线性主帧会让分路器错拿边缘图，E×E/255 在 E∈{0,255} 时
+        // 恰好还原边缘图）。
+        final outs = <String, List<int>>{};
+        final rgba = await runChainFrame(compileChain(graph, prev), 0,
+            onNodeOutput: (nodeId, data, format, w0, h0) {
+          outs[nodeId] = data;
+        });
+        expect(rgba.length, w * h * 4);
+        for (var i = 0; i < rgba.length; i += 4) {
+          expect(rgba[i], rgba[i + 1]);
+          expect(rgba[i + 1], rgba[i + 2]);
+        }
+        final edgeOut = outs[edge]!;
+        final mulOut = outs[mul]!;
+        var diffPx = 0;
+        for (var i = 0; i < w * h; i++) {
+          if (edgeOut[i * 3] != mulOut[i]) diffPx++;
+        }
+        expect(diffPx, greaterThan(0),
+            reason: '调制结果不应与边缘图完全一致（E×Y/255 ≠ E）');
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('adder 单源分支链：balance=1/0 分别退化为源1/源2 直通', () async {
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)),
+          'add_branch');
+      try {
+        IspGraph buildGraph() {
+          final graph = IspGraph();
+          final src = graph.addNode('bayer_source', 0, 0);
+          setRawParams(graph, src, tmp.path, w, h);
+          final dem = graph.addNode('demosaic', 0, 0);
+          final edge = graph.addNode('edge_extract', 0, 0);
+          final csc = graph.addNode('csc_rgb2yuv', 0, 0);
+          final split = graph.addNode('yuv_splitter', 0, 0);
+          final prevY = graph.addNode('preview', 0, 0);
+          final add = graph.addNode('adder', 0, 0);
+          final prev = graph.addNode('preview', 0, 0);
+          expect(graph.connect(src, 'out', dem, 'in'), isNull);
+          expect(graph.connect(dem, 'out', edge, 'in'), isNull);
+          expect(graph.connect(dem, 'out', csc, 'in'), isNull);
+          expect(graph.connect(csc, 'out', split, 'in'), isNull);
+          expect(graph.connect(split, 'out_y', prevY, 'in_mono'), isNull);
+          expect(graph.connect(edge, 'out_mono', add, 'in_mono'), isNull);
+          expect(graph.connect(prevY, 'out_mono', add, 'in_mono2'), isNull);
+          expect(graph.connect(add, 'out_mono', prev, 'in_mono'), isNull);
+          return graph;
+        }
+
+        String idOf(IspGraph g, String typeId, {bool last = false}) {
+          final matches =
+              g.nodes.entries.where((e) => e.value.typeId == typeId);
+          return (last ? matches.last : matches.first).key;
+        }
+
+        // balance=1：加法器输出 = 源1（边缘图）。
+        final g1 = buildGraph();
+        g1.nodes[idOf(g1, 'adder')]!.paramValues['balance'] = 1.0;
+        final outs1 = <String, List<int>>{};
+        await runChainFrame(
+            compileChain(g1, idOf(g1, 'preview', last: true)), 0,
+            onNodeOutput: (nodeId, data, format, w0, h0) {
+          outs1[nodeId] = data;
+        });
+        final edgeId = idOf(g1, 'edge_extract');
+        final addId1 = idOf(g1, 'adder');
+        for (var i = 0; i < w * h; i++) {
+          expect(outs1[addId1]![i], outs1[edgeId]![i * 3],
+              reason: 'balance=1 应等于边缘图（源1）');
+        }
+
+        // balance=0：加法器输出 = 源2（分路器 Y，经预览透传）。
+        final g0 = buildGraph();
+        g0.nodes[idOf(g0, 'adder')]!.paramValues['balance'] = 0.0;
+        final outs0 = <String, List<int>>{};
+        await runChainFrame(
+            compileChain(g0, idOf(g0, 'preview', last: true)), 0,
+            onNodeOutput: (nodeId, data, format, w0, h0) {
+          outs0[nodeId] = data;
+        });
+        final prevYId = g0.nodes.entries
+            .where((e) => e.value.typeId == 'preview')
+            .first
+            .key;
+        final addId0 = idOf(g0, 'adder');
+        for (var i = 0; i < w * h; i++) {
+          expect(outs0[addId0]![i], outs0[prevYId]![i],
+              reason: 'balance=0 应等于分路器 Y（源2）');
+        }
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('blender 单源分支链：基图 + 混叠图×蒙版×强度（正常模式）', () async {
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)),
+          'blend_branch');
+      try {
+        // 图：src→dm→csc→split→prevY（混叠图=Y 支路）；dm→edge（蒙版=
+        // 边缘图支路）；基图 = dem 输出 RGB（split 的 out 主帧别名）。
+        final graph = IspGraph();
+        final src = graph.addNode('bayer_source', 0, 0);
+        setRawParams(graph, src, tmp.path, w, h);
+        final dem = graph.addNode('demosaic', 0, 0);
+        final edge = graph.addNode('edge_extract', 0, 0);
+        final csc = graph.addNode('csc_rgb2yuv', 0, 0);
+        final split = graph.addNode('yuv_splitter', 0, 0);
+        final prevY = graph.addNode('preview', 0, 0);
+        final mix = graph.addNode('blender', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(src, 'out', dem, 'in'), isNull);
+        expect(graph.connect(dem, 'out', edge, 'in'), isNull);
+        expect(graph.connect(dem, 'out', csc, 'in'), isNull);
+        expect(graph.connect(csc, 'out', split, 'in'), isNull);
+        expect(graph.connect(split, 'out_y', prevY, 'in_mono'), isNull);
+        expect(graph.connect(csc, 'out', mix, 'in_yuv'), isNull);
+        expect(graph.connect(edge, 'out_mono', mix, 'in_mask'), isNull);
+        expect(graph.connect(prevY, 'out_mono', mix, 'in_blend_mono'), isNull);
+        expect(graph.connect(mix, 'out_yuv', prev, 'in_yuv'), isNull);
+
+        graph.nodes[mix]!.paramValues['strength'] = 1.0;
+        final outs = <String, List<int>>{};
+        await runChainFrame(compileChain(graph, prev), 0,
+            onNodeOutput: (nodeId, data, format, w0, h0) {
+          outs[nodeId] = data;
+        });
+        final baseOut = outs[csc]!; // 基图（YUV 交织帧）
+        final maskOut = outs[edge]!; // 蒙版（out_mono，基图 0 通道同值）
+        final blendOut = outs[prevY]!; // 混叠图（mono Y）
+        final mixOut = outs[mix]!;
+        const maxV = 255;
+        for (var i = 0; i < w * h; i++) {
+          final delta = (maskOut[i * 3] * blendOut[i] / maxV).round();
+          // YUV 基图：增量只加 Y 通道，U/V 必须与基图一致。
+          expect(mixOut[i * 3],
+              (baseOut[i * 3] + delta).clamp(0, maxV),
+              reason: '像素 $i Y：基图+混叠图×蒙版/maxV');
+          expect(mixOut[i * 3 + 1], baseOut[i * 3 + 1],
+              reason: '像素 $i U 不应被混叠修改');
+          expect(mixOut[i * 3 + 2], baseOut[i * 3 + 2],
+              reason: '像素 $i V 不应被混叠修改');
+        }
+        // 有实际混叠效果（不是纯基图直通）。
+        var changed = 0;
+        for (var i = 0; i < w * h * 3; i++) {
+          if (mixOut[i] != baseOut[i]) changed++;
+        }
+        expect(changed, greaterThan(0));
+
+        // 缺蒙版/混叠图：链执行抛 StateError。
+        final graph2 = IspGraph();
+        final src2 = graph2.addNode('bayer_source', 0, 0);
+        setRawParams(graph2, src2, tmp.path, w, h);
+        final dem2 = graph2.addNode('demosaic', 0, 0);
+        final mix2 = graph2.addNode('blender', 0, 0);
+        final prev2 = graph2.addNode('preview', 0, 0);
+        expect(graph2.connect(src2, 'out', dem2, 'in'), isNull);
+        expect(graph2.connect(dem2, 'out', mix2, 'in'), isNull);
+        expect(graph2.connect(mix2, 'out_rgb', prev2, 'in'), isNull);
+        await expectLater(runChainFrame(compileChain(graph2, prev2), 0),
+            throwsStateError);
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('mux4 多路选择器：输出透传 select 选中的那路输入', () async {
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)),
+          'mux4_sel');
+      try {
+        // 源1 = dem 输出 RGB（接 in1），源2 = 分路器 Y（接 in2_mono，
+        // 单通道端口），select 切换验证透传语义。
+        IspGraph buildGraph() {
+          final graph = IspGraph();
+          final src = graph.addNode('bayer_source', 0, 0);
+          setRawParams(graph, src, tmp.path, w, h);
+          final dem = graph.addNode('demosaic', 0, 0);
+          final csc = graph.addNode('csc_rgb2yuv', 0, 0);
+          final split = graph.addNode('yuv_splitter', 0, 0);
+          final mux = graph.addNode('mux4', 0, 0);
+          expect(graph.connect(src, 'out', dem, 'in'), isNull);
+          expect(graph.connect(dem, 'out', csc, 'in'), isNull);
+          expect(graph.connect(csc, 'out', split, 'in'), isNull);
+          expect(graph.connect(dem, 'out', mux, 'in1'), isNull);
+          expect(graph.connect(split, 'out_y', mux, 'in2_mono'), isNull);
+          return graph;
+        }
+
+        Future<(List<int>, List<int>)> runWith(int select) async {
+          final graph = buildGraph();
+          final muxId = graph.nodes.entries
+              .firstWhere((e) => e.value.typeId == 'mux4')
+              .key;
+          graph.nodes[muxId]!.paramValues['select'] = select;
+          final prevId = graph.addNode('preview', 0, 0);
+          expect(graph.connect(muxId, 'out_rgb', prevId, 'in'), isNull);
+          final outs = <String, List<int>>{};
+          await runChainFrame(compileChain(graph, prevId), 0,
+              onNodeOutput: (nodeId, data, format, w0, h0) {
+            outs[nodeId] = data;
+          });
+          final demId = graph.nodes.entries
+              .firstWhere((e) => e.value.typeId == 'demosaic')
+              .key;
+          return (outs[muxId]!, outs[demId]!);
+        }
+
+        // select=1：输出 = 源1（dem RGB 主帧），逐值一致（透传不改数据）。
+        final (mux1, demOut) = await runWith(1);
+        expect(mux1, demOut, reason: 'select=1 应透传源1');
+        // select=2：输出 = 源2（分路器 Y 的 mono 帧，w*h 单通道）。
+        final (mux2, _) = await runWith(2);
+        expect(mux2.length, w * h, reason: 'select=2 应透传单通道源2');
+        expect(mux2, isNot(demOut));
+
+        // 未接入的源：选中支路为空，链缺少源节点直接不可编译。
+        final graph3 = buildGraph();
+        final muxId3 = graph3.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'mux4')
+            .key;
+        graph3.nodes[muxId3]!.paramValues['select'] = 3;
+        final prev3 = graph3.addNode('preview', 0, 0);
+        expect(graph3.connect(muxId3, 'out_rgb', prev3, 'in'), isNull);
+        expect(() => compileChain(graph3, prev3), throwsStateError);
+      } finally {
+        await deleteQuietly(tmp);
+      }
+    });
+
+    test('bright_contrast_adjuster 非 mono 输入时 out_mono 为亮度通道', () async {
+      // 混叠器测试流程的拓扑：YUV → 亮度/对比度调节器，其 out_mono 应
+      // 为调整后的 Y 通道（供混叠器蒙版等 mono 侧端口消费）；旧实现
+      // 只在 mono 输入时登记 out_mono，YUV 输入时该端口为空。
+      const w = 8, h = 8;
+      final tmp = await tempRaw(
+          raw8Le(List<int>.generate(w * h, (i) => 20 + (i * 3) % 200)),
+          'bc_out_mono');
+      try {
+        final graph = IspGraph();
+        final src = graph.addNode('bayer_source', 0, 0);
+        setRawParams(graph, src, tmp.path, w, h);
+        final dem = graph.addNode('demosaic', 0, 0);
+        final csc = graph.addNode('csc_rgb2yuv', 0, 0);
+        final bc = graph.addNode('bright_contrast_adjuster', 0, 0);
+        final prev = graph.addNode('preview', 0, 0);
+        expect(graph.connect(src, 'out', dem, 'in'), isNull);
+        expect(graph.connect(dem, 'out', csc, 'in'), isNull);
+        expect(graph.connect(csc, 'out', bc, 'in_yuv'), isNull);
+        expect(graph.connect(bc, 'out_mono', prev, 'in_mono'), isNull);
+        graph.nodes[bc]!.paramValues['bright'] = 150.0;
+
+        String? sinkFormat;
+        await runChainFrame(compileChain(graph, prev), 0,
+            onNodeOutput: (nodeId, data, format, w0, h0) {
+          if (nodeId == prev) sinkFormat ??= '$format:${data.length}';
+        });
+        expect(sinkFormat, 'mono:${w * h}',
+            reason: '汇点应收到调节器的单通道 Y（out_mono）');
+      } finally {
+        await deleteQuietly(tmp);
       }
     });
   });

@@ -87,7 +87,8 @@ flutter:
     - shaders/isp/isp_hsl2yuv.frag
     - shaders/isp/isp_extract_channel.frag
     - shaders/isp/isp_clahe_apply.frag
-    - shaders/isp/isp_combine_yuv.frag
+    - shaders/isp/isp_combine_3ch.frag
+    - shaders/isp/isp_levels_curve.frag
     - shaders/isp/isp_yuv2rgb.frag
     - shaders/isp/isp_tonemap.frag
     - shaders/isp/isp_dpc.frag
@@ -102,6 +103,19 @@ flutter:
     - shaders/isp/isp_sharpen_apply.frag
     - shaders/isp/isp_yuv2hsl.frag
     - shaders/isp/isp_hsl2rgb.frag
+    - shaders/isp/isp_yuv_gains.frag
+    - shaders/isp/isp_edge_extract.frag
+    - shaders/isp/isp_morphology.frag
+    - shaders/isp/isp_multiply_mono.frag
+    - shaders/isp/isp_blend_mono.frag
+    - shaders/isp/isp_blender.frag
+    - shaders/isp/isp_bright_contrast.frag
+    - shaders/isp/isp_fluoro_leak.frag
+    - shaders/isp/isp_fluoro_gain.frag
+    - shaders/isp/isp_fluoro_bg_sub.frag
+    - shaders/isp/isp_fluoro_temporal.frag
+    - shaders/isp/isp_pseudo_color.frag
+    - shaders/isp/isp_fluoro_fusion.frag
 
   # To add assets to your application, add an assets section, like this:
   # assets:

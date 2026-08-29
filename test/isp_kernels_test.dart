@@ -483,6 +483,160 @@ void main() {
     });
   });
 
+  group('色饱和度/亮度调节（adjustSatBright）', () {
+    test('恒等参数直接返回原数据（不拷贝）', () {
+      for (final fmt in ['rgb', 'yuv', 'hsl']) {
+        final data = Uint16List.fromList([10, 200, 100]);
+        final out = adjustSatBright(data, format: fmt, maxValue: 255);
+        expect(identical(out, data), isTrue, reason: fmt);
+      }
+    });
+
+    test('非法格式抛 ArgumentError', () {
+      final data = Uint16List.fromList([10, 200, 100]);
+      expect(
+          () => adjustSatBright(data,
+              format: 'mosaic', maxValue: 255, satGain: 2),
+          throwsArgumentError);
+    });
+
+    test('RGB 域：satGain=0 变为 BT.601 灰度，亮度增益再整体缩放', () {
+      // 纯红 [255,0,0]：Y = 0.299*255 ≈ 76；satGain=0 → R=G=B=76；
+      // brightGain=2 → 152。
+      final rgb = Uint16List.fromList([255, 0, 0]);
+      final out = adjustSatBright(rgb,
+          format: 'rgb', maxValue: 255, satGain: 0, brightGain: 2);
+      expect(out[0], 152);
+      expect(out[1], 152);
+      expect(out[2], 152);
+    });
+
+    test('RGB 域：satGain=1 时仅亮度增益生效', () {
+      final rgb = Uint16List.fromList([100, 150, 200]);
+      final out = adjustSatBright(rgb,
+          format: 'rgb', maxValue: 255, brightGain: 0.5);
+      expect(out[0], 50);
+      expect(out[1], 75);
+      expect(out[2], 100);
+    });
+
+    test('YUV 域：Y 乘亮度增益，U/V 围绕中点乘饱和度增益', () {
+      // half = 127；U=187 → 127 + 60*0.5 = 157；V=67 → 127 - 60*0.5 = 97。
+      final yuv = Uint16List.fromList([100, 187, 67]);
+      final out = adjustSatBright(yuv,
+          format: 'yuv', maxValue: 255, satGain: 0.5, brightGain: 2);
+      expect(out[0], 200);
+      expect(out[1], 157);
+      expect(out[2], 97);
+    });
+
+    test('YUV 域：satGain=0 时 U/V 回到中性点', () {
+      final yuv = Uint16List.fromList([100, 200, 30]);
+      final out =
+          adjustSatBright(yuv, format: 'yuv', maxValue: 255, satGain: 0);
+      expect(out[0], 100);
+      expect(out[1], 127);
+      expect(out[2], 127);
+    });
+
+    test('HSL 域：S/L 分别乘增益，H 不变，结果钳位不溢出', () {
+      final hsl = Uint16List.fromList([10, 200, 250]);
+      final out = adjustSatBright(hsl,
+          format: 'hsl', maxValue: 255, satGain: 2, brightGain: 2);
+      expect(out[0], 10);
+      expect(out[1], 255);
+      expect(out[2], 255);
+    });
+  });
+
+  group('亮度/对比度调节（adjustBrightContrast）', () {
+    test('bright=100 且 gain=100 时恒等直通（基线任意值，不拷贝）', () {
+      for (final fmt in ['rgb', 'yuv', 'hsl']) {
+        final data = Uint16List.fromList([10, 200, 100]);
+        final out = adjustSatBright(data, format: fmt, maxValue: 255);
+        expect(identical(out, data), isTrue, reason: fmt);
+        final out2 = adjustBrightContrast(data,
+            format: fmt, maxValue: 255, baselinePct: 80);
+        expect(identical(out2, data), isTrue, reason: fmt);
+      }
+      // mono 域（w*h 单通道）同样恒等直通。
+      final mono = Uint16List.fromList([10, 200, 100, 0]);
+      final out3 = adjustBrightContrast(mono, format: 'mono', maxValue: 255);
+      expect(identical(out3, mono), isTrue);
+    });
+
+    test('非法格式抛 ArgumentError', () {
+      final data = Uint16List.fromList([10, 200, 100]);
+      expect(
+          () => adjustBrightContrast(data,
+              format: 'mosaic', maxValue: 255, brightPct: 150),
+          throwsArgumentError);
+    });
+
+    test('YUV 域：按公式调 Y，U/V 不变', () {
+      // base = 50% × 255 = 127.5；bright=200、gain=100：
+      // Y' = (100×2 − 127.5) × 1 + 127.5 = 200。
+      final yuv = Uint16List.fromList([100, 130, 60]);
+      final out = adjustBrightContrast(yuv,
+          format: 'yuv', maxValue: 255, brightPct: 200);
+      expect(out[0], 200);
+      expect(out[1], 130);
+      expect(out[2], 60);
+    });
+
+    test('YUV 域：结果钳位到 0..maxValue', () {
+      // (200×2 − 127.5) + 127.5 = 400 → 255。
+      final yuv = Uint16List.fromList([200, 128, 128]);
+      final out = adjustBrightContrast(yuv,
+          format: 'yuv', maxValue: 255, brightPct: 200);
+      expect(out[0], 255);
+      // baseline=100、gain=200：base=255；(100−255)×2+255 = −55 → 0。
+      final dark = adjustBrightContrast(Uint16List.fromList([100, 128, 128]),
+          format: 'yuv', maxValue: 255, baselinePct: 100, gainPct: 200);
+      expect(dark[0], 0);
+    });
+
+    test('RGB 域：按亮度比例等比缩放三通道', () {
+      // Y = 0.299×100 + 0.587×50 + 0.114×50 = 64.95 ≈ 65；
+      // baseline=0、bright=200 → Y' = 130；ratio = 130/64.95 ≈ 2.0015；
+      // R' = 200.15→200，G'/B' = 100.08→100。
+      final rgb = Uint16List.fromList([100, 50, 50]);
+      final out = adjustBrightContrast(rgb,
+          format: 'rgb', maxValue: 255, brightPct: 200, baselinePct: 0);
+      expect(out[0], 200);
+      expect(out[1], 100);
+      expect(out[2], 100);
+    });
+
+    test('RGB 域：纯黑像素（Y=0）保持 0，不做除零', () {
+      final rgb = Uint16List.fromList([0, 0, 0]);
+      final out = adjustBrightContrast(rgb,
+          format: 'rgb', maxValue: 255, brightPct: 0, baselinePct: 100);
+      expect(out[0], 0);
+      expect(out[1], 0);
+      expect(out[2], 0);
+    });
+
+    test('HSL 域：作用于 L 通道，H/S 不变', () {
+      // baseline=0、bright=200：L' = 100×2 = 200。
+      final hsl = Uint16List.fromList([10, 200, 100]);
+      final out = adjustBrightContrast(hsl,
+          format: 'hsl', maxValue: 255, brightPct: 200, baselinePct: 0);
+      expect(out[0], 10);
+      expect(out[1], 200);
+      expect(out[2], 200);
+    });
+
+    test('Mono 域：直接作用于单通道亮度（w*h 逐元素）', () {
+      // base = 50% × 255 = 127.5；bright=200、gain=100：
+      // v' = (v×2 − 127.5) + 127.5 = 2v → [20, 400→255, 0]。
+      final mono = Uint16List.fromList([10, 200, 0]);
+      final out = adjustBrightContrast(mono,
+          format: 'mono', maxValue: 255, brightPct: 200);
+      expect(out, [20, 255, 0]);
+    });
+  });
+
   group('YUV/HSL 组合转换', () {
     test('yuvToHsl：纯红 YUV 得 H=0、S=max、L=max/2', () {
       final yuv = rgbToYuv(Uint16List.fromList([255, 0, 0]), maxValue: 255);
@@ -1027,6 +1181,413 @@ void main() {
       expect([out[12], out[13], out[14]], [0, 255, 0]);
       // 角落非 mask → 白光。
       expect([out[0], out[1], out[2]], [100, 100, 100]);
+    });
+  });
+
+  group('applyColorBalance 色彩平衡', () {
+    test('三值全 0 直通不拷贝', () {
+      final src = Uint16List.fromList([10, 20, 30, 200, 100, 50]);
+      final out = applyColorBalance(src, format: 'rgb', maxValue: 255);
+      expect(identical(out, src), isTrue, reason: '恒等时应返回原列表');
+    });
+
+    test('中间调偏移：正值加红，负值偏青，G/B 不变', () {
+      // 中灰像素 Y≈0.502，w≈0.996。
+      final src = Uint16List.fromList([128, 128, 128]);
+      final out =
+          applyColorBalance(src, format: 'rgb', maxValue: 255, cyanRed: 10);
+      // dr = 10/100*255 = 25.5；r' ≈ 128 + 25.5*0.996 ≈ 153。
+      expect(out[0], closeTo(153, 1));
+      expect(out[1], 128);
+      expect(out[2], 128);
+      // 负值向青（减 R）。
+      final neg = applyColorBalance(src, format: 'rgb', maxValue: 255, cyanRed: -10);
+      expect(neg[0], closeTo(103, 1));
+    });
+
+    test('纯黑/纯白不受中间调权重影响', () {
+      final src = Uint16List.fromList([0, 0, 0, 255, 255, 255]);
+      final out = applyColorBalance(src,
+          format: 'rgb',
+          maxValue: 255,
+          cyanRed: 100,
+          magentaGreen: 100,
+          yellowBlue: 100);
+      expect(out, src, reason: 'w=0 时黑/白像素不应偏移');
+    });
+
+    test('结果钳位到 maxValue', () {
+      final src = Uint16List.fromList([200, 200, 200]);
+      final out = applyColorBalance(src,
+          format: 'rgb', maxValue: 255, yellowBlue: 100);
+      expect(out[2], 255, reason: 'B 通道偏移超限时钳位');
+    });
+
+    test('YUV 域：青↔红走 V 轴、黄↔蓝走 U 轴、Y 不变', () {
+      // 中性色：U=V=128（maxValue 255 的中点），Y=128 → w≈1。
+      final src = Uint16List.fromList([128, 128, 128]);
+      final out = applyColorBalance(src,
+          format: 'yuv', maxValue: 255, cyanRed: 50, yellowBlue: -50);
+      expect(out[0], 128, reason: 'Y 通道不变');
+      // du = -50×(255/2/100) ≈ -63.75；dv = +63.75；w≈0.996。
+      expect(out[1], closeTo(64, 1), reason: 'yellow_blue=-50 偏黄（U 减）');
+      expect(out[2], closeTo(192, 1), reason: 'cyan_red=50 偏红（V 增）');
+      // 洋红↔绿走 U/V 对角：绿 = −U−V。
+      final green = applyColorBalance(src,
+          format: 'yuv', maxValue: 255, magentaGreen: 100);
+      expect(green[1], lessThan(128));
+      expect(green[2], lessThan(128));
+    });
+
+    test('HSL 域：经 RGB 往返施加偏移，小偏移近似恒等', () {
+      // 中性灰 HSL ≈ (0, 0, 128)：往返转换 + 零偏移应近似回读。
+      final src = Uint16List.fromList([0, 0, 128]);
+      final out = applyColorBalance(src,
+          format: 'hsl', maxValue: 255, cyanRed: 10);
+      // 偏移后仍为 HSL 三通道合法值（不越界）。
+      for (final v in out) {
+        expect(v, inInclusiveRange(0, 255));
+      }
+    });
+
+    test('非 RGB/YUV/HSL 格式抛错', () {
+      expect(
+          () => applyColorBalance(Uint16List(3),
+              format: 'mosaic', maxValue: 255, cyanRed: 1),
+          throwsStateError);
+    });
+  });
+
+  group('extractHighFreq 高频边缘提取', () {
+    test('平坦图像输出纯黑', () {
+      final src = Uint16List(4 * 4 * 3)..fillRange(0, 48, 100);
+      final out = extractHighFreq(src,
+          width: 4, height: 4, threshold: 0, maxValue: 255);
+      for (final v in out) {
+        expect(v, 0, reason: 'detail=0 → 黑底（gain×|detail| = 0）');
+      }
+    });
+
+    test('亮点脉冲：中心与邻域均为满量程亮线、远处纯黑', () {
+      // 4x4 全 0，(1,1) 处亮点 255。
+      final src = Uint16List(4 * 4 * 3);
+      final c = (1 * 4 + 1) * 3;
+      src[c] = src[c + 1] = src[c + 2] = 255;
+      final out = extractHighFreq(src,
+          width: 4, height: 4, threshold: 0, maxValue: 255);
+      // 中心 detail = 255 − 255/9，相对对比度 8 → 截位到满量程。
+      expect(out[c], 255, reason: '亮点处相对对比度 8 → 截位满量程');
+      // 亮点右侧像素 (1,2)：detail<0 取幅值，相对对比度 1 → 满量程。
+      final n = (1 * 4 + 2) * 3;
+      expect(out[n], 255, reason: '暗侧边缘同为亮线（黑底白线不区分极性）');
+      // 远处像素 detail=0 → 纯黑。
+      final far = (3 * 4 + 3) * 3;
+      expect(out[far], 0);
+      // 三通道同值（灰度图）。
+      expect(out[c], out[c + 1]);
+      expect(out[c], out[c + 2]);
+    });
+
+    test('门限抑制弱 detail，增益按比例放大', () {
+      // 左半 100 右半 140 的 4x4 缓变边缘。
+      Uint16List edge() {
+        final f = Uint16List(4 * 4 * 3);
+        for (var y = 0; y < 4; y++) {
+          for (var x = 0; x < 4; x++) {
+            final v = x < 2 ? 100 : 140;
+            final i = (y * 4 + x) * 3;
+            f[i] = f[i + 1] = f[i + 2] = v;
+          }
+        }
+        return f;
+      }
+
+      // threshold 50 → 相对门限 50/255≈0.196 > 边缘 rel≈0.105，
+      // 全部置零 → 纯黑。
+      final suppressed = extractHighFreq(edge(),
+          width: 4, height: 4, threshold: 50, maxValue: 255);
+      for (final v in suppressed) {
+        expect(v, 0);
+      }
+      // threshold 0：边界右侧像素 rel≈0.105 → √rel×255 ≈ 83；
+      // gain=2 更亮（≈165）。
+      final g1 = extractHighFreq(edge(),
+          width: 4, height: 4, threshold: 0, maxValue: 255);
+      final g2 = extractHighFreq(edge(),
+          width: 4, height: 4, gain: 2, threshold: 0, maxValue: 255);
+      final i = (1 * 4 + 2) * 3;
+      expect(g1[i], 83);
+      expect(g2[i], greaterThan(g1[i]));
+      // 平坦区（左半内部）detail=0 → 纯黑。
+      expect(g1[(1 * 4 + 0) * 3], 0);
+    });
+
+    test('暗区边缘：按相对对比度归一化，与亮区同反差边缘输出同亮度', () {
+      // 暗边缘 4|8 与亮边缘 100|200 的相对反差相同（2:1），输出应一致。
+      Uint16List edge(int lo, int hi) {
+        final f = Uint16List(4 * 4 * 3);
+        for (var y = 0; y < 4; y++) {
+          for (var x = 0; x < 4; x++) {
+            final v = x < 2 ? lo : hi;
+            final i = (y * 4 + x) * 3;
+            f[i] = f[i + 1] = f[i + 2] = v;
+          }
+        }
+        return f;
+      }
+
+      final i = (1 * 4 + 2) * 3;
+      final dark = extractHighFreq(edge(4, 8),
+          width: 4, height: 4, threshold: 0, maxValue: 255);
+      final bright = extractHighFreq(edge(100, 200),
+          width: 4, height: 4, threshold: 0, maxValue: 255);
+      // 边界像素 rel = |hi − (lo+2hi)/3| / ((lo+2hi)/3) = 0.2
+      // → √0.2×255 ≈ 114。
+      expect(dark[i], 114, reason: '暗区边缘按相对对比度放大，清晰可见');
+      expect(dark[i], bright[i], reason: '亮度不变性：同反差输出同亮度');
+      // 平坦区仍为纯黑。
+      expect(dark[(1 * 4 + 0) * 3], 0);
+      expect(bright[(1 * 4 + 0) * 3], 0);
+    });
+
+    test('YUV 域：取 Y 通道求 detail，U/V 输出中灰', () {
+      // 4x4 全 0，(1,1) 处 Y=255 亮点；U/V 任意值不影响结果。
+      final src = Uint16List(4 * 4 * 3);
+      final c = (1 * 4 + 1) * 3;
+      src[c] = 255;
+      src[c + 1] = 30;
+      src[c + 2] = 200;
+      final out = extractHighFreq(src,
+          width: 4, height: 4, format: 'yuv', threshold: 0, maxValue: 255);
+      expect(out[c], 255, reason: '亮点处相对对比度 8 → Y 截位满量程');
+      // U/V 输出中性中灰（白线不带色）。
+      expect(out[c + 1], 127);
+      expect(out[c + 2], 127);
+      // 远处像素 Y detail=0 → 黑。
+      final far = (3 * 4 + 3) * 3;
+      expect(out[far], 0);
+    });
+
+    test('HSL 域：取 L 通道求 detail，H=0、S=0', () {
+      // 4x4 全 0，(1,1) 处 L=255 亮点。
+      final src = Uint16List(4 * 4 * 3);
+      final c = (1 * 4 + 1) * 3;
+      src[c + 2] = 255;
+      final out = extractHighFreq(src,
+          width: 4, height: 4, format: 'hsl', threshold: 0, maxValue: 255);
+      expect(out[c + 2], 255, reason: '亮点处相对对比度 8 → L 截位满量程');
+      expect(out[c], 0, reason: 'S=0 时 H 无意义，输出 0');
+      expect(out[c + 1], 0, reason: '黑底白线图 S=0');
+      final far = (3 * 4 + 3) * 3;
+      expect(out[far + 2], 0, reason: '远处像素 detail=0 → L 黑');
+    });
+
+    test('RGB 默认格式与 format: rgb 一致；非法格式抛 ArgumentError', () {
+      final src = Uint16List(4 * 4 * 3)..fillRange(0, 48, 100);
+      final a = extractHighFreq(src, width: 4, height: 4, maxValue: 255);
+      final b = extractHighFreq(src,
+          width: 4, height: 4, format: 'rgb', maxValue: 255);
+      expect(a, b);
+      expect(
+          () => extractHighFreq(src,
+              width: 4, height: 4, format: 'mosaic', maxValue: 255),
+          throwsArgumentError);
+    });
+  });
+
+  group('multiplyMono 乘法器', () {
+    test('归一化相乘：out = a×b/maxValue', () {
+      final a = Uint16List.fromList([0, 64, 128, 255]);
+      final b = Uint16List.fromList([255, 128, 128, 255]);
+      final out = multiplyMono(a, b, maxValue: 255);
+      expect(out, [0, 32, 64, 255],
+          reason: '0×1=0，64×128/255≈32，128×128/255≈64，255×255/255=255');
+    });
+
+    test('满量程 × 满量程 = 满量程（截位不溢出）', () {
+      final a = Uint16List.fromList([65535, 65535]);
+      final b = Uint16List.fromList([65535, 40000]);
+      final out = multiplyMono(a, b);
+      expect(out[0], 65535);
+      expect(out[1], 40000, reason: '65535×40000/65535 = 40000');
+    });
+
+    test('与零相乘得零；长度不一致按短者截断', () {
+      final a = Uint16List.fromList([100, 200, 300]);
+      final b = Uint16List.fromList([0, 128]);
+      final out = multiplyMono(a, b, maxValue: 255);
+      expect(out.length, 2);
+      expect(out, [0, 100], reason: '200×128/255 ≈ 100');
+    });
+
+    test('offset：抬升后参与相乘，负值截位到 0', () {
+      final a = Uint16List.fromList([0, 100, 10]);
+      final b = Uint16List.fromList([128, 128, 128]);
+      // (0+100)×128/255 ≈ 50；(100+100)×128/255 ≈ 100。
+      final out = multiplyMono(a, b,
+          offset1: 100, offset2: 0, maxValue: 255);
+      expect(out[0], 50, reason: 'offset1 把零值像素抬到 100 再相乘');
+      expect(out[1], 100);
+      final neg = multiplyMono(a, b,
+          offset1: -50, offset2: 0, maxValue: 255);
+      expect(neg[0], 0, reason: '(0−50)×128 < 0 → 截位到 0');
+      expect(neg[1], 25, reason: '(100−50)×128/255 ≈ 25');
+      // offset2 同理作用于第二路。
+      final out2 = multiplyMono(a, b,
+          offset1: 0, offset2: 127, maxValue: 255);
+      expect(out2[1], 100, reason: '100×(128+127)/255 = 100');
+    });
+  });
+
+  group('blendMono 加法器', () {
+    test('balance=0.5 取两路均值，增益总和恒为 1', () {
+      final a = Uint16List.fromList([100, 200, 0]);
+      final b = Uint16List.fromList([300, 100, 65535]);
+      final out = blendMono(a, b);
+      expect(out[0], 200, reason: '(100+300)/2 = 200');
+      expect(out[1], 150, reason: '(200+100)/2 = 150');
+      expect(out[2], 32768, reason: '65535/2 ≈ 32768');
+    });
+
+    test('balance 为 0/1 时退化为单路直通', () {
+      final a = Uint16List.fromList([100, 200]);
+      final b = Uint16List.fromList([300, 400]);
+      expect(blendMono(a, b, balance: 1), [100, 200], reason: 'balance=1 全源1');
+      expect(blendMono(a, b, balance: 0), [300, 400], reason: 'balance=0 全源2');
+    });
+
+    test('加权和截位到 maxValue；长度不一致按短者截断', () {
+      final a = Uint16List.fromList([65535, 100, 50]);
+      final b = Uint16List.fromList([65535, 100]);
+      final out = blendMono(a, b, balance: 0.8, maxValue: 255);
+      expect(out.length, 2);
+      expect(out[0], 255, reason: '加权和超 maxValue 截位');
+      expect(out[1], 100, reason: '同值混合不变');
+    });
+  });
+
+  group('blendMaskMono 混叠器（正常模式）', () {
+    test('RGB 基图：三通道同加（等效亮度叠加）', () {
+      // 2 像素 RGB 基图；混叠图 200、蒙版取半（128/255）→ delta≈100×强度。
+      final base = Uint16List.fromList([10, 20, 30, 40, 50, 60]);
+      final blend = Uint16List.fromList([200, 0]);
+      final mask = Uint16List.fromList([128, 255]);
+      final out = blendMaskMono(base, blend, mask,
+          format: 'rgb', strength: 1.0, maxValue: 255);
+      // delta = 200×128/255 ≈ 100.4 → 各通道 +100；混叠图为 0 → 不变。
+      expect(out, [110, 120, 130, 40, 50, 60]);
+      // 强度加倍 → delta 加倍。
+      final out2 = blendMaskMono(base, blend, mask,
+          format: 'rgb', strength: 2.0, maxValue: 255);
+      expect(out2, [211, 221, 231, 40, 50, 60]);
+      // 蒙版为 0 → 无混叠，输出等于基图（且基图缓冲不被修改）。
+      final out3 = blendMaskMono(base, blend, Uint16List(2),
+          format: 'rgb', maxValue: 255);
+      expect(out3, base);
+    });
+
+    test('YUV 基图：只加 Y，U/V 不变（锐化不产生色偏）', () {
+      final base = Uint16List.fromList([10, 128, 130, 40, 128, 130]);
+      final blend = Uint16List.fromList([200, 200]);
+      final mask = Uint16List.fromList([128, 255]);
+      final out = blendMaskMono(base, blend, mask,
+          format: 'yuv', strength: 1.0, maxValue: 255);
+      // 像素0：Y 10+100=110，U/V 不变；像素1：Y 40+200=240，U/V 不变。
+      expect(out, [110, 128, 130, 240, 128, 130]);
+    });
+
+    test('HSL 基图：只加 L；截位到 maxValue；强度 0 直通', () {
+      final base = Uint16List.fromList([0, 0, 250, 0, 0, 10]);
+      final blend = Uint16List.fromList([255, 255]);
+      final mask = Uint16List.fromList([255, 255]);
+      final out = blendMaskMono(base, blend, mask,
+          format: 'hsl', strength: 1.0, maxValue: 255);
+      expect(out, [0, 0, 255, 0, 0, 255],
+          reason: 'L 250+255 截位到 255，L 10+255 截位到 255；H/S 不变');
+      final same = blendMaskMono(base, blend, mask,
+          format: 'hsl', strength: 0, maxValue: 255);
+      expect(same, base, reason: '强度 0 输出等于基图');
+    });
+
+    test('Mono 基图：单通道叠加并截位', () {
+      final base = Uint16List.fromList([250, 10]);
+      final blend = Uint16List.fromList([255, 255]);
+      final mask = Uint16List.fromList([255, 255]);
+      final out = blendMaskMono(base, blend, mask,
+          format: 'mono', strength: 1.0, maxValue: 255);
+      expect(out, [255, 255]);
+    });
+
+    test('三通道混叠图：逐通道对应叠加（Y 加到 Y、U 加到 U）', () {
+      // YUV 基图 2 像素；混叠图为三通道交织，每通道独立增量。
+      final base = Uint16List.fromList([10, 128, 130, 40, 128, 130]);
+      final blend = Uint16List.fromList([200, 255, 0, 100, 0, 51]);
+      final mask = Uint16List.fromList([128, 255]);
+      final out = blendMaskMono(base, blend, mask,
+          format: 'yuv', blendChannels: 3, strength: 1.0, maxValue: 255);
+      // 像素0：Y 10+200×128/255≈110，U 128+255×128/255≈255（截位），
+      // V 130+0=130；像素1：Y 40+100=140，U 128+0=128，V 130+51=181。
+      expect(out, [110, 255, 130, 140, 128, 181]);
+    });
+  });
+
+  group('applyMorphology', () {
+    test('膨胀：单亮点扩散为 (2r+1)² 方块', () {
+      // 5x5 全 0，中心亮点 1000，radius=1 膨胀 → 中心 3x3 全 1000。
+      final img = Uint16List(25);
+      img[2 * 5 + 2] = 1000;
+      applyMorphology(img, width: 5, height: 5, erode: false, radius: 1);
+      for (var y = 0; y < 5; y++) {
+        for (var x = 0; x < 5; x++) {
+          final inBox = x >= 1 && x <= 3 && y >= 1 && y <= 3;
+          expect(img[y * 5 + x], inBox ? 1000 : 0,
+              reason: '($x,$y) ${inBox ? "在" : "不在"}扩散范围内');
+        }
+      }
+    });
+
+    test('腐蚀：亮块收缩一圈，孤立亮点消失', () {
+      // 5x5 全 0，中心 3x3 亮块 → radius=1 腐蚀后只剩中心点。
+      final img = Uint16List(25);
+      for (var y = 1; y <= 3; y++) {
+        for (var x = 1; x <= 3; x++) {
+          img[y * 5 + x] = 800;
+        }
+      }
+      applyMorphology(img, width: 5, height: 5, radius: 1);
+      expect(img[2 * 5 + 2], 800, reason: '3x3 亮块腐蚀后剩中心点');
+      img[2 * 5 + 2] = 0;
+      expect(img.every((v) => v == 0), isTrue, reason: '亮块其余像素被腐蚀');
+      // 孤立亮点（1x1）腐蚀后消失。
+      final imp = Uint16List(25);
+      imp[2 * 5 + 2] = 65535;
+      applyMorphology(imp, width: 5, height: 5, radius: 1);
+      expect(imp.every((v) => v == 0), isTrue);
+    });
+
+    test('腐蚀与膨胀互逆：常量图不变，radius=0 直通', () {
+      final flat = Uint16List(16)..fillRange(0, 16, 500);
+      applyMorphology(flat, width: 4, height: 4, radius: 2);
+      expect(flat.every((v) => v == 500), isTrue, reason: '常量图腐蚀不变');
+      applyMorphology(flat, width: 4, height: 4, erode: false, radius: 2);
+      expect(flat.every((v) => v == 500), isTrue, reason: '常量图膨胀不变');
+      final img = Uint16List.fromList([1, 2, 3, 4]);
+      applyMorphology(img, width: 2, height: 2, radius: 0);
+      expect(img, [1, 2, 3, 4], reason: 'radius=0 不处理');
+    });
+
+    test('RGB 三通道独立取极值', () {
+      // 2x1 RGB：左像素 R 亮，右像素 G 亮；radius=1 膨胀后两像素
+      // R、G 都取到各自通道极大值，B 仍为 0（通道间不串扰）。
+      final rgb = Uint16List.fromList([900, 0, 0, 0, 700, 0]);
+      applyMorphology(rgb,
+          width: 2, height: 1, channels: 3, erode: false, radius: 1);
+      expect(rgb, [900, 700, 0, 900, 700, 0]);
+      // 腐蚀则取各通道极小值（均为 0）。
+      final rgb2 = Uint16List.fromList([900, 0, 0, 0, 700, 0]);
+      applyMorphology(rgb2,
+          width: 2, height: 1, channels: 3, radius: 1);
+      expect(rgb2, [0, 0, 0, 0, 0, 0]);
     });
   });
 }

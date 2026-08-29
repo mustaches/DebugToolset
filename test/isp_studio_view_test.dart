@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:debug_tool_set/modules/isp_studio/isp_studio_view.dart';
 import 'package:debug_tool_set/modules/isp_studio/models/isp_node.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/connection_painter.dart';
@@ -13,6 +15,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  // 普通 test() 里的 runPreview 需要 ui.decodeImageFromPixels。
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   testWidgets('ISP Studio 视图可渲染且包含默认节点', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -29,7 +34,7 @@ void main() {
     expect(find.byTooltip('运行预览'), findsOneWidget);
     expect(find.byTooltip('适配全屏'), findsOneWidget);
     // 属性面板空选中提示
-    expect(find.text('点击节点查看参数'), findsOneWidget);
+    expect(find.text('点击节点查看参数；点击上方链路选中高亮该链'), findsOneWidget);
     // 默认图节点标题（至少能看到 Bayer RAW 源 / 预览 / 图片输出）
     expect(find.textContaining('Bayer RAW 源'), findsWidgets);
     expect(find.textContaining('预览'), findsWidgets);
@@ -58,6 +63,56 @@ void main() {
 
     expect(find.text('亮度'), findsOneWidget);
     expect(find.text('对比度'), findsOneWidget);
+  });
+
+  testWidgets('无选中节点时属性面板显示流程摘要', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final state = IspStudioState.withDefaultGraph();
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: const MaterialApp(home: Scaffold(body: IspStudioView())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 未运行：显示各汇点的实际链（默认图有预览节点），耗时为占位符。
+    expect(find.text('节点流程图'), findsOneWidget);
+    expect(find.textContaining('尚未运行预览'), findsOneWidget);
+    expect(find.text('—'), findsWidgets);
+  });
+
+  // 运行后的耗时/后端标记（普通测试，真实异步环境；testWidgets 的假
+  // 异步会让 runPreview 的 isolate 工作无法完成）。
+  test('运行预览后记录逐节点耗时与执行后端', () async {
+    final tmp = File(
+        '${Directory.systemTemp.path}/flow_summary_${DateTime.now().microsecondsSinceEpoch}.raw');
+    await tmp.writeAsBytes(List<int>.filled(8 * 8 * 2, 100));
+    addTearDown(() async {
+      if (tmp.existsSync()) await tmp.delete();
+    });
+    final state = IspStudioState.withDefaultGraph();
+    addTearDown(state.dispose);
+    final srcId = state.graph.nodes.entries
+        .firstWhere((e) => e.value.typeId == 'bayer_source')
+        .key;
+    final p = state.graph.nodes[srcId]!.paramValues;
+    p['filePath'] = tmp.path;
+    p['width'] = 8;
+    p['height'] = 8;
+    p['bitDepth'] = '8';
+
+    await state.runPreview();
+
+    expect(state.nodeRunTimesUs, isNotEmpty);
+    expect(state.nodeRunOnGpu, isNotEmpty);
+    // 每个有耗时的节点都有后端标记（true=GPU，false=CPU）。
+    for (final id in state.nodeRunTimesUs.keys) {
+      expect(state.nodeRunOnGpu.containsKey(id), isTrue, reason: id);
+    }
   });
 
   testWidgets('点击节点卡片任意位置可选中节点', (tester) async {

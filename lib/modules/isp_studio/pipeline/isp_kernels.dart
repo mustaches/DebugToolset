@@ -15,6 +15,8 @@ library;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'levels_curve.dart';
+
 /// Bayer color filter array pattern (2x2 tiling).
 enum BayerPattern {
   /// (0,0)=R (1,0)=G / (0,1)=G (1,1)=B
@@ -1172,7 +1174,7 @@ Uint16List hslToRgb(Uint16List hsl, {required int maxValue}) {
   return out;
 }
 
-/// HSL 调整（HSL 调试器节点）：H 在 0..360° 色环上循环偏移 [hShiftDeg]
+/// HSL 调整（HSL 调节器节点）：H 在 0..360° 色环上循环偏移 [hShiftDeg]
 /// 度，S/L 分别乘增益 [sGain]/[lGain] 后钳位到 0..maxValue。
 /// 三个参数均为恒等值时直接返回原数据（不拷贝）。
 Uint16List adjustHsl(Uint16List hsl,
@@ -1189,6 +1191,249 @@ Uint16List adjustHsl(Uint16List hsl,
     out[i] = ((hsl[i] + shift) % m + m) % m;
     out[i + 1] = _clampTo(hsl[i + 1] * sGain, maxValue);
     out[i + 2] = _clampTo(hsl[i + 2] * lGain, maxValue);
+  }
+  return out;
+}
+
+/// RGB 调节器（RGB 域调参节点）：R/G/B 三通道分别乘增益后钳位到
+/// 0..maxValue。三个增益均为恒等 1 时直接返回原数据（不拷贝）。
+Uint16List adjustRgb(Uint16List rgb,
+    {required int maxValue,
+    double rGain = 1.0,
+    double gGain = 1.0,
+    double bGain = 1.0}) {
+  if (rGain == 1.0 && gGain == 1.0 && bGain == 1.0) return rgb;
+  final out = Uint16List(rgb.length);
+  for (var i = 0; i < rgb.length; i += 3) {
+    out[i] = _clampTo(rgb[i] * rGain, maxValue);
+    out[i + 1] = _clampTo(rgb[i + 1] * gGain, maxValue);
+    out[i + 2] = _clampTo(rgb[i + 2] * bGain, maxValue);
+  }
+  return out;
+}
+
+/// 曲线调节器（levels_curves）：RGB 帧逐通道过传递函数 LUT（4096 级，
+/// 定义域 0..4095）。帧值先按 maxValue 线性缩放到 LUT 域查表，结果再
+/// 缩放回 0..maxValue；maxValue == 4095 时直通查表。恒等 LUT 由调用方
+/// 判定并跳过本核（不拷贝）。
+Uint16List applyLevelsCurve(Uint16List rgb, Uint16List lut,
+    {required int maxValue}) {
+  final out = Uint16List(rgb.length);
+  if (maxValue == kLevelsMax) {
+    for (var i = 0; i < rgb.length; i++) {
+      out[i] = lut[rgb[i]];
+    }
+    return out;
+  }
+  for (var i = 0; i < rgb.length; i++) {
+    final idx = (rgb[i] * kLevelsMax + (maxValue >> 1)) ~/ maxValue;
+    out[i] = (lut[idx] * maxValue + (kLevelsMax >> 1)) ~/ kLevelsMax;
+  }
+  return out;
+}
+
+/// 色彩平衡（color_balance）：RGB/YUV/HSL 三域中间调色彩偏移，输出保持
+/// 输入格式。三个滑杆值 [-100, 100] 分别对应 青↔红、洋红↔绿、黄↔蓝：
+/// 正值向后二（红/绿/蓝）偏移，负值向前一。偏移按 BT.601 亮度的中间调
+/// 权重 w = 1 − |2Y−1| 加权（中间调最强，纯黑/纯白不受影响），结果钳位
+/// 到 0..maxValue。三值全 0 时直通不拷贝。
+///
+/// 各域实现：
+/// - RGB：偏移量 = 值/100 × maxValue，直接加到 R/G/B 通道；
+/// - YUV：青↔红即 V 轴（V ≈ R−Y）、黄↔蓝即 U 轴（U ≈ B−Y），洋红↔绿
+///   为 U/V 对角（绿 = −U−V，洋红 = +U+V）；色度偏移量 = 值/100 ×
+///   maxValue/2（色度全量程为 ±maxValue/2），Y 通道不变，中间调权重
+///   直接取 Y 通道；
+/// - HSL：无直接的通道对应关系，经 hslToRgb/rgbToHsl 往返转换施加
+///   RGB 域偏移（语义与 RGB 输入一致）。
+Uint16List applyColorBalance(Uint16List data,
+    {required String format,
+    required int maxValue,
+    double cyanRed = 0,
+    double magentaGreen = 0,
+    double yellowBlue = 0}) {
+  if (cyanRed == 0 && magentaGreen == 0 && yellowBlue == 0) return data;
+  switch (format) {
+    case 'rgb':
+      return _colorBalanceRgb(data, maxValue, cyanRed, magentaGreen,
+          yellowBlue);
+    case 'yuv':
+      return _colorBalanceYuv(data, maxValue, cyanRed, magentaGreen,
+          yellowBlue);
+    case 'hsl':
+      final rgb = hslToRgb(data, maxValue: maxValue);
+      return rgbToHsl(
+          _colorBalanceRgb(rgb, maxValue, cyanRed, magentaGreen, yellowBlue),
+          maxValue: maxValue);
+    default:
+      throw StateError('色彩平衡需要 RGB/YUV/HSL 输入（当前 $format）');
+  }
+}
+
+/// RGB 域：按通道加性偏移（中间调权重按 BT.601 亮度计算）。
+Uint16List _colorBalanceRgb(Uint16List rgb, int maxValue, double cyanRed,
+    double magentaGreen, double yellowBlue) {
+  final dr = cyanRed / 100 * maxValue;
+  final dg = magentaGreen / 100 * maxValue;
+  final db = yellowBlue / 100 * maxValue;
+  final out = Uint16List(rgb.length);
+  for (var i = 0; i < rgb.length; i += 3) {
+    final r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
+    final y = (0.299 * r + 0.587 * g + 0.114 * b) / maxValue;
+    final w = 1 - (2 * y - 1).abs();
+    out[i] = _clampTo(r + dr * w, maxValue);
+    out[i + 1] = _clampTo(g + dg * w, maxValue);
+    out[i + 2] = _clampTo(b + db * w, maxValue);
+  }
+  return out;
+}
+
+/// YUV 域：青↔红 → V 轴、黄↔蓝 → U 轴、洋红↔绿 → U/V 对角；Y 不变。
+Uint16List _colorBalanceYuv(Uint16List yuv, int maxValue, double cyanRed,
+    double magentaGreen, double yellowBlue) {
+  final k = maxValue / 2 / 100; // 色度偏移系数（值 100 = 半量程）
+  final du = yellowBlue * k; // U：正值偏蓝
+  final dv = cyanRed * k; // V：正值偏红
+  final dg = magentaGreen * k; // 洋红↔绿：绿 = −U−V
+  final out = Uint16List(yuv.length);
+  for (var i = 0; i < yuv.length; i += 3) {
+    final y = yuv[i];
+    final w = 1 - (2 * y / maxValue - 1).abs();
+    out[i] = y;
+    out[i + 1] = _clampTo(yuv[i + 1] + (du - dg) * w, maxValue);
+    out[i + 2] = _clampTo(yuv[i + 2] + (dv - dg) * w, maxValue);
+  }
+  return out;
+}
+
+/// YUV 调节器（YUV 域调参节点）：Y 乘增益；U/V 围绕中点（maxValue>>1）
+/// 缩放（色度增益不改变中性色点），钳位到 0..maxValue。
+/// 三个增益均为恒等 1 时直接返回原数据（不拷贝）。
+Uint16List adjustYuv(Uint16List yuv,
+    {required int maxValue,
+    double yGain = 1.0,
+    double uGain = 1.0,
+    double vGain = 1.0}) {
+  if (yGain == 1.0 && uGain == 1.0 && vGain == 1.0) return yuv;
+  final half = maxValue >> 1;
+  final out = Uint16List(yuv.length);
+  for (var i = 0; i < yuv.length; i += 3) {
+    out[i] = _clampTo(yuv[i] * yGain, maxValue);
+    out[i + 1] = _clampTo(half + (yuv[i + 1] - half) * uGain, maxValue);
+    out[i + 2] = _clampTo(half + (yuv[i + 2] - half) * vGain, maxValue);
+  }
+  return out;
+}
+
+/// 色饱和度/亮度调节器：按输入帧所在色彩域（[format] = 'rgb'/'yuv'/
+/// 'hsl'）施加色饱和度增益 [satGain] 与亮度增益 [brightGain]，输出保持
+/// 原格式（不跨域转换）。两个增益均为恒等 1 时直接返回原数据（不拷贝）。
+///
+/// - RGB 域：先做保亮度饱和度混合 c' = Y + (c - Y) * satGain
+///   （Y 为 BT.601 亮度），再整体乘 brightGain；
+/// - YUV 域：Y 乘 brightGain；U/V 围绕中点（maxValue>>1）乘 satGain
+///   （色度增益不改变中性色点）；
+/// - HSL 域：S 乘 satGain；L 乘 brightGain。
+/// 均四舍五入后钳位到 0..maxValue。
+Uint16List adjustSatBright(Uint16List data,
+    {required String format,
+    required int maxValue,
+    double satGain = 1.0,
+    double brightGain = 1.0}) {
+  if (satGain == 1.0 && brightGain == 1.0 &&
+      (format == 'rgb' || format == 'yuv' || format == 'hsl')) {
+    return data;
+  }
+  final out = Uint16List(data.length);
+  switch (format) {
+    case 'rgb':
+      for (var i = 0; i < data.length; i += 3) {
+        final r = data[i], g = data[i + 1], b = data[i + 2];
+        // BT.601 全范围亮度（与 rgbToYuv 的 Y 一致）。
+        final y = 0.299 * r + 0.587 * g + 0.114 * b;
+        out[i] = _clampTo((y + (r - y) * satGain) * brightGain, maxValue);
+        out[i + 1] = _clampTo((y + (g - y) * satGain) * brightGain, maxValue);
+        out[i + 2] = _clampTo((y + (b - y) * satGain) * brightGain, maxValue);
+      }
+    case 'yuv':
+      final half = maxValue >> 1;
+      for (var i = 0; i < data.length; i += 3) {
+        out[i] = _clampTo(data[i] * brightGain, maxValue);
+        out[i + 1] =
+            _clampTo(half + (data[i + 1] - half) * satGain, maxValue);
+        out[i + 2] =
+            _clampTo(half + (data[i + 2] - half) * satGain, maxValue);
+      }
+    case 'hsl':
+      for (var i = 0; i < data.length; i += 3) {
+        out[i] = data[i]; // H 不变
+        out[i + 1] = _clampTo(data[i + 1] * satGain, maxValue);
+        out[i + 2] = _clampTo(data[i + 2] * brightGain, maxValue);
+      }
+    default:
+      throw ArgumentError('色饱和度/亮度调节器需要 RGB/YUV/HSL 输入，实际: $format');
+  }
+  return out;
+}
+
+/// 亮度/对比度调节器：按输入帧所在色彩域（[format] = 'rgb'/'yuv'/'hsl'/
+/// 'mono'）对亮度施加调节，输出保持原格式（不跨域转换）。
+///
+/// 公式（[baselinePct] 为满量程百分比）：base = baselinePct/100 × maxValue；
+/// Y' = ((Y × brightPct/100) − base) × gainPct/100 + base，钳位 0..maxValue。
+/// - RGB 域：逐像素求 BT.601 亮度 Y，按 Y'/Y 等比缩放 R/G/B（Y=0 的纯黑
+///   像素无亮度比例可言，保持 0）；
+/// - YUV 域：直接作用于 Y 通道；
+/// - HSL 域：作用于 L 通道；
+/// - Mono 域：直接作用于单通道亮度（数据长度 w*h）。
+/// brightPct=100 且 gainPct=100 时为恒等（与基线无关），直接返回原数据
+/// （不拷贝）。
+Uint16List adjustBrightContrast(Uint16List data,
+    {required String format,
+    required int maxValue,
+    double brightPct = 100,
+    double baselinePct = 50,
+    double gainPct = 100}) {
+  if (brightPct == 100 && gainPct == 100 &&
+      (format == 'rgb' || format == 'yuv' || format == 'hsl' ||
+          format == 'mono')) {
+    return data;
+  }
+  final base = baselinePct / 100 * maxValue;
+  final bs = brightPct / 100;
+  final gs = gainPct / 100;
+  int adjust(int y) => _clampTo(((y * bs) - base) * gs + base, maxValue);
+  final out = Uint16List(data.length);
+  switch (format) {
+    case 'rgb':
+      for (var i = 0; i < data.length; i += 3) {
+        final r = data[i], g = data[i + 1], b = data[i + 2];
+        // BT.601 全范围亮度（与 rgbToYuv 的 Y 一致）。
+        final y = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (y <= 0) continue; // 纯黑像素保持 0
+        final ratio = adjust(y.round()) / y;
+        out[i] = _clampTo(r * ratio, maxValue);
+        out[i + 1] = _clampTo(g * ratio, maxValue);
+        out[i + 2] = _clampTo(b * ratio, maxValue);
+      }
+    case 'yuv':
+      for (var i = 0; i < data.length; i += 3) {
+        out[i] = adjust(data[i]);
+        out[i + 1] = data[i + 1];
+        out[i + 2] = data[i + 2];
+      }
+    case 'hsl':
+      for (var i = 0; i < data.length; i += 3) {
+        out[i] = data[i];
+        out[i + 1] = data[i + 1];
+        out[i + 2] = adjust(data[i + 2]);
+      }
+    case 'mono':
+      for (var i = 0; i < data.length; i++) {
+        out[i] = adjust(data[i]);
+      }
+    default:
+      throw ArgumentError('亮度/对比度调节器需要 RGB/YUV/HSL/Mono 输入，实际: $format');
   }
   return out;
 }
@@ -1898,6 +2143,146 @@ void applySharpen(
   }
 }
 
+/// 形态学腐蚀/膨胀（morphology）：方形结构元 (2×radius+1)² 的逐通道
+/// 极小（腐蚀）/极大（膨胀）滤波，对交织多通道数据逐通道独立处理
+/// （RGB 三通道独立 → 亮色/暗色区域整体收缩/扩张；Mono 单通道即灰度
+/// 形态学）。可分离两趟实现（水平 + 垂直），结果与直接二维窗口完全一致；
+/// 边界按可用邻域取极值（同 _dilateMask）。极值取自原数据，无需钳位。
+void applyMorphology(
+  Uint16List data, {
+  required int width,
+  required int height,
+  int channels = 1,
+  bool erode = true,
+  int radius = 1,
+}) {
+  if (radius <= 0) return;
+  final tmp = Uint16List(data.length);
+  // 水平趟：每行按 [x-radius, x+radius]（裁剪到图内）取极值。
+  for (var y = 0; y < height; y++) {
+    final row = y * width;
+    for (var x = 0; x < width; x++) {
+      final x0 = x - radius < 0 ? 0 : x - radius;
+      final x1 = x + radius >= width ? width - 1 : x + radius;
+      for (var c = 0; c < channels; c++) {
+        var v = data[(row + x0) * channels + c];
+        for (var nx = x0 + 1; nx <= x1; nx++) {
+          final u = data[(row + nx) * channels + c];
+          if (erode ? u < v : u > v) v = u;
+        }
+        tmp[(row + x) * channels + c] = v;
+      }
+    }
+  }
+  // 垂直趟：对水平趟结果按列取极值，写回原缓冲。
+  for (var y = 0; y < height; y++) {
+    final y0 = y - radius < 0 ? 0 : y - radius;
+    final y1 = y + radius >= height ? height - 1 : y + radius;
+    for (var x = 0; x < width; x++) {
+      for (var c = 0; c < channels; c++) {
+        var v = tmp[(y0 * width + x) * channels + c];
+        for (var ny = y0 + 1; ny <= y1; ny++) {
+          final u = tmp[(ny * width + x) * channels + c];
+          if (erode ? u < v : u > v) v = u;
+        }
+        data[(y * width + x) * channels + c] = v;
+      }
+    }
+  }
+}
+
+/// 高频边缘提取（edge_extract）：亮度高通输出黑底白线边缘图——
+/// detail = Y − 3x3 盒式模糊（与 [applySharpen] 同一 detail 定义），
+/// 归一化为相对对比度 rel = |detail|/邻域均值；rel < threshold/maxValue
+/// 视为噪声置零（相对门限，[threshold] 仍为满量程码值量纲）；输出 =
+/// gain×√rel×maxValue，截位到 [maxValue]：平坦区为黑、边缘（无论亮边
+/// 暗边）为亮线。边界按可用邻域平均（同 sharpen）。
+///
+/// 两个显示向设计：
+/// - **相对对比度归一化**：同样相对反差的边缘在暗区与亮区输出同样
+///   亮度，暗区边缘不再因绝对码值小而消失；门限也按相对口径判定，
+///   否则暗区/柔和小 detail 边缘会被绝对门限整体吞掉。均值下限取
+///   maxValue/128，防止近黑区域除零爆增益。
+/// - **√rel 显示压缩**：弱边缘显著提亮（rel=0.01 → 0.1×满量程）、
+///   强边缘饱和，避免弱反差边缘虽过门限却暗得看不见。
+///
+/// 按输入帧所在色彩域（[format] = 'rgb'/'yuv'/'hsl'）取亮度通道：
+/// RGB 域求 BT.601 定点亮度，YUV 域取 Y 通道，HSL 域取 L 通道；输出
+/// 保持原格式的黑底白线图（RGB 三通道同值 / YUV 的 U=V=中灰 /
+/// HSL 的 H=0、S=0）。
+Uint16List extractHighFreq(Uint16List data,
+    {required int width,
+    required int height,
+    String format = 'rgb',
+    double gain = 1.0,
+    double threshold = 4.0,
+    int maxValue = 65535}) {
+  final pixels = width * height;
+  final ys = Uint16List(pixels);
+  switch (format) {
+    case 'rgb':
+      for (var p = 0; p < pixels; p++) {
+        final i = p * 3;
+        ys[p] =
+            (19595 * data[i] + 38470 * data[i + 1] + 7471 * data[i + 2] + 32768) >>
+                16;
+      }
+    case 'yuv':
+      for (var p = 0; p < pixels; p++) {
+        ys[p] = data[p * 3];
+      }
+    case 'hsl':
+      for (var p = 0; p < pixels; p++) {
+        ys[p] = data[p * 3 + 2];
+      }
+    default:
+      throw ArgumentError('高频边缘提取需要 RGB/YUV/HSL 输入，实际: $format');
+  }
+  final midI = maxValue >> 1;
+  final meanFloor = maxValue / 128;
+  final relThreshold = threshold / maxValue;
+  final out = Uint16List(pixels * 3);
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final p = y * width + x;
+      var sum = 0, count = 0;
+      for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+          final nx = x + dx, ny = y + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          sum += ys[ny * width + nx];
+          count++;
+        }
+      }
+      final detail = ys[p] - sum / count;
+      // 相对对比度：除邻域均值（均值下限防除零）。
+      final mean = sum / count;
+      var rel = detail.abs() / (mean < meanFloor ? meanFloor : mean);
+      // 相对门限：与归一化同口径，避免暗区/柔和小 detail 边缘被吞。
+      if (rel < relThreshold) rel = 0;
+      // 黑底白线 + √rel 显示压缩：弱边缘提亮、强边缘饱和，平坦区为黑、
+      // 亮边暗边均为亮线，同反差边缘与亮度无关。
+      final v = _clampTo(gain * math.sqrt(rel) * maxValue, maxValue);
+      final i = p * 3;
+      switch (format) {
+        case 'rgb':
+          out[i] = v;
+          out[i + 1] = v;
+          out[i + 2] = v;
+        case 'yuv':
+          out[i] = v;
+          out[i + 1] = midI;
+          out[i + 2] = midI;
+        case 'hsl':
+          out[i] = 0; // H 无意义（S=0）
+          out[i + 1] = 0;
+          out[i + 2] = v;
+      }
+    }
+  }
+  return out;
+}
+
 /// CLAHE 直方图 bin 数（亮度按 maxValue 等比落入 256 bin）。
 const int _claheBins = 256;
 
@@ -2360,6 +2745,88 @@ Uint16List fuseFluorescence(
       out[i] = _clampTo(rgbWl[i] * (1 - a) + pr * maxValue * a, maxValue);
       out[i + 1] = _clampTo(rgbWl[i + 1] * (1 - a) + pg * maxValue * a, maxValue);
       out[i + 2] = _clampTo(rgbWl[i + 2] * (1 - a) + pb * maxValue * a, maxValue);
+    }
+  }
+  return out;
+}
+
+/// 乘法器（multiplier）：两路 Mono 帧逐像素归一化相乘——
+/// out = (a+offset1)×(b+offset2)/maxValue，截位到 0..[maxValue]
+/// （归一化使输出仍在原量程内；offset 可用于黑电平抬升/符号偏移，
+/// 避免零值像素把另一路整体清零）。两路长度必须一致（分辨率一致性
+/// 的校验在 pipeline_runner 的节点分支完成，此处按短者兜底截断）。
+Uint16List multiplyMono(List<int> a, List<int> b,
+    {double offset1 = 0, double offset2 = 0, int maxValue = 65535}) {
+  final n = math.min(a.length, b.length);
+  final out = Uint16List(n);
+  for (var i = 0; i < n; i++) {
+    out[i] = _clampTo(
+        (a[i] + offset1) * (b[i] + offset2) / maxValue, maxValue);
+  }
+  return out;
+}
+
+/// 加法器（adder）：两路 mono 平衡加权混合——
+/// out = round(a×balance + b×(1−balance))，两路增益总和恒为 1
+/// （balance 即源1 增益，源2 增益 = 1−balance），截位到 [maxValue]；
+/// 长度不一致按短者截断（同 [multiplyMono]）。
+Uint16List blendMono(List<int> a, List<int> b,
+    {double balance = 0.5, int maxValue = 65535}) {
+  final n = math.min(a.length, b.length);
+  final out = Uint16List(n);
+  final wb = 1 - balance;
+  for (var i = 0; i < n; i++) {
+    out[i] = _clampTo(a[i] * balance + b[i] * wb, maxValue);
+  }
+  return out;
+}
+
+/// 混叠器（blender）正常模式：out = 基图 + 混叠图×蒙版/maxValue×strength
+/// ——混叠图与蒙版归一化相乘（同 [multiplyMono] 口径：蒙版取满量程时
+/// 混叠图全量通过），乘混叠强度后逐像素叠加到基图，截位到 [maxValue]。
+/// 叠加目标通道按基图 [format]：YUV 只加 Y（U/V 不变，锐化不产生
+/// 色偏）、HSL 只加 L、RGB 三通道同加（等效亮度叠加，同 unsharp
+/// mask 的通道无关增量）、Mono 单通道。基图为交织数据（RGB/YUV/HSL
+/// = w*h*3，Mono = w*h），蒙版为单通道（w*h）；混叠图为单通道
+/// （[blendChannels]=1，默认）或三通道交织（[blendChannels]=3，
+/// 逐通道对应叠加：Y 加到 Y、U 加到 U……），返回新缓冲
+/// （基图不被修改）。
+Uint16List blendMaskMono(List<int> base, List<int> blend, List<int> mask,
+    {String format = 'rgb',
+    int blendChannels = 1,
+    double strength = 1.0,
+    int maxValue = 65535}) {
+  final out = Uint16List.fromList(base);
+  if (strength == 0) return out;
+  final channels = format == 'mono' ? 1 : 3;
+  final pixels = math.min(out.length ~/ channels,
+      math.min(blend.length ~/ blendChannels, mask.length));
+  final k = strength / maxValue;
+  for (var p = 0; p < pixels; p++) {
+    final i = p * channels;
+    if (blendChannels == 3) {
+      // 三通道混叠图：逐通道对应叠加（Y 加到 Y、U 加到 U……）。
+      for (var c = 0; c < channels; c++) {
+        final delta = blend[p * 3 + c] * mask[p] * k;
+        if (delta <= 0) continue;
+        out[i + c] = _clampTo(base[i + c] + delta, maxValue);
+      }
+      continue;
+    }
+    final delta = blend[p] * mask[p] * k;
+    if (delta <= 0) continue;
+    switch (format) {
+      case 'rgb':
+        // 三通道同加：等效亮度增量（不改变量比，不产生色偏）。
+        for (var c = 0; c < 3; c++) {
+          out[i + c] = _clampTo(base[i + c] + delta, maxValue);
+        }
+      case 'yuv':
+        out[i] = _clampTo(base[i] + delta, maxValue);
+      case 'hsl':
+        out[i + 2] = _clampTo(base[i + 2] + delta, maxValue);
+      default: // mono
+        out[i] = _clampTo(base[i] + delta, maxValue);
     }
   }
   return out;
