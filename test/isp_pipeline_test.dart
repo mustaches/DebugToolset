@@ -94,6 +94,38 @@ void main() {
       expect(ids, isNot(contains(srcs[1])));
       expect(ids, contains(mux));
     });
+
+    test('双输入评价仪器允许两个源节点（参考/测试两路）', () {
+      // PSNR/SSIM/LPIPS 等全参考评价数字表有两路输入，各自接独立
+      // 图片源：编译到该汇点的链含 2 个源节点，不应报多源错误。
+      for (final metric in dualInputMetricTypes) {
+        final graph = IspGraph();
+        final ref = graph.addNode('image_source', 0, 0);
+        final test = graph.addNode('image_source', 0, 0);
+        final sink = graph.addNode(metric, 0, 0);
+        expect(graph.connect(ref, 'out_rgb', sink, 'in'), isNull);
+        expect(graph.connect(test, 'out_rgb', sink, 'in_test'), isNull);
+        final chain = compileChain(graph, sink);
+        expect(chain.last['typeId'], metric);
+        expect(
+            chain.where((op) => op['typeId'] == 'image_source').length, 2);
+      }
+    });
+
+    test('双输入评价仪器超过两个源节点仍报错', () {
+      // 混叠器双源 + 评价仪器测试路 = 3 个源，超出双源上限。
+      final graph = IspGraph();
+      final sink = graph.addNode('psnr', 0, 0);
+      final blender = graph.addNode('blender', 0, 0);
+      final src1 = graph.addNode('image_source', 0, 0);
+      final src2 = graph.addNode('image_source', 0, 0);
+      final src3 = graph.addNode('image_source', 0, 0);
+      expect(graph.connect(src1, 'out_rgb', blender, 'in'), isNull);
+      expect(graph.connect(src2, 'out_rgb', blender, 'in_blend'), isNull);
+      expect(graph.connect(blender, 'out_rgb', sink, 'in'), isNull);
+      expect(graph.connect(src3, 'out_rgb', sink, 'in_test'), isNull);
+      expect(() => compileChain(graph, sink), throwsStateError);
+    });
   });
 
   group('sourceFrameCount / runChainFrame', () {

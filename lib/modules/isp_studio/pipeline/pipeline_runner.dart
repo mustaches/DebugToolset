@@ -11,8 +11,11 @@ import 'frame3d.dart';
 import 'image_source.dart';
 import 'video_source.dart';
 import 'instruments.dart';
+import 'brisque.dart';
 import 'isp_kernels.dart';
 import 'levels_curve.dart';
+import 'niqe.dart';
+import 'piqe.dart';
 
 export 'levels_curve.dart'
     show
@@ -37,6 +40,7 @@ export 'color_temp.dart'
 export 'isp_kernels.dart'
     show
         downsampleRgba82x,
+        downsampleRgba82xInIsolate,
         downsampleYuv444p2x,
         downsampleRgba8Step,
         mono8ToRgba,
@@ -65,9 +69,24 @@ const rawSourceTypes = {
 /// 全部源节点（RAW 源 + 图片文件源）。
 const sourceTypes = {...rawSourceTypes, 'image_source', 'video_source'};
 
+/// 双输入全参考评价仪器（参考图 in* + 测试图 in_test* 两路输入，
+/// 各自可追溯到独立源节点）：编译到这类汇点的链允许 2 个源节点。
+const dualInputMetricTypes = {
+  'psnr',
+  'ssim',
+  'msssim',
+  'fsim',
+  'lpips',
+  'dists',
+  'fid',
+  'kid',
+};
+
 /// 从 [sinkNodeId] 反向收集上游节点，按拓扑序编译为算子链。
 ///
-/// 链中必须恰好包含一个源节点（[sourceTypes] 之一）且位于链首。
+/// 链中至少包含一个源节点（[sourceTypes] 之一）且位于链首；双路输入
+/// 节点（荧光融合/乘法器/加法器/混叠器、PSNR 等双输入评价仪器）允许
+/// 2 个源，多路选择器允许 4 个，其余链限 1 个。
 /// 图片源会附加 `outFormat`（'rgb'/'yuv'/'hsl'），由其出边端口决定。
 /// 抛出 [StateError]（中文消息）当：图有环、汇点不存在、缺少源节点等。
 List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
@@ -121,14 +140,16 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
     throw StateError('流水线缺少源节点');
   }
   // 含荧光融合/乘法器/加法器/混叠器节点的链允许 2 个源节点（双路
-  // 输入），多路选择器允许 4 个（源1~源4），其余链单源。
+  // 输入），双输入评价仪器（PSNR/LPIPS 等）同样允许 2 个（参考/测试
+  // 两路），多路选择器允许 4 个（源1~源4），其余链单源。
   final maxSources = chain.any((op) => op['typeId'] == 'mux4')
       ? 4
       : chain.any((op) =>
               op['typeId'] == 'fluoro_fusion' ||
               op['typeId'] == 'multiplier' ||
               op['typeId'] == 'adder' ||
-              op['typeId'] == 'blender')
+              op['typeId'] == 'blender' ||
+              dualInputMetricTypes.contains(op['typeId']))
           ? 2
           : 1;
   if (sources > maxSources) {
@@ -767,6 +788,55 @@ Future<Uint8List> runChainFrame(
             amount: _double(p, 'amount'),
             threshold: _double(p, 'threshold'),
             maxValue: frame.maxValue);
+      case 'gaussian_blur':
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        final fmt = frame.format;
+        if (fmt != 'rgb' && fmt != 'yuv' && fmt != 'hsl' && fmt != 'mono') {
+          throw StateError('高斯模糊需要 RGB/YUV/HSL/Mono 输入');
+        }
+        // YUV 平面轨道先物化为交织（兜底路径，非常规连接）；mono8 轨道
+        // （视频分路的 8 位单通道）物化为 16 位单通道。
+        final data = frame.yuvPlanes8 != null
+            ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
+            : frame.mono8 != null
+                ? Uint16List.fromList(frame.mono8!)
+                : frame.data;
+        applyGaussianBlur(data,
+            width: w,
+            height: h,
+            channels: fmt == 'mono' ? 1 : 3,
+            sigma: _double(p, 'sigma'),
+            strength: _double(p, 'strength'));
+        frame = _Frame(
+          data: data,
+          format: fmt,
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+        // out_mono：非 mono 输入时取输出帧的亮度通道（yuv→Y、hsl→L、
+        // rgb→BT.601 亮度）登记为单通道端口（mono 输入由循环末统一
+        // 登记 out=out_mono=主帧）。
+        if (fmt != 'mono') {
+          final mono = Uint16List(w * h);
+          if (fmt == 'rgb') {
+            for (var i = 0, j = 0; i < w * h; i++, j += 3) {
+              mono[i] = (19595 * data[j] +
+                      38470 * data[j + 1] +
+                      7471 * data[j + 2] +
+                      32768) >>
+                  16;
+            }
+          } else {
+            final ch = fmt == 'hsl' ? 2 : 0;
+            for (var i = 0, j = ch; i < w * h; i++, j += 3) {
+              mono[i] = data[j];
+            }
+          }
+          portOutputs[nodeId] = {'out_mono': mono};
+        }
       // ---- 高频边缘提取：亮度高通输出黑底白线边缘图（detail 按邻域
       // 均值归一化为相对对比度 rel，相对门限 + gain×√rel×maxValue
       // 显示压缩；RGB/YUV/HSL 三域通用，输出保持输入格式；非恒等
@@ -1744,6 +1814,20 @@ Future<Uint8List> runChainFrame(
       case 'waveform':
       case 'vectorscope':
       case 'psnr':
+      case 'ssim':
+      case 'msssim':
+      case 'fsim':
+      case 'niqe':
+      case 'brisque':
+      case 'ilniqe':
+      case 'piqe':
+      case 'lpips':
+      case 'dists':
+      case 'fid':
+      case 'kid':
+      case 'musiq':
+      case 'clipiqa':
+      case 'minmax':
       case 'image_output':
       case 'video_output':
         final monoData = getPortData(op, 'in_mono');
@@ -2130,6 +2214,15 @@ Map<String, Object?> _instrumentResult(
       };
     case 'vectorscope':
       return {'kind': kind, 'counts': vectorscope(rgba)};
+    case 'minmax':
+      final (mn, mx) = minmaxMono(rgba);
+      return {'kind': kind, 'min': mn, 'max': mx};
+    case 'niqe':
+      return {'kind': kind, 'niqe': niqeScore(rgba, w, h)};
+    case 'brisque':
+      return {'kind': kind, 'brisque': brisqueScore(rgba, w, h)};
+    case 'piqe':
+      return {'kind': kind, 'piqe': piqeScore(rgba, w, h)};
     default:
       throw StateError('未知仪器类型: $kind');
   }
