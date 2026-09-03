@@ -42,15 +42,17 @@ class _WorkerSlot {
   /// 计数表端口拷贝）；[visible] 为波形的可见通道。
   /// [payload] 通常是帧 RGBA（Uint8List）；'render_vectorscope' 时是
   /// 各条带计数表的字节视图列表（`List<Uint8List>`）。
+  /// [timeout] 缺省 5s；重统计指标（NIQE/BRISQUE/PIQE）放大帧 +
+  /// worker 冷启动（JIT）下单帧可达秒级，用 30s。
   Future<Map<String, Object?>> request(
       String kind, Object payload, int width, int height,
-      {Set<String>? visible, bool render = false}) {
+      {Set<String>? visible, bool render = false, Duration? timeout}) {
     final id = _reqId++;
     final c = Completer<Map<String, Object?>>();
     _pending[id] = c;
     _worker!.send([id, payload, width, height, kind, visible?.toList(), render]);
     return c.future.timeout(
-      const Duration(seconds: 5),
+      timeout ?? const Duration(seconds: 5),
       onTimeout: () {
         _pending.remove(id);
         throw StateError('仪器分析超时 ($kind ${width}x$height)');
@@ -104,6 +106,24 @@ class InstrumentAnalyzer {
   static final int poolSize =
       (Platform.numberOfProcessors - 2).clamp(1, 8);
 
+  /// 不可条带拆分的分析类型：矢量示波器是扫描轨迹连线（跨行接续），
+  /// NIQE/BRISQUE/PIQE 是整图统计（分片口径不同且 merge 无法合并，
+  /// 只会错误地取第一片的分值）。这些类型轮转分配到池内不同 worker——
+  /// 全部挤在 0 号会把重统计请求串行排队（超时从发送时计时，排队中
+  /// 的请求会被误杀）。
+  static const _kNonSplittableKinds = {
+    'vectorscope', 'niqe', 'brisque', 'piqe',
+  };
+
+  /// 重统计指标（NIQE/BRISQUE/PIQE）的请求超时：大帧（百万像素级）+
+  /// worker 冷启动（JIT 预热）下单帧可达秒级，5s 默认值会误报超时。
+  static const _kHeavyKinds = {'niqe', 'brisque', 'piqe'};
+
+  static Duration _timeoutFor(String kind) =>
+      _kHeavyKinds.contains(kind)
+          ? const Duration(seconds: 30)
+          : const Duration(seconds: 5);
+
   final List<_WorkerSlot> _workers = [];
   var _started = false;
   var _rr = 0;
@@ -120,7 +140,8 @@ class InstrumentAnalyzer {
     _rr++;
     return slot.request(kind, rgba, width, height,
         visible: visible,
-        render: kind == 'waveform' || kind == 'vectorscope');
+        render: kind == 'waveform' || kind == 'vectorscope',
+        timeout: _timeoutFor(kind));
   }
 
   /// 矢量示波器多核并行（播放实时刷新用，保留连线轨迹）：抗锯齿连线
@@ -172,9 +193,18 @@ class InstrumentAnalyzer {
       Uint8List rgba, int width, int height, String kind) async {
     await _ensureStarted();
     final n = _workers.length;
-    // 矢量示波器不可条带拆分；帧太矮切不出像样条带时也不拆。
-    if (n <= 1 || kind == 'vectorscope' || height < n * 64) {
-      return _workers[0].request(kind, rgba, width, height);
+    // 不可条带拆分的类型轮转分配到池内不同 worker（见
+    // _kNonSplittableKinds 注释：全挤 0 号会串行排队误杀）。
+    if (_kNonSplittableKinds.contains(kind)) {
+      final slot = _workers[_rr % n];
+      _rr++;
+      return slot.request(kind, rgba, width, height,
+          timeout: _timeoutFor(kind));
+    }
+    // 帧太矮切不出像样条带时也不拆。
+    if (n <= 1 || height < n * 64) {
+      return _workers[0].request(kind, rgba, width, height,
+          timeout: _timeoutFor(kind));
     }
     final rowsPer = height ~/ n;
     final parts = <Future<Map<String, Object?>>>[];
@@ -184,7 +214,8 @@ class InstrumentAnalyzer {
       // 视图零拷贝创建；端口消息只拷条带覆盖的字节段。
       final band =
           Uint8List.sublistView(rgba, y0 * width * 4, y1 * width * 4);
-      parts.add(_workers[i].request(kind, band, width, y1 - y0));
+      parts.add(_workers[i]
+          .request(kind, band, width, y1 - y0, timeout: _timeoutFor(kind)));
     }
     return mergeInstrumentResults(await Future.wait(parts));
   }

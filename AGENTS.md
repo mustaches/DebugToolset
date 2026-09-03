@@ -14,7 +14,7 @@
 | 3 | 文本对比 / 补丁 | `lib/modules/text_editor/` | 文本编辑、语法高亮、文件/文件夹 diff、补丁生成与套用 |
 | 4 | 字库提取 | `lib/modules/font_extractor/` | 从 TTF/OTF 提取点阵字库（EBDT 解析、字符集管理、字形预览），导出 C 数组/bin |
 | 5 | UI 设计器 | `lib/modules/ui_designer/` | 嵌入式 UI 拖拽设计器：控件箱 → 画布编辑 → 预览交互 → 导出 C99 代码（无动态分配、弱符号回调）。详见 `docs/UI_Designer.md` |
-| 6 | ISP Studio | `lib/modules/isp_studio/` | 图像信号处理流水线节点图编辑器：节点画布 + 每节点代码页，支持 RAW 图像/视频源、ISP 算法核、仪器仪表（矢量示波器、音频分析等）、Worker 池并行计算、ffmpeg 视频导出；单帧预览可走 GPU 快路径（`pipeline/gpu/`：16 位打包纹理 + FragmentShader，仅 UI isolate，失败自动回退 CPU isolate 路径） |
+| 6 | ISP Studio | `lib/modules/isp_studio/` | 图像信号处理流水线节点图编辑器：节点画布 + 每节点代码页，支持 RAW 图像/视频源、ISP 算法核、仪器仪表（矢量示波器、音频分析等）、Worker 池并行计算、ffmpeg 视频导出；单帧预览可走 GPU 快路径（`pipeline/gpu/`：16 位打包纹理 + FragmentShader，仅 UI isolate，失败自动回退 CPU isolate 路径）；深度评价节点（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）经 `pipeline/pyiqa_worker.dart` 调 Python 桥接进程计算 |
 
 应用强制暗色主题（`lib/main.dart` 中 `themeMode: ThemeMode.dark`），默认窗口 1658×869。
 
@@ -58,6 +58,7 @@ flutter analyze                 # 静态分析
 - `IspFlow/` — `.ispflow` ISP 流程图文件（JSON 文本）。
 - `UI_Project/` — `.uiproj` UI 设计器工程文件（JSON）；`UI_Project/exported_c/`、`gpu_effects_demo_c/` 为导出示例。
 - `tools/ffmpeg/ffmpeg.exe` — ISP Studio 视频导出默认使用（节点属性 `ffmpegPath` 默认值 `tools/ffmpeg/ffmpeg.exe`）。
+- `tools/iqa/` — 深度评价节点（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）的运行时资源与桥接。**默认进程内 Dart 计算**（`pipeline/metrics/*_dart.dart` + `pipeline/nn/` 推理引擎，经 `isp_studio_state.dart` 的 `_analyzeDeepIqa` 走共享 `NnPool` 常驻 isolate 池），权重为 `tools/iqa/weights/*.nnw`（需随安装包分发），由 `tools/iqa/export_weights.py` 一次性生成——Python 环境（torch/torchmetrics/lpips/pyiqa，解释器路径常量 `pyIqaPythonPath`，开发机默认 `scratch/eval_venv/Scripts/python.exe`）仅用于权重导出与对拍。LPIPS/DISTS 的 VGG16 主干另有 **GPU 纹理驻留链**（`pipeline/metrics/vgg16_gpu.dart` + `pipeline/nn/nn_gpu.dart` 的 fp16 打包 FragmentShader，仅 UI isolate）：`_analyzeDeepIqa` 懒创建共享 `Vgg16Gpu`，输入上传一次后 13 conv+relu+4 pool 全部驻留执行、仅 5 个切片特征回读，任一步不支持/失败整链回退 CPU 池；特征图折叠布局总纹素数 < 2^24 时走单纹理路径，超出（如 1024×768 以上大图）自动切**分块路径**——沿 H 切带、每带一张纹理（带预算 2^23 纹素），conv/L2pooling 带间 halo 经 `shaders/nn/nn_stitch3_f16.frag` 拼接为 padded 带（uYOff=1），maxpool/relu 逐带直接执行，规划见 `GpuNnBackend.planBandHeights`/`planConvOutBands`（含 stitch 覆盖 ≤3 与 maxpool 奇偶约束），仍不可行的形态预检抛 `UnsupportedError` 回退 CPU；全局开关 `Vgg16AsyncForward.enabled`，真机性能基准入口 `scratch/nn_gpu_vgg_bench_main.dart`。`tools/iqa/iqa_bridge.py`（常驻子进程 + stdin/stdout JSON 行协议，Dart 侧封装为 `pipeline/pyiqa_worker.dart`）降级为**回退/对拍路径**：仅当权重文件缺失且 Python 环境可用时使用；两者都缺时节点显示「需要权重文件 tools/iqa/weights/… 或 Python 环境」，其余功能不受影响。
 - `docs/Oscilloscope_Protocol.md` — 下位机（FPGA/MCU）二进制同步帧通信协议规范，修改示波器数据通路时应先阅读。
 
 其余顶层目录多为**测试素材与参考资料**，不属于代码：`datasheet/`、`MSO8000/`、`SIGLENT/`（各厂编程手册 PDF）、`BayerRGGB/`（RAW 图测试数据）、`Font/`、`FontLib/`、`Memorydump/`、`binfile/`、`cfile/`、`vfile/` 等。

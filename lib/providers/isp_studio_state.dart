@@ -17,10 +17,21 @@ import '../modules/isp_studio/pipeline/audio_analysis.dart';
 import '../modules/isp_studio/pipeline/audio_player.dart';
 import '../modules/isp_studio/pipeline/exporters.dart';
 import '../modules/isp_studio/pipeline/image_source.dart';
+import '../modules/isp_studio/pipeline/ilniqe.dart';
 import '../modules/isp_studio/pipeline/instrument_worker.dart';
 import '../modules/isp_studio/pipeline/instruments.dart';
+import '../modules/isp_studio/pipeline/metrics/clipiqa_dart.dart';
+import '../modules/isp_studio/pipeline/metrics/dists_dart.dart';
+import '../modules/isp_studio/pipeline/metrics/fid_kid_dart.dart';
+import '../modules/isp_studio/pipeline/metrics/inception_dart.dart';
+import '../modules/isp_studio/pipeline/metrics/lpips_dart.dart';
+import '../modules/isp_studio/pipeline/metrics/musiq_dart.dart';
+import '../modules/isp_studio/pipeline/metrics/vgg16_gpu.dart';
+import '../modules/isp_studio/pipeline/nn/nn_gpu.dart';
+import '../modules/isp_studio/pipeline/nn/nn_pool.dart';
 import '../modules/isp_studio/pipeline/pipeline_runner.dart';
 import '../modules/isp_studio/pipeline/pipeline_worker.dart';
+import '../modules/isp_studio/pipeline/pyiqa_worker.dart';
 import '../modules/isp_studio/pipeline/dng_source.dart';
 import '../modules/isp_studio/pipeline/gpu/gpu_pipeline.dart';
 import '../modules/isp_studio/pipeline/raw_sidecar.dart';
@@ -95,6 +106,63 @@ bool gpuChainPrefixCovered(
     }
   }
   return true;
+}
+
+/// 深度评价指标进程内 Dart 计算所需的权重文件（相对工作目录，由
+/// tools/iqa/export_weights.py 一次性导出）。齐全时节点走进程内计算，
+/// 不再依赖 Python 环境。测试可临时改写以模拟权重缺失（验证回退/
+/// 报错路径，用后须还原）。
+Map<String, List<String>> deepIqaWeightFiles = {
+  'lpips': [lpipsVggWeightsPath, lpipsLinWeightsPath],
+  'dists': [distsVggWeightsPath, distsWeightsPath],
+  'fid': [inceptionV3WeightsPath],
+  'kid': [inceptionV3WeightsPath],
+  'musiq': [musiqWeightsPath],
+  'clipiqa': [clipiqaWeightsPath],
+};
+
+/// [kind] 指标的进程内计算权重是否齐全（见 [deepIqaWeightFiles]）。
+bool deepIqaWeightsAvailable(String kind) =>
+    (deepIqaWeightFiles[kind] ?? const []).every((f) => File(f).existsSync());
+
+/// FID/KID 进程内（Dart 路径）的逐帧累计状态：两侧 patch 特征分块
+/// 驻留，出分时拼接为 [n,2048] 连续排布交后台 isolate 计算（FID 的
+/// 2048² 协方差/特征值与 KID 的 Gram 矩阵均为重计算，见
+/// fidScoreInIsolate / kidScoreInIsolate）。
+class _DeepIqaDistAccum {
+  final List<Float32List> refChunks = [];
+  final List<Float32List> testChunks = [];
+  int nRef = 0;
+  int nTest = 0;
+
+  void reset() {
+    refChunks.clear();
+    testChunks.clear();
+    nRef = 0;
+    nTest = 0;
+  }
+
+  /// 累计一帧：两侧各为 [n,2048] 连续排布的 patch 特征。
+  void add(Float32List refFeats, Float32List testFeats) {
+    refChunks.add(refFeats);
+    nRef += refFeats.length ~/ fidFeatureDim;
+    testChunks.add(testFeats);
+    nTest += testFeats.length ~/ fidFeatureDim;
+  }
+
+  static Float32List _concatSide(List<Float32List> chunks, int n) {
+    final out = Float32List(n * fidFeatureDim);
+    var off = 0;
+    for (final c in chunks) {
+      out.setRange(off, off + c.length, c);
+      off += c.length;
+    }
+    return out;
+  }
+
+  /// 拼接两侧特征为 [n,2048] 连续排布（出分时调用一次）。
+  (Float32List, Float32List) concat() =>
+      (_concatSide(refChunks, nRef), _concatSide(testChunks, nTest));
 }
 
 /// ISP Studio 模块状态：节点图、画布变换、执行与导出编排。
@@ -303,6 +371,70 @@ class IspStudioState extends ChangeNotifier {
   /// 返回 map），随预览运行刷新；直方图数据由节点控件直接绘制。
   Map<String, Map<String, Object?>> instrumentResults = {};
 
+  /// 最值保持器（minmax）节点的跨帧保持值：nodeId → (保持最大, 保持最小)。
+  /// 每次仪器刷新时按当帧结果累计（取历史极值），[resetMinmaxHold] 复位。
+  final Map<String, (int, int)> _minmaxHold = {};
+
+  /// FID/KID（分布级深度评价）节点的样本复位标记：nodeId → 最近一次
+  /// 复位时所属的运行轮次 token。新一轮运行（token 变化）时先清空
+  /// 累计样本（进程内 Dart 路径清 [_deepIqaDist]，Python 桥接路径清
+  /// 桥接进程的累计特征）再逐帧 add（见 _analyzeDeepIqa/_analyzePyIqa）。
+  final Map<String, int> _pyiqaDistTokens = {};
+
+  /// FID/KID 进程内 Dart 路径的逐帧累计状态（nodeId → 两侧 patch
+  /// 特征）。复位时机同 [_pyiqaDistTokens]；图替换/节点移除时清理。
+  final Map<String, _DeepIqaDistAccum> _deepIqaDist = {};
+
+  /// 单次运行内的 Inception patch 特征缓存（双路馈源键 → 两侧特征
+  /// Future）：同一次运行内 FID 与 KID 节点接同一对源时只算一次。
+  /// 每次 [_runInstruments] 开始清空（与 _instrumentFeedCache 同
+  /// 生命周期）。
+  final Map<String, Future<(Float32List, Float32List)>> _deepIqaFeatCache =
+      {};
+
+  /// 进程内深度评价的共享 NN isolate 池（懒创建，[dispose] 时关闭）。
+  NnPool? _nnPool;
+  Future<NnPool>? _nnPoolStart;
+
+  /// 取共享 NN 池（首次调用时启动；worker 数缺省按 CPU 核数 - 2，
+  /// 限幅 [1,16]，见 NnPool.start）。池内请求按 id 路由应答，支持
+  /// 多指标并发共用。
+  Future<NnPool> _sharedNnPool() {
+    final running = _nnPool;
+    if (running != null) return Future.value(running);
+    return _nnPoolStart ??= () async {
+      final pool = NnPool();
+      await pool.start();
+      _nnPool = pool;
+      _nnPoolStart = null;
+      return pool;
+    }();
+  }
+
+  /// LPIPS/DISTS 共用的 VGG16 GPU 纹理驻留链（懒创建，仅 UI isolate
+  /// 可用；shader/权重任一初始化失败则保持 null 且不再重试，指标计算
+  /// 自动回退 [_sharedNnPool] 的 CPU 池路径）。
+  GpuNnBackend? _gpuNnBackend;
+  Vgg16Gpu? _vggGpu;
+  bool _vggGpuTried = false;
+
+  /// 取共享 VGG16 GPU 链（权重随 [lpipsVggWeightsPath] 加载一次；
+  /// 两路输入共享已上传权重、各自独立执行）。
+  Future<Vgg16Gpu?> _sharedVggGpu() async {
+    if (_vggGpuTried) return _vggGpu;
+    _vggGpuTried = true;
+    final g = await GpuNnBackend.tryCreate();
+    if (g == null) return null;
+    try {
+      _vggGpu = await Vgg16Gpu.load(g, lpipsVggWeightsPath);
+      _gpuNnBackend = g;
+    } catch (e) {
+      // ignore: avoid_print
+      print('[IspStudioState] VGG16 GPU 链初始化失败，回退 CPU 池: $e');
+    }
+    return _vggGpu;
+  }
+
   /// 波形/矢量示波器节点的显示图像（nodeId → 计数表映射的亮度图）。
   final Map<String, ui.Image> instrumentImages = {};
 
@@ -365,6 +497,7 @@ class IspStudioState extends ChangeNotifier {
           typeId == 'yuv_debugger' ||
           typeId == 'sat_bright_adjuster' ||
           typeId == 'bright_contrast_adjuster' ||
+          typeId == 'gaussian_blur' ||
           typeId == 'color_balance' ||
           typeId == 'color_temp_adjuster' ||
           typeId == 'edge_extract' ||
@@ -474,6 +607,7 @@ class IspStudioState extends ChangeNotifier {
     nodeRunOnGpu = {}; // 同上
     _instrumentSrcCache.clear();
     instrumentResults.remove(id);
+    _minmaxHold.remove(id);
     instrumentImages.remove(id)?.dispose();
     brightContrastWaveforms.remove(id)?.dispose();
     brightContrastInputWaveforms.remove(id)?.dispose();
@@ -810,6 +944,34 @@ class IspStudioState extends ChangeNotifier {
   }
 
 
+  /// 最值保持器：把当帧结果并入跨帧保持值（保持最大/最小 = 自复位
+  /// 以来的历史极值），保持值写回结果 map（holdMax/holdMin）供节点显示。
+  Map<String, Object?> _mergeMinmaxHold(
+      String nodeId, Map<String, Object?> result) {
+    final curMax = result['max'] as int?;
+    final curMin = result['min'] as int?;
+    if (curMax == null || curMin == null) return result;
+    final prev = _minmaxHold[nodeId];
+    final holdMax = prev == null ? curMax : math.max(prev.$1, curMax);
+    final holdMin = prev == null ? curMin : math.min(prev.$2, curMin);
+    _minmaxHold[nodeId] = (holdMax, holdMin);
+    result['holdMax'] = holdMax;
+    result['holdMin'] = holdMin;
+    return result;
+  }
+
+  /// 复位最值保持器的跨帧保持值：清除后显示回到当前帧口径，
+  /// 下一次仪器刷新从该帧重新累计。
+  void resetMinmaxHold(String nodeId) {
+    _minmaxHold.remove(nodeId);
+    instrumentResults[nodeId]
+      ?..remove('holdMax')
+      ..remove('holdMin');
+    // 仪器附加区靠 instrumentTick 局部重建（同波形通道切换）。
+    instrumentTick.value++;
+    notifyListeners();
+  }
+
   /// 一次节点尺寸拖动的累计位移（beginNodeResize 清零）：用于判断
   /// 主拖动方向，决定比例适配时哪一维跟随另一维。
   Offset _resizeDragAcc = Offset.zero;
@@ -829,6 +991,7 @@ class IspStudioState extends ChangeNotifier {
       case 'rgb_debugger':
       case 'yuv_debugger':
       case 'sat_bright_adjuster':
+      case 'gaussian_blur':
       case 'color_balance':
       case 'color_temp_adjuster':
       case 'edge_extract':
@@ -857,6 +1020,7 @@ class IspStudioState extends ChangeNotifier {
         'color_balance' =>
           (20.0, 86.0), // 横 8+4+8；纵 4+滑块 24*3+手柄 10
         'sat_bright_adjuster' => (20.0, 62.0), // 滑块 24*2
+        'gaussian_blur' => (20.0, 62.0), // 滑块 24*2
         'edge_extract' => (20.0, 62.0), // 滑块 24*2
         'color_temp_adjuster' => (20.0, 126.0), // 温度行 24+滑块 24+底行 64
         _ => (16.0, 14.0), // levels_curves/vectorscope：纵 4+手柄 10
@@ -1911,6 +2075,7 @@ class IspStudioState extends ChangeNotifier {
           node.typeId == 'rgb_debugger' ||
           node.typeId == 'yuv_debugger' ||
           node.typeId == 'sat_bright_adjuster' ||
+          node.typeId == 'gaussian_blur' ||
           node.typeId == 'bright_contrast_adjuster' ||
           node.typeId == 'color_balance' ||
           node.typeId == 'color_temp_adjuster' ||
@@ -1965,6 +2130,7 @@ class IspStudioState extends ChangeNotifier {
             pvNode.typeId == 'rgb_debugger' ||
             pvNode.typeId == 'yuv_debugger' ||
             pvNode.typeId == 'sat_bright_adjuster' ||
+            pvNode.typeId == 'gaussian_blur' ||
             pvNode.typeId == 'bright_contrast_adjuster' ||
             pvNode.typeId == 'color_balance' ||
             pvNode.typeId == 'color_temp_adjuster' ||
@@ -2419,6 +2585,9 @@ class IspStudioState extends ChangeNotifier {
         }
       } else {
         instrumentResults.remove(node.id);
+        _instrumentSigs.remove(node.id);
+        _minmaxHold.remove(node.id);
+        _deepIqaDist.remove(node.id);
         instrumentImages.remove(node.id)?.dispose();
       }
     }
@@ -2426,88 +2595,125 @@ class IspStudioState extends ChangeNotifier {
     for (final id in instrumentResults.keys.toList()) {
       if (!graph.nodes.containsKey(id)) {
         instrumentResults.remove(id);
+        _instrumentSigs.remove(id);
+        _minmaxHold.remove(id);
+        _deepIqaDist.remove(id);
         instrumentImages.remove(id)?.dispose();
       }
     }
     // 音频仪器：数据来自音轨而非帧，与图像仪器并行刷新。
     final audioFuture = _runAudioInstruments(frame, token);
+    // 单次运行的馈源/降采样/PNG 去重缓存：多个评价节点接同一对
+    // 源时（如 图像评价.ispflow 的 15 指标 × 22 路馈源），每路上游
+    // 只重跑/降采样/编码一次。每次运行开始清空（帧与图可能已变）。
+    _instrumentFeedCache.clear();
+    _instrumentFeedDownCache.clear();
+    _pyiqaPngCache.clear();
+    _deepIqaFeatCache.clear();
     if (connected.isNotEmpty) {
       int instrumentCompleted = 0;
       final instrumentTotal = connected.length;
+      // 正在分析中的仪器节点名（并发执行，状态栏显示具体节点，
+      // 最多列 3 个）。
+      final instrumentsRunning = <String>{};
+      void updateInstrumentStatus() {
+        if (token != _runToken) return;
+        final names = instrumentsRunning.take(3).join('、');
+        statusMessage = names.isEmpty
+            ? '正在更新仪器 [$instrumentCompleted/$instrumentTotal]…'
+            : '正在更新仪器 [$instrumentCompleted/$instrumentTotal]：'
+                '$names${instrumentsRunning.length > 3 ? ' 等' : ''}…';
+        notifyListeners();
+      }
+
       await Future.wait([
         for (final node in connected)
           () async {
+            instrumentsRunning.add(node.name);
+            updateInstrumentStatus();
+            // 仪器节点耗时测量（右侧面板「节点流程图」的运行时间列）；
+            // 签名命中跳过时保留上次耗时。
+            var ran = false;
+            final sw = Stopwatch()..start();
             try {
+              // 输入签名未变且已有结果：跳过重复分析（重复点「运行
+              // 预览」时不再全量重算所有指标）；分析失败不记录签名，
+              // 下次运行自动重试。
+              final sig = _instrumentSignature(node, frame);
+              if (_instrumentSigs[node.id] == sig &&
+                  instrumentResults.containsKey(node.id)) {
+                return;
+              }
+              ran = true;
               final type = IspNodeRegistry.byId(node.typeId);
               Map<String, Object?> result;
-              if (node.typeId == 'psnr') {
-                // PSNR 数字表：双输入（参考/测试），走专用双路馈源分析。
-                result = await _analyzePsnr(node, frame);
-              } else {
-                Uint8List? rgba;
-                int? w, h;
-                // 优先复用播放中最近上屏的帧（暂停场景）：视频源逐仪器
-                // 重新 seek 解码要起多次 ffmpeg，耗时以秒计。
-                final lastMap = _lastPlaybackRgba;
-                if (lastMap != null && lastMap.isNotEmpty) {
-                  final srcId = _instrumentSrcNodeId(node);
-                  rgba = lastMap[srcId] ?? lastMap.values.first;
-                  // GPU 平面馈源的 U/V chroma 平面是半尺寸，按条目取真实宽高，
-                  // 不能用全分辨率 _lastPlaybackW/H 去索引。
-                  final dim = _lastPlaybackDims?[srcId];
-                  w = dim?.$1 ?? _lastPlaybackW;
-                  h = dim?.$2 ?? _lastPlaybackH;
-                } else if (type != null) {
-                  for (final inputSpec in type.inputs) {
-                    final inputConn = graph.connectionAt(node.id, inputSpec.name);
-                    if (inputConn != null) {
-                      final capture = nodeOutputCaptures[inputConn.fromNodeId]?[inputConn.fromPort];
-                      if (capture is Map) {
-                        rgba = capture['data'] as Uint8List?;
-                        w = capture['width'] as int?;
-                        h = capture['height'] as int?;
-                        if (rgba != null) break;
-                      }
-                    }
-                  }
-                }
-
-                if (rgba != null && w != null && h != null && w > 0 && h > 0) {
-                  final (srcRgba, srcW, srcH) = w > 64 && h > 64
-                      ? downsampleRgba82x(rgba, w, h)
-                      : (rgba, w, h);
-                  result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
+              if (node.typeId == 'psnr' ||
+                  node.typeId == 'ssim' ||
+                  node.typeId == 'msssim' ||
+                  node.typeId == 'fsim') {
+                // 评价算法数字表：双输入（参考/测试），走专用双路馈源分析。
+                result = await _analyzeDualInput(node, frame);
+              } else if (node.typeId == 'ilniqe') {
+                // ILNIQE 数字表：无参考单输入，但计算量远超其他仪器
+                // （FFT 滤波器组 + MVG 评分），不走 5s 超时的仪器 worker，
+                // 馈源与通用路径一致，计算放独立 isolate（compute）。
+                final feed = await _instrumentFrameFeed(node, frame, type);
+                if (feed != null) {
+                  // 多核并行版：滤波器组与分块特征分多 isolate 计算，
+                  // 结果与串行位级一致（见 ilniqeScoreParallel）。
+                  final v = await compute(ilniqeScoreParallelInIsolate, {
+                    'rgba': feed.$1,
+                    'width': feed.$2,
+                    'height': feed.$3,
+                  });
+                  result = {'kind': 'ilniqe', 'ilniqe': v};
                 } else {
-                  final chain = compileChain(graph, node.id);
-                  // 链重跑放后台 isolate：多核 RAW 算子的长链在主 isolate
-                  // 执行会冻结 UI 数秒，期间仪器 worker 的回包无法被处理，
-                  // 5s 超时定时器抢先触发而误报「仪器分析超时」。
-                  final chainRgba = await compute(runChainFrameInIsolate,
-                      {'chain': chain, 'frameIndex': frame});
-                  final (dw, dh) = await sourceDimensions(
-                      chain.first['typeId'] as String,
-                      chain.first['params'] as Map<String, Object?>);
-                  final (srcRgba, srcW, srcH) = dw > 64 && dh > 64
-                      ? downsampleRgba82x(chainRgba, dw, dh)
-                      : (chainRgba, dw, dh);
-                  result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
+                  throw StateError('无可用馈源');
                 }
+              } else if (pyIqaMetrics.containsKey(node.typeId)) {
+                // 深度评价数字表（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）：
+                // 权重齐全时进程内 Dart 计算（tools/iqa/weights/*.nnw，
+                // 共享 NnPool 常驻 isolate 池），不齐时回退 Python 桥接
+                // 进程（PyIqaWorker）；FID/KID 逐帧累计样本。
+                result = await _analyzeDeepIqa(node, frame, token);
+              } else {
+                // 降采样馈源（后台 isolate 降采样 + 单次运行去重，
+                // 见 _instrumentFrameFeedDown）。
+                final feed = await _instrumentFrameFeedDown(node, frame, type);
+                if (feed == null) {
+                  throw StateError('无可用馈源');
+                }
+                final (srcRgba, srcW, srcH) = feed;
+                result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
               }
               if (token != _runToken) return;
-              instrumentResults[node.id] = result;
+              instrumentResults[node.id] = node.typeId == 'minmax'
+                  ? _mergeMinmaxHold(node.id, result)
+                  : result;
+              // 错误结果（如「需要权重文件…或 Python 环境」）不记录签名，
+              // 下次运行重新尝试。
+              if (result['error'] == null) {
+                _instrumentSigs[node.id] = sig;
+              }
               await _updateInstrumentImage(node.id, result);
             } catch (e) {
               // 链不完整等失败：保留旧结果，不影响预览，但记录便于诊断。
               debugPrint('[isp] 仪器分析失败 ${node.id}(${node.typeId}): $e');
             } finally {
+              instrumentsRunning.remove(node.name);
               instrumentCompleted++;
               if (token == _runToken) {
+                if (ran) {
+                  nodeRunTimesUs[node.id] = sw.elapsedMicroseconds;
+                  // GPU 徽标缺省 CPU：仅 LPIPS/DISTS 的 GPU 驻留链会
+                  // 经 onBackend 回写 true（见 _analyzeDeepIqa）。
+                  nodeRunOnGpu.putIfAbsent(node.id, () => false);
+                }
                 if (progressBase != null) {
                   _advanceProgress(progressBase +
                       progressScale * instrumentCompleted / instrumentTotal);
                 }
-                statusMessage = '正在更新仪器 [$instrumentCompleted/$instrumentTotal]…';
-                notifyListeners();
+                updateInstrumentStatus();
               }
             }
           }(),
@@ -2523,87 +2729,470 @@ class IspStudioState extends ChangeNotifier {
     }
   }
 
-  /// PSNR 数字表分析：取参考图（in*）与测试图（in_test*）两路的链末端
-  /// 色调映射 RGBA（与直方图同一数据口径），计算 PSNR(dB)/MSE。
-  /// 任一路未接入或尺寸不一致时返回带 error 提示的结果。
-  Future<Map<String, Object?>> _analyzePsnr(IspNode node, int frame) async {
-    // 取一路输入的 RGBA：优先复用最近一次运行的端口捕获（GPU 回读）；
-    // 没有捕获则把上游节点当汇点编译链重跑（后台 isolate，同仪器
-    // 通用回退路径）。
-    Future<(Uint8List, int, int)?> feedOf(List<String> ports) async {
-      for (final pn in ports) {
-        final conn = graph.connectionAt(node.id, pn);
+  /// 单次运行内的仪器馈源去重缓存：(上游节点#端口@帧) → 全分辨率
+  /// 馈源 Future（存 Future 可同时去重并发中的在途计算）。每次
+  /// [_runInstruments] 开始清空。
+  final Map<String, Future<(Uint8List, int, int)?>> _instrumentFeedCache = {};
+
+  /// 与 [_instrumentFeedCache] 同键的 2x 降采样馈源缓存：降采样在
+  /// 后台 isolate 完成，同源多指标只降一次。
+  final Map<String, Future<(Uint8List, int, int)?>> _instrumentFeedDownCache =
+      {};
+
+  /// 同一降采样缓冲的单次运行 PNG 编码缓存（键含缓冲身份与尺寸）：
+  /// LPIPS/DISTS/FID/KID 共用一对源图时 8 次编码变 2 次。
+  final Map<int, Future<String>> _pyiqaPngCache = {};
+
+  /// 仪器输入签名（跨运行）：签名未变且已有结果时 [_runInstruments]
+  /// 跳过该节点的重复分析。
+  final Map<String, String> _instrumentSigs = {};
+
+  /// 仪器输入签名：帧号 + 节点参数 + 各输入上游链（含图片源文件
+  /// mtime/大小，同路径重存也会使签名失效）。
+  String _instrumentSignature(IspNode node, int frame) {
+    final parts = <Object?>[frame, node.typeId, node.paramValues];
+    final type = IspNodeRegistry.byId(node.typeId);
+    if (type != null) {
+      for (final port in type.inputs) {
+        final conn = graph.connectionAt(node.id, port.name);
         if (conn == null) continue;
-        final cap = nodeOutputCaptures[conn.fromNodeId]?[conn.fromPort];
-        if (cap is Map && cap['data'] is Uint8List) {
-          return (
-            cap['data'] as Uint8List,
-            cap['width'] as int,
-            cap['height'] as int,
-          );
+        try {
+          final chain = compileChain(graph, conn.fromNodeId);
+          parts.add(chain);
+          // 同路径图片重存（内容变、路径不变）也要失效签名。
+          if (chain.first['typeId'] == 'image_source') {
+            final fp =
+                '${(chain.first['params'] as Map)['filePath'] ?? ''}';
+            if (fp.isNotEmpty) {
+              final f = File(fp);
+              if (f.existsSync()) {
+                final st = f.statSync();
+                parts.add(
+                    '$fp:${st.modified.millisecondsSinceEpoch}:${st.size}');
+              }
+            }
+          }
+        } catch (_) {
+          parts.add('chain-error');
         }
-        final chain = compileChain(graph, conn.fromNodeId);
-        // 图片源：注入共享解码缓存的 RGBA8（跨运行只解码一次，mtime/
-        // 大小校验），跳过链内重复解码（20MP 解码占馈源耗时的 90%+）。
-        Map<String, Object?>? inject;
-        if (chain.first['typeId'] == 'image_source') {
-          final p0 = chain.first['params'] as Map<String, Object?>;
-          final inj =
-              await _imageSourceRgba('${p0['filePath'] ?? ''}');
-          inject = {
-            'sourceRgba': inj.$1,
-            'sourceWidth': inj.$2,
-            'sourceHeight': inj.$3,
-          };
-        }
-        // GPU 快路径：链支持时 GPU 执行（16 位帧驻留 GPU，色调映射
-        // 在 GPU 上完成，仅回读 RGBA8）；失败/不支持回退 CPU isolate。
-        final gpu = await _gpuPipeline();
-        if (gpu != null && GpuPipeline.isSupportedChain(chain)) {
-          try {
-            final r = await gpu.run(chain, frame,
-                imageSources: inject == null
-                    ? const {}
-                    : {
-                        chain.first['nodeId'] as String: (
-                          inject['sourceRgba'] as Uint8List,
-                          inject['sourceWidth'] as int,
-                          inject['sourceHeight'] as int,
-                        ),
-                      });
-            final gpuRgba = await GpuPipeline.readbackBytes(r.image);
-            r.image.dispose();
-            return (gpuRgba, r.width, r.height);
-          } catch (_) {
-            // 回退 CPU 路径。
+      }
+    }
+    return jsonEncode(parts);
+  }
+
+  /// 降采样馈源（后台 isolate 执行，单次运行去重）。
+  Future<(Uint8List, int, int)?> _downsampleFeed(
+      String key, Future<(Uint8List, int, int)?> feed) {
+    return _instrumentFeedDownCache.putIfAbsent(key, () async {
+      final f = await feed;
+      if (f == null) return null;
+      var (rgba, w, h) = f;
+      if (w > 64 && h > 64) {
+        (rgba, w, h) = await compute(
+            downsampleRgba82xInIsolate, {'src': rgba, 'width': w, 'height': h});
+      }
+      return (rgba, w, h);
+    });
+  }
+
+  /// 降采样缓冲的 PNG 编码去重（单次运行内同一缓冲只编码一次）。
+  Future<String> _pyIqaPngFor(Uint8List rgba, int w, int h) =>
+      _pyiqaPngCache.putIfAbsent(
+          Object.hash(identityHashCode(rgba), rgba.lengthInBytes, w, h),
+          () => pyIqaWriteTempPng(rgba, w, h));
+
+  /// 图像仪器的单路馈源（单次运行去重缓存入口，见
+  /// [_instrumentFrameFeedUncached]）。
+  Future<(Uint8List, int, int)?> _instrumentFrameFeed(
+          IspNode node, int frame, IspNodeType? type) =>
+      _instrumentFeedCache.putIfAbsent(_frameFeedKey(node, frame, type),
+          () => _instrumentFrameFeedUncached(node, frame, type));
+
+  /// 图像仪器的单路降采样馈源：同源多指标共享一次后台降采样。
+  Future<(Uint8List, int, int)?> _instrumentFrameFeedDown(
+          IspNode node, int frame, IspNodeType? type) =>
+      _downsampleFeed(_frameFeedKey(node, frame, type),
+          _instrumentFrameFeed(node, frame, type));
+
+  /// 单路馈源缓存键：第一路已连接输入的 (上游节点#端口@帧)；无连接
+  /// 时退化为节点自身（此时馈源必然失败，键不重要）。
+  String _frameFeedKey(IspNode node, int frame, IspNodeType? type) {
+    if (type != null) {
+      for (final port in type.inputs) {
+        final conn = graph.connectionAt(node.id, port.name);
+        if (conn != null) return '${conn.fromNodeId}#${conn.fromPort}@$frame';
+      }
+    }
+    return '${node.id}@$frame';
+  }
+
+  /// 图像仪器的单路馈源：优先复用播放中最近上屏的帧（含分路器通道
+  /// 端口修正），其次端口捕获（GPU 回读），都没有则把仪器当汇点编译
+  /// 链重跑（后台 isolate）。返回原始 RGBA 帧与宽高（不降采样——
+  /// 调用侧按需处理，如通用仪器分析压到一半、ILNIQE 内部归一化到
+  /// 524×524）；无法获取返回 null。
+  Future<(Uint8List, int, int)?> _instrumentFrameFeedUncached(
+      IspNode node, int frame, IspNodeType? type) async {
+    // 优先复用播放中最近上屏的帧（暂停场景）：视频源逐仪器
+    // 重新 seek 解码要起多次 ffmpeg，耗时以秒计。
+    final lastMap = _lastPlaybackRgba;
+    if (lastMap != null && lastMap.isNotEmpty) {
+      final srcId = _instrumentSrcNodeId(node);
+      var rgba = lastMap[srcId] ?? lastMap.values.first;
+      // GPU 平面馈源的 U/V chroma 平面是半尺寸，按条目取真实宽高，
+      // 不能用全分辨率 _lastPlaybackW/H 去索引。
+      final dim = _lastPlaybackDims?[srcId];
+      final w = dim?.$1 ?? _lastPlaybackW;
+      final h = dim?.$2 ?? _lastPlaybackH;
+      // 分路器通道输出（out_r/g/b 等）的端口修正：同分路器下
+      // 多台仪器复用到同一帧时提取各自通道（同播放路径，
+      // 见 _instrumentChannelFeed）。
+      rgba = _instrumentChannelFeed(node, srcId, rgba);
+      if (w > 0 && h > 0) {
+        return (rgba, w, h);
+      }
+    } else if (type != null) {
+      for (final inputSpec in type.inputs) {
+        final inputConn = graph.connectionAt(node.id, inputSpec.name);
+        if (inputConn != null) {
+          final capture = nodeOutputCaptures[inputConn.fromNodeId]?[inputConn.fromPort];
+          if (capture is Map) {
+            final rgba = capture['data'] as Uint8List?;
+            final w = capture['width'] as int?;
+            final h = capture['height'] as int?;
+            if (rgba != null && w != null && h != null && w > 0 && h > 0) {
+              return (rgba, w, h);
+            }
           }
         }
-        final rgba = await compute(runChainFrameInIsolate,
-            {'chain': chain, 'frameIndex': frame, ...?inject});
-        final (dw, dh) = await sourceDimensions(
-            chain.first['typeId'] as String,
-            chain.first['params'] as Map<String, Object?>);
-        return (rgba, dw, dh);
       }
-      return null;
     }
+    final chain = compileChain(graph, node.id);
+    // 图片源：注入共享解码缓存的 RGBA8（跨运行只解码一次，mtime/
+    // 大小校验），跳过链内重复解码——单输入仪器（NIQE/BRISQUE/
+    // PIQE/ILNIQE/MUSIQ/CLIPIQA 等）此前每个节点各解码一遍，20MP
+    // 图每次 1.5~2s（与 _instrumentFeedOf 双路馈源同一口径）。
+    Map<String, Object?>? inject;
+    if (chain.first['typeId'] == 'image_source') {
+      final p0 = chain.first['params'] as Map<String, Object?>;
+      final inj = await _imageSourceRgba('${p0['filePath'] ?? ''}');
+      inject = {
+        'sourceRgba': inj.$1,
+        'sourceWidth': inj.$2,
+        'sourceHeight': inj.$3,
+      };
+    }
+    // 链重跑放后台 isolate：多核 RAW 算子的长链在主 isolate
+    // 执行会冻结 UI 数秒，期间仪器 worker 的回包无法被处理，
+    // 5s 超时定时器抢先触发而误报「仪器分析超时」。
+    final chainRgba = await compute(runChainFrameInIsolate,
+        {'chain': chain, 'frameIndex': frame, ...?inject});
+    final (dw, dh) = await sourceDimensions(
+        chain.first['typeId'] as String,
+        chain.first['params'] as Map<String, Object?>);
+    return (chainRgba, dw, dh);
+  }
 
-    final ref = await feedOf(const ['in', 'in_yuv', 'in_hsl', 'in_mono']);
-    final test = await feedOf(
-        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono']);
+  /// 双输入仪器的单路馈源（单次运行去重缓存入口，见
+  /// [_instrumentFeedOfUncached]）。
+  Future<(Uint8List, int, int)?> _instrumentFeedOf(
+      IspNode node, List<String> ports, int frame) {
+    final key = _feedOfKey(node, ports, frame);
+    if (key == null) return Future.value(null);
+    return _instrumentFeedCache.putIfAbsent(
+        key, () => _instrumentFeedOfUncached(node, ports, frame));
+  }
+
+  /// 双输入仪器的单路降采样馈源（后台 isolate 降采样 + 去重）。
+  Future<(Uint8List, int, int)?> _instrumentFeedOfDown(
+      IspNode node, List<String> ports, int frame) {
+    final key = _feedOfKey(node, ports, frame);
+    if (key == null) return Future.value(null);
+    return _downsampleFeed(key, _instrumentFeedOf(node, ports, frame));
+  }
+
+  /// 双路馈源缓存键：[ports] 中第一路已连接输入的 (上游节点#端口@帧)。
+  String? _feedOfKey(IspNode node, List<String> ports, int frame) {
+    for (final pn in ports) {
+      final conn = graph.connectionAt(node.id, pn);
+      if (conn != null) return '${conn.fromNodeId}#${conn.fromPort}@$frame';
+    }
+    return null;
+  }
+
+  /// 双输入仪器（PSNR/SSIM 数字表）的单路馈源：取 [ports] 中第一路
+  /// 已连接输入的链末端色调映射 RGBA（与直方图同一数据口径）。
+  /// 优先复用最近一次运行的端口捕获（GPU 回读）；没有捕获则把上游
+  /// 节点当汇点编译链重跑（后台 isolate，同仪器通用回退路径）。
+  Future<(Uint8List, int, int)?> _instrumentFeedOfUncached(
+      IspNode node, List<String> ports, int frame) async {
+    for (final pn in ports) {
+      final conn = graph.connectionAt(node.id, pn);
+      if (conn == null) continue;
+      final cap = nodeOutputCaptures[conn.fromNodeId]?[conn.fromPort];
+      if (cap is Map && cap['data'] is Uint8List) {
+        return (
+          cap['data'] as Uint8List,
+          cap['width'] as int,
+          cap['height'] as int,
+        );
+      }
+      final chain = compileChain(graph, conn.fromNodeId);
+      // 图片源：注入共享解码缓存的 RGBA8（跨运行只解码一次，mtime/
+      // 大小校验），跳过链内重复解码（20MP 解码占馈源耗时的 90%+）。
+      Map<String, Object?>? inject;
+      if (chain.first['typeId'] == 'image_source') {
+        final p0 = chain.first['params'] as Map<String, Object?>;
+        final inj =
+            await _imageSourceRgba('${p0['filePath'] ?? ''}');
+        inject = {
+          'sourceRgba': inj.$1,
+          'sourceWidth': inj.$2,
+          'sourceHeight': inj.$3,
+        };
+      }
+      // GPU 快路径：链支持时 GPU 执行（16 位帧驻留 GPU，色调映射
+      // 在 GPU 上完成，仅回读 RGBA8）；失败/不支持回退 CPU isolate。
+      final gpu = await _gpuPipeline();
+      if (gpu != null && GpuPipeline.isSupportedChain(chain)) {
+        try {
+          final r = await gpu.run(chain, frame,
+              imageSources: inject == null
+                  ? const {}
+                  : {
+                      chain.first['nodeId'] as String: (
+                        inject['sourceRgba'] as Uint8List,
+                        inject['sourceWidth'] as int,
+                        inject['sourceHeight'] as int,
+                      ),
+                    });
+          final gpuRgba = await GpuPipeline.readbackBytes(r.image);
+          r.image.dispose();
+          return (gpuRgba, r.width, r.height);
+        } catch (_) {
+          // 回退 CPU 路径。
+        }
+      }
+      final rgba = await compute(runChainFrameInIsolate,
+          {'chain': chain, 'frameIndex': frame, ...?inject});
+      final (dw, dh) = await sourceDimensions(
+          chain.first['typeId'] as String,
+          chain.first['params'] as Map<String, Object?>);
+      return (rgba, dw, dh);
+    }
+    return null;
+  }
+
+  /// 双输入评价数字表（PSNR/SSIM/MS-SSIM/FSIM）分析：取参考图（in*）与
+  /// 测试图（in_test*）两路的链末端色调映射 RGBA（与直方图同一数据
+  /// 口径），按节点类型计算对应指标（计算在后台 isolate 执行，见
+  /// dualMetricInIsolate）。任一路未接入或尺寸不一致时
+  /// 返回带 error 提示的结果。
+  Future<Map<String, Object?>> _analyzeDualInput(IspNode node, int frame) async {
+    final kind = node.typeId;
+    // 降采样馈源（后台 isolate 降采样，同源多指标去重共享）。
+    final ref = await _instrumentFeedOfDown(
+        node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame);
+    final test = await _instrumentFeedOfDown(node,
+        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'], frame);
     if (ref == null || test == null) {
-      return {'kind': 'psnr', 'error': '需要接入参考图与测试图'};
+      return {'kind': kind, 'error': '需要接入参考图与测试图'};
     }
     if (ref.$2 != test.$2 || ref.$3 != test.$3) {
-      return {'kind': 'psnr', 'error': '两路输入尺寸不一致'};
+      return {'kind': kind, 'error': '两路输入尺寸不一致'};
     }
-    // 与直方图同一口径：大帧 2x 降采样后统计（视觉等效，耗时 1/4）。
-    final large = ref.$2 > 64 && ref.$3 > 64;
-    final ra = large ? downsampleRgba82x(ref.$1, ref.$2, ref.$3).$1 : ref.$1;
-    final ta =
-        large ? downsampleRgba82x(test.$1, test.$2, test.$3).$1 : test.$1;
-    final (mse, psnr) = psnrRgba(ra, ta);
-    return {'kind': 'psnr', 'psnr': psnr, 'mse': mse};
+    // 调用侧已限定 psnr/ssim/msssim/fsim（见 _analyzeInstruments 分支）。
+    return compute(dualMetricInIsolate, {
+      'kind': kind,
+      'ref': ref.$1,
+      'test': test.$1,
+      'width': ref.$2,
+      'height': ref.$3,
+    });
+  }
+
+  /// 深度评价数字表（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）分析的首选路径：
+  /// 权重（[deepIqaWeightFiles]）齐全时进程内 Dart 计算（metrics/
+  /// *_dart.dart，多 isolate 并行，共享 [_sharedNnPool] 常驻池）；
+  /// 不齐且 Python 桥接可用时回退 [_analyzePyIqa]；两者皆缺返回带
+  /// error 提示的结果。馈源口径与 [_analyzePyIqa] 一致（双路/单路
+  /// 2x 降采样）；FID/KID 逐帧累计（新一轮运行 token 变化时复位，
+  /// 见 [_pyiqaDistTokens]），同一次运行内 FID 与 KID 节点接同一对
+  /// 源时共享 Inception patch 特征（[_deepIqaFeatCache]）。
+  Future<Map<String, Object?>> _analyzeDeepIqa(
+      IspNode node, int frame, int token) async {
+    final kind = node.typeId;
+    final info = pyIqaMetrics[kind]!;
+    if (!deepIqaWeightsAvailable(kind)) {
+      if (PyIqaWorker.available) {
+        // 回退 Python 桥接进程：非本应用 GPU 路径，徽标按 CPU 显示。
+        nodeRunOnGpu[node.id] = false;
+        return _analyzePyIqa(node, frame, token);
+      }
+      final missing = [
+        for (final f in deepIqaWeightFiles[kind]!)
+          if (!File(f).existsSync()) f,
+      ];
+      return {
+        'kind': kind,
+        'error': '需要权重文件 tools/iqa/weights/…（缺 '
+            '${missing.join('、')}）或 Python 环境',
+      };
+    }
+    if (info.kind == 'single') {
+      final type = IspNodeRegistry.byId(kind);
+      // 降采样馈源（后台 isolate 降采样，同源多指标去重共享）。
+      final feed = await _instrumentFrameFeedDown(node, frame, type);
+      if (feed == null) return {'kind': kind, 'error': '需要接入输入图'};
+      final (rgba, w, h) = feed;
+      final pool = await _sharedNnPool();
+      // MUSIQ/CLIPIQA 的进程内实现走 CPU isolate 池（无 GPU 后端）。
+      nodeRunOnGpu[node.id] = false;
+      final v = kind == 'musiq'
+          ? await musiqScoreParallel(rgba, w, h, pool: pool)
+          : await clipiqaScoreParallel(rgba, w, h, pool: pool);
+      return {'kind': kind, kind: v};
+    }
+    // pair / dist：双路降采样馈源（与 PSNR 同端口）。
+    final ref = await _instrumentFeedOfDown(
+        node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame);
+    final test = await _instrumentFeedOfDown(node,
+        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'],
+        frame);
+    if (ref == null || test == null) {
+      return {'kind': kind, 'error': '需要接入参考图与测试图'};
+    }
+    if (ref.$2 != test.$2 || ref.$3 != test.$3) {
+      return {'kind': kind, 'error': '两路输入尺寸不一致'};
+    }
+    final (ra, rw, rh) = ref;
+    final ta = test.$1;
+    if (info.kind == 'pair') {
+      final pool = await _sharedNnPool();
+      // 权重与 GPU 可用时优先走 VGG16 GPU 纹理驻留链（失败自动整链
+      // 回退 CPU 池，见 lpipsScoreParallel/distsScoreParallel）。
+      final vggGpu = await _sharedVggGpu();
+      // 实际后端（GPU 驻留链或 CPU 池）回写到节点徽标。
+      void markBackend(bool usedGpu) => nodeRunOnGpu[node.id] = usedGpu;
+      final v = kind == 'lpips'
+          ? await lpipsScoreParallel(ra, ta, rw, rh,
+              pool: pool, vggForward: vggGpu, onBackend: markBackend)
+          : await distsScoreParallel(ra, ta, rw, rh,
+              pool: pool, vggForward: vggGpu, onBackend: markBackend);
+      return {'kind': kind, kind: v};
+    }
+    // dist：新一轮运行先复位累计，再逐帧向两侧各 add 一帧的 patch 特征。
+    final accum = _deepIqaDist.putIfAbsent(node.id, _DeepIqaDistAccum.new);
+    if (_pyiqaDistTokens[node.id] != token) {
+      _pyiqaDistTokens[node.id] = token;
+      accum.reset();
+    }
+    // FID 与 KID 节点共用同一对源时特征只算一次（键含双路馈源键，
+    // 馈源键本身含帧号）。
+    final refKey =
+        _feedOfKey(node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame);
+    final testKey = _feedOfKey(node,
+        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'],
+        frame);
+    final (fr, ft) = await _deepIqaFeatCache.putIfAbsent(
+        '$refKey|$testKey', () async {
+      // 两侧并行（各自内部再按 patch 分 isolate，见
+      // inceptionPatchFeaturesParallel）。
+      final r = await Future.wait([
+        inceptionPatchFeaturesParallel(ra, rw, rh),
+        inceptionPatchFeaturesParallel(ta, rw, rh),
+      ]);
+      return (r[0], r[1]);
+    });
+    accum.add(fr, ft);
+    if (accum.nRef < 2 || accum.nTest < 2) {
+      // 样本不足（任一侧 <2 个 patch）：只显示累计进度。
+      return {'kind': kind, 'n_ref': accum.nRef, 'n_test': accum.nTest};
+    }
+    // FID/KID 的进程内实现走 CPU isolate（特征提取 + 统计计算）。
+    nodeRunOnGpu[node.id] = false;
+    final (featsRef, featsTest) = accum.concat();
+    // FID 的 2048² 协方差/特征值求解与 KID 的 Gram 矩阵均为重计算，
+    // 放后台 isolate（compute），不在 UI isolate 执行。
+    final v = await compute(
+        kind == 'fid' ? fidScoreInIsolate : kidScoreInIsolate, {
+      'ref': featsRef,
+      'nRef': accum.nRef,
+      'test': featsTest,
+      'nTest': accum.nTest,
+    });
+    return {
+      'kind': kind,
+      kind: v,
+      'n_ref': accum.nRef,
+      'n_test': accum.nTest,
+    };
+  }
+
+  /// 深度评价数字表（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）分析：馈源口径
+  /// 与各 Dart 评价节点一致（链末端色调映射 RGBA，大帧 2x 降采样），
+  /// 计算经 [PyIqaWorker] 常驻 Python 桥接进程（torch 模型）。
+  /// pair（lpips/dists）与 single（musiq/clipiqa）每帧直接出分；
+  /// dist（fid/kid）为分布级指标——新一轮运行（[token] 变化）先清空
+  /// 桥接进程的累计特征，此后每帧向两侧各 add 一个样本，任一侧 ≥2 帧
+  /// 时出分（结果带 n_ref/n_test 样本计数）。
+  /// Python 环境缺失或输入未接时返回带 error 提示的结果。
+  /// 进程内 Dart 实现可用时 [_analyzeDeepIqa] 优先，本方法为回退路径。
+  Future<Map<String, Object?>> _analyzePyIqa(
+      IspNode node, int frame, int token) async {
+    final kind = node.typeId;
+    final info = pyIqaMetrics[kind]!;
+    if (!PyIqaWorker.available) {
+      return {
+        'kind': kind,
+        'error': '需要 Python 环境（$pyIqaPythonPath）',
+      };
+    }
+    if (info.kind == 'single') {
+      final type = IspNodeRegistry.byId(kind);
+      // 降采样馈源（后台 isolate 降采样，同源多指标去重共享）。
+      final feed = await _instrumentFrameFeedDown(node, frame, type);
+      if (feed == null) return {'kind': kind, 'error': '需要接入输入图'};
+      final (rgba, w, h) = feed;
+      final path = await _pyIqaPngFor(rgba, w, h);
+      final v = await PyIqaWorker.forMetric(kind).singleScore(path);
+      return {'kind': kind, kind: v};
+    }
+    // pair / dist：双路降采样馈源（与 PSNR 同端口）。
+    final ref = await _instrumentFeedOfDown(
+        node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame);
+    final test = await _instrumentFeedOfDown(node,
+        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'], frame);
+    if (ref == null || test == null) {
+      return {'kind': kind, 'error': '需要接入参考图与测试图'};
+    }
+    if (ref.$2 != test.$2 || ref.$3 != test.$3) {
+      return {'kind': kind, 'error': '两路输入尺寸不一致'};
+    }
+    final (ra, rw, rh) = ref;
+    final ta = test.$1;
+    final worker = PyIqaWorker.forMetric(kind);
+    if (info.kind == 'pair') {
+      final pa = await _pyIqaPngFor(ra, rw, rh);
+      final pb = await _pyIqaPngFor(ta, rw, rh);
+      final v = await worker.pairScore(pa, pb);
+      return {'kind': kind, kind: v};
+    }
+    // dist：新一轮运行先复位累计，再逐帧向两侧各 add 一个样本。
+    if (_pyiqaDistTokens[node.id] != token) {
+      _pyiqaDistTokens[node.id] = token;
+      await worker.distReset();
+    }
+    final pa = await _pyIqaPngFor(ra, rw, rh);
+    final pb = await _pyIqaPngFor(ta, rw, rh);
+    final nRef = await worker.distAdd('ref', pa);
+    final nTest = await worker.distAdd('test', pb);
+    final s = await worker.distScore();
+    if (s == null) {
+      // 样本不足（任一侧 <2 帧）：只显示累计进度。
+      return {'kind': kind, 'n_ref': nRef, 'n_test': nTest};
+    }
+    return {'kind': kind, kind: s.$1, 'n_ref': s.$2, 'n_test': s.$3};
   }
 
   /// 音频仪器的 WAV PCM 缓存（WAV 路径 → 解析结果）。
@@ -3397,6 +3986,24 @@ class IspStudioState extends ChangeNotifier {
                   }
                   return downsampleRgba8Step(rgba, ew, eh, step);
                 });
+                // 分路器通道输出（out_r/g/b 等）的端口修正：同分路器下
+                // 多台仪器复用到同一帧时提取各自通道（见
+                // _instrumentChannelFeed）；非通道馈源原样返回。
+                final feedRgba =
+                    _instrumentChannelFeed(node, srcNodeId, downRgba);
+                // 深度评价（Python 桥接）：pair/single 播放中不刷新
+                // （与 PSNR/ILNIQE 一致，保留运行时结果；它们不在仪器
+                // worker 的口径内，直接 analyze 会报「未知仪器类型」）；
+                // dist（FID/KID）逐帧累计两侧样本后出分。
+                if (pyIqaMetrics.containsKey(node.typeId)) {
+                  if (pyIqaMetrics[node.typeId]!.kind != 'dist') return;
+                  final r = await _pyiqaDistPlaybackFrame(node, feedRgba, dw,
+                      dh, rgbaMap, w, h, dims, downCache, token);
+                  if (r == null) return; // 测试路未接入/环境缺失：跳过
+                  if (token != _runToken) return;
+                  instrumentResults[node.id] = r;
+                  return;
+                }
                 // 波形：整机轮转分配到池内不同 worker，按可见通道选择性
                 // 统计，亮度图 worker 侧渲染（结果只带 bmp）。矢量示波器：
                 // 隔行条带多核并行（见下）。
@@ -3408,7 +4015,7 @@ class IspStudioState extends ChangeNotifier {
                   // 丢失视觉不可见。纯统计仪器（横轴不对应图像列）
                   // 输入再压到 ~240p：连线成本与像素数成正比，数据量
                   // 减为 1/4 而显示统计等效。
-                  var vecRgba = downRgba;
+                  var vecRgba = feedRgba;
                   var vw = dw, vh = dh;
                   var vstep = 1;
                   while (vh ~/ vstep > 240) {
@@ -3416,7 +4023,7 @@ class IspStudioState extends ChangeNotifier {
                   }
                   if (vstep > 1) {
                     (vecRgba, vw, vh) =
-                        downsampleRgba8Step(downRgba, dw, dh, vstep);
+                        downsampleRgba8Step(feedRgba, dw, dh, vstep);
                   }
                   try {
                     result = await _instrumentAnalyzer
@@ -3429,19 +4036,21 @@ class IspStudioState extends ChangeNotifier {
                 } else if (node.typeId == 'waveform') {
                   try {
                     result = await _instrumentAnalyzer.analyzeDedicated(
-                        downRgba, dw, dh, node.typeId,
+                        feedRgba, dw, dh, node.typeId,
                         visible: waveformChannels(node.id));
                   } catch (_) {
                     // worker 侧渲染失败：回退为池内分析 + 本地渲染。
                     result = await _instrumentAnalyzer.analyze(
-                        downRgba, dw, dh, node.typeId);
+                        feedRgba, dw, dh, node.typeId);
                   }
                 } else {
                   result = await _instrumentAnalyzer.analyze(
-                      downRgba, dw, dh, node.typeId);
+                      feedRgba, dw, dh, node.typeId);
                 }
                 if (token != _runToken) return;
-                instrumentResults[node.id] = result;
+                instrumentResults[node.id] = node.typeId == 'minmax'
+                    ? _mergeMinmaxHold(node.id, result)
+                    : result;
                 await _updateInstrumentImage(node.id, result);
               } catch (e, st) {
                 // 单个仪器失败不影响播放，但记录错误便于诊断。
@@ -3465,6 +4074,55 @@ class IspStudioState extends ChangeNotifier {
   String? _instrumentSrcNodeId(IspNode node) => _instrumentSrcCache
       .putIfAbsent(node.id, () => _findSourcePreviewNodeId(node));
 
+  /// 通道端口类型 → 通道提取名（[extractChannelGray] 的 channel 参数）。
+  static String? _channelOfPortType(IspPortType t) => switch (t) {
+        IspPortType.r => 'r',
+        IspPortType.g => 'g',
+        IspPortType.b => 'b',
+        IspPortType.y => 'y',
+        IspPortType.u => 'u',
+        IspPortType.v => 'v',
+        IspPortType.h => 'h',
+        IspPortType.s => 's',
+        IspPortType.l => 'l',
+        _ => null,
+      };
+
+  /// 仪器复用馈源的端口修正：播放/暂停复用的帧按预览节点 id 键控、
+  /// 无端口维度，接在分路器通道输出（out_r/g/b、out_y/u/v、out_h/s/l）
+  /// 下的多台仪器会解析到同一帧（显示数值完全一样）。仪器经 in_mono
+  /// 接在通道端口、且解析到的预览并非接在同一输出端口时，从复用帧
+  /// 提取对应通道灰度作为馈源；其余情况原样返回。
+  Uint8List _instrumentChannelFeed(
+      IspNode node, String? srcNodeId, Uint8List rgba) {
+    final conn = graph.connectionAt(node.id, 'in_mono');
+    if (conn == null) return rgba;
+    final upstream = graph.nodes[conn.fromNodeId];
+    final portType = upstream == null
+        ? null
+        : IspNodeRegistry.byId(upstream.typeId)
+            ?.outputPort(conn.fromPort)
+            ?.type;
+    final channel = portType == null ? null : _channelOfPortType(portType);
+    if (channel == null) return rgba;
+    // 解析到的预览正好接在同一输出端口：它显示的就是该通道，无需提取。
+    if (srcNodeId != null) {
+      final pNode = graph.nodes[srcNodeId];
+      final pType = pNode == null ? null : IspNodeRegistry.byId(pNode.typeId);
+      if (pType != null) {
+        for (final p in pType.inputs) {
+          final pc = graph.connectionAt(srcNodeId, p.name);
+          if (pc != null &&
+              pc.fromNodeId == conn.fromNodeId &&
+              pc.fromPort == conn.fromPort) {
+            return rgba;
+          }
+        }
+      }
+    }
+    return extractChannelGray(rgba, channel);
+  }
+
   String? _findSourcePreviewNodeId(IspNode instrument) {
     final conn = graph.connectionAt(instrument.id, 'in_mono') ??
         graph.connectionAt(instrument.id, 'in_yuv') ??
@@ -3482,6 +4140,76 @@ class IspStudioState extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  /// 双输入评价（FID/KID）测试路（in_test* 端口组）的预览源节点解析：
+  /// 与 [_findSourcePreviewNodeId]（参考路）同思路；回退匹配改为精确
+  /// 检查测试路上游节点是否在预览链内（不能用 _sharesUpstream——
+  /// 仪器节点同时挂参考/测试两侧，会误配到参考路的预览）。
+  String? _findTestPreviewNodeId(IspNode instrument) {
+    final conn = graph.connectionAt(instrument.id, 'in_test_mono') ??
+        graph.connectionAt(instrument.id, 'in_test_yuv') ??
+        graph.connectionAt(instrument.id, 'in_test_hsl') ??
+        graph.connectionAt(instrument.id, 'in_test');
+    if (conn == null) return null;
+    final upstreamId = conn.fromNodeId;
+    if (graph.nodes[upstreamId]?.typeId == 'preview') {
+      return upstreamId;
+    }
+    for (final pNode in graph.nodes.values) {
+      if (pNode.typeId != 'preview') continue;
+      final chain = compileChain(graph, pNode.id);
+      if (chain.any((e) => e['nodeId'] == upstreamId)) return pNode.id;
+    }
+    return null;
+  }
+
+  /// FID/KID 播放中的逐帧累计：参考路用当前刷新帧（[feedRgba]，已按
+  /// ~480p 口径降采样），测试路从 [rgbaMap] 解析 in_test* 上游预览帧
+  /// （同口径）。新一轮运行（[token] 变化）先复位桥接进程的累计特征。
+  /// 测试路未接入/无法解析或 Python 环境缺失时返回 null（跳过）。
+  /// 注：测试路的通道修正（分路器 out_* 端口）未做——RGB 直连是常态，
+  /// 通道馈源在暂停/运行路径（_analyzePyIqa）下走链重跑，口径完整。
+  Future<Map<String, Object?>?> _pyiqaDistPlaybackFrame(
+      IspNode node,
+      Uint8List feedRgba,
+      int dw,
+      int dh,
+      Map<String, Uint8List> rgbaMap,
+      int w,
+      int h,
+      Map<String, (int, int)>? dims,
+      Map<String, (Uint8List, int, int)> downCache,
+      int token) async {
+    if (!PyIqaWorker.available) return null;
+    final kind = node.typeId;
+    final testSrcId = _findTestPreviewNodeId(node);
+    if (testSrcId == null) return null;
+    final testRgba = rgbaMap[testSrcId];
+    if (testRgba == null) return null;
+    // 测试路同 ~480p 口径降采样（缓存键加前缀，避免与参考路串缓存）。
+    final dim = dims?[testSrcId];
+    final ew = dim?.$1 ?? w;
+    final eh = dim?.$2 ?? h;
+    final (testDown, tw, th) = downCache.putIfAbsent('#test:$testSrcId', () {
+      var step = 1;
+      while (eh ~/ step > 480) {
+        step *= 2;
+      }
+      return downsampleRgba8Step(testRgba, ew, eh, step);
+    });
+    final worker = PyIqaWorker.forMetric(kind);
+    if (_pyiqaDistTokens[node.id] != token) {
+      _pyiqaDistTokens[node.id] = token;
+      await worker.distReset();
+    }
+    final pa = await pyIqaWriteTempPng(feedRgba, dw, dh);
+    final pb = await pyIqaWriteTempPng(testDown, tw, th);
+    final nRef = await worker.distAdd('ref', pa);
+    final nTest = await worker.distAdd('test', pb);
+    final s = await worker.distScore();
+    if (s == null) return {'kind': kind, 'n_ref': nRef, 'n_test': nTest};
+    return {'kind': kind, kind: s.$1, 'n_ref': s.$2, 'n_test': s.$3};
   }
 
   /// 查询 [nodeId] 输出缓冲在 (x, y, channel) 处的值。
@@ -3526,6 +4254,7 @@ class IspStudioState extends ChangeNotifier {
         t == 'yuv_debugger' ||
         t == 'sat_bright_adjuster' ||
         t == 'bright_contrast_adjuster' ||
+        t == 'gaussian_blur' ||
         t == 'color_balance' ||
         t == 'color_temp_adjuster' ||
         t == 'edge_extract' ||
@@ -3838,6 +4567,9 @@ class IspStudioState extends ChangeNotifier {
     nodeRunTimesUs = {};
     nodeRunOnGpu = {};
     instrumentResults = {};
+    _minmaxHold.clear(); // 保持值属于旧图（节点 id 可能撞名）
+    _pyiqaDistTokens.clear(); // FID/KID 样本复位标记同理
+    _deepIqaDist.clear(); // FID/KID 进程内累计样本同理
     _histogramChannels.clear();
     for (final img in instrumentImages.values) {
       img.dispose();
@@ -3911,6 +4643,16 @@ class IspStudioState extends ChangeNotifier {
     for (final img in instrumentImages.values) {
       img.dispose();
     }
+    // 进程内深度评价的共享 NN isolate 池（若曾启动）随状态销毁。
+    _nnPool?.dispose();
+    _nnPool = null;
+    // VGG16 GPU 纹理驻留链（若曾创建）随状态销毁。
+    _vggGpu?.dispose();
+    _vggGpu = null;
+    _gpuNnBackend?.dispose();
+    _gpuNnBackend = null;
+    // 深度评价的 Python 桥接进程（若曾启动）随状态销毁。
+    unawaited(PyIqaWorker.disposeAll());
     super.dispose();
   }
 }

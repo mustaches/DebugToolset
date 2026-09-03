@@ -33,4 +33,28 @@ void main() {
     final y1 = inputPortPos(node, type, 1).dy;
     expect(y1 - y0, kPortRowHeight);
   });
+
+  test('双输入评价节点：参考图与测试图两组输入之间插入一行间隔', () {
+    // PSNR/SSIM/MS-SSIM/FSIM 与 LPIPS/DISTS/FID/KID（8 端口双输入）
+    // 统一在第 5 个端口（in_test）前插入一行间隔。
+    for (final id in [
+      'psnr',
+      'ssim',
+      'msssim',
+      'fsim',
+      'lpips',
+      'dists',
+      'fid',
+      'kid',
+    ]) {
+      final type = IspNodeRegistry.byId(id)!;
+      final node = IspNode.create(type, 'n1', 0, 0);
+      // 高度：标题 30 + 8 端口行 + 1 间隔行 + 仪器附加区 160 + 底部留白 8。
+      const expected = kNodeTitleHeight + 9 * kPortRowHeight + 160 + 8;
+      expect(nodeHeight(type), expected, reason: '$id 节点高度应含 1 行间隔');
+      final y3 = inputPortPos(node, type, 3).dy; // 参考 Mono
+      final y4 = inputPortPos(node, type, 4).dy; // 测试 RGB
+      expect(y4 - y3, 2 * kPortRowHeight, reason: '$id 参考/测试之间应间隔一行');
+    }
+  });
 }

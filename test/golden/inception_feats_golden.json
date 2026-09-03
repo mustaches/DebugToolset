@@ -1,0 +1,32 @@
+{
+  "images": {
+    "ref_0.feats": {
+      "file": "ref_0.png",
+      "width": 256,
+      "height": 192,
+      "patch_size": 192,
+      "patches": 2,
+      "xs": [
+        0,
+        64
+      ],
+      "ys": [
+        0
+      ]
+    },
+    "test_0.feats": {
+      "file": "test_0.png",
+      "width": 256,
+      "height": 192,
+      "patch_size": 192,
+      "patches": 2,
+      "xs": [
+        0,
+        64
+      ],
+      "ys": [
+        0
+      ]
+    }
+  }
+}

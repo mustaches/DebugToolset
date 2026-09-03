@@ -111,5 +111,38 @@ void main() {
       expect(rightX % 10.0, 0.0);
       expect(bottomY % 10.0, 0.0);
     });
+
+    test('固定比例节点拖动时非主拖动维自动跟随（内容区 1:1）', () {
+      state.addNodeAt('levels_curves', const Offset(100, 100));
+      final id = state.graph.nodes.keys.first;
+      final node = state.graph.nodes[id]!;
+
+      // 横向为主拖动：高度跟随宽度，内容区（宽-16 × 高-14）保持正方形。
+      state.beginNodeResize(id);
+      state.resizePreview(id, const Offset(40, 0));
+      state.endNodeResize();
+      expect(node.width - 16, closeTo(node.extraHeight - 14, 1e-9));
+
+      // 纵向为主拖动：宽度跟随高度，仍保持正方形。
+      state.beginNodeResize(id);
+      state.resizePreview(id, const Offset(0, 30));
+      state.endNodeResize();
+      expect(node.width - 16, closeTo(node.extraHeight - 14, 1e-9));
+    });
+
+    test('自适应填充节点（直方图仪器）拖动不受比例约束', () {
+      state.addNodeAt('histogram', const Offset(100, 100));
+      final id = state.graph.nodes.keys.first;
+      final node = state.graph.nodes[id]!;
+      final w0 = node.width;
+      final h0 = node.extraHeight;
+
+      // 纯纵向拖动只改高度，宽度不变。
+      state.beginNodeResize(id);
+      state.resizePreview(id, const Offset(0, 30));
+      state.endNodeResize();
+      expect(node.width, w0);
+      expect(node.extraHeight, greaterThan(h0));
+    });
   });
 }

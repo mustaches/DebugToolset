@@ -108,6 +108,7 @@ class GpuPipeline {
     'sharpen',
     'edge_extract',
     'morphology',
+    'gaussian_blur',
     'multiplier',
     'adder',
     'mux4',
@@ -169,6 +170,7 @@ class GpuPipeline {
     'yuv_gains': 'shaders/isp/isp_yuv_gains.frag',
     'edge_extract': 'shaders/isp/isp_edge_extract.frag',
     'morphology': 'shaders/isp/isp_morphology.frag',
+    'gaussian_blur': 'shaders/isp/isp_gaussian_blur.frag',
     'multiply_mono': 'shaders/isp/isp_multiply_mono.frag',
     'blend_mono': 'shaders/isp/isp_blend_mono.frag',
     'blender': 'shaders/isp/isp_blender.frag',
@@ -827,6 +829,54 @@ class GpuPipeline {
             ports['$nodeId:out_mono'] = frame;
           } else {
             throw StateError('GPU 路径：腐蚀/膨胀需要 RGB 或 Mono 输入');
+          }
+        // ---- 高斯模糊：可分离两趟高斯卷积（gaussian_blur shader 跑两遍，
+        // uDir 0/1，与 CPU applyGaussianBlur 同口径；垂直趟以原帧纹理做
+        // 强度混合）。RGB/YUV/HSL 三通道 / Mono 单通道 ----
+        case 'gaussian_blur':
+          final gSigma = (p['sigma'] as num?)?.toDouble() ?? 1.0;
+          final gStrength = (p['strength'] as num?)?.toDouble() ?? 1.0;
+          _Port blurPass(_Port src, int channels) {
+            final base = [
+              src.texW.toDouble(), src.texH.toDouble(), w.toDouble(),
+              channels.toDouble(),
+            ];
+            // 水平趟：单输入（不混合）；垂直趟：读水平趟结果 + 原帧
+            // （uTexOrig）做强度混合。
+            final hTex = runPass(_progs['gaussian_blur']!, [
+              ...base, 0.0, gSigma, gStrength,
+            ], [src.tex, src.tex], src.texW, src.texH);
+            final vTex = runPass(_progs['gaussian_blur']!, [
+              ...base, 1.0, gSigma, gStrength,
+            ], [hTex, src.tex], src.texW, src.texH);
+            transients.add(hTex);
+            return _Port(vTex, src.texW, src.texH, src.format);
+          }
+          if (frame.format == 'mono') {
+            frame = blurPass(frame, 1);
+            ports['$nodeId:out'] = frame;
+            ports['$nodeId:out_mono'] = frame;
+          } else if (frame.format == 'rgb' ||
+              frame.format == 'yuv' ||
+              frame.format == 'hsl') {
+            frame = blurPass(frame, 3);
+            ports['$nodeId:out'] = frame;
+            // 三格式输出端口同名别名（帧格式同输入，与 CPU 一致）。
+            ports['$nodeId:out_rgb'] = frame;
+            ports['$nodeId:out_yuv'] = frame;
+            ports['$nodeId:out_hsl'] = frame;
+            // out_mono：输出帧亮度通道（rgb/yuv 在 0 通道，hsl 在 L=2
+            // 通道），与 CPU 口径一致；extract_channel 打包要求偶数宽。
+            if (w.isOdd) {
+              throw StateError('GPU 路径：高斯模糊 mono 输出要求偶数宽');
+            }
+            final blurMono = runPass(_progs['extract_channel']!, [
+              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+              frame.format == 'hsl' ? 2.0 : 0.0, (w ~/ 2).toDouble(),
+            ], [frame.tex], w ~/ 2, h);
+            ports['$nodeId:out_mono'] = _Port(blurMono, w ~/ 2, h, 'mono');
+          } else {
+            throw StateError('GPU 路径：高斯模糊需要 RGB/YUV/HSL/Mono 输入');
           }
         // ---- 乘法器：(源1+offset1)×(源2+offset2)/maxValue，两路 mono
         // 纹理逐像素相乘；分辨率必须一致 ----

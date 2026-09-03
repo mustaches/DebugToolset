@@ -140,15 +140,25 @@ void main() {
     expectClose(gpuOut, cpu, 0, 'demosaic');
   });
 
-  test('apply_gains（白平衡施加）', () async {
+  test('apply_gains（白平衡施加 / RGB 调节器通道增益）', () async {
     final src = randFrame(w * h * 3, 4);
     final cpu = Uint16List.fromList(src);
     applyWhiteBalance(cpu, rGain: 1.37, bGain: 0.82, maxValue: maxValue);
     final gpuOut = await runShader(
         prog('apply_gains'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(), 1.37, 0.82],
+        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
+         1.37, 1.0, 0.82],
         [src], [3], 3);
-    expectClose(gpuOut, cpu, 1, 'apply_gains');
+    expectClose(gpuOut, cpu, 1, 'apply_gains（白平衡 R/B）');
+    // RGB 调节器：三通道独立增益。
+    final cpu3 = adjustRgb(src,
+        maxValue: maxValue, rGain: 1.2, gGain: 0.7, bGain: 1.5);
+    final gpu3 = await runShader(
+        prog('apply_gains'),
+        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
+         1.2, 0.7, 1.5],
+        [src], [3], 3);
+    expectClose(gpu3, cpu3, 1, 'apply_gains（RGB 调节器三通道）');
   });
 
   test('csc_rgb2hsl', () async {
@@ -231,22 +241,22 @@ void main() {
     expectClose(bytes.buffer.asUint16List(), cpu, 2, 'clahe_apply');
   });
 
-  test('combine_yuv', () async {
-    final yuv = randFrame(w * h * 3, 10);
+  test('combine_3ch（YUV 合路：三路 mono 交织）', () async {
     final y = randFrame(w * h, 11);
-    // CPU 语义：Y 取 in_y，U/V 取 in_u/in_v（此处同源自 yuv 帧）。
+    final u = randFrame(w * h, 12);
+    final v = randFrame(w * h, 13);
+    // CPU 语义：Y/U/V 各取 in_y/in_u/in_v 的 mono 平面。
     final cpu = Uint16List(w * h * 3);
     for (var i = 0; i < w * h; i++) {
       cpu[i * 3] = y[i];
-      cpu[i * 3 + 1] = yuv[i * 3 + 1];
-      cpu[i * 3 + 2] = yuv[i * 3 + 2];
+      cpu[i * 3 + 1] = u[i];
+      cpu[i * 3 + 2] = v[i];
     }
     final gpuOut = await runShader(
-        prog('combine_yuv'),
-        [w / 2, h.toDouble(), w * 3 / 2, h.toDouble(), w.toDouble(),
-         1, 1, (maxValue >> 1).toDouble(), w * 3 / 2],
-        [y, yuv], [1, 3], 3);
-    expectClose(gpuOut, cpu, 0, 'combine_yuv');
+        prog('combine_3ch'),
+        [w / 2, h.toDouble(), 1, 1, 1, 0, 0, 0, w * 3 / 2],
+        [y, u, v], [1, 1, 1], 3);
+    expectClose(gpuOut, cpu, 0, 'combine_3ch yuv 三路');
   });
 
   test('csc_yuv2rgb', () async {
@@ -336,6 +346,14 @@ void main() {
       op('n3', 'preview'),
     ];
     expect(GpuPipeline.isSupportedChain(ok), isTrue);
+    // 色温调节器（通道增益）支持
+    final colorTemp = [
+      src(),
+      op('n2', 'demosaic'),
+      op('n4', 'color_temp_adjuster', {}, {'temperature': 5000.0}),
+      op('n3', 'preview'),
+    ];
+    expect(GpuPipeline.isSupportedChain(colorTemp), isTrue);
     // 高级去马赛克算法不支持
     final badAlgo = [
       src(),

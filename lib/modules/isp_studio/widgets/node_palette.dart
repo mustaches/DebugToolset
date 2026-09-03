@@ -34,6 +34,7 @@ const _processTypeIds = [
   'ccm',
   'rgb_dnr',
   'sharpen',
+  'gaussian_blur',
   'edge_extract',
   'morphology',
   'gamma',
@@ -94,14 +95,59 @@ const _instrumentTypeIds = [
   'histogram',
   'waveform',
   'vectorscope',
-  'psnr',
+  'minmax',
   'audio_level',
   'audio_waveform',
   'audio_eq',
 ];
 
+/// 「Evaluation」分组：评价算法类节点（图像质量评价数字表），
+/// 按输入路数分两个嵌套子类。
+/// 双输入类（参考 + 测试两路）：全参考评价（PSNR/SSIM/MS-SSIM/FSIM/
+/// LPIPS/DISTS）与分布级评价（FID/KID，逐帧累计）。
+const _dualEvalTypeIds = [
+  'psnr',
+  'ssim',
+  'msssim',
+  'fsim',
+  'lpips',
+  'dists',
+  'fid',
+  'kid',
+];
+
+/// 单输入类（无参考评价）：NIQE/BRISQUE/ILNIQE/PIQE（Dart 实现）与
+/// MUSIQ/CLIPIQA（Python 桥接）。
+const _singleEvalTypeIds = [
+  'niqe',
+  'brisque',
+  'ilniqe',
+  'piqe',
+  'musiq',
+  'clipiqa',
+];
+
+/// 节点悬浮说明：缺省显示节点全名（长名称截断时用），评价算法类
+/// 节点显示算法特性与适用场景说明。
+const _nodeTooltips = {
+  'psnr': 'PSNR 像素级均方误差，用于压缩/去噪基准测试，计算快但与感知质量相关性弱',
+  'ssim': 'SSIM 结构相似性（亮度、对比度、结构），用于通用图像质量评估，比 PSNR 更符合人眼感知',
+  'msssim': 'MS-SSIM 多尺度 SSIM，用于多分辨率场景，在不同尺度评估结构信息',
+  'fsim': 'FSIM 特征相似性（相位一致性 + 梯度），用于纹理丰富图像，对边缘和细节敏感',
+  'niqe': 'NIQE 自然图像统计特征（NSS），无需训练，通用性强',
+  'brisque': 'BRISQUE 空间域 NSS + SVM 回归，速度快，效果稳定',
+  'ilniqe': 'ILNIQE 改进的 NIQE（含颜色、纹理），更全面，计算量稍大',
+  'piqe': 'PIQE 感知质量评价（块级失真估计），无需模型与训练，速度快',
+  'lpips': 'LPIPS 学习感知差异（VGG 特征距离），与人眼感知相关性高；需 Python 环境（eval_venv），越小越好',
+  'dists': 'DISTS 深度纹理与结构相似度，对纹理替换/重采样稳健；需 Python 环境，越小越好',
+  'fid': 'FID 两路图像的 Inception 特征分布距离（按 299² 块 50% 重叠累计样本，静态图对即可出分）；需 Python 环境，越小越好',
+  'kid': 'KID 两路图像分布的 MMD 距离，小样本集偏差小于 FID（按 299² 块累计样本）；需 Python 环境，越小越好',
+  'musiq': 'MUSIQ 多尺度 Transformer 无参考质量分（koniq10k 预训练）；需 Python 环境，越大越好',
+  'clipiqa': 'CLIPIQA 基于 CLIP 的无参考感知质量分（0..1）；需 Python 环境，越大越好',
+};
+
 /// 节点工具栏：按 Source / Process / ColorTrans / Datapath / Output /
-/// Instrument 分组列出全部节点类型
+/// Instrument / Evaluation 分组列出全部节点类型
 /// （类型色点 + 名称），点击后把节点添加到视口中心
 /// （[onPickCenter] 由视图/画布计算）。
 /// 注：bayer_source 不在工具栏提供——与 CIS Src → Bayer RGGB 重复
@@ -159,6 +205,20 @@ class IspNodePalette extends StatelessWidget {
             _expansionGroup('Instrument', const Color(0xFF26363A), [
               for (final id in _instrumentTypeIds) _item(state, id),
             ]),
+            _expansionGroup('Evaluation', const Color(0xFF332A3E), [
+              _expansionGroup(
+                'Dual-Input',
+                null,
+                [for (final id in _dualEvalTypeIds) _item(state, id)],
+                nested: true,
+              ),
+              _expansionGroup(
+                'Single-Input',
+                null,
+                [for (final id in _singleEvalTypeIds) _item(state, id)],
+                nested: true,
+              ),
+            ]),
           ],
         ),
       ),
@@ -181,7 +241,7 @@ class IspNodePalette extends StatelessWidget {
     final type = IspNodeRegistry.byId(typeId)!;
     // 条目宽度有限，长名称会省略号截断；悬浮气泡显示完整节点名。
     return Tooltip(
-      message: type.displayName,
+      message: _nodeTooltips[typeId] ?? type.displayName,
       waitDuration: const Duration(milliseconds: 400),
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),

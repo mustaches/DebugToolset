@@ -51,6 +51,41 @@ void main() {
       }
     });
 
+    test('进入播放清空单次预览的节点后端/耗时标记', () async {
+      // 播放帧由 worker isolate 的 CPU 流水线生产，单次预览测得的
+      // GPU/CPU 徽标与耗时对播放不再适用，进入播放即应清空。
+      const w = 8, h = 8, frames = 3;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final raw = File('${Directory.systemTemp.path}/isp_badge_$stamp.raw');
+      await raw.writeAsBytes(
+          raw8Le(List<int>.generate(w * h * frames, (i) => i % (w * h))));
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        addTearDown(state.dispose);
+        final srcId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'bayer_source')
+            .key;
+        state.setParam(srcId, 'filePath', raw.path);
+        state.setParam(srcId, 'width', w);
+        state.setParam(srcId, 'height', h);
+        state.setParam(srcId, 'bitDepth', '8');
+
+        await state.runPreview();
+        expect(state.nodeRunOnGpu, isNotEmpty, reason: '预览后应有后端标记');
+        expect(state.nodeRunTimesUs, isNotEmpty, reason: '预览后应有耗时');
+
+        final playing = state.togglePlayback();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(state.isPlaying, isTrue);
+        expect(state.nodeRunOnGpu, isEmpty, reason: '播放中不应残留预览徽标');
+        expect(state.nodeRunTimesUs, isEmpty, reason: '播放中不应残留预览耗时');
+        state.stopPlayback();
+        await playing;
+      } finally {
+        await raw.delete();
+      }
+    });
+
     test('播放中同链仪器随帧刷新', () async {
       // 8x8、8bit、RGGB 共 3 帧，帧 k 为纯色 k*80（直方图随帧变化）。
       const w = 8, h = 8, frames = 3;

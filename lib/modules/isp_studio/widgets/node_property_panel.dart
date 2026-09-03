@@ -14,9 +14,9 @@ import '../pipeline/pipeline_runner.dart';
 import 'node_widget.dart' show formatNodeRunTime;
 
 /// 流程摘要列出的汇点类型：预览类节点（与 IspStudioState.runPreview 的
-/// 收集口径一致，新增预览类节点类型时需同步）+ 图像仪器（直方图/
-/// 示波器/矢量示波器/PSNR——其链在仪器分析时实际编译执行；音频仪器
-/// 不走帧流水线，不列出）。
+/// 收集口径一致，新增预览类节点类型时需同步）+ 图像仪器/评价算法
+/// （直方图/示波器/矢量示波器/PSNR/SSIM/MS-SSIM/FSIM/NIQE/最值保持器——
+/// 其链在仪器分析时实际编译执行；音频仪器不走帧流水线，不列出）。
 const _flowSinkTypeIds = {
   'preview',
   'hsl_debugger',
@@ -24,6 +24,7 @@ const _flowSinkTypeIds = {
   'yuv_debugger',
   'sat_bright_adjuster',
   'bright_contrast_adjuster',
+  'gaussian_blur',
   'color_balance',
   'color_temp_adjuster',
   'edge_extract',
@@ -32,6 +33,20 @@ const _flowSinkTypeIds = {
   'waveform',
   'vectorscope',
   'psnr',
+  'ssim',
+  'msssim',
+  'fsim',
+  'niqe',
+  'brisque',
+  'ilniqe',
+  'piqe',
+  'lpips',
+  'dists',
+  'fid',
+  'kid',
+  'musiq',
+  'clipiqa',
+  'minmax',
 };
 
 /// 右侧固定宽度属性面板。

@@ -1,0 +1,18 @@
+{
+  "images": {
+    "clean.feats": {
+      "file": "scratch/eval_a.png",
+      "width": 256,
+      "height": 192,
+      "feature_dim": 1024,
+      "score": 0.4798240661621094
+    },
+    "noisy.feats": {
+      "file": "scratch/eval_b.png",
+      "width": 256,
+      "height": 192,
+      "feature_dim": 1024,
+      "score": 0.22778423130512238
+    }
+  }
+}

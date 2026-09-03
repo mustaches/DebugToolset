@@ -1,6 +1,6 @@
-// 白平衡施加（GPU 版，对应 applyWhiteBalance）：R/B 通道乘增益、G 不动，
-// 四舍五入并钳位到 maxValue（CPU 为每通道 LUT，此处逐点计算等价）。
-// 增益统计（灰度世界）在 CPU 侧完成，经 uniform 传入。
+// 通道增益（GPU 版，对应 applyWhiteBalance / adjustRgb）：各通道乘增益、
+// 四舍五入并钳位到 maxValue（CPU 为每通道 LUT/逐点计算，此处等价）。
+// 白平衡用 R/B 增益（G 传 1.0）；RGB 调节器三通道独立。
 #include <flutter/runtime_effect.glsl>
 
 precision highp float;
@@ -11,6 +11,7 @@ uniform float uTexH;
 uniform float uWidth;
 uniform float uMaxValue;
 uniform float uRGain;
+uniform float uGGain;
 uniform float uBGain;
 uniform sampler2D uTex;
 
@@ -31,7 +32,7 @@ float fetchVal(int idx) {
 
 float kernel(int idx) {
   int ch = idx - idx / 3 * 3;
-  float gain = ch == 0 ? uRGain : (ch == 2 ? uBGain : 1.0);
+  float gain = ch == 0 ? uRGain : (ch == 2 ? uBGain : uGGain);
   float v = fetchVal(idx) * gain;
   return clamp(floor(v + 0.5), 0.0, uMaxValue);
 }

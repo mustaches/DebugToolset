@@ -1,0 +1,437 @@
+{
+  "seed": 0,
+  "nnw": "nn_ops_golden.nnw",
+  "cases": [
+    {
+      "name": "conv2d_3x3_s1_p1",
+      "op": "conv2d",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          1,
+          1
+        ],
+        "groups": 1
+      },
+      "inputs": {
+        "x": "conv2d_3x3_s1_p1.x",
+        "weight": "conv2d_3x3_s1_p1.weight",
+        "bias": "conv2d_3x3_s1_p1.bias"
+      },
+      "output": "conv2d_3x3_s1_p1.out"
+    },
+    {
+      "name": "conv2d_1x1",
+      "op": "conv2d",
+      "attrs": {
+        "kernel_size": [
+          1,
+          1
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          0,
+          0
+        ],
+        "groups": 1
+      },
+      "inputs": {
+        "x": "conv2d_1x1.x",
+        "weight": "conv2d_1x1.weight",
+        "bias": "conv2d_1x1.bias"
+      },
+      "output": "conv2d_1x1.out"
+    },
+    {
+      "name": "conv2d_3x3_s2_p0",
+      "op": "conv2d",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          2,
+          2
+        ],
+        "padding": [
+          0,
+          0
+        ],
+        "groups": 1
+      },
+      "inputs": {
+        "x": "conv2d_3x3_s2_p0.x",
+        "weight": "conv2d_3x3_s2_p0.weight",
+        "bias": "conv2d_3x3_s2_p0.bias"
+      },
+      "output": "conv2d_3x3_s2_p0.out"
+    },
+    {
+      "name": "conv2d_1x7_p0_3",
+      "op": "conv2d",
+      "attrs": {
+        "kernel_size": [
+          1,
+          7
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          0,
+          3
+        ],
+        "groups": 1
+      },
+      "inputs": {
+        "x": "conv2d_1x7_p0_3.x",
+        "weight": "conv2d_1x7_p0_3.weight",
+        "bias": "conv2d_1x7_p0_3.bias"
+      },
+      "output": "conv2d_1x7_p0_3.out"
+    },
+    {
+      "name": "conv2d_7x1_p3_0",
+      "op": "conv2d",
+      "attrs": {
+        "kernel_size": [
+          7,
+          1
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          3,
+          0
+        ],
+        "groups": 1
+      },
+      "inputs": {
+        "x": "conv2d_7x1_p3_0.x",
+        "weight": "conv2d_7x1_p3_0.weight",
+        "bias": "conv2d_7x1_p3_0.bias"
+      },
+      "output": "conv2d_7x1_p3_0.out"
+    },
+    {
+      "name": "conv2d_dw_3x3_s2_p1",
+      "op": "conv2d",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          2,
+          2
+        ],
+        "padding": [
+          1,
+          1
+        ],
+        "groups": 4
+      },
+      "inputs": {
+        "x": "conv2d_dw_3x3_s2_p1.x",
+        "weight": "conv2d_dw_3x3_s2_p1.weight",
+        "bias": "conv2d_dw_3x3_s2_p1.bias"
+      },
+      "output": "conv2d_dw_3x3_s2_p1.out"
+    },
+    {
+      "name": "maxpool2d_k2_s2",
+      "op": "maxpool2d",
+      "attrs": {
+        "kernel_size": [
+          2,
+          2
+        ],
+        "stride": [
+          2,
+          2
+        ],
+        "padding": [
+          0,
+          0
+        ]
+      },
+      "inputs": {
+        "x": "maxpool2d_k2_s2.x"
+      },
+      "output": "maxpool2d_k2_s2.out"
+    },
+    {
+      "name": "maxpool2d_k3_s2_p0",
+      "op": "maxpool2d",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          2,
+          2
+        ],
+        "padding": [
+          0,
+          0
+        ]
+      },
+      "inputs": {
+        "x": "maxpool2d_k3_s2_p0.x"
+      },
+      "output": "maxpool2d_k3_s2_p0.out"
+    },
+    {
+      "name": "maxpool2d_k3_s1_p1",
+      "op": "maxpool2d",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          1,
+          1
+        ]
+      },
+      "inputs": {
+        "x": "maxpool2d_k3_s1_p1.x"
+      },
+      "output": "maxpool2d_k3_s1_p1.out"
+    },
+    {
+      "name": "avgpool2d_k3_s1_p1_cip1",
+      "op": "avgpool2d",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          1,
+          1
+        ],
+        "count_include_pad": true
+      },
+      "inputs": {
+        "x": "avgpool2d_k3_s1_p1_cip1.x"
+      },
+      "output": "avgpool2d_k3_s1_p1_cip1.out"
+    },
+    {
+      "name": "avgpool2d_k3_s1_p1_cip0",
+      "op": "avgpool2d",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          1,
+          1
+        ],
+        "padding": [
+          1,
+          1
+        ],
+        "count_include_pad": false
+      },
+      "inputs": {
+        "x": "avgpool2d_k3_s1_p1_cip0.x"
+      },
+      "output": "avgpool2d_k3_s1_p1_cip0.out"
+    },
+    {
+      "name": "avgpool2d_k2_s2",
+      "op": "avgpool2d",
+      "attrs": {
+        "kernel_size": [
+          2,
+          2
+        ],
+        "stride": [
+          2,
+          2
+        ],
+        "padding": [
+          0,
+          0
+        ],
+        "count_include_pad": true
+      },
+      "inputs": {
+        "x": "avgpool2d_k2_s2.x"
+      },
+      "output": "avgpool2d_k2_s2.out"
+    },
+    {
+      "name": "adaptive_avgpool_1x1",
+      "op": "adaptive_avgpool2d",
+      "attrs": {
+        "output_size": [
+          1,
+          1
+        ]
+      },
+      "inputs": {
+        "x": "adaptive_avgpool_1x1.x"
+      },
+      "output": "adaptive_avgpool_1x1.out"
+    },
+    {
+      "name": "resize_bilinear_12x9_7x5",
+      "op": "resize_bilinear",
+      "attrs": {
+        "size": [
+          7,
+          5
+        ],
+        "align_corners": false
+      },
+      "inputs": {
+        "x": "resize_bilinear_12x9_7x5.x"
+      },
+      "output": "resize_bilinear_12x9_7x5.out"
+    },
+    {
+      "name": "resize_bicubic_12x9_7x5",
+      "op": "resize_bicubic",
+      "attrs": {
+        "size": [
+          7,
+          5
+        ],
+        "align_corners": false
+      },
+      "inputs": {
+        "x": "resize_bicubic_12x9_7x5.x"
+      },
+      "output": "resize_bicubic_12x9_7x5.out"
+    },
+    {
+      "name": "layernorm",
+      "op": "layernorm",
+      "attrs": {
+        "normalized_shape": [
+          24
+        ],
+        "eps": 1e-06
+      },
+      "inputs": {
+        "x": "layernorm.x",
+        "weight": "layernorm.weight",
+        "bias": "layernorm.bias"
+      },
+      "output": "layernorm.out"
+    },
+    {
+      "name": "groupnorm_g4",
+      "op": "groupnorm",
+      "attrs": {
+        "num_groups": 4,
+        "eps": 1e-06
+      },
+      "inputs": {
+        "x": "groupnorm_g4.x",
+        "weight": "groupnorm_g4.weight",
+        "bias": "groupnorm_g4.bias"
+      },
+      "output": "groupnorm_g4.out"
+    },
+    {
+      "name": "gelu_erf",
+      "op": "gelu",
+      "attrs": {
+        "approximate": "none"
+      },
+      "inputs": {
+        "x": "gelu_erf.x"
+      },
+      "output": "gelu_erf.out"
+    },
+    {
+      "name": "softmax_last",
+      "op": "softmax",
+      "attrs": {
+        "dim": -1
+      },
+      "inputs": {
+        "x": "softmax_last.x"
+      },
+      "output": "softmax_last.out"
+    },
+    {
+      "name": "linear",
+      "op": "linear",
+      "attrs": {
+        "in_features": 10,
+        "out_features": 6
+      },
+      "inputs": {
+        "x": "linear.x",
+        "weight": "linear.weight",
+        "bias": "linear.bias"
+      },
+      "output": "linear.out"
+    },
+    {
+      "name": "l2_normalize_channels",
+      "op": "l2_normalize_channels",
+      "attrs": {
+        "dim": 1,
+        "eps": 1e-10
+      },
+      "inputs": {
+        "x": "l2_normalize_channels.x"
+      },
+      "output": "l2_normalize_channels.out"
+    },
+    {
+      "name": "l2pooling_dists",
+      "op": "l2pooling_dists",
+      "attrs": {
+        "kernel_size": [
+          3,
+          3
+        ],
+        "stride": [
+          2,
+          2
+        ],
+        "padding": [
+          1,
+          1
+        ],
+        "sqrt_eps": 1e-12
+      },
+      "inputs": {
+        "x": "l2pooling_dists.x",
+        "weight": "l2pooling_dists.weight"
+      },
+      "output": "l2pooling_dists.out"
+    }
+  ]
+}

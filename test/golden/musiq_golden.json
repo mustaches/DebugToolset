@@ -1,0 +1,200 @@
+{
+  "images": {
+    "clean": {
+      "file": "scratch/eval_a.png",
+      "width": 256,
+      "height": 192,
+      "total_seq": 241,
+      "scales": [
+        {
+          "scale_id": 0,
+          "longer_side": 224,
+          "rh": 168,
+          "rw": 224,
+          "count_h": 6,
+          "count_w": 7,
+          "real_patches": 42,
+          "seq_len": 49,
+          "hse_first": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            7,
+            8,
+            10
+          ],
+          "hse_last": [
+            84,
+            85,
+            87,
+            88
+          ]
+        },
+        {
+          "scale_id": 1,
+          "longer_side": 384,
+          "rh": 288,
+          "rw": 384,
+          "count_h": 9,
+          "count_w": 12,
+          "real_patches": 108,
+          "seq_len": 144,
+          "hse_first": [
+            0,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            5
+          ],
+          "hse_last": [
+            86,
+            87,
+            88,
+            89
+          ]
+        },
+        {
+          "scale_id": 2,
+          "longer_side": null,
+          "rh": 192,
+          "rw": 256,
+          "count_h": 6,
+          "count_w": 8,
+          "real_patches": 48,
+          "seq_len": 48,
+          "hse_first": [
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            8
+          ],
+          "hse_last": [
+            85,
+            86,
+            87,
+            88
+          ]
+        }
+      ],
+      "mask_sum": 198,
+      "tok_indices": [
+        0,
+        1,
+        41,
+        48,
+        49,
+        192,
+        193,
+        240
+      ],
+      "score": 22.499778747558594
+    },
+    "noisy": {
+      "file": "scratch/eval_b.png",
+      "width": 256,
+      "height": 192,
+      "total_seq": 241,
+      "scales": [
+        {
+          "scale_id": 0,
+          "longer_side": 224,
+          "rh": 168,
+          "rw": 224,
+          "count_h": 6,
+          "count_w": 7,
+          "real_patches": 42,
+          "seq_len": 49,
+          "hse_first": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            7,
+            8,
+            10
+          ],
+          "hse_last": [
+            84,
+            85,
+            87,
+            88
+          ]
+        },
+        {
+          "scale_id": 1,
+          "longer_side": 384,
+          "rh": 288,
+          "rw": 384,
+          "count_h": 9,
+          "count_w": 12,
+          "real_patches": 108,
+          "seq_len": 144,
+          "hse_first": [
+            0,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            5
+          ],
+          "hse_last": [
+            86,
+            87,
+            88,
+            89
+          ]
+        },
+        {
+          "scale_id": 2,
+          "longer_side": null,
+          "rh": 192,
+          "rw": 256,
+          "count_h": 6,
+          "count_w": 8,
+          "real_patches": 48,
+          "seq_len": 48,
+          "hse_first": [
+            0,
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            8
+          ],
+          "hse_last": [
+            85,
+            86,
+            87,
+            88
+          ]
+        }
+      ],
+      "mask_sum": 198,
+      "tok_indices": [
+        0,
+        1,
+        41,
+        48,
+        49,
+        192,
+        193,
+        240
+      ],
+      "score": 21.41221809387207
+    }
+  }
+}

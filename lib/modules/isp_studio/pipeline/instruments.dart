@@ -33,6 +33,7 @@ Uint8List downsample2x2(Uint8List rgba, int width, int height) {
 
 /// 合并条带并行分析的分片结果：直方图与波形的计数表按行条带各自
 /// 统计，逐元素相加即得全帧结果（各分片的 columns/桶数一致）。
+/// 最值保持器的 min/max 标量分别取各分片最小/最大。
 /// 矢量示波器是扫描轨迹连线、不可按条带拆分，不走这里。
 Map<String, Object?> mergeInstrumentResults(
     List<Map<String, Object?>> parts) {
@@ -47,6 +48,13 @@ Map<String, Object?> mergeInstrumentResults(
         dst[i] += src[i];
       }
     }
+    // 最值保持器（minmax）的标量：max 取各片最大、min 取各片最小。
+    final hi = parts[p]['max'];
+    final lo = parts[p]['min'];
+    final hi0 = first['max'];
+    final lo0 = first['min'];
+    if (hi is int && hi0 is int && hi > hi0) first['max'] = hi;
+    if (lo is int && lo0 is int && lo < lo0) first['min'] = lo;
   }
   return first;
 }
@@ -351,6 +359,100 @@ void _aaSegment(Uint32List counts, int x0, int y0, int x1, int y1) {
   counts[y1 * kVectorscopeSize + x1] += _kAaFullWeight;
 }
 
+/// 最值保持器（minmax）：Mono 单通道链末端色调映射帧的灰度最值
+/// （mono 出图 R=G=B，扫 R 通道即可）。返回 (最小值, 最大值)，
+/// 均为 0..255。空帧返回 (0, 0)。
+(int, int) minmaxMono(Uint8List rgba) {
+  if (rgba.length < 4) return (0, 0);
+  var min = 255;
+  var max = 0;
+  for (var i = 0; i + 2 < rgba.length; i += 4) {
+    final v = rgba[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return (min, max);
+}
+
+/// 从 RGBA8888 显示帧提取单通道灰度图（R=G=B=通道值，alpha=255）。
+///
+/// 播放/暂停时仪器馈源复用预览节点的色调映射帧（按预览节点 id 键控、
+/// 无端口维度）：接在分路器通道输出（out_r/g/b、out_y/u/v、out_h/s/l）
+/// 下的多台仪器会解析到同一帧，不做通道提取时读到完全相同的数值。
+/// [channel] ∈ 'r'/'g'/'b'/'y'/'u'/'v'/'h'/'s'/'l'；YUV 为 BT.601
+/// 全范围（U/V 以 128 为零点）、HSL 的 H/S/L 映射到 0..255，口径与
+/// 16 位 CSC 核（rgbToYuv/rgbToHsl，isp_kernels.dart）一致。
+/// 未知通道原样返回（调用侧保证只传上述通道）。
+Uint8List extractChannelGray(Uint8List rgba, String channel) {
+  final out = Uint8List(rgba.length);
+  switch (channel) {
+    case 'r' || 'g' || 'b':
+      final off = channel == 'r' ? 0 : (channel == 'g' ? 1 : 2);
+      for (var i = 0; i + 3 < rgba.length; i += 4) {
+        final v = rgba[i + off];
+        out[i] = v;
+        out[i + 1] = v;
+        out[i + 2] = v;
+        out[i + 3] = 255;
+      }
+    case 'y' || 'u' || 'v':
+      // BT.601 全范围（同 rgbToYuv 的定点系数，8 位量级）。
+      for (var i = 0; i + 3 < rgba.length; i += 4) {
+        final r = rgba[i];
+        final g = rgba[i + 1];
+        final b = rgba[i + 2];
+        var v = switch (channel) {
+          'y' => (19595 * r + 38470 * g + 7471 * b + 32768) >> 16,
+          'u' => ((-11058 * r - 21710 * g + 32768 * b + 32768) >> 16) + 128,
+          _ => ((32768 * r - 27439 * g - 5329 * b + 32768) >> 16) + 128,
+        };
+        if (v < 0) {
+          v = 0;
+        } else if (v > 255) {
+          v = 255;
+        }
+        out[i] = v;
+        out[i + 1] = v;
+        out[i + 2] = v;
+        out[i + 3] = 255;
+      }
+    case 'h' || 's' || 'l':
+      // 标准 HSL（同 rgbToHsl）：H/S/L ∈ 0..1 映射到 0..255。
+      for (var i = 0; i + 3 < rgba.length; i += 4) {
+        final r = rgba[i] / 255.0;
+        final g = rgba[i + 1] / 255.0;
+        final b = rgba[i + 2] / 255.0;
+        final mx = math.max(r, math.max(g, b));
+        final mn = math.min(r, math.min(g, b));
+        final l = (mx + mn) / 2;
+        var h = 0.0;
+        var s = 0.0;
+        final d = mx - mn;
+        if (d > 0) {
+          s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+          if (mx == r) {
+            h = ((g - b) / d) % 6;
+          } else if (mx == g) {
+            h = (b - r) / d + 2;
+          } else {
+            h = (r - g) / d + 4;
+          }
+          h /= 6;
+          if (h < 0) h += 1;
+        }
+        final t = channel == 'h' ? h : (channel == 's' ? s : l);
+        final v = (t * 255).round().clamp(0, 255);
+        out[i] = v;
+        out[i + 1] = v;
+        out[i + 2] = v;
+        out[i + 3] = 255;
+      }
+    default:
+      return rgba;
+  }
+  return out;
+}
+
 /// ---------------------------------------------------------------------------
 /// 计数表 → 显示用 RGBA 亮度图（对数刻度）。
 /// 纯 Dart，在仪器 worker isolate 侧渲染，UI 只做 decodeImageFromPixels。
@@ -467,4 +569,339 @@ void _drawChannelInto(
   final mse = sum / count;
   if (mse == 0) return (0.0, double.infinity);
   return (mse, 10 * math.log(255 * 255 / mse) / math.ln10);
+}
+
+/// SSIM 块边长（非重叠块 MSSIM 近似）。
+const int _kSsimBlock = 8;
+
+/// SSIM（结构相似度，Wang 04）：两幅 RGBA8888 图（同尺寸）按 R/G/B
+/// 三通道分别在不重叠 8×8 块上计算块 SSIM（C1=(0.01·255)²，
+/// C2=(0.03·255)²，总体方差），返回 (全部块与通道的均值, R 均值,
+/// G 均值, B 均值)。两图完全相同为 1.0；宽高不足一个块时整幅为单块。
+/// 用于评估图像噪声/压缩损伤的结构保真度：数值越大越接近参考图。
+(double, double, double, double) ssimRgba(
+    Uint8List a, Uint8List b, int width, int height) {
+  const c1 = 6.5025; // (0.01·255)²
+  const c2 = 58.5225; // (0.03·255)²
+  final bw = width < _kSsimBlock ? width : _kSsimBlock;
+  final bh = height < _kSsimBlock ? height : _kSsimBlock;
+  if (bw <= 0 || bh <= 0) return (1.0, 1.0, 1.0, 1.0);
+  final sum = [0.0, 0.0, 0.0];
+  final cnt = [0, 0, 0];
+  for (var by = 0; by + bh <= height; by += bh) {
+    for (var bx = 0; bx + bw <= width; bx += bw) {
+      final n = bw * bh;
+      for (var c = 0; c < 3; c++) {
+        var sa = 0.0, sb = 0.0, saa = 0.0, sbb = 0.0, sab = 0.0;
+        for (var y = by; y < by + bh; y++) {
+          var i = (y * width + bx) * 4 + c;
+          for (var x = 0; x < bw; x++, i += 4) {
+            final va = a[i];
+            final vb = b[i];
+            sa += va;
+            sb += vb;
+            saa += va * va;
+            sbb += vb * vb;
+            sab += va * vb;
+          }
+        }
+        final ma = sa / n;
+        final mb = sb / n;
+        final va = saa / n - ma * ma;
+        final vb = sbb / n - mb * mb;
+        final cov = sab / n - ma * mb;
+        final ssim = ((2 * ma * mb + c1) * (2 * cov + c2)) /
+            ((ma * ma + mb * mb + c1) * (va + vb + c2));
+        sum[c] += ssim;
+        cnt[c]++;
+      }
+    }
+  }
+  if (cnt[0] == 0) return (1.0, 1.0, 1.0, 1.0);
+  final sr = sum[0] / cnt[0];
+  final sg = sum[1] / cnt[1];
+  final sb = sum[2] / cnt[2];
+  return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
+/// MS-SSIM 各尺度权重（Wang 03，5 尺度）；尺度不足时截断并归一化。
+const _msssimWeights = [0.0448, 0.2856, 0.3001, 0.2363, 0.1333];
+
+/// 单通道平面 2×2 均值降采样（宽高减半，奇数边裁掉）。
+Uint8List _downsample2xPlane(Uint8List p, int w, int h) {
+  final w2 = w ~/ 2;
+  final h2 = h ~/ 2;
+  final out = Uint8List(w2 * h2);
+  for (var y = 0; y < h2; y++) {
+    var i = y * 2 * w;
+    for (var x = 0; x < w2; x++, i += 2) {
+      out[y * w2 + x] = (p[i] + p[i + 1] + p[i + w] + p[i + w + 1] + 2) >> 2;
+    }
+  }
+  return out;
+}
+
+/// 单尺度单通道（w*h 平面）：8×8 非重叠块的平均亮度项 l 与平均
+/// 对比度-结构项 cs（与 [ssimRgba] 同块统计口径）。
+(double, double) _ssimBlockTerms(Uint8List a, Uint8List b, int w, int h) {
+  const c1 = 6.5025; // (0.01·255)²
+  const c2 = 58.5225; // (0.03·255)²
+  var lSum = 0.0, csSum = 0.0;
+  var cnt = 0;
+  for (var by = 0; by + _kSsimBlock <= h; by += _kSsimBlock) {
+    for (var bx = 0; bx + _kSsimBlock <= w; bx += _kSsimBlock) {
+      const n = _kSsimBlock * _kSsimBlock;
+      var sa = 0.0, sb = 0.0, saa = 0.0, sbb = 0.0, sab = 0.0;
+      for (var y = by; y < by + _kSsimBlock; y++) {
+        var i = y * w + bx;
+        for (var x = 0; x < _kSsimBlock; x++, i++) {
+          final va = a[i];
+          final vb = b[i];
+          sa += va;
+          sb += vb;
+          saa += va * va;
+          sbb += vb * vb;
+          sab += va * vb;
+        }
+      }
+      final ma = sa / n;
+      final mb = sb / n;
+      final va = saa / n - ma * ma;
+      final vb = sbb / n - mb * mb;
+      final cov = sab / n - ma * mb;
+      lSum += (2 * ma * mb + c1) / (ma * ma + mb * mb + c1);
+      csSum += (2 * cov + c2) / (va + vb + c2);
+      cnt++;
+    }
+  }
+  if (cnt == 0) return (1.0, 1.0);
+  return (lSum / cnt, csSum / cnt);
+}
+
+/// MS-SSIM（多尺度结构相似度，Wang 03）：两幅 RGBA8888 图（同尺寸）
+/// 按 R/G/B 三通道分别在逐级 2× 降采样的多尺度上计算——每尺度的
+/// 对比度-结构项 cs 按权重累乘，亮度项 l 只取最粗尺度
+/// （MS-SSIM = Π cs_j^wj · l_M^wM）；尺度数上限 5（图像太小放不下
+/// 8×8 块时提前停止），权重截断归一化。返回 (总体, R, G, B)；
+/// 完全相同为 1.0。比单尺度 SSIM 更适合多分辨率/不同观看距离下的
+/// 结构信息评估。
+(double, double, double, double) msssimRgba(
+    Uint8List a, Uint8List b, int width, int height) {
+  if (width < _kSsimBlock || height < _kSsimBlock) {
+    // 不足一个块：退化为单尺度 SSIM。
+    return ssimRgba(a, b, width, height);
+  }
+  final perChannel = <double>[];
+  for (var c = 0; c < 3; c++) {
+    var pa = Uint8List(width * height);
+    var pb = Uint8List(width * height);
+    for (var i = 0, j = c; i < pa.length; i++, j += 4) {
+      pa[i] = a[j];
+      pb[i] = b[j];
+    }
+    // 逐尺度统计（亮度项只保留当级值，循环结束即最粗尺度）。
+    final csList = <double>[];
+    var lLast = 1.0;
+    var cw = width, ch = height;
+    while (cw >= _kSsimBlock &&
+        ch >= _kSsimBlock &&
+        csList.length < _msssimWeights.length) {
+      final (l, cs) = _ssimBlockTerms(pa, pb, cw, ch);
+      csList.add(cs.clamp(0.0, 1.0));
+      lLast = l.clamp(0.0, 1.0);
+      if (csList.length == _msssimWeights.length) break;
+      pa = _downsample2xPlane(pa, cw, ch);
+      pb = _downsample2xPlane(pb, cw, ch);
+      cw ~/= 2;
+      ch ~/= 2;
+    }
+    // 权重截断归一化后累乘：cs 每尺度都参与，l 只取最粗尺度。
+    var wSum = 0.0;
+    for (var j = 0; j < csList.length; j++) {
+      wSum += _msssimWeights[j];
+    }
+    var msssim = 1.0;
+    for (var j = 0; j < csList.length; j++) {
+      final wj = _msssimWeights[j] / wSum;
+      msssim *= math.pow(csList[j], wj);
+    }
+    msssim *= math.pow(lLast, _msssimWeights[csList.length - 1] / wSum);
+    perChannel.add(msssim.toDouble());
+  }
+  final sr = perChannel[0];
+  final sg = perChannel[1];
+  final sb = perChannel[2];
+  return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
+/// ---------------------------------------------------------------------------
+/// FSIM（特征相似度，Zhang 11 结构的实用简化版）：相位一致性（PC）用
+/// 空间域双尺度正交对近似（奇=Scharr 梯度幅度、偶=|Laplacian| 的局部
+/// 能量/幅度比），梯度幅度（GM）用 /16 归一化 Scharr。
+/// ---------------------------------------------------------------------------
+
+/// FSIM 常量（Zhang 11）：T1 为 PC 项常数，T2 为梯度项常数。
+const double _kFsimT1 = 0.85;
+const double _kFsimT2 = 160.0;
+
+/// 3×3 盒式模糊写入 [out]，[tmp] 为水平趟缓冲。
+/// 边界为窗截断（仅平均图内像素，与 `lib` 原 2-D 实现口径一致）。
+/// 盒式核可分离：水平均值 + 垂直均值，与 2-D 逐点均值数学等价
+/// （每像素约 4 次加法代替 9 次）。
+void _boxBlur3Into(
+    Float64List p, int w, int h, Float64List out, Float64List tmp) {
+  for (var y = 0; y < h; y++) {
+    final row = y * w;
+    for (var x = 0; x < w; x++) {
+      final x0 = x > 0 ? x - 1 : 0;
+      final x1 = x < w - 1 ? x + 1 : w - 1;
+      var s = p[row + x];
+      if (x0 != x) s += p[row + x0];
+      if (x1 != x) s += p[row + x1];
+      tmp[row + x] = s / (x1 - x0 + 1);
+    }
+  }
+  for (var y = 0; y < h; y++) {
+    final y0 = y > 0 ? y - 1 : 0;
+    final y1 = y < h - 1 ? y + 1 : h - 1;
+    final r0 = y0 * w, r1 = y * w, r2 = y1 * w;
+    final n = y1 - y0 + 1;
+    for (var x = 0; x < w; x++) {
+      var s = tmp[r1 + x];
+      if (y0 != y) s += tmp[r0 + x];
+      if (y1 != y) s += tmp[r2 + x];
+      out[r1 + x] = s / n;
+    }
+  }
+}
+
+/// Scharr 梯度幅度（/16 归一化）与 |4 邻域 Laplacian|（均边界复制）
+/// 单趟同算：两者邻域相同，合并省一趟索引计算。
+void _scharrAndLap(
+    Float64List p, int w, int h, Float64List mag, Float64List lap) {
+  for (var y = 0; y < h; y++) {
+    final y0 = (y > 0 ? y - 1 : 0) * w;
+    final y1 = y * w;
+    final y2 = (y < h - 1 ? y + 1 : h - 1) * w;
+    for (var x = 0; x < w; x++) {
+      final x0 = x > 0 ? x - 1 : 0;
+      final x1 = x < w - 1 ? x + 1 : w - 1;
+      final gx = (3 * p[y0 + x1] + 10 * p[y1 + x1] + 3 * p[y2 + x1]) -
+          (3 * p[y0 + x0] + 10 * p[y1 + x0] + 3 * p[y2 + x0]);
+      final gy = (3 * p[y2 + x0] + 10 * p[y2 + x] + 3 * p[y2 + x1]) -
+          (3 * p[y0 + x0] + 10 * p[y0 + x] + 3 * p[y0 + x1]);
+      final i = y1 + x;
+      mag[i] = math.sqrt(gx * gx + gy * gy) / 16;
+      lap[i] =
+          (4 * p[i] - p[y1 + x0] - p[y1 + x1] - p[y0 + x] - p[y2 + x]).abs();
+    }
+  }
+}
+
+/// 简化相位一致性（Kovesi 局部能量形式的双尺度空间域近似）：
+/// 正交对取 奇=Scharr 梯度幅度、偶=|Laplacian|，细尺度（原图）+
+/// 粗尺度（3×3 模糊后）；PC = ΣE / (ΣA + ε)，E 为正交对能量、
+/// A 为其幅度和。PC ∈ [0,1]，对比度缩放不变，边缘/线条/角点处高。
+/// PC 写入 [pcOut]，细尺度梯度幅度写入 [gmOut]（GM 供 FSIM 的梯度项
+/// 复用）；[s1]/[s2]/[s3] 为调用侧跨通道复用的工作平面。
+void _pcAndGm(Float64List p, int w, int h, Float64List pcOut,
+    Float64List gmOut, Float64List s1, Float64List s2, Float64List s3) {
+  // gmOut = odd1（细尺度梯度幅度），s1 = even1（细尺度 |Laplacian|）。
+  _scharrAndLap(p, w, h, gmOut, s1);
+  // s2 = 3×3 模糊图（s3 为水平趟缓冲）。
+  _boxBlur3Into(p, w, h, s2, s3);
+  // pcOut 暂存 odd2，s3 转作 even2（粗尺度正交对）。
+  _scharrAndLap(s2, w, h, pcOut, s3);
+  for (var i = 0; i < pcOut.length; i++) {
+    final e = math.sqrt(gmOut[i] * gmOut[i] + s1[i] * s1[i]) +
+        math.sqrt(pcOut[i] * pcOut[i] + s3[i] * s3[i]);
+    final a = gmOut[i] + s1[i] + pcOut[i] + s3[i];
+    pcOut[i] = e / (a + 1e-4);
+  }
+}
+
+/// 单通道 FSIM：S_L = S_PC·S_G 逐像素相乘，以 PCm = max(PC1, PC2)
+/// 为权重做加权平均。两图均无特征（平坦）时分母为 0——结构项全为
+/// 1，按定义返回 1.0（FSIM 对纯亮度差异不敏感，与论文行为一致）。
+/// 工作平面由 [fsimRgba] 统一分配并跨通道复用（大帧下避免每通道
+/// 十余个全帧平面的反复分配）。
+double _fsimChannel(Float64List pa, Float64List pb, int w, int h,
+    Float64List pc1, Float64List g1, Float64List pc2, Float64List g2,
+    Float64List s1, Float64List s2, Float64List s3) {
+  _pcAndGm(pa, w, h, pc1, g1, s1, s2, s3);
+  _pcAndGm(pb, w, h, pc2, g2, s1, s2, s3);
+  var num = 0.0, den = 0.0;
+  for (var i = 0; i < pa.length; i++) {
+    final spc = (2 * pc1[i] * pc2[i] + _kFsimT1) /
+        (pc1[i] * pc1[i] + pc2[i] * pc2[i] + _kFsimT1);
+    final sg = (2 * g1[i] * g2[i] + _kFsimT2) /
+        (g1[i] * g1[i] + g2[i] * g2[i] + _kFsimT2);
+    final pcm = math.max(pc1[i], pc2[i]);
+    num += spc * sg * pcm;
+    den += pcm;
+  }
+  return den <= 0 ? 1.0 : num / den;
+}
+
+/// FSIM（特征相似度）：两幅 RGBA8888 图（同尺寸）按 R/G/B 三通道
+/// 分别计算并返回 (总体, R, G, B)；完全相同为 1.0。相位一致性 +
+/// 梯度幅度对边缘与细节敏感，适合纹理丰富图像的质量评估。
+/// PC 为空间域简化实现（见 [_pcAndGm]），与频域 log-Gabor 版本在
+/// 边缘排序上一致、绝对值口径不同。
+(double, double, double, double) fsimRgba(
+    Uint8List a, Uint8List b, int width, int height) {
+  if (width <= 0 || height <= 0 || a.isEmpty || b.isEmpty) {
+    return (1.0, 1.0, 1.0, 1.0);
+  }
+  // 工作平面一次分配、跨通道复用（9 个全帧平面；此前每对通道分配 14 个全帧平面，大帧下分配/GC 开销显著）。
+  final n = width * height;
+  final pa = Float64List(n);
+  final pb = Float64List(n);
+  final pc1 = Float64List(n);
+  final g1 = Float64List(n);
+  final pc2 = Float64List(n);
+  final g2 = Float64List(n);
+  final s1 = Float64List(n);
+  final s2 = Float64List(n);
+  final s3 = Float64List(n);
+  final perChannel = <double>[];
+  for (var c = 0; c < 3; c++) {
+    for (var i = 0, j = c; i < n; i++, j += 4) {
+      pa[i] = a[j].toDouble();
+      pb[i] = b[j].toDouble();
+    }
+    perChannel.add(
+        _fsimChannel(pa, pb, width, height, pc1, g1, pc2, g2, s1, s2, s3));
+  }
+  final sr = perChannel[0];
+  final sg = perChannel[1];
+  final sb = perChannel[2];
+  return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
+/// compute() 入口：双输入评价指标（PSNR/SSIM/MS-SSIM/FSIM）在后台
+/// isolate 计算，避免大帧指标阻塞 UI isolate。
+/// [msg] = `{'kind': 'psnr'|'ssim'|'msssim'|'fsim', 'ref': Uint8List,
+/// 'test': Uint8List, 'width': int, 'height': int}`（ref/test 同尺寸，
+/// 调用侧已完成降采样与尺寸校验）；返回 `{'kind': kind, ...指标}`，
+/// 结果键与各指标直接调用时一致。
+@pragma('vm:entry-point')
+Map<String, Object?> dualMetricInIsolate(Map<String, Object?> msg) {
+  final kind = msg['kind'] as String;
+  final ra = msg['ref'] as Uint8List;
+  final ta = msg['test'] as Uint8List;
+  final w = msg['width'] as int;
+  final h = msg['height'] as int;
+  if (kind == 'psnr') {
+    final (mse, psnr) = psnrRgba(ra, ta);
+    return {'kind': kind, 'psnr': psnr, 'mse': mse};
+  }
+  if (kind == 'fsim') {
+    final (v, fr, fg, fb) = fsimRgba(ra, ta, w, h);
+    return {'kind': kind, 'fsim': v, 'fsimR': fr, 'fsimG': fg, 'fsimB': fb};
+  }
+  // SSIM/MS-SSIM 共用结果键（ssim/ssimR/ssimG/ssimB）。
+  final (v, sr, sg, sb) =
+      kind == 'msssim' ? msssimRgba(ra, ta, w, h) : ssimRgba(ra, ta, w, h);
+  return {'kind': kind, 'ssim': v, 'ssimR': sr, 'ssimG': sg, 'ssimB': sb};
 }

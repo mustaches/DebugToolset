@@ -106,6 +106,7 @@ flutter:
     - shaders/isp/isp_yuv_gains.frag
     - shaders/isp/isp_edge_extract.frag
     - shaders/isp/isp_morphology.frag
+    - shaders/isp/isp_gaussian_blur.frag
     - shaders/isp/isp_multiply_mono.frag
     - shaders/isp/isp_blend_mono.frag
     - shaders/isp/isp_blender.frag
@@ -116,6 +117,11 @@ flutter:
     - shaders/isp/isp_fluoro_temporal.frag
     - shaders/isp/isp_pseudo_color.frag
     - shaders/isp/isp_fluoro_fusion.frag
+    - shaders/nn/nn_conv3x3_f16.frag
+    - shaders/nn/nn_relu_f16.frag
+    - shaders/nn/nn_maxpool2x2_f16.frag
+    - shaders/nn/nn_l2pool_dists_f16.frag
+    - shaders/nn/nn_stitch3_f16.frag
 
   # To add assets to your application, add an assets section, like this:
   # assets:

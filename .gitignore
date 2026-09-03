@@ -60,3 +60,6 @@ app.*.map.json
 # ISP 冒烟测试输出
 /scratch/isp_smoke_out/
 Linux_setup/Output/
+
+# IQA 权重导出产物（.nnw，一次性工具生成，不入库）
+/tools/iqa/weights/

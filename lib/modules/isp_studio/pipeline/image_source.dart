@@ -39,6 +39,24 @@ Future<(Uint16List, int, int)> decodeImageFileToRgb16(
   return (out, w, h);
 }
 
+/// 解码图片文件为 RGBA8888（长度 w*h*4），返回 (数据, 宽, 高)。
+///
+/// 供预览运行期「一次解码、多链共享」注入：调用方解码一次后经
+/// sourceRgba 注入各预览链（链内再按位深放大到 16 位量级），避免
+/// 每条链对同一文件重复完整解码。高位深图片同样先降为 8 位，与
+/// [decodeImageFileToRgb16] 口径一致。
+Future<(Uint8List, int, int)> decodeImageFileToRgba8(String path) async {
+  final file = File(path);
+  if (!await file.exists()) throw StateError('图片文件不存在: $path');
+  final bytes = await file.readAsBytes();
+  var image = img.decodeImage(bytes);
+  if (image == null) {
+    throw StateError('无法解码图片文件（支持 BMP/JPG/PNG/GIF）: $path');
+  }
+  image = image.convert(format: img.Format.uint8, numChannels: 4);
+  return (image.toUint8List(), image.width, image.height);
+}
+
 /// 图片文件的像素尺寸（完整解码，开销可接受）。
 Future<(int, int)> imageFileDimensions(String path) async {
   final file = File(path);

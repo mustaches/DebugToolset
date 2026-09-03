@@ -804,6 +804,184 @@ const String _psnrCode = r'''
 }
 ''';
 
+/// 最值保持器（instruments.dart）。
+const String _minmaxCode = r'''
+/// 最值保持器：Mono 单通道链末端色调映射灰度帧（R=G=B，扫 R 通道）
+/// 的当前帧最大/最小值（0..255）；UI 侧跨帧保持历史极值
+/// （holdMax/holdMin），节点上的复位按钮清零后从当帧重新累计。
+(int, int) minmaxMono(Uint8List rgba) {
+  // 逐像素扫 R 通道取最小/最大；空帧返回 (0, 0)。
+}
+''';
+
+/// SSIM 数字表（instruments.dart）。
+const String _ssimCode = r'''
+/// SSIM（结构相似度，Wang 04）：参考图（in*）与测试图（in_test*）
+/// 各取链末端色调映射 RGBA（与直方图同一数据口径），按 R/G/B 三
+/// 通道在不重叠 8×8 块上计算块 SSIM 并取均值；完全相同为 1.0。
+(double, double, double, double) ssimRgba(
+    Uint8List a, Uint8List b, int width, int height) {
+  // 块 SSIM = (2μaμb+C1)(2σab+C2) / (μa²+μb²+C1)(σa²+σb²+C2)；
+  // C1=(0.01·255)²，C2=(0.03·255)²，返回 (总体, R, G, B) 均值。
+}
+''';
+
+/// MS-SSIM 数字表（instruments.dart）。
+const String _msssimCode = r'''
+/// MS-SSIM（多尺度结构相似度，Wang 03）：参考图（in*）与测试图
+/// （in_test*）各取链末端色调映射 RGBA（与直方图同一数据口径），
+/// 逐级 2× 降采样（最多 5 尺度，权重截断归一化）：每尺度的
+/// 对比度-结构项 cs 按权重累乘，亮度项 l 只取最粗尺度
+/// （MS-SSIM = Π cs_j^wj · l_M^wM）；完全相同为 1.0。
+(double, double, double, double) msssimRgba(
+    Uint8List a, Uint8List b, int width, int height) {
+  // 块统计同 ssimRgba（8×8 非重叠块）；cs 与 l 逐尺度计算，
+  // 返回 (总体, R, G, B) 三通道均值。
+}
+''';
+
+/// FSIM 数字表（instruments.dart）。
+const String _fsimCode = r'''
+/// FSIM（特征相似度，Zhang 11 结构的实用简化版）：参考图（in*）与
+/// 测试图（in_test*）各取链末端色调映射 RGBA（与直方图同一数据
+/// 口径），按 R/G/B 三通道计算特征相似度并取均值；完全相同为 1.0。
+/// S_PC = (2·PC1·PC2+T1)/(PC1²+PC2²+T1)，S_G = (2·G1·G2+T2)/(G1²+G2²+T2)，
+/// FSIM = Σ(S_PC·S_G·PCm)/ΣPCm，PCm = max(PC1, PC2)。
+/// PC 为双尺度空间域简化（Scharr 梯度 + |Laplacian| 的局部能量/幅度比），
+/// GM 为 /16 归一化 Scharr 梯度幅度；T1=0.85，T2=160。
+(double, double, double, double) fsimRgba(
+    Uint8List a, Uint8List b, int width, int height) {
+  // 返回 (总体, R, G, B)；两图均无特征（平坦）时为 1.0。
+}
+''';
+
+/// NIQE 数字表（niqe.dart + niqe_model.dart）。
+const String _niqeCode = r'''
+/// NIQE（自然图像质量评价器，Mittal 13，无参考）：链末端色调映射
+/// RGBA → BT.601 亮度 → 2 尺度 MSCN 系数的 NSS 特征（36 维：GGD
+/// 形状/方差 + 4 方向邻积 AGGD），与官方 pristine 语料预训练
+/// 多元高斯模型（niqe_model.dart）的马氏距离；越大越差。
+double niqeScore(Uint8List rgba, int width, int height) {
+  // 分块 96×96（不足时整幅单块兜底）；score =
+  // sqrt((μp-μd)' · inv((Σp+Σd)/2) · (μp-μd))；图太小返回 NaN。
+}
+''';
+
+/// BRISQUE 数字表（brisque.dart + brisque_model.dart）。
+const String _brisqueCode = r'''
+/// BRISQUE（空间域盲质量评价器，Mittal 12，无参考）：链末端色调映射
+/// RGBA → 灰度（0..1）→ 2 尺度 MSCN 的 NSS 特征（36 维：AGGD 形状/
+/// 方差 + 4 方向邻积 AGGD）→ [-1,1] 归一化 → 官方预训练
+/// epsilon-SVR（RBF 核，γ=0.05，brisque_model.dart）回归；
+/// 0..100，越小越好。AGGD 右侧含零值（z>=0）。
+double brisqueScore(Uint8List rgba, int width, int height) {
+  // score = Σ coef·exp(-γ‖x-sv‖²) - ρ；特征退化返回 NaN。
+}
+''';
+
+/// ILNIQE 数字表（ilniqe.dart + ilniqe_model.dart）。
+const String _ilniqeCode = r'''
+/// ILNIQE（特征增强型盲质量评价器，Zhang 15，无参考）：RGB → MATLAB
+/// 风格抗锯齿双三次缩放归一化到 524×524 → 2 尺度 109 通道复合特征
+/// （O3 亮度 MSCN / 对立色高斯导数梯度 / 对数通道强度·BY·RG /
+/// 3 尺度 × 4 方向 log-Gabor 频域滤波响应及导数与梯度）→ 84×84
+/// 分块 234 维特征（AGGD/Weibull/均值方差）→ 拼接 468 维 → 官方
+/// 预训练 PCA（→430 维）→ 与 pristine 语料 MVG 模型的逐块马氏
+/// 距离均值；越大越差。
+double ilniqeScore(Uint8List rgba, int width, int height) {
+  // 计算量大（FFT 滤波器组 + MVG 评分），在独立 isolate 运行
+  // （ilniqeScoreInIsolate），不走 5s 超时的仪器 worker。
+}
+''';
+
+/// PIQE 数字表（piqe.dart）。
+const String _piqeCode = r'''
+/// PIQE（感知质量评价器，Venkatanath 15，无参考、无需模型）：灰度 →
+/// 按图最大值归一化 → 对称填充到 16 的整数倍 → 7×7 高斯窗 MSCN →
+/// 16×16 分块：方差超阈值的活跃块按「块效应（边缘段标准差）」与
+/// 「高斯噪声（中心-surround 标准差比）」两条判据分类失真，按块
+/// 方差加权汇总；Score = (distorted + 1) / (NHSA + 1) × 100，
+/// 0..100 越小越好；平坦图按定义得 100。
+double piqeScore(Uint8List rgba, int width, int height) {
+  // 纯空间域计算，无模型参数；失真块判据见论文式 (1)(2)。
+}
+''';
+
+/// LPIPS 数字表（Python 桥接：pyiqa_worker.dart + tools/iqa/iqa_bridge.py）。
+const String _lpipsCode = r'''
+/// LPIPS（学习感知图像块相似度，Zhang 18）：参考图（in*）与测试图
+/// （in_test*）各取链末端色调映射 RGBA（与直方图同一数据口径，大帧
+/// 2x 降采样），VGG 各层特征的归一化 L2 距离加权和（0..~1，越小
+/// 越好）；与 PSNR/SSIM 相比同人眼感知的相关性更高。
+/// torch 模型无法在 Dart 内计算：帧写临时 PNG，经 stdin/stdout
+/// JSON 行协议发给常驻 Python 桥接进程（lpips 包，net='vgg'）出分。
+Future<double> lpipsScore(String refPng, String testPng) {
+  // 见 tools/iqa/iqa_bridge.py（_LpipsPair.pair）。
+}
+''';
+
+/// DISTS 数字表（Python 桥接，同 LPIPS 路径）。
+const String _distsCode = r'''
+/// DISTS（深度图像结构与纹理相似度，Ding 20）：参考图（in*）与测试
+/// 图（in_test*）各取链末端色调映射 RGBA（与直方图同一数据口径，
+/// 大帧 2x 降采样），VGG 特征图的全局均值（结构）与通道协方差
+/// （纹理）两级相似度加权和（0..~1，越小越好）；对纹理替换/
+/// 重采样稳健。计算经 Python 桥接进程（pyiqa 'dists'）。
+Future<double> distsScore(String refPng, String testPng) {
+  // 见 tools/iqa/iqa_bridge.py（_PyiqaPair('dists')）。
+}
+''';
+
+/// FID 数字表（Python 桥接，分布级：逐块累计）。
+const String _fidCode = r'''
+/// FID（Fréchet Inception 距离，Heusel 17）：参考路（in*）与测试路
+/// （in_test*）图像在 InceptionV3 pool3（2048 维）特征空间的两个
+/// 高斯（μ,Σ）之间的 Fréchet 距离（≥0，越小越好）。分布级指标，
+/// 样本单位为图像块：每帧按 ≤299×299（Inception 输入尺寸）50% 重叠
+/// 切块累计（patch-FID 口径），静态图片对单次运行即可出分；视频源
+/// 播放时逐帧（逐块）累计，样本越多越准。新一轮运行先复位。
+/// 计算经 Python 桥接进程（pyiqa InceptionV3 + torchmetrics FID）。
+Future<double> fidScore(List<String> refPngs, List<String> testPngs) {
+  // 见 tools/iqa/iqa_bridge.py（_DistMetric('fid')）。
+}
+''';
+
+/// KID 数字表（Python 桥接，分布级：逐块累计）。
+const String _kidCode = r'''
+/// KID（Kernel Inception 距离，Bińkowski 18）：参考路（in*）与测试路
+/// （in_test*）图像的 InceptionV3 pool3 特征间多项式核
+/// ((x·y/d+1)³) MMD 无偏估计（≥0，越小越好）；与 FID 同为分布级
+/// 指标，但小样本集偏差更小。样本单位为图像块（≤299²、50% 重叠，
+/// 同 FID）；静态图片对单次运行即可出分，视频源播放逐帧累计；
+/// 新一轮运行先复位，subset_size 随样本量自适应。
+/// 计算经 Python 桥接进程（pyiqa InceptionV3 + torchmetrics KID）。
+Future<double> kidScore(List<String> refPngs, List<String> testPngs) {
+  // 见 tools/iqa/iqa_bridge.py（_DistMetric('kid')）。
+}
+''';
+
+/// MUSIQ 数字表（Python 桥接）。
+const String _musiqCode = r'''
+/// MUSIQ（多尺度图像质量 Transformer，Ke 21，无参考）：链末端色调映射 RGBA（与直方图
+/// 同一数据口径，大帧 2x 降采样）→ 多尺度 patch Transformer（koniq10k 预训练）
+/// 的质量分（~0..100，越大越好）。torch 模型无法在 Dart 内计算，经 Python 桥接
+/// 进程（pyiqa 'musiq'，koniq10k 预训练）出分。
+Future<double> musiqScore(String rgbaPng) {
+  // 见 tools/iqa/iqa_bridge.py（_PyiqaSingle('musiq')。
+}
+''';
+
+/// CLIPIQA 数字表（Python 桥接）。
+const String _clipiqaCode = r'''
+/// CLIPIQA（CLIP 无参考质量评价，Wang 22）：链末端色调映射 RGBA → CLIP RN50
+/// 图像特征与「好/差照片」提示对的文本特征的相似度（0..1，越大
+/// 越好）。torch 模型无法在 Dart 内计算，经 Python 桥接进程
+/// （pyiqa 'clipiqa'）出分。
+Future<double> clipiqaScore(String rgbaPng) {
+  // 见 tools/iqa/iqa_bridge.py（_PyiqaSingle('clipiqa')）。
+}
+''';
+
 /// 仪器节点共用的输入：链末端色调映射后的 RGBA8888 显示帧。
 const String _instrumentCode = r'''
 /// RGB+Y 直方图：返回 (R, G, B, Y) 四个 256 桶计数（Y 为 BT.601 亮度，
@@ -1324,6 +1502,24 @@ void applySharpen(
 }
 ''';
 
+/// 高斯模糊（isp_kernels.dart）。
+const String _gaussianBlurCode = r'''
+/// 高斯模糊：可分离两趟高斯卷积（水平 + 垂直），核半径 ⌈3σ⌉、
+/// 归一化权重，边界复制；RGB/YUV/HSL 三通道交织逐通道独立，
+/// Mono 单通道（channels=1）。
+/// out = in×(1−strength) + blurred×strength（强度混合）。
+void applyGaussianBlur(
+  Uint16List data, {
+  required int width,
+  required int height,
+  int channels = 3,
+  double sigma = 1.0,
+  double strength = 1.0,
+}) {
+  // 水平趟 data→tmp，垂直趟 tmp→data（含强度混合，原地写回）。
+}
+''';
+
 /// 腐蚀/膨胀（isp_kernels.dart）。
 const String _morphologyCode = r'''
 /// 形态学腐蚀/膨胀：方形结构元 (2×radius+1)² 的逐通道极小（erode）/
@@ -1790,6 +1986,7 @@ const Map<String, String> nodeSourceCode = {
   'highlight': _highlightCode,
   'rgb_dnr': _rgbDnrCode,
   'sharpen': _sharpenCode,
+  'gaussian_blur': _gaussianBlurCode,
   'morphology': _morphologyCode,
   'edge_extract': _edgeExtractCode,
   'csc_rgb2yuv': _cscCode,
@@ -1826,6 +2023,20 @@ const Map<String, String> nodeSourceCode = {
   'waveform': _instrumentCode,
   'vectorscope': _instrumentCode,
   'psnr': _psnrCode,
+  'ssim': _ssimCode,
+  'msssim': _msssimCode,
+  'fsim': _fsimCode,
+  'niqe': _niqeCode,
+  'brisque': _brisqueCode,
+  'ilniqe': _ilniqeCode,
+  'piqe': _piqeCode,
+  'lpips': _lpipsCode,
+  'dists': _distsCode,
+  'fid': _fidCode,
+  'kid': _kidCode,
+  'musiq': _musiqCode,
+  'clipiqa': _clipiqaCode,
+  'minmax': _minmaxCode,
   'image_output': _imageOutputCode,
   'video_output': _videoOutputCode,
   'audio_level': _audioLevelCode,
@@ -1868,6 +2079,17 @@ const List<CodeVariable> _instrumentInputs = [
   CodeVariable(name: 'rgba', type: 'Uint8List', value: '链末端 RGBA8888 显示帧'),
   CodeVariable(name: 'width', type: 'int', value: '帧宽'),
   CodeVariable(name: 'height', type: 'int', value: '帧高'),
+];
+
+/// 双输入评价数字表（LPIPS/DISTS/FID/KID）共用输入：参考/测试两路
+/// 链末端显示帧 + 帧尺寸（两路一致）。
+const List<CodeVariable> _dualEvalInputs = [
+  CodeVariable(
+      name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+  CodeVariable(
+      name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+  CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
+  CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
 ];
 
 /// RAW 域算子（dpc/fpn/lsc/grgb_balance/bayer_dnr/highlight）共用输入：
@@ -1933,6 +2155,17 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'amount', type: 'double', value: '锐化强度（节点参数）'),
     CodeVariable(name: 'threshold', type: 'double', value: '噪声门限（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'gaussian_blur': [
+    CodeVariable(
+        name: 'data',
+        type: 'Uint16List',
+        value: '帧数据（RGB/YUV/HSL 交织 w*h*3，Mono 单通道 w*h）'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高'),
+    CodeVariable(name: 'channels', type: 'int', value: '通道数（mono=1，其余=3）'),
+    CodeVariable(name: 'sigma', type: 'double', value: '高斯 σ（节点参数）'),
+    CodeVariable(name: 'strength', type: 'double', value: '混合强度（节点参数）'),
   ],
   'morphology': [
     CodeVariable(
@@ -2213,6 +2446,41 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
     CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
   ],
+  'ssim': [
+    CodeVariable(
+        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+    CodeVariable(
+        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
+  ],
+  'msssim': [
+    CodeVariable(
+        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+    CodeVariable(
+        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
+  ],
+  'fsim': [
+    CodeVariable(
+        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+    CodeVariable(
+        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+    CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
+    CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
+  ],
+  'niqe': _instrumentInputs,
+  'brisque': _instrumentInputs,
+  'ilniqe': _instrumentInputs,
+  'piqe': _instrumentInputs,
+  'lpips': _dualEvalInputs,
+  'dists': _dualEvalInputs,
+  'fid': _dualEvalInputs,
+  'kid': _dualEvalInputs,
+  'musiq': _instrumentInputs,
+  'clipiqa': _instrumentInputs,
+  'minmax': _instrumentInputs,
   'image_output': [
     CodeVariable(name: 'rgba', type: 'Uint8List', value: 'RGBA8888 帧（w*h*4）'),
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
@@ -2320,6 +2588,12 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   ],
   'sharpen': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: '锐化后（原地修改）'),
+  ],
+  'gaussian_blur': [
+    CodeVariable(
+        name: 'data', type: 'Uint16List', value: '高斯模糊后（原地修改，格式同输入）'),
+    CodeVariable(
+        name: 'out_mono', type: 'Uint16List', value: '亮度单通道（非 mono 输入时提取登记）'),
   ],
   'morphology': [
     CodeVariable(
@@ -2460,6 +2734,64 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'psnr': [
     CodeVariable(name: 'psnr', type: 'double', value: '峰值信噪比（dB，完全相同为 ∞）'),
     CodeVariable(name: 'mse', type: 'double', value: 'RGB 三通道均方误差'),
+  ],
+  'ssim': [
+    CodeVariable(name: 'ssim', type: 'double', value: '结构相似度（0..1，完全相同为 1.0）'),
+    CodeVariable(name: 'ssimR', type: 'double', value: 'R 通道 SSIM'),
+    CodeVariable(name: 'ssimG', type: 'double', value: 'G 通道 SSIM'),
+    CodeVariable(name: 'ssimB', type: 'double', value: 'B 通道 SSIM'),
+  ],
+  'msssim': [
+    CodeVariable(name: 'ssim', type: 'double', value: '多尺度结构相似度（0..1，完全相同为 1.0）'),
+    CodeVariable(name: 'ssimR', type: 'double', value: 'R 通道 MS-SSIM'),
+    CodeVariable(name: 'ssimG', type: 'double', value: 'G 通道 MS-SSIM'),
+    CodeVariable(name: 'ssimB', type: 'double', value: 'B 通道 MS-SSIM'),
+  ],
+  'fsim': [
+    CodeVariable(name: 'fsim', type: 'double', value: '特征相似度（0..1，完全相同为 1.0）'),
+    CodeVariable(name: 'fsimR', type: 'double', value: 'R 通道 FSIM'),
+    CodeVariable(name: 'fsimG', type: 'double', value: 'G 通道 FSIM'),
+    CodeVariable(name: 'fsimB', type: 'double', value: 'B 通道 FSIM'),
+  ],
+  'niqe': [
+    CodeVariable(name: 'niqe', type: 'double', value: 'NIQE 质量分（无参考，越小越好；无法计算为 NaN）'),
+  ],
+  'brisque': [
+    CodeVariable(name: 'brisque', type: 'double', value: 'BRISQUE 质量分（无参考，0..100 越小越好；无法计算为 NaN）'),
+  ],
+  'ilniqe': [
+    CodeVariable(name: 'ilniqe', type: 'double', value: 'ILNIQE 质量分（无参考，越大越差；无法计算为 NaN）'),
+  ],
+  'piqe': [
+    CodeVariable(name: 'piqe', type: 'double', value: 'PIQE 质量分（无参考，0..100 越小越好）'),
+  ],
+  'lpips': [
+    CodeVariable(name: 'lpips', type: 'double', value: 'LPIPS 感知差异（0..~1，越小越好）'),
+  ],
+  'dists': [
+    CodeVariable(name: 'dists', type: 'double', value: 'DISTS 深度结构/纹理差异（0..~1，越小越好）'),
+  ],
+  'fid': [
+    CodeVariable(name: 'fid', type: 'double', value: 'FID 分布距离（≥0，越小越好；样本不足时不出分）'),
+    CodeVariable(name: 'n_ref', type: 'int', value: '参考侧累计样本数（299² 图像块）'),
+    CodeVariable(name: 'n_test', type: 'int', value: '测试侧累计样本数（299² 图像块）'),
+  ],
+  'kid': [
+    CodeVariable(name: 'kid', type: 'double', value: 'KID 分布距离（≥0，越小越好；样本不足时不出分）'),
+    CodeVariable(name: 'n_ref', type: 'int', value: '参考侧累计样本数（299² 图像块）'),
+    CodeVariable(name: 'n_test', type: 'int', value: '测试侧累计样本数（299² 图像块）'),
+  ],
+  'musiq': [
+    CodeVariable(name: 'musiq', type: 'double', value: 'MUSIQ 质量分（无参考，~0..100，越大越好）'),
+  ],
+  'clipiqa': [
+    CodeVariable(name: 'clipiqa', type: 'double', value: 'CLIPIQA 质量分（无参考，0..1，越大越好）'),
+  ],
+  'minmax': [
+    CodeVariable(name: 'min', type: 'int', value: '当前帧最小值（0..255）'),
+    CodeVariable(name: 'max', type: 'int', value: '当前帧最大值（0..255）'),
+    CodeVariable(name: 'holdMin', type: 'int', value: '跨帧保持最小值（UI 侧累计）'),
+    CodeVariable(name: 'holdMax', type: 'int', value: '跨帧保持最大值（UI 侧累计）'),
   ],
   'image_output': [
     CodeVariable(

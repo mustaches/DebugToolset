@@ -19,6 +19,13 @@ const double kPortRowHeight = 22;
 const Map<String, List<int>> kPortGroupGapRows = {
   'blender': [4, 5],
   'psnr': [4], // 参考图/测试图两组输入之间
+  'ssim': [4], // 同 PSNR：参考/测试两组输入之间
+  'msssim': [4], // 同 PSNR：参考/测试两组输入之间
+  'fsim': [4], // 同 PSNR：参考/测试两组输入之间
+  'lpips': [4], // 同 PSNR：参考/测试两组输入之间
+  'dists': [4], // 同 PSNR：参考/测试两组输入之间
+  'fid': [4], // 同 PSNR：参考/测试两组输入之间
+  'kid': [4], // 同 PSNR：参考/测试两组输入之间
   'mux4': [4, 8, 12], // 源1/源2/源3/源4 四组输入之间
 };
 
@@ -40,6 +47,7 @@ double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
       type.typeId == 'yuv_debugger' ||
       type.typeId == 'sat_bright_adjuster' ||
       type.typeId == 'bright_contrast_adjuster' ||
+      type.typeId == 'gaussian_blur' ||
       type.typeId == 'color_balance' ||
       type.typeId == 'color_temp_adjuster' ||
       type.typeId == 'edge_extract' ||

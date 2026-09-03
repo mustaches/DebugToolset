@@ -816,6 +816,45 @@ abstract final class IspNodeRegistry {
         ),
       ],
     ),
+    // ---- 高斯模糊：可分离高斯卷积（核半径 ⌈3σ⌉，边界复制），
+    // RGB/YUV/HSL/Mono 四域通用（互斥输入组 + 同格式四路输出），
+    // 逐通道独立；strength 为原图/模糊图混合强度；节点内嵌双联
+    // 对比预览（左调整前/右调整后）+ σ/强度两行滑块 ----
+    'gaussian_blur': IspNodeType(
+      typeId: 'gaussian_blur',
+      displayName: '高斯模糊',
+      colorValue: 0xFF665A5E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'out_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'out_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'sigma',
+          label: 'σ',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0.1,
+          max: 10,
+        ),
+        IspParamSpec(
+          key: 'strength',
+          label: '强度',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 1,
+        ),
+      ],
+    ),
     // ---- 高频边缘提取：亮度高通黑底白线边缘图（detail 按邻域均值
     // 归一化为相对对比度 rel，相对门限 rel < threshold/maxValue 置零，
     // 输出 gain×√rel×maxValue 显示压缩；与 sharpen 同一 detail 定义，
@@ -1858,6 +1897,227 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
       ],
     ),
+    // ---- SSIM 数字表：双输入仪器（同 PSNR 数字表的端口布局与数据
+    // 口径），显示结构相似度（0..1，完全相同为 1.0）与 R/G/B 分通道
+    // 值，评估图像噪声/压缩损伤的结构保真度。只进不出 ----
+    'ssim': IspNodeType(
+      typeId: 'ssim',
+      displayName: 'SSIM 数字表',
+      colorValue: 0xFF5E4A7A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+      ],
+    ),
+    // ---- MS-SSIM 数字表：双输入仪器（同 PSNR/SSIM 数字表的端口布局
+    // 与数据口径），逐级 2× 降采样多尺度结构相似度（0..1，完全相同
+    // 为 1.0），用于多分辨率场景的结构信息评估。只进不出 ----
+    'msssim': IspNodeType(
+      typeId: 'msssim',
+      displayName: 'MS-SSIM 数字表',
+      colorValue: 0xFF7A4A6E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+      ],
+    ),
+    // ---- FSIM 数字表：双输入仪器（同 PSNR/SSIM 数字表的端口布局与
+    // 数据口径），特征相似度（相位一致性 + 梯度幅度，0..1，完全相同
+    // 为 1.0），对边缘和细节敏感，适合纹理丰富图像。只进不出 ----
+    'fsim': IspNodeType(
+      typeId: 'fsim',
+      displayName: 'FSIM 数字表',
+      colorValue: 0xFF4A7A6E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+      ],
+    ),
+    // ---- NIQE 数字表：无参考评价仪器（单输入，四域选一），NSS 特征
+    // 与 pristine 预训练模型的马氏距离（越大越差）。只进不出 ----
+    'niqe': IspNodeType(
+      typeId: 'niqe',
+      displayName: 'NIQE 数字表',
+      colorValue: 0xFF6E7A4A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
+    // ---- BRISQUE 数字表：无参考评价仪器（单输入，四域选一），空间域
+    // NSS 特征 + SVM 回归的质量分（0..100，越小越好）。只进不出 ----
+    'brisque': IspNodeType(
+      typeId: 'brisque',
+      displayName: 'BRISQUE 数字表',
+      colorValue: 0xFF8E6E4E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
+    // ---- ILNIQE 数字表：无参考评价仪器（单输入，四域选一），改进的
+    // NIQE（含颜色/纹理的 468 维特征 + PCA + MVG 模型），更全面但
+    // 计算量稍大（内部归一化到 524×524，分值越大越差）。只进不出 ----
+    'ilniqe': IspNodeType(
+      typeId: 'ilniqe',
+      displayName: 'ILNIQE 数字表',
+      colorValue: 0xFF5E7A5E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
+    // ---- PIQE 数字表：无参考评价仪器（单输入，四域选一），感知质量
+    // 评价（块级失真估计，无需模型/训练），0..100 越小越好。
+    // 只进不出 ----
+    'piqe': IspNodeType(
+      typeId: 'piqe',
+      displayName: 'PIQE 数字表',
+      colorValue: 0xFF8E4A5E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
+    // ---- LPIPS 数字表：双输入深度评价（端口布局同 PSNR），VGG 特征
+    // 感知差异（0..~1，越小越好）。经 Python 桥接进程计算
+    // （pyiqa_worker.dart + tools/iqa/iqa_bridge.py），需 Python 环境。
+    // 只进不出 ----
+    'lpips': IspNodeType(
+      typeId: 'lpips',
+      displayName: 'LPIPS 数字表',
+      colorValue: 0xFF4A5E8E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+      ],
+    ),
+    // ---- DISTS 数字表：双输入深度评价（同 LPIPS 的端口与桥接路径），
+    // 深度纹理与结构相似度（0..~1，越小越好），对纹理替换/重采样
+    // 稳健。需 Python 环境。只进不出 ----
+    'dists': IspNodeType(
+      typeId: 'dists',
+      displayName: 'DISTS 数字表',
+      colorValue: 0xFF6E4A8E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+      ],
+    ),
+    // ---- FID 数字表：双输入分布级评价（同 LPIPS 的端口与桥接路径），
+    // 两路帧集 Inception 特征的 Fréchet 距离（≥0，越小越好）；
+    // 视频源逐帧累计样本（图片源单帧无法出分，需 ≥2 帧/侧）。
+    // 需 Python 环境。只进不出 ----
+    'fid': IspNodeType(
+      typeId: 'fid',
+      displayName: 'FID 数字表',
+      colorValue: 0xFF8E7A3E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+      ],
+    ),
+    // ---- KID 数字表：双输入分布级评价（同 FID 的端口与桥接路径），两路帧集 Inception
+    // 特征的多项式核 MMD 距离（≥0，越小越好）；小样本集偏差小于 FID。视频源逐帧
+    // 累计样本（需 ≥2 帧/侧）。需 Python 环境。只进不出 ----
+    'kid': IspNodeType(
+      typeId: 'kid',
+      displayName: 'KID 数字表',
+      colorValue: 0xFF3E7A6E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: '参考 RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: '参考 YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
+        IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
+        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
+        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
+        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+      ],
+    ),
+    // ---- MUSIQ 数字表：无参考深度评价（单输入，四域选一），多尺度
+    // Transformer 质量分（koniq10k 预训练，~0..100，越大越好）。
+    // 经 Python 桥接进程计算，需 Python 环境。只进不出 ----
+    'musiq': IspNodeType(
+      typeId: 'musiq',
+      displayName: 'MUSIQ 数字表',
+      colorValue: 0xFF7A5E3E,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
+    // ---- CLIPIQA 数字表：无参考深度评价（单输入，四域选一），基于
+    // CLIP（RN50）的感知质量分（0..1，越大越好）。经 Python 桥接进程
+    // 计算，需 Python 环境。只进不出 ----
+    'clipiqa': IspNodeType(
+      typeId: 'clipiqa',
+      displayName: 'CLIPIQA 数字表',
+      colorValue: 0xFF5E4A7A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
+        IspPortSpec(name: 'in_yuv', type: IspPortType.yuv, label: 'YUV'),
+        IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: 'HSL'),
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
+    // ---- 最值保持器：Mono 单通道仪器——统计链末端色调映射灰度帧
+    // （与直方图同一数据口径）的当前帧最大/最小值，并跨帧保持历史
+    // 极值（节点上复位按钮清零重新累计）。只进不出 ----
+    'minmax': IspNodeType(
+      typeId: 'minmax',
+      displayName: '最值保持器',
+      colorValue: 0xFF7A6E4A,
+      inputs: [
+        IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
+      ],
+    ),
     'waveform': IspNodeType(
       typeId: 'waveform',
       displayName: '示波器',
@@ -2151,9 +2411,31 @@ abstract final class IspNodeRegistry {
   static IspNodeType? byId(String typeId) => types[typeId];
 }
 
-/// 仪器类节点（直方图/示波器/矢量示波器）：只进不出的分析汇点，
-/// 节点内嵌分析结果显示区。
-const instrumentTypes = {'histogram', 'waveform', 'vectorscope', 'psnr'};
+/// 仪器类节点（直方图/示波器/矢量示波器/PSNR/SSIM/MS-SSIM/FSIM/NIQE/
+/// BRISQUE/ILNIQE/PIQE/LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA/最值保持器）：
+/// 只进不出的分析汇点，节点内嵌分析结果显示区。
+/// 其中 LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA 经 Python 桥接进程计算
+/// （pyiqa_worker.dart + tools/iqa/iqa_bridge.py），需 Python 环境。
+const instrumentTypes = {
+  'histogram',
+  'waveform',
+  'vectorscope',
+  'psnr',
+  'ssim',
+  'msssim',
+  'fsim',
+  'niqe',
+  'brisque',
+  'ilniqe',
+  'piqe',
+  'lpips',
+  'dists',
+  'fid',
+  'kid',
+  'musiq',
+  'clipiqa',
+  'minmax',
+};
 
 /// 音频类仪器节点（电平/波形/EQ 频谱）：数据来自视频音轨 PCM 而非
 /// 图像帧，走独立的刷新路径（isp_studio_state._runAudioInstruments）。

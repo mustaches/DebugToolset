@@ -776,6 +776,13 @@ Uint8List yuvToRgba(
   return (dst, outW, outH);
 }
 
+/// compute() 入口：后台 isolate 内执行 [downsampleRgba82x]。
+/// 大帧（如 20MP ≈ 81MB）降采样在 UI isolate 同步执行会阻塞事件
+/// 循环造成掉帧，仪器馈源路径一律经此入口在后台执行。
+(Uint8List, int, int) downsampleRgba82xInIsolate(Map<String, Object?> args) =>
+    downsampleRgba82x(
+        args['src'] as Uint8List, args['width'] as int, args['height'] as int);
+
 /// 步长抽样降采样（RGBA8888）：一趟把 (w, h) 抽成 (w/step, h/step)。
 /// 仪器分析输入用：多级 2x 降采样的第一级要读全帧（4K ≈ 33MB），
 /// 改为按最终倍率点采样后，读取量与输出尺寸成正比。
@@ -2139,6 +2146,77 @@ void applySharpen(
       rgb[i] = _clampTo(rgb[i] * scale, maxValue);
       rgb[i + 1] = _clampTo(rgb[i + 1] * scale, maxValue);
       rgb[i + 2] = _clampTo(rgb[i + 2] * scale, maxValue);
+    }
+  }
+}
+
+/// 高斯模糊（gaussian_blur）：可分离两趟高斯卷积（水平 + 垂直），
+/// 核半径 ⌈3σ⌉、归一化权重，边界复制；交织多通道逐通道独立处理。
+/// out = in×(1−strength) + blurred×strength（强度混合，1 = 全模糊）。
+/// 高斯权重为凸组合，不产生超范围值，无需钳位。
+void applyGaussianBlur(
+  Uint16List data, {
+  required int width,
+  required int height,
+  int channels = 3,
+  double sigma = 1.0,
+  double strength = 1.0,
+}) {
+  if (strength <= 0 || sigma <= 0) return;
+  final radius = (3 * sigma).ceil();
+  final kLen = 2 * radius + 1;
+  final kernel = Float64List(kLen);
+  var kSum = 0.0;
+  for (var i = -radius; i <= radius; i++) {
+    final v = math.exp(-(i * i) / (2 * sigma * sigma));
+    kernel[i + radius] = v;
+    kSum += v;
+  }
+  for (var i = 0; i < kLen; i++) {
+    kernel[i] /= kSum;
+  }
+  // 水平趟：data → tmp（边界复制）。
+  final tmp = Float64List(data.length);
+  for (var y = 0; y < height; y++) {
+    final row = y * width * channels;
+    for (var x = 0; x < width; x++) {
+      final x0 = x - radius < 0 ? 0 : x - radius;
+      final x1 = x + radius >= width ? width - 1 : x + radius;
+      for (var c = 0; c < channels; c++) {
+        var acc = 0.0;
+        for (var k = 0; k < kLen; k++) {
+          var xx = x + k - radius;
+          if (xx < x0) {
+            xx = x0;
+          } else if (xx > x1) {
+            xx = x1;
+          }
+          acc += data[row + xx * channels + c] * kernel[k];
+        }
+        tmp[row + x * channels + c] = acc;
+      }
+    }
+  }
+  // 垂直趟：tmp → data（含强度混合，原地写回）。
+  for (var y = 0; y < height; y++) {
+    final y0 = y - radius < 0 ? 0 : y - radius;
+    final y1 = y + radius >= height ? height - 1 : y + radius;
+    for (var x = 0; x < width; x++) {
+      for (var c = 0; c < channels; c++) {
+        var acc = 0.0;
+        for (var k = 0; k < kLen; k++) {
+          var yy = y + k - radius;
+          if (yy < y0) {
+            yy = y0;
+          } else if (yy > y1) {
+            yy = y1;
+          }
+          acc += tmp[(yy * width + x) * channels + c] * kernel[k];
+        }
+        final i = (y * width + x) * channels + c;
+        final orig = data[i];
+        data[i] = (orig + (acc - orig) * strength).round();
+      }
     }
   }
 }

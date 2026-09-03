@@ -257,9 +257,9 @@ void main() {
 
     final palette = find.byType(IspNodePalette);
     expect(palette, findsOneWidget);
-    // 大类分组默认收起：五个顶级分组标题可见，节点项不可见。
+    // 大类分组默认收起：六个顶级分组标题可见，节点项不可见。
     for (final name in [
-      'Source', 'Process', 'Datapath', 'Output', 'Instrument'
+      'Source', 'Process', 'Datapath', 'Output', 'Instrument', 'Evaluation'
     ]) {
       expect(find.descendant(of: palette, matching: find.text(name)),
           findsOneWidget);
@@ -333,12 +333,65 @@ void main() {
       '直方图',
       '示波器',
       '矢量示波器',
+      '最值保持器',
       '音频电平',
       '音频波形',
       '音频EQ频谱',
     ]) {
       expect(find.descendant(of: palette, matching: find.text(name)),
           findsWidgets);
+    }
+
+    // Evaluation 分组：评价算法类数字表，按双输入/单输入两个嵌套
+    // 子类分组（子组默认展开）。
+    await expand('Evaluation');
+    for (final name in ['Dual-Input', 'Single-Input']) {
+      expect(find.descendant(of: palette, matching: find.text(name)),
+          findsOneWidget);
+    }
+    for (final name in [
+      'PSNR 数字表',
+      'SSIM 数字表',
+      'MS-SSIM 数字表',
+      'FSIM 数字表',
+      'LPIPS 数字表',
+      'DISTS 数字表',
+      'FID 数字表',
+      'KID 数字表',
+      'NIQE 数字表',
+      'BRISQUE 数字表',
+      'ILNIQE 数字表',
+      'PIQE 数字表',
+      'MUSIQ 数字表',
+      'CLIPIQA 数字表',
+    ]) {
+      expect(find.descendant(of: palette, matching: find.text(name)),
+          findsOneWidget);
+    }
+    // 悬浮说明：评价算法条目显示算法特性与适用场景。
+    for (final tip in [
+      '像素级均方误差',
+      '结构相似性',
+      '多尺度 SSIM',
+      '特征相似性',
+      '自然图像统计特征',
+      '空间域 NSS',
+      '改进的 NIQE',
+      '感知质量评价',
+      '学习感知差异',
+      '深度纹理与结构相似度',
+      '分布距离',
+      'MMD 距离',
+      'Transformer',
+      '基于 CLIP',
+    ]) {
+      expect(
+          find.descendant(
+              of: palette,
+              matching: find.byWidgetPredicate((w) =>
+                  w is Tooltip && (w.message?.contains(tip) ?? false))),
+          findsOneWidget,
+          reason: '应有包含「$tip」的悬浮说明');
     }
 
     // Bayer RAW 源不在工具栏（与 CIS Src 的 Bayer RGGB 重复）。

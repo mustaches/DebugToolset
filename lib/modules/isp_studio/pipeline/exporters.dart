@@ -23,6 +23,12 @@ Uint8List encodePngRgba(Uint8List rgba, int width, int height) {
   return img.encodePng(image);
 }
 
+/// compute() 入口：后台 isolate 内执行 [encodePngRgba]。
+/// 大图的纯 Dart deflate 编码在 UI isolate 同步执行会阻塞事件循环
+/// 数百毫秒，Python 桥接的临时 PNG 一律经此入口在后台编码。
+Uint8List encodePngRgbaInIsolate(Map<String, Object?> args) => encodePngRgba(
+    args['rgba'] as Uint8List, args['width'] as int, args['height'] as int);
+
 /// Encode an RGBA8888 buffer to JPEG. [quality] 1-100 (100 = best).
 /// 色度用 yuv420 二次抽样：JPEG 的标准做法，编码更快、文件更小，
 /// 视觉上与 yuv444 几乎无差别。

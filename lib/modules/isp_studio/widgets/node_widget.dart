@@ -15,6 +15,7 @@ import '../models/isp_node.dart';
 import '../pipeline/audio_analysis.dart';
 import '../pipeline/color_temp.dart';
 import '../pipeline/levels_curve.dart';
+import '../pipeline/pyiqa_worker.dart';
 import 'node_layout.dart';
 
 /// ISP Studio 节点控制条（Slider）的统一主题：滑钮（控制点）直径为
@@ -166,6 +167,8 @@ class IspNodeWidget extends StatelessWidget {
                     _buildSatBrightExtra(state),
                   if (type.typeId == 'bright_contrast_adjuster')
                     _buildBrightContrastExtra(state),
+                  if (type.typeId == 'gaussian_blur')
+                    _buildGaussianBlurExtra(state),
                   if (type.typeId == 'levels_curves')
                     _buildLevelsExtra(state),
                   if (type.typeId == 'color_balance')
@@ -329,6 +332,182 @@ class IspNodeWidget extends StatelessWidget {
                     ],
                   ),
       );
+    } else if (type.typeId == 'ssim' ||
+        type.typeId == 'msssim' ||
+        type.typeId == 'fsim') {
+      // SSIM/MS-SSIM/FSIM 数字表：大字号总体值 + R/G/B 分通道值；
+      // 未运行/缺输入/尺寸不一致分别显示提示。完全相同（1.0）以绿色突出。
+      final metric = switch (type.typeId) {
+        'ssim' => 'SSIM',
+        'msssim' => 'MS-SSIM',
+        _ => 'FSIM',
+      };
+      final result = state.instrumentResults[node.id];
+      final err = result?['error'] as String?;
+      // 结果键随指标命名（ssim*/fsim*），显示逻辑共享。
+      final ssim = (result?['ssim'] ?? result?['fsim']) as double?;
+      final sr = (result?['ssimR'] ?? result?['fsimR']) as double?;
+      final sg = (result?['ssimG'] ?? result?['fsimG']) as double?;
+      final sb = (result?['ssimB'] ?? result?['fsimB']) as double?;
+      content = Center(
+        child: result == null
+            ? hint
+            : err != null
+                ? Text(err,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.orangeAccent))
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        ssim!.toStringAsFixed(4),
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: ssim >= 1.0
+                              ? const Color(0xFF50C080)
+                              : Colors.white,
+                        ),
+                      ),
+                      Text(metric,
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey.shade400)),
+                      const SizedBox(height: 8),
+                      Text(
+                          'R ${sr!.toStringAsFixed(4)}  '
+                          'G ${sg!.toStringAsFixed(4)}  '
+                          'B ${sb!.toStringAsFixed(4)}',
+                          style: TextStyle(
+                              fontSize: 10, color: Colors.grey.shade500)),
+                    ],
+                  ),
+      );
+    } else if (type.typeId == 'niqe' ||
+        type.typeId == 'brisque' ||
+        type.typeId == 'ilniqe' ||
+        type.typeId == 'piqe') {
+      // NIQE/BRISQUE/ILNIQE/PIQE 数字表：无参考，大字号分值 + 标签；
+      // 越小越好（与其他数字表相反），NaN（图太小无法计算）显示 '—'。
+      final label = switch (type.typeId) {
+        'niqe' => 'NIQE',
+        'brisque' => 'BRISQUE',
+        'ilniqe' => 'ILNIQE',
+        _ => 'PIQE',
+      };
+      final result = state.instrumentResults[node.id];
+      final score = (result?[switch (type.typeId) {
+        'niqe' => 'niqe',
+        'brisque' => 'brisque',
+        'ilniqe' => 'ilniqe',
+        _ => 'piqe',
+      }]) as double?;
+      final valid = score != null && !score.isNaN;
+      content = Center(
+        child: result == null
+            ? hint
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    valid ? score.toStringAsFixed(2) : '—',
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Text(label,
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.grey.shade400)),
+                  const SizedBox(height: 8),
+                  Text(valid ? '越小越好' : '图像太小',
+                      style: TextStyle(
+                          fontSize: 10, color: Colors.grey.shade500)),
+                ],
+              ),
+      );
+    } else if (pyIqaMetrics.containsKey(type.typeId)) {
+      // 深度评价数字表（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA，Python 桥接）：
+      // 大字号分值 + 标签 + 方向提示；error（Python 环境缺失/输入未接等）
+      // 显示提示文本；FID/KID 附两侧样本计数，样本不足显示「累计中」。
+      final label = type.typeId.toUpperCase();
+      final info = pyIqaMetrics[type.typeId]!;
+      final result = state.instrumentResults[node.id];
+      final err = result?['error'] as String?;
+      final score = result?[type.typeId] as double?;
+      final nRef = result?['n_ref'] as int?;
+      final nTest = result?['n_test'] as int?;
+      content = Center(
+        child: result == null
+            ? hint
+            : err != null
+                ? Text(err,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.orangeAccent))
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        score != null ? score.toStringAsFixed(4) : '…',
+                        style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      Text(label,
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey.shade400)),
+                      const SizedBox(height: 8),
+                      Text(
+                        score != null
+                            ? (nRef != null
+                                ? '${info.lowerBetter ? '越小越好' : '越大越好'}'
+                                    '（${nRef}v${nTest ?? 0} 样本）'
+                                : (info.lowerBetter ? '越小越好' : '越大越好'))
+                            : '累计中（${nRef ?? 0}v${nTest ?? 0} 样本，≥2 出分）',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 10, color: Colors.grey.shade500)),
+                    ],
+                  ),
+      );
+    } else if (type.typeId == 'minmax') {
+      // 最值保持器：当前帧最大/最小 + 跨帧保持值（琥珀色突出），
+      // 复位按钮清空保持值（下一帧重新累计）。
+      final result = state.instrumentResults[node.id];
+      final curMax = result?['max'] as int?;
+      final curMin = result?['min'] as int?;
+      final holdMax = result?['holdMax'] as int?;
+      final holdMin = result?['holdMin'] as int?;
+      content = Center(
+        child: result == null
+            ? hint
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _minmaxLine('最大', curMax, holdMax),
+                  const SizedBox(height: 6),
+                  _minmaxLine('最小', curMin, holdMin),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 24,
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        foregroundColor: Colors.white70,
+                        side: BorderSide(color: Colors.grey.shade700),
+                      ),
+                      onPressed: () => state.resetMinmaxHold(node.id),
+                      child:
+                          const Text('复位', style: TextStyle(fontSize: 11)),
+                    ),
+                  ),
+                ],
+              ),
+      );
     } else if (type.typeId == 'audio_level') {
       final result = state.instrumentResults[node.id];
       // 表盘常显（与波形节点一致）：未运行时按静音状态绘制
@@ -432,6 +611,32 @@ class IspNodeWidget extends StatelessWidget {
             ),
           ),
           _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 最值保持器的一行读数：标签 + 当前帧值（白色大字）+ 保持值（琥珀色）。
+  /// FittedBox 缩放兜底：窄节点下数值过长时整体缩小而非溢出。
+  Widget _minmaxLine(String label, int? cur, int? hold) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Text(label,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade400)),
+          const SizedBox(width: 8),
+          Text('${cur ?? '--'}',
+              style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white)),
+          const SizedBox(width: 10),
+          Text('保持 ${hold ?? '--'}',
+              style: const TextStyle(fontSize: 10, color: Color(0xFFF0B050))),
         ],
       ),
     );
@@ -585,6 +790,7 @@ class IspNodeWidget extends StatelessWidget {
               type.typeId == 'yuv_debugger' ||
               type.typeId == 'sat_bright_adjuster' ||
               type.typeId == 'bright_contrast_adjuster' ||
+              type.typeId == 'gaussian_blur' ||
               type.typeId == 'edge_extract' ||
               type.typeId == 'levels_curves' ||
               allInstrumentTypes.contains(type.typeId))
@@ -1648,6 +1854,61 @@ class IspNodeWidget extends StatelessWidget {
               (v) => '×${v.toStringAsFixed(2)}'),
           _buildHslSliderRow(state, 'L', 'bright_gain', 0, 32, 1,
               (v) => '×${v.toStringAsFixed(2)}'),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 高斯模糊附加区：双联对比预览（左调整前/右调整后，与色饱和度/
+  /// 亮度调节器同一布局）+ σ/强度两行滑块 + 底部拖动手柄。
+  /// 图刷新走 [IspStudioState.frameTick]；拖动滑块只写参数，松手重跑。
+  Widget _buildGaussianBlurExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildGaussianBlurExtraContent(state),
+    );
+  }
+
+  Widget _buildGaussianBlurExtraContent(IspStudioState state) {
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    // 互斥输入组：in/in_yuv/in_hsl/in_mono 任一已连接即视为有输入。
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null ||
+        state.graph.connectionAt(node.id, 'in_yuv') != null ||
+        state.graph.connectionAt(node.id, 'in_hsl') != null ||
+        state.graph.connectionAt(node.id, 'in_mono') != null;
+    final extra = state.previewExtraHeight(node.id);
+    // 2 行滑块各 24，顶部留白 4，底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 * 2 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: imageHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链出图）；右半：调整后（输出链出图）。
+                  Expanded(
+                      child: _buildHslComparePane(inputImage, '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入')),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildHslComparePane(
+                          image, '调整后', '运行预览后显示效果')),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'σ', 'sigma', 0.1, 10, 1,
+              (v) => v.toStringAsFixed(1)),
+          _buildHslSliderRow(state, '强度', 'strength', 0, 1, 1,
+              (v) => '${(v * 100).toStringAsFixed(0)}%',
+              labelWidth: 26),
           // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
           _buildResizeBar(state),
         ],
