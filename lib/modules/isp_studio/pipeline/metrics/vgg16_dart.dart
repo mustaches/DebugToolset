@@ -107,6 +107,15 @@ class Vgg16Dart {
   }
 }
 
+/// 两阶段前向（优化 11：双图流水线）的句柄基类：持有
+/// [Vgg16AsyncForward.forwardSubmit] 已提交的 GPU 驻留切片纹理，供
+/// [Vgg16AsyncForward.forwardDownload] 回读。定义为纯 Dart 空基类以
+/// 保持本文件无 Flutter 依赖；实现侧（vgg16_gpu.dart）才携带
+/// GpuNnTensor 等 dart:ui 类型。
+abstract class Vgg16ForwardHandle {
+  const Vgg16ForwardHandle();
+}
+
 /// VGG16 前向的异步抽象（GPU 纹理驻留实现见 vgg16_gpu.dart）。定义为
 /// 纯 Dart 接口，以保持本文件（及 lpips_dart/dists_dart）无 Flutter
 /// 依赖、可在后台 isolate 加载；实现侧才引入 dart:ui。
@@ -120,6 +129,27 @@ abstract class Vgg16AsyncForward {
 
   /// 与 [Vgg16Dart.forward] 同构的异步前向：输入 [1,3,H,W]，返回
   /// relu1_2..relu5_3 共 5 个特征。任何一步不支持/失败都应抛异常，
-  /// 由调用方整链回退 CPU。
+  /// 由调用方整链回退 CPU。等价于 [forwardSubmit] + [forwardDownload]
+  /// 顺序调用（无流水线重叠）。
   Future<List<NnTensor>> forward(NnTensor x, {bool useL2Pooling = false});
+
+  /// 两阶段前向（优化 11）——提交阶段：上传输入并链式提交全部 GPU
+  /// pass（中间纹理照旧即弃），返回持有 5 个切片驻留纹理的句柄，不
+  /// 等待回读。配对调用方按 submit0→submit1→download0→download1 编排
+  /// 时，图 1 的 CPU 下载/解包与图 2 的 GPU 光栅化在时间轴上重叠；
+  /// 每图的计算序列与 [forward] 完全相同（数值逐位一致）。任何一步
+  /// 不支持/失败抛异常（实现侧已释放中间纹理），由调用方整链回退
+  /// CPU；成功返回的句柄必须由 [forwardDownload] 或 [discardForward]
+  /// 消费，否则切片纹理泄漏。
+  Future<Vgg16ForwardHandle> forwardSubmit(NnTensor x,
+      {bool useL2Pooling = false});
+
+  /// 两阶段前向——下载阶段：逐切片回读并释放句柄持有的全部驻留纹理
+  /// （下载中途失败同样全部释放）。返回 relu1_2..relu5_3 共 5 个特征，
+  /// 与 [forward] 逐位一致。
+  Future<List<NnTensor>> forwardDownload(Vgg16ForwardHandle handle);
+
+  /// 放弃一个已提交的前向（如配对图的 [forwardSubmit] 失败后清理已
+  /// 驻留的那一份）：只释放驻留纹理，不做回读。
+  Future<void> discardForward(Vgg16ForwardHandle handle);
 }

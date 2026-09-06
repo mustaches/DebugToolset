@@ -23,6 +23,42 @@ import '../nn/nn_gpu_pack.dart' as pack;
 import '../nn/tensor.dart';
 import 'vgg16_dart.dart';
 
+/// [Vgg16Gpu] 两阶段前向（优化 11：双图流水线）的句柄：持有 5 个切片
+/// 的 GPU 驻留纹理（单纹理或分块形态二选一，与提交时按
+/// [_requireChainSupported] 选择的路径一致）与 [useL2Pooling] 记录。
+/// 必须由 [Vgg16Gpu.forwardDownload] 消费（回读并释放）或
+/// [Vgg16Gpu.discardForward] 直接释放，否则纹理泄漏。
+class Vgg16GpuForwardHandle extends Vgg16ForwardHandle {
+  Vgg16GpuForwardHandle.single(this.slices, {required this.useL2Pooling})
+      : bandedSlices = null;
+  Vgg16GpuForwardHandle.banded(this.bandedSlices, {required this.useL2Pooling})
+      : slices = null;
+
+  /// 单纹理路径的 5 切片驻留纹理（relu1_2..relu5_3）。
+  final List<GpuNnTensor>? slices;
+
+  /// 分块路径的 5 切片驻留纹理。
+  final List<GpuNnBandedTensor>? bandedSlices;
+
+  /// 提交时的池化变体（记录用，切片纹理本身已固化计算结果）。
+  final bool useL2Pooling;
+
+  void dispose() {
+    final s = slices;
+    if (s != null) {
+      for (final t in s) {
+        t.dispose();
+      }
+    }
+    final b = bandedSlices;
+    if (b != null) {
+      for (final t in b) {
+        t.dispose();
+      }
+    }
+  }
+}
+
 /// GPU 纹理驻留的 VGG16 前向（实现 [Vgg16AsyncForward]）。
 class Vgg16Gpu implements Vgg16AsyncForward {
   Vgg16Gpu._(this._backend, this._convW, this._cin);
@@ -147,15 +183,25 @@ class Vgg16Gpu implements Vgg16AsyncForward {
   /// GPU 驻留前向：输入上传一次 → 13 conv(+relu) + 4 pool 全部驻留执行
   /// → 只在 5 个切片特征处回读。任何一步失败抛异常（已创建的中间纹理
   /// 在抛出前释放），调用方整链回退 CPU。
+  /// 等价于 [forwardSubmit] + [forwardDownload] 顺序调用。
   @override
   Future<List<NnTensor>> forward(NnTensor x,
       {bool useL2Pooling = false}) async {
+    return forwardDownload(await forwardSubmit(x, useL2Pooling: useL2Pooling));
+  }
+
+  /// 提交阶段（优化 11）：链式提交全部 GPU pass，返回持有 5 个切片
+  /// 驻留纹理的句柄（中间纹理照旧即弃），不做回读。任何一步失败抛
+  /// 异常（已创建的中间纹理在抛出前释放），调用方整链回退 CPU。
+  @override
+  Future<Vgg16GpuForwardHandle> forwardSubmit(NnTensor x,
+      {bool useL2Pooling = false}) async {
     if (x.rank != 4 || x.batch != 1 || x.channels != 3) {
-      throw ArgumentError('Vgg16Gpu.forward 需要 [1,3,H,W] 输入，得到 $x');
+      throw ArgumentError('Vgg16Gpu.forwardSubmit 需要 [1,3,H,W] 输入，得到 $x');
     }
     if (_requireChainSupported(x.height, x.width,
         useL2Pooling: useL2Pooling)) {
-      return _forwardBanded(x, useL2Pooling: useL2Pooling);
+      return _submitBanded(x, useL2Pooling: useL2Pooling);
     }
     final slices = <GpuNnTensor>[];
     var h = await _backend.uploadFeatureMap(x);
@@ -190,22 +236,42 @@ class Vgg16Gpu implements Vgg16AsyncForward {
       rethrow;
     }
     h.dispose();
+    return Vgg16GpuForwardHandle.single(slices, useL2Pooling: useL2Pooling);
+  }
+
+  /// 下载阶段（优化 11）：逐切片回读，无论成败都在返回/抛出前释放
+  /// 句柄持有的全部驻留纹理（失败时同样 dispose 全部切片，防泄漏）。
+  @override
+  Future<List<NnTensor>> forwardDownload(Vgg16ForwardHandle handle) async {
+    final h = handle as Vgg16GpuForwardHandle;
     try {
       final out = <NnTensor>[];
-      for (var i = 0; i < slices.length; i++) {
-        out.add(await _backend.downloadFeatureMap(slices[i]));
+      final singles = h.slices;
+      if (singles != null) {
+        for (final s in singles) {
+          out.add(await _backend.downloadFeatureMap(s));
+        }
+      } else {
+        for (final s in h.bandedSlices!) {
+          out.add(await _backend.downloadFeatureMapBanded(s));
+        }
       }
       return out;
     } finally {
-      for (final s in slices) {
-        s.dispose();
-      }
+      h.dispose();
     }
   }
 
-  /// 分块路径前向（大图：折叠布局总纹素数超单纹理上限时由 [forward]
-  /// 选择）：语义与单纹理路径完全一致，各 op 换用 banded 变体。
-  Future<List<NnTensor>> _forwardBanded(NnTensor x,
+  /// 放弃一个已提交的前向：只释放驻留纹理，不做回读。
+  @override
+  Future<void> discardForward(Vgg16ForwardHandle handle) async {
+    (handle as Vgg16GpuForwardHandle).dispose();
+  }
+
+  /// 分块路径提交（大图：折叠布局总纹素数超单纹理上限时由
+  /// [forwardSubmit] 选择）：语义与单纹理路径完全一致，各 op 换用
+  /// banded 变体。
+  Future<Vgg16GpuForwardHandle> _submitBanded(NnTensor x,
       {required bool useL2Pooling}) async {
     final slices = <GpuNnBandedTensor>[];
     var h = await _backend.uploadFeatureMapBanded(x);
@@ -239,16 +305,6 @@ class Vgg16Gpu implements Vgg16AsyncForward {
       rethrow;
     }
     h.dispose();
-    try {
-      final out = <NnTensor>[];
-      for (var i = 0; i < slices.length; i++) {
-        out.add(await _backend.downloadFeatureMapBanded(slices[i]));
-      }
-      return out;
-    } finally {
-      for (final s in slices) {
-        s.dispose();
-      }
-    }
+    return Vgg16GpuForwardHandle.banded(slices, useL2Pooling: useL2Pooling);
   }
 }

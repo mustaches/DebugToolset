@@ -209,8 +209,10 @@ double lpipsScore(Uint8List rgbaA, Uint8List rgbaB, int width, int height,
 ///
 /// [vggForward]（可选，如 GPU 纹理驻留的 Vgg16Gpu）非空且
 /// [Vgg16AsyncForward.enabled] 时优先走 GPU 驻留链：两路输入共享同
-/// 一份已上传权重、各自独立上传输入纹理（互不污染）；任何一步失败
-/// 整链回退 CPU 池路径。GPU 路径的分数精度见
+/// 一份已上传权重、各自独立上传输入纹理（互不污染）；优化 11 起按
+/// submit0→submit1→download0→download1 双图流水线编排（图 1 的 CPU
+/// 下载/解包与图 2 的 GPU 光栅化重叠，每图计算序列不变，数值逐位
+/// 一致）；任何一步失败整链回退 CPU 池路径。GPU 路径的分数精度见
 /// test/isp_nn_gpu_vgg_test.dart 的对拍记录。
 Future<double> lpipsScoreParallel(
     Uint8List rgbaA, Uint8List rgbaB, int width, int height,
@@ -226,8 +228,25 @@ Future<double> lpipsScoreParallel(
   final vf = vggForward;
   if (vf != null && Vgg16AsyncForward.enabled) {
     try {
-      final feats0 = await vf.forward(_lpipsInput(rgbaA, width, height));
-      final feats1 = await vf.forward(_lpipsInput(rgbaB, width, height));
+      // 优化 11（双图流水线）：图 2 的链式提交不等待图 1 的回读——
+      // 图 1 的下载/解包（后台 isolate 流水线，优化 8）与图 2 的 GPU
+      // 光栅化重叠；两份切片纹理同时驻留 GPU（5MP 时约 1.3GB fp16）。
+      final h0 = await vf.forwardSubmit(_lpipsInput(rgbaA, width, height));
+      final Vgg16ForwardHandle h1;
+      try {
+        h1 = await vf.forwardSubmit(_lpipsInput(rgbaB, width, height));
+      } catch (_) {
+        await vf.discardForward(h0); // 防切片纹理泄漏
+        rethrow;
+      }
+      List<NnTensor> feats0;
+      try {
+        feats0 = await vf.forwardDownload(h0);
+      } catch (_) {
+        await vf.discardForward(h1);
+        rethrow;
+      }
+      final feats1 = await vf.forwardDownload(h1);
       onBackend?.call(true);
       return _lpipsHeadParallel(feats0, feats1, linW);
     } catch (e) {

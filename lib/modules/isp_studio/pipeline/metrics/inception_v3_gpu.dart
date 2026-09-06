@@ -25,6 +25,19 @@ import '../nn/ops.dart' as ops;
 import '../nn/tensor.dart';
 import 'inception_dart.dart';
 
+/// [InceptionV3Gpu] 两阶段前向（优化 11：patch 流水线）的句柄：持有
+/// Mixed_7c 输出纹理（[1,2048,h′,w′]），由
+/// [InceptionV3Gpu.forwardDownload] 消费（回读 + adaptiveAvgPool1x1 +
+/// 释放）或 [InceptionV3Gpu.discardForward] 直接释放，否则纹理泄漏。
+class InceptionV3ForwardHandle {
+  InceptionV3ForwardHandle(this.output);
+
+  /// Mixed_7c 的 GPU 驻留输出（relu 后）。
+  final GpuNnTensor output;
+
+  void dispose() => output.dispose();
+}
+
 /// GPU 纹理驻留的 InceptionV3（FID 版）前向。
 class InceptionV3Gpu {
   InceptionV3Gpu._(this._backend, this._conv);
@@ -375,9 +388,20 @@ class InceptionV3Gpu {
   /// GPU 驻留前向：[x] 为 [1,3,H,W]、已按 (x·255−128)/128 归一化的
   /// 输入，返回 2048 维 pool3 特征（fp32）。任何一步失败抛异常（中间
   /// 纹理在抛出前释放），调用方整链回退 CPU。
+  /// 等价于 [forwardSubmit] + [forwardDownload] 顺序调用。
   Future<Float32List> forward(NnTensor x) async {
+    return forwardDownload(await forwardSubmit(x));
+  }
+
+  /// 提交阶段（优化 11：patch 流水线）：上传输入并链式提交全部 GPU
+  /// pass（中间纹理照旧即弃），返回持有 Mixed_7c 输出纹理的句柄，
+  /// 不做回读。与 [forwardDownload] 配合可让 patch i 的回读与
+  /// patch i+1 的 GPU 光栅化重叠（每个 patch 的计算序列与 [forward]
+  /// 完全相同，数值逐位一致）。
+  Future<InceptionV3ForwardHandle> forwardSubmit(NnTensor x) async {
     if (x.rank != 4 || x.batch != 1 || x.channels != 3) {
-      throw ArgumentError('InceptionV3Gpu.forward 需要 [1,3,H,W] 输入，得到 $x');
+      throw ArgumentError(
+          'InceptionV3Gpu.forwardSubmit 需要 [1,3,H,W] 输入，得到 $x');
     }
     _requireSupported(x.height, x.width);
     var h = await _backend.uploadFeatureMap(x);
@@ -418,12 +442,23 @@ class InceptionV3Gpu {
       h.dispose();
       rethrow;
     }
+    return InceptionV3ForwardHandle(h);
+  }
+
+  /// 下载阶段（优化 11）：回读 Mixed_7c 并做 adaptiveAvgPool1x1，无论
+  /// 成败都在返回/抛出前释放句柄持有的输出纹理。
+  Future<Float32List> forwardDownload(InceptionV3ForwardHandle handle) async {
     try {
-      final feat =
-          await _backend.downloadFeatureMap(h, channels: inceptionFeatureDim);
+      final feat = await _backend.downloadFeatureMap(handle.output,
+          channels: inceptionFeatureDim);
       return ops.adaptiveAvgPool1x1(feat).data;
     } finally {
-      h.dispose();
+      handle.dispose();
     }
+  }
+
+  /// 放弃一个已提交的前向：只释放输出纹理，不做回读。
+  Future<void> discardForward(InceptionV3ForwardHandle handle) async {
+    handle.dispose();
   }
 }

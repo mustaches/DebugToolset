@@ -253,7 +253,9 @@ double distsScore(Uint8List rgbaA, Uint8List rgbaB, int width, int height,
 /// [vggForward]（可选，如 GPU 纹理驻留的 Vgg16Gpu）非空且
 /// [Vgg16AsyncForward.enabled] 时优先走 GPU 驻留链（L2pooling 变体）：
 /// 两路输入共享同一份已上传权重、各自独立上传输入纹理（互不污染）；
-/// 任何一步失败整链回退 CPU 池路径。
+/// 优化 11 起按 submit0→submit1→download0→download1 双图流水线编排
+/// （图 1 的 CPU 下载/解包与图 2 的 GPU 光栅化重叠，每图计算序列不
+/// 变，数值逐位一致）；任何一步失败整链回退 CPU 池路径。
 Future<double> distsScoreParallel(
     Uint8List rgbaA, Uint8List rgbaB, int width, int height,
     {String vggWeightsPath = distsVggWeightsPath,
@@ -270,16 +272,28 @@ Future<double> distsScoreParallel(
   final vf = vggForward;
   if (vf != null && Vgg16AsyncForward.enabled) {
     try {
-      final feats0 = [
-        x0,
-        ...await vf.forward(_normalizeForNet(x0), useL2Pooling: true),
-      ];
-      final feats1 = [
-        x1,
-        ...await vf.forward(_normalizeForNet(x1), useL2Pooling: true),
-      ];
+      // 优化 11（双图流水线）：同 lpipsScoreParallel 的编排。
+      final h0 = await vf
+          .forwardSubmit(_normalizeForNet(x0), useL2Pooling: true);
+      final Vgg16ForwardHandle h1;
+      try {
+        h1 = await vf
+            .forwardSubmit(_normalizeForNet(x1), useL2Pooling: true);
+      } catch (_) {
+        await vf.discardForward(h0); // 防切片纹理泄漏
+        rethrow;
+      }
+      List<NnTensor> feats0;
+      try {
+        feats0 = await vf.forwardDownload(h0);
+      } catch (_) {
+        await vf.discardForward(h1);
+        rethrow;
+      }
+      final feats1 = await vf.forwardDownload(h1);
       onBackend?.call(true);
-      return _distsHeadParallel(feats0, feats1, alpha, beta);
+      return _distsHeadParallel(
+          [x0, ...feats0], [x1, ...feats1], alpha, beta);
     } catch (e) {
       // ignore: avoid_print
       print('[distsScoreParallel] GPU 前向失败，整链回退 CPU 池: $e');

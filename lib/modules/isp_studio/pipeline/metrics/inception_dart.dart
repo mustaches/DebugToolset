@@ -277,8 +277,13 @@ Float32List _featuresChunk(Uint8List rgba, int width, int height,
 ///
 /// [gpuNet]（可选，GPU 纹理驻留的 InceptionV3Gpu）非空且
 /// [InceptionV3Gpu.enabled] 时改走 GPU 路径：逐 patch 驻留前向（UI
-/// isolate 串行，fp16 精度见 test/isp_nn_gpu_inception_test.dart）；
-/// 任一 patch 失败抛异常，由调用方整批回退本函数的 isolate 并行路径。
+/// isolate 提交，fp16 精度见 test/isp_nn_gpu_inception_test.dart）；
+/// 优化 11 起保持 1-2 个 patch 在飞行中——patch i 的前向提交后不立即
+/// 回读，先提交 patch i+1（各自独立的输入/输出纹理），再回读 patch i，
+/// 上传/回读的 CPU 侧工作与 GPU 执行重叠（每个 patch 的计算序列与串行
+/// 完全相同，数值逐位一致；显存同时驻留 ≤2 个 patch 的链输出，299²
+/// 小图量级 MB）；任一 patch 失败抛异常，由调用方整批回退本函数的
+/// isolate 并行路径。
 Future<Float32List> inceptionPatchFeaturesParallel(
     Uint8List rgba, int width, int height,
     {String weightsPath = inceptionV3WeightsPath,
@@ -290,11 +295,31 @@ Future<Float32List> inceptionPatchFeaturesParallel(
   final gn = gpuNet;
   if (gn != null && InceptionV3Gpu.enabled) {
     final out = Float32List(n * inceptionFeatureDim);
+    InceptionV3ForwardHandle? pending;
+    var pendingIdx = 0;
     for (var i = 0; i < n; i++) {
       final (y0, x0, s) = grid[i];
-      final f = await gn.forward(inceptionPatchInput(rgba, width, y0, x0, s));
-      out.setRange(
-          i * inceptionFeatureDim, (i + 1) * inceptionFeatureDim, f);
+      final handle = await gn.forwardSubmit(
+          inceptionPatchInput(rgba, width, y0, x0, s));
+      final prev = pending;
+      if (prev != null) {
+        // patch i 提交完成后才回读 patch i-1（GPU 执行与回读重叠）。
+        try {
+          final f = await gn.forwardDownload(prev);
+          out.setRange(pendingIdx * inceptionFeatureDim,
+              (pendingIdx + 1) * inceptionFeatureDim, f);
+        } catch (_) {
+          await gn.discardForward(handle); // 防输出纹理泄漏
+          rethrow;
+        }
+      }
+      pending = handle;
+      pendingIdx = i;
+    }
+    if (pending != null) {
+      final f = await gn.forwardDownload(pending);
+      out.setRange(pendingIdx * inceptionFeatureDim,
+          (pendingIdx + 1) * inceptionFeatureDim, f);
     }
     return out;
   }

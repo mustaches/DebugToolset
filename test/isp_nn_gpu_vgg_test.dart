@@ -353,6 +353,42 @@ void main() {
         () => checkChain(65, 49, useL2Pooling: true),
         timeout: const Timeout(Duration(minutes: 10)));
 
+    // 生产编排（submit0→submit1→download0→download1，两份切片纹理
+    // 同时驻留）与逐图 forward 的结果逐位一致——每图的 GPU 计算序列
+    // 完全相同，只是时间轴重叠。软件光栅下每变体 4 条整链前向
+    // （64×48 约 5min），故两种池化变体拆成两个用例以不超 10min 上限。
+    Future<void> checkPipelineVsSerial(bool useL2Pooling) async {
+      final vg = vggGpu;
+      if (vg == null) return;
+      final l2 = useL2Pooling;
+      final x0 = lpipsInput(busyFrame(64, 48), 64, 48);
+      final x1 = lpipsInput(busyFrame(64, 48, noisy: true), 64, 48);
+      final d0 = await vg.forward(x0, useL2Pooling: l2);
+      final d1 = await vg.forward(x1, useL2Pooling: l2);
+      final h0 = await vg.forwardSubmit(x0, useL2Pooling: l2);
+      final h1 = await vg.forwardSubmit(x1, useL2Pooling: l2);
+      final p0 = await vg.forwardDownload(h0);
+      final p1 = await vg.forwardDownload(h1);
+      for (final (pipe, direct) in [(p0, d0), (p1, d1)]) {
+        expect(pipe.length, direct.length);
+        for (var k = 0; k < direct.length; k++) {
+          expect(pipe[k].shape, direct[k].shape);
+          var mismatch = 0;
+          for (var i = 0; i < direct[k].numel; i++) {
+            if (pipe[k].data[i] != direct[k].data[i]) mismatch++;
+          }
+          expect(mismatch, 0, reason: 'slice$k l2=$l2');
+        }
+      }
+    }
+
+    test('两阶段流水线与串行 forward 逐位一致（优化 11，maxpool 变体）',
+        () => checkPipelineVsSerial(false),
+        timeout: const Timeout(Duration(minutes: 10)));
+    test('两阶段流水线与串行 forward 逐位一致（优化 11，L2pooling 变体）',
+        () => checkPipelineVsSerial(true),
+        timeout: const Timeout(Duration(minutes: 10)));
+
     test('超大输入整链回退（抛 UnsupportedError）', () async {
       final vg = vggGpu;
       if (vg == null) return;
