@@ -63,3 +63,8 @@ Linux_setup/Output/
 
 # IQA 权重导出产物（.nnw，一次性工具生成，不入库）
 /tools/iqa/weights/
+
+# 超 GitHub 100MB 上限的 RAW 素材与 Inno Setup 打包产物（不入库，仅存本地）
+/temp/RAW_3840x2160_10bits_RGGB_Linear_5frame.raw
+/temp/RAW_3840x2160_10bits_RGGB_Linear_30frame.raw
+/Windows_setup/Output/
