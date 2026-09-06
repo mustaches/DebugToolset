@@ -68,3 +68,10 @@ Linux_setup/Output/
 /temp/RAW_3840x2160_10bits_RGGB_Linear_5frame.raw
 /temp/RAW_3840x2160_10bits_RGGB_Linear_30frame.raw
 /Windows_setup/Output/
+
+# >20MB 的 RAW/图像/视频测试素材（不入库，仅存本地）
+/IspFlow/DemoPhoto/*.raw
+/IspFlow/DemoPhoto/3noise.png
+/IspFlow/本地部署DeepSeek Harness 加 Qwen3.8-27B教程.mp4
+/temp/IMG_20260817_213218.png
+/temp/IMG_20260817_213218.raw
