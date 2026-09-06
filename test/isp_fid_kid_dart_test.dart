@@ -140,6 +140,46 @@ void main() {
       print('小维度自洽：fid(x,x)=$fidSame fid(x,y)=$fidDiff');
     });
 
+    test('FID 低秩快路径与 2048² 旧路径一致（噪声底内）：对称/不对称样本数',
+        () {
+      double slowPath(
+          Float32List x, int nx, Float32List y, int ny, int dim) {
+        final accX = FidAccumulator(dim)..addBatch(x, nx);
+        final accY = FidAccumulator(dim)..addBatch(y, ny);
+        return fidCompute(accX, accY);
+      }
+
+      // 快路径触发条件 min(n) < dim 意味着 σ1σ2 恒秩亏（rank ≤ n−1），
+      // 旧路径的 dim−rank 个真零特征值经 Re(√λ) 把 QR 残差
+      // （~1e-16·‖σ1σ2‖）放大为 ~1e-8/个 的系统性噪声底（dim=64 时实测
+      // 总差 ~1e-7），故断言阈值取 1e-6；两路径数学上严格等价，差异即
+      // 旧路径的零特征值数值残差。
+      const tol = 1e-6;
+      const dim = 64;
+      // 对称 n1 = n2 = 12（min(n) < dim → fidScoreFromFeatures 走快路径）。
+      final x = randFeats(12, dim, 42);
+      final y = randFeats(12, dim, 43, offset: 0.3);
+      final fastSym = fidScoreFromFeatures(x, 12, y, 12, dim: dim);
+      final slowSym = slowPath(x, 12, y, 12, dim);
+      expect((fastSym - slowSym).abs(), lessThan(tol),
+          reason: '对称 n=12：fast=$fastSym slow=$slowSym');
+      // 不对称 n1=12 vs n2=20（小样本侧在后）。
+      final z = randFeats(20, dim, 44, offset: 0.1);
+      final fastAsym = fidScoreFromFeatures(x, 12, z, 20, dim: dim);
+      final slowAsym = slowPath(x, 12, z, 20, dim);
+      expect((fastAsym - slowAsym).abs(), lessThan(tol),
+          reason: '不对称 12 vs 20：fast=$fastAsym slow=$slowAsym');
+      // 反向不对称（小样本侧在前）。
+      final fastAsym2 = fidScoreFromFeatures(z, 20, x, 12, dim: dim);
+      final slowAsym2 = slowPath(z, 20, x, 12, dim);
+      expect((fastAsym2 - slowAsym2).abs(), lessThan(tol),
+          reason: '不对称 20 vs 12：fast=$fastAsym2 slow=$slowAsym2');
+      // ignore: avoid_print
+      print('FID 快路径 vs 旧路径：sym 差 '
+          '${(fastSym - slowSym).abs()} asym 差 ${(fastAsym - slowAsym).abs()} '
+          'asym2 差 ${(fastAsym2 - slowAsym2).abs()}');
+    });
+
     test('样本不足（任一侧 <2）抛错', () {
       const dim = 8;
       final x = randFeats(1, dim, 1);
@@ -246,9 +286,7 @@ void main() {
       final pyFid = await pyScore('fid');
       final pyKid = await pyScore('kid');
 
-      // Dart 侧：逐帧 patch 特征（并行），累计 FID 统计 / 驻留 KID 特征。
-      final accRef = FidAccumulator();
-      final accTest = FidAccumulator();
+      // Dart 侧：逐帧 patch 特征（并行），驻留特征供 FID/KID 出分。
       final refFeats = <Float32List>[];
       final testFeats = <Float32List>[];
       final sw = Stopwatch()..start();
@@ -257,8 +295,6 @@ void main() {
         final rgbaT = loadRgba('$evalDir/test_$i.png');
         final fr = await inceptionPatchFeaturesParallel(rgbaR, 256, 192);
         final ft = await inceptionPatchFeaturesParallel(rgbaT, 256, 192);
-        accRef.addBatch(fr, 2);
-        accTest.addBatch(ft, 2);
         refFeats.add(fr);
         testFeats.add(ft);
       }
@@ -274,9 +310,11 @@ void main() {
       }
 
       sw.reset();
-      final dartFid = fidCompute(accRef, accTest);
+      // n=10 < 2048 → 低秩快路径（与 2048² 旧路径 <1e-9 一致，见上组
+      // 自洽用例），出分从 ~40s 降到亚秒级。
+      final dartFid = fidScoreFromFeatures(refAll, 10, testAll, 10);
       // ignore: avoid_print
-      print('Dart FID 出分（含 2048² 矩阵乘 + 特征值求解）耗时 ${sw.elapsed}');
+      print('Dart FID 出分（低秩快路径）耗时 ${sw.elapsed}');
       sw.reset();
       final dartKid = kidCompute(refAll, 10, testAll, 10);
       // ignore: avoid_print

@@ -9,9 +9,9 @@
       "width": 190.0,
       "extraHeight": 160.0,
       "params": {
-        "filePath": "G:\\DebugToolSet\\IspFlow\\BayerRGGB\\IMG_20260817_213218.raw",
-        "width": 4096,
-        "height": 3072,
+        "filePath": "G:\\DebugToolSet\\IspFlow\\BayerRGGB\\RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
+        "width": 1920,
+        "height": 1080,
         "bitDepth": "10",
         "packing": "unpacked_lsb",
         "bayerPattern": "RGGB",
@@ -27,10 +27,10 @@
       "width": 190.0,
       "extraHeight": 160.0,
       "params": {
-        "r": 50.25,
-        "gr": 50.375,
-        "gb": 50.25,
-        "b": 50.3125
+        "r": 0.0,
+        "gr": 0.0,
+        "gb": 0.0,
+        "b": 0.0
       }
     },
     {

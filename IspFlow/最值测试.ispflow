@@ -1,0 +1,107 @@
+{
+  "name": "最值测试",
+  "nodes": [
+    {
+      "id": "n4",
+      "typeId": "image_source",
+      "x": 440.0,
+      "y": 210.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\10.jpg",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n14",
+      "typeId": "rgb_splitter",
+      "x": 830.0,
+      "y": 210.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "RGB 分路器#1",
+      "params": {}
+    },
+    {
+      "id": "n16",
+      "typeId": "minmax",
+      "x": 1210.0,
+      "y": 210.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "最值保持器#1",
+      "params": {}
+    },
+    {
+      "id": "n17",
+      "typeId": "minmax",
+      "x": 1210.0,
+      "y": 440.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "最值保持器#2",
+      "params": {}
+    },
+    {
+      "id": "n18",
+      "typeId": "minmax",
+      "x": 1210.0,
+      "y": 670.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "最值保持器#3",
+      "params": {}
+    },
+    {
+      "id": "n19",
+      "typeId": "histogram",
+      "x": 440.0,
+      "y": 440.0,
+      "width": 570.0,
+      "extraHeight": 324.0,
+      "name": "直方图#1",
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "c15",
+      "from": "n4",
+      "fromPort": "out_rgb",
+      "to": "n14",
+      "toPort": "in"
+    },
+    {
+      "id": "c20",
+      "from": "n4",
+      "fromPort": "out_rgb",
+      "to": "n19",
+      "toPort": "in"
+    },
+    {
+      "id": "c21",
+      "from": "n14",
+      "fromPort": "out_r",
+      "to": "n16",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c22",
+      "from": "n14",
+      "fromPort": "out_g",
+      "to": "n17",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c23",
+      "from": "n14",
+      "fromPort": "out_b",
+      "to": "n18",
+      "toPort": "in_mono"
+    }
+  ],
+  "groups": [],
+  "nextId": 24
+}

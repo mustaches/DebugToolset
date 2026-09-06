@@ -16,8 +16,10 @@
 /// test/isp_nn_gpu_vgg_test.dart。
 library;
 
+import 'package:flutter/foundation.dart';
+
 import '../nn/nn_gpu.dart';
-import '../nn/nnw_reader.dart';
+import '../nn/nn_gpu_pack.dart' as pack;
 import '../nn/tensor.dart';
 import 'vgg16_dart.dart';
 
@@ -45,27 +47,23 @@ class Vgg16Gpu implements Vgg16AsyncForward {
   static bool debugForceBanded = false;
 
   /// 从 .nnw 加载 13 个 conv 的 weight+bias 并上传为 GPU 驻留纹理。
+  /// 读取与 fp16 打包整网一次 compute 在后台 isolate 完成（避免 UI
+  /// isolate 同步大循环卡死，见 nn_gpu_pack.dart），UI 侧仅上传纹理。
   /// 任一失败抛异常（已上传的权重随之释放），调用方回退 CPU。
   static Future<Vgg16Gpu> load(GpuNnBackend backend, String nnwPath) async {
-    final reader = NnwReader.open(nnwPath);
+    final packed =
+        await compute(pack.packVgg16Weights, (nnwPath, Vgg16Dart.convIndices));
     final convW = <GpuConvWeights>[];
-    final cin = <int>[];
     try {
-      for (final idx in Vgg16Dart.convIndices) {
-        final w = reader.readTensor('features.$idx.weight');
-        final b = reader.tensor('features.$idx.bias').$1;
-        final cinP = (w.shape[1] + 3) & ~3;
-        convW.add(await backend.uploadConvWeights(w, cinP, bias: b));
-        cin.add(w.shape[1]);
+      for (final p in packed.convs) {
+        convW.add(await backend.uploadPackedConvWeights(p));
       }
-      return Vgg16Gpu._(backend, convW, cin);
+      return Vgg16Gpu._(backend, convW, packed.cin);
     } catch (_) {
       for (final w in convW) {
         w.dispose();
       }
       rethrow;
-    } finally {
-      reader.close();
     }
   }
 
@@ -161,6 +159,7 @@ class Vgg16Gpu implements Vgg16AsyncForward {
     }
     final slices = <GpuNnTensor>[];
     var h = await _backend.uploadFeatureMap(x);
+    final yielder = GpuDispatchYield(); // 层间让出（优化 6，纯调度）
     try {
       for (var i = 0; i < Vgg16Dart.convIndices.length; i++) {
         final idx = Vgg16Dart.convIndices[i];
@@ -181,6 +180,7 @@ class Vgg16Gpu implements Vgg16AsyncForward {
           // 使切片与继续前向的 h 各自独立持有纹理、互不污染。
           slices.add(_backend.reluGpu(h));
         }
+        await yielder.tick();
       }
     } catch (_) {
       h.dispose();
@@ -191,9 +191,11 @@ class Vgg16Gpu implements Vgg16AsyncForward {
     }
     h.dispose();
     try {
-      return [
-        for (final s in slices) await _backend.downloadFeatureMap(s),
-      ];
+      final out = <NnTensor>[];
+      for (var i = 0; i < slices.length; i++) {
+        out.add(await _backend.downloadFeatureMap(slices[i]));
+      }
+      return out;
     } finally {
       for (final s in slices) {
         s.dispose();
@@ -207,6 +209,7 @@ class Vgg16Gpu implements Vgg16AsyncForward {
       {required bool useL2Pooling}) async {
     final slices = <GpuNnBandedTensor>[];
     var h = await _backend.uploadFeatureMapBanded(x);
+    final yielder = GpuDispatchYield(); // 层间让出（优化 6，纯调度）
     try {
       for (var i = 0; i < Vgg16Dart.convIndices.length; i++) {
         final idx = Vgg16Dart.convIndices[i];
@@ -226,6 +229,7 @@ class Vgg16Gpu implements Vgg16AsyncForward {
           // 同单纹理路径：切片处再过一个 relu pass 复制一份。
           slices.add(_backend.reluGpuBanded(h));
         }
+        await yielder.tick();
       }
     } catch (_) {
       h.dispose();
@@ -236,9 +240,11 @@ class Vgg16Gpu implements Vgg16AsyncForward {
     }
     h.dispose();
     try {
-      return [
-        for (final s in slices) await _backend.downloadFeatureMapBanded(s),
-      ];
+      final out = <NnTensor>[];
+      for (var i = 0; i < slices.length; i++) {
+        out.add(await _backend.downloadFeatureMapBanded(slices[i]));
+      }
+      return out;
     } finally {
       for (final s in slices) {
         s.dispose();

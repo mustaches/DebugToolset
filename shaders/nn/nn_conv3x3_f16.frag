@@ -1,4 +1,7 @@
-// NN conv2d 3x3/s1/p1 GPU 版（fp16 打包路径，对应 GpuNnBackend.conv2dAsync）。
+// NN conv2d GPU 版（fp16 打包路径，对应 GpuNnBackend.conv2dAsync）：
+// kernel ≤7x7（含非对称 1x7/7x1 与原生 1x1），pad ≤3，步长由 uStride
+// 指定（1.0 或 2.0），可选 uRelu 融合（末 pass 加 bias 后 max(·,0)）。
+// （历史上只支持 3x3/p1，文件名沿用未改。）
 //
 // 背景：本机 Impeller（flutter test 与真实 Windows 桌面一致）的离屏渲染
 // 目标只有 RGBA8——toImageSync(targetFormat: rgbaFloat32) 被静默降级为
@@ -9,8 +12,10 @@
 // 折叠布局（规避 8192 纹理宽上限，任何 NCHW 形状都摊平为线性 texel 流）：
 // - 特征图（cin%4==0）：逻辑纹素 T=(gi*H+y)*W+x 装通道 4gi..4gi+3 的
 //   4 个 half = 2 个物理纹素 P=2T,2T+1；物理纹理宽 uInTW，按 P 线性折叠。
-// - 权重：逻辑单元 cell=((go*cinG+gi)*9+tap)*4+co 装 w[4go+co][4gi..4gi+3][tap]
-//   的 4 个 half = 2 个物理纹素，宽 uWgtTW 线性折叠（本 pass 的 cinG）。
+// - 权重：逻辑单元 cell=((go*cinG+gi)*TAPS+tap)*4+co 装
+//   w[4go+co][4gi..4gi+3][tap] 的 4 个 half = 2 个物理纹素，宽 uWgtTW
+//   线性折叠（本 pass 的 cinG）；TAPS = kH*kW（= uKSize.x*uKSize.y），
+//   tap = r*kW + c 行主序。
 // - 偏置：cell=go，宽 uBiasTW=coutG*2，高 1。
 // - 输出：与特征图同布局（go 替换 gi），宽 uOutTW；多 pass 累加时
 //   uAccum 为上一 pass 的输出纹理（同布局）。
@@ -33,10 +38,14 @@ uniform float uAddBias;  // 1=加偏置（末 pass）
 uniform float uBiasTW;   // 偏置纹理宽（coutG*2，高 1）
 uniform float uYOff;     // 输入垂直偏移：分块 padded 输入为 1.0（行 0 为
                          // 上 halo），单纹理路径为 0.0（行为与旧版逐位一致）
-uniform vec2 uOutDims;   // 输出空间尺寸 (W, Ho)；单纹理路径与 uDims 相同，
+uniform vec2 uOutDims;   // 输出空间尺寸 (W2, Ho)；单纹理路径与 uDims 相同，
                          // 分块路径 Ho = 带高（输入为 padH = 带高+2 的
                          // padded 带，halo 行已由 stitch 写好，越界检查
                          // 不会触发，等价于零填充）
+uniform float uStride;   // 空间步长（1.0 或 2.0，H/W 同值；1.0 时位级不变）
+uniform vec2 uKSize;     // 卷积核 (KH, KW)（≤7；3x3 以外用于 InceptionV3）
+uniform vec2 uPad;       // 填充 (padH, padW)（≤3）
+uniform float uRelu;     // 1=末 pass 加 bias 后 max(·,0)（BasicConv2d 融合）
 uniform sampler2D uIn;
 uniform sampler2D uWgt;
 uniform sampler2D uAccum;
@@ -129,18 +138,22 @@ void main() {
   float x = rem - y * uOutDims.x;
 
   vec4 acc = vec4(0.0);
+  float taps = uKSize.x * uKSize.y;
   for (int gi0 = 0; gi0 < MAX_CG; gi0++) {
     if (float(gi0) >= uCinG) break;
     float gi = uGiBase + float(gi0);
-    for (int r = 0; r < 3; r++) {
-      float iy = y + float(r) - 1.0 + uYOff;
+    for (int r = 0; r < 7; r++) {
+      if (float(r) >= uKSize.x) break;
+      float iy = y * uStride + float(r) - uPad.x + uYOff;
       if (iy < 0.0 || iy >= uDims.y) continue;
-      for (int c = 0; c < 3; c++) {
-        float ix = x + float(c) - 1.0;
+      for (int c = 0; c < 7; c++) {
+        if (float(c) >= uKSize.y) break;
+        float ix = x * uStride + float(c) - uPad.y;
         if (ix < 0.0 || ix >= uDims.x) continue;
         vec4 xv = fetchIn4(gi, ix, iy);
         float cellBase =
-            ((go * uCinG + float(gi0)) * 9.0 + float(r * 3 + c)) * 4.0;
+            ((go * uCinG + float(gi0)) * taps + float(r) * uKSize.y +
+                float(c)) * 4.0;
         vec4 w0 = fetchW4(cellBase);
         vec4 w1 = fetchW4(cellBase + 1.0);
         vec4 w2 = fetchW4(cellBase + 2.0);
@@ -154,6 +167,7 @@ void main() {
   }
   if (uHasAccum > 0.5) acc += fetchAccum4(t);
   if (uAddBias > 0.5) acc += fetchBias4(go);
+  if (uRelu > 0.5) acc = max(acc, vec4(0.0));
 
   float h0 = f2h(sub < 0.5 ? acc.x : acc.z);
   float h1 = f2h(sub < 0.5 ? acc.y : acc.w);

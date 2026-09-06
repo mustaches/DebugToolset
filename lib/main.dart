@@ -16,7 +16,7 @@ import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize window_manager
   await windowManager.ensureInitialized();
   WindowOptions windowOptions = const WindowOptions(

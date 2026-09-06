@@ -3,18 +3,22 @@
 ; Non-commercial use only
 
 #define MyAppName "DebugToolset"
-#define MyAppVersion "0.0.2"
-#define MyAppPublisher "FZDL.cg"
+#define MyAppVersion "0.0.3"
+#define MyAppPublisher "FZDL.CG"
+#define MyAppURL "https://github.com/mustaches/DebugToolset"
 #define MyAppExeName "debug_tool_set.exe"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={{9E274F85-70BB-4CC4-9996-BE44FA791668}
+AppId={{F97CFF64-4DF0-4BB8-935F-D0CD39526877}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; "ArchitecturesAllowed=x64compatible" specifies that Setup cannot run
@@ -29,8 +33,8 @@ DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-OutputDir=G:\DebugToolSet\Windows_setup
-OutputBaseFilename=DebugToolSet
+OutputDir=G:\DebugToolSet\Windows_setup\Output
+OutputBaseFilename=DebugToolset_setup
 SetupIconFile=G:\DebugToolSet\windows\runner\resources\app_icon.ico
 SolidCompression=yes
 WizardStyle=modern dynamic
@@ -48,7 +52,10 @@ Source: "G:\DebugToolSet\bussetup\*"; DestDir: "{app}\bussetup"; Flags: ignoreve
 Source: "G:\DebugToolSet\DeviceProtocol\*"; DestDir: "{app}\DeviceProtocol"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "G:\DebugToolSet\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "G:\DebugToolSet\waveform\*"; DestDir: "{app}\waveform"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "G:\DebugToolSet\tools\ffmpeg\*"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "G:\DebugToolSet\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "G:\DebugToolSet\IspFlow\*"; DestDir: "{app}\IspFlow"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "G:\DebugToolSet\Font\*"; DestDir: "{app}\Font"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "G:\DebugToolSet\UI_Project\*"; DestDir: "{app}\UI_Project"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

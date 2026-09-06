@@ -27,6 +27,8 @@ import '../modules/isp_studio/pipeline/metrics/inception_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/lpips_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/musiq_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/vgg16_gpu.dart';
+import '../modules/isp_studio/pipeline/metrics/clip_rn50_gpu.dart';
+import '../modules/isp_studio/pipeline/metrics/inception_v3_gpu.dart';
 import '../modules/isp_studio/pipeline/nn/nn_gpu.dart';
 import '../modules/isp_studio/pipeline/nn/nn_pool.dart';
 import '../modules/isp_studio/pipeline/pipeline_runner.dart';
@@ -362,7 +364,8 @@ class IspStudioState extends ChangeNotifier {
 
   Future<GpuPipeline?> _gpuPipeline() async {
     if (!gpuPreviewEnabled || _gpuUnavailable) return null;
-    final g = _gpu ??= await GpuPipeline.tryCreate();
+    _gpu ??= await GpuPipeline.tryCreate();
+    final g = _gpu;
     if (g == null) _gpuUnavailable = true;
     return g;
   }
@@ -404,7 +407,11 @@ class IspStudioState extends ChangeNotifier {
     if (running != null) return Future.value(running);
     return _nnPoolStart ??= () async {
       final pool = NnPool();
-      await pool.start();
+      // worker 数显式限为 核数-4（NnPool 缺省 核数-2 不动）：给
+      // UI/raster 线程留出物理核，避免 GPU 链派发与消息泵在 MUSIQ 等
+      // 重 CPU 指标窗口被饿死（真机实测：MUSIQ 窗口内 LPIPS 从基准
+      // 57s 被拖到 462s、标题栏「未响应」，优化 7）。
+      await pool.start(math.max(2, Platform.numberOfProcessors - 4));
       _nnPool = pool;
       _nnPoolStart = null;
       return pool;
@@ -414,25 +421,148 @@ class IspStudioState extends ChangeNotifier {
   /// LPIPS/DISTS 共用的 VGG16 GPU 纹理驻留链（懒创建，仅 UI isolate
   /// 可用；shader/权重任一初始化失败则保持 null 且不再重试，指标计算
   /// 自动回退 [_sharedNnPool] 的 CPU 池路径）。
+  ///
+  /// 竞态修复：getter 与后端创建均**缓存 in-flight Future**（同
+  /// [_sharedNnPool] 的 _nnPoolStart 模式）——并发调用共享同一次
+  /// load、全部拿到同一结果；load 失败缓存 null（保持「不再重试」
+  /// 语义）。此前「先置 tried 再 await」会让并发的第二个调用者拿到
+  /// null 退化到 CPU 全核慢路径。
   GpuNnBackend? _gpuNnBackend;
+  Future<GpuNnBackend?>? _gpuNnBackendStart;
   Vgg16Gpu? _vggGpu;
-  bool _vggGpuTried = false;
+  Future<Vgg16Gpu?>? _vggGpuStart;
+  ClipRn50Gpu? _rn50Gpu;
+  Future<ClipRn50Gpu?>? _rn50GpuStart;
+  InceptionV3Gpu? _inceptionGpu;
+  Future<InceptionV3Gpu?>? _inceptionGpuStart;
+
+  /// FID/KID patch 特征是否由 GPU 链产出（_deepIqaFeatCache 键 → 后端），
+  /// 用于缓存命中时回填节点徽标。
+  final Map<String, bool> _deepIqaFeatOnGpu = {};
+
+  /// 取共享 GPU NN 后端（shader 加载一次；失败缓存 null 不再重试）。
+  Future<GpuNnBackend?> _sharedGpuNnBackend() {
+    final b = _gpuNnBackend;
+    if (b != null) return Future.value(b);
+    return _gpuNnBackendStart ??= () async {
+      final g = await GpuNnBackend.tryCreate();
+      _gpuNnBackend = g; // null 也缓存：shader 加载失败重试无意义
+      return g;
+    }();
+  }
 
   /// 取共享 VGG16 GPU 链（权重随 [lpipsVggWeightsPath] 加载一次；
   /// 两路输入共享已上传权重、各自独立执行）。
-  Future<Vgg16Gpu?> _sharedVggGpu() async {
-    if (_vggGpuTried) return _vggGpu;
-    _vggGpuTried = true;
-    final g = await GpuNnBackend.tryCreate();
-    if (g == null) return null;
-    try {
-      _vggGpu = await Vgg16Gpu.load(g, lpipsVggWeightsPath);
-      _gpuNnBackend = g;
-    } catch (e) {
-      // ignore: avoid_print
-      print('[IspStudioState] VGG16 GPU 链初始化失败，回退 CPU 池: $e');
+  Future<Vgg16Gpu?> _sharedVggGpu() {
+    final v = _vggGpu;
+    if (v != null) return Future.value(v);
+    return _vggGpuStart ??= () async {
+      final g = await _sharedGpuNnBackend();
+      if (g == null) return null;
+      Vgg16Gpu? loaded;
+      try {
+        loaded = await Vgg16Gpu.load(g, lpipsVggWeightsPath);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[IspStudioState] VGG16 GPU 链初始化失败，回退 CPU 池: $e');
+      }
+      _vggGpu = loaded; // 失败缓存 null（不再重试）
+      return loaded;
+    }();
+  }
+
+  /// 取共享 RN50 GPU 链（CLIPIQA 主干，权重随 [clipiqaWeightsPath]
+  /// 加载一次；AttentionPool2d 仍走 [_sharedNnPool] CPU 池）。
+  Future<ClipRn50Gpu?> _sharedRn50Gpu() {
+    final v = _rn50Gpu;
+    if (v != null) return Future.value(v);
+    return _rn50GpuStart ??= () async {
+      final g = await _sharedGpuNnBackend();
+      if (g == null) return null;
+      ClipRn50Gpu? loaded;
+      try {
+        loaded = await ClipRn50Gpu.load(g, clipiqaWeightsPath);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[IspStudioState] RN50 GPU 链初始化失败，回退 CPU 池: $e');
+      }
+      _rn50Gpu = loaded; // 失败缓存 null（不再重试）
+      return loaded;
+    }();
+  }
+
+  /// 取共享 InceptionV3 GPU 链（FID/KID patch 特征，权重随
+  /// [inceptionV3WeightsPath] 加载一次）。
+  Future<InceptionV3Gpu?> _sharedInceptionGpu() {
+    final v = _inceptionGpu;
+    if (v != null) return Future.value(v);
+    return _inceptionGpuStart ??= () async {
+      final g = await _sharedGpuNnBackend();
+      if (g == null) return null;
+      InceptionV3Gpu? loaded;
+      try {
+        loaded = await InceptionV3Gpu.load(g, inceptionV3WeightsPath);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[IspStudioState] InceptionV3 GPU 链初始化失败，回退 CPU 池: $e');
+      }
+      _inceptionGpu = loaded; // 失败缓存 null（不再重试）
+      return loaded;
+    }();
+  }
+
+  /// GPU 链类深度评价节点（优化 6 并发治理）：共享同一 GPU 与同一 UI
+  /// 派发通道，互斥执行（信号量=1）让每条链全速派发；KID 排在 FID
+  /// 后还能命中 [_deepIqaFeatCache] 接近免费。
+  static const _gpuChainMetricTypes = {
+    'lpips', 'dists', 'fid', 'kid', 'clipiqa',
+  };
+
+  /// 重 CPU 仪器节点（优化 6 并发治理）：限并发 ≤2，避免与 NnPool
+  /// worker + 嵌套 Isolate.run 叠加超订打满 CPU 核饿死 UI isolate
+  /// （GPU 派发与消息泵都在 UI isolate）。
+  static const _heavyCpuInstrumentTypes = {
+    'musiq', 'niqe', 'brisque', 'ilniqe', 'piqe',
+    'psnr', 'ssim', 'msssim', 'fsim',
+  };
+
+  /// [_gpuChainMetricTypes] 的互斥锁链（见 [_gpuMetricLock]）。
+  Future<void> _gpuMetricTurn = Future.value();
+
+  /// [_heavyCpuInstrumentTypes] 的信号量状态（见 [_heavyCpuLock]）。
+  var _heavyCpuRunning = 0;
+  final _heavyCpuWaiters = <Completer<void>>[];
+
+  /// GPU 链类指标互斥执行：调用按到达顺序串行，[fn] 抛错不中断后续
+  /// 排队者。token 取消语义由 [fn] 自身保持（锁不改变任何分析行为）。
+  Future<T> _gpuMetricLock<T>(Future<T> Function() fn) {
+    final completer = Completer<T>();
+    _gpuMetricTurn = _gpuMetricTurn.then((_) async {
+      try {
+        completer.complete(await fn());
+      } catch (e, st) {
+        completer.completeError(e, st);
+      }
+    });
+    return completer.future;
+  }
+
+  /// 重 CPU 指标限并发执行（同时 ≤2 个，FIFO 唤醒）。
+  Future<T> _heavyCpuLock<T>(Future<T> Function() fn) async {
+    while (_heavyCpuRunning >= 2) {
+      final waiter = Completer<void>();
+      _heavyCpuWaiters.add(waiter);
+      await waiter.future;
     }
-    return _vggGpu;
+    _heavyCpuRunning++;
+    try {
+      return await fn();
+    } finally {
+      _heavyCpuRunning--;
+      if (_heavyCpuWaiters.isNotEmpty) {
+        _heavyCpuWaiters.removeAt(0).complete();
+      }
+    }
   }
 
   /// 波形/矢量示波器节点的显示图像（nodeId → 计数表映射的亮度图）。
@@ -2632,7 +2762,8 @@ class IspStudioState extends ChangeNotifier {
             instrumentsRunning.add(node.name);
             updateInstrumentStatus();
             // 仪器节点耗时测量（右侧面板「节点流程图」的运行时间列）；
-            // 签名命中跳过时保留上次耗时。
+            // 签名命中跳过时保留上次耗时。计时在并发治理锁外开始（含
+            // 排队时间，语义：节点就绪 → 出分的端到端耗时）。
             var ran = false;
             final sw = Stopwatch()..start();
             try {
@@ -2652,30 +2783,44 @@ class IspStudioState extends ChangeNotifier {
                   node.typeId == 'msssim' ||
                   node.typeId == 'fsim') {
                 // 评价算法数字表：双输入（参考/测试），走专用双路馈源分析。
-                result = await _analyzeDualInput(node, frame);
+                // 重 CPU（大帧嵌套 Isolate.run）：限并发（优化 6）。
+                result =
+                    await _heavyCpuLock(() => _analyzeDualInput(node, frame));
               } else if (node.typeId == 'ilniqe') {
                 // ILNIQE 数字表：无参考单输入，但计算量远超其他仪器
                 // （FFT 滤波器组 + MVG 评分），不走 5s 超时的仪器 worker，
                 // 馈源与通用路径一致，计算放独立 isolate（compute）。
-                final feed = await _instrumentFrameFeed(node, frame, type);
-                if (feed != null) {
-                  // 多核并行版：滤波器组与分块特征分多 isolate 计算，
-                  // 结果与串行位级一致（见 ilniqeScoreParallel）。
-                  final v = await compute(ilniqeScoreParallelInIsolate, {
-                    'rgba': feed.$1,
-                    'width': feed.$2,
-                    'height': feed.$3,
-                  });
-                  result = {'kind': 'ilniqe', 'ilniqe': v};
-                } else {
+                // 重 CPU：限并发（优化 6）。
+                result = await _heavyCpuLock(() async {
+                  final feed = await _instrumentFrameFeed(node, frame, type);
+                  if (feed != null) {
+                    // 多核并行版：滤波器组与分块特征分多 isolate 计算，
+                    // 结果与串行位级一致（见 ilniqeScoreParallel）。
+                    final v = await compute(ilniqeScoreParallelInIsolate, {
+                      'rgba': feed.$1,
+                      'width': feed.$2,
+                      'height': feed.$3,
+                    });
+                    return {'kind': 'ilniqe', 'ilniqe': v};
+                  }
                   throw StateError('无可用馈源');
-                }
+                });
               } else if (pyIqaMetrics.containsKey(node.typeId)) {
                 // 深度评价数字表（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）：
                 // 权重齐全时进程内 Dart 计算（tools/iqa/weights/*.nnw，
                 // 共享 NnPool 常驻 isolate 池），不齐时回退 Python 桥接
                 // 进程（PyIqaWorker）；FID/KID 逐帧累计样本。
-                result = await _analyzeDeepIqa(node, frame, token);
+                // 优化 6 并发治理：GPU 链类互斥（共享 GPU/UI 派发通道），
+                // MUSIQ 等重 CPU 限并发。
+                if (_gpuChainMetricTypes.contains(node.typeId)) {
+                  result = await _gpuMetricLock(
+                      () => _analyzeDeepIqa(node, frame, token));
+                } else if (_heavyCpuInstrumentTypes.contains(node.typeId)) {
+                  result = await _heavyCpuLock(
+                      () => _analyzeDeepIqa(node, frame, token));
+                } else {
+                  result = await _analyzeDeepIqa(node, frame, token);
+                }
               } else {
                 // 降采样馈源（后台 isolate 降采样 + 单次运行去重，
                 // 见 _instrumentFrameFeedDown）。
@@ -2684,7 +2829,13 @@ class IspStudioState extends ChangeNotifier {
                   throw StateError('无可用馈源');
                 }
                 final (srcRgba, srcW, srcH) = feed;
-                result = await _instrumentAnalyzer.analyze(srcRgba, srcW, srcH, node.typeId);
+                // NIQE/BRISQUE/PIQE 为重 CPU：限并发（优化 6）；其余
+                // 轻量仪器（直方图/波形等，5s 超时 worker）保持现状不限。
+                result = _heavyCpuInstrumentTypes.contains(node.typeId)
+                    ? await _heavyCpuLock(() => _instrumentAnalyzer.analyze(
+                        srcRgba, srcW, srcH, node.typeId))
+                    : await _instrumentAnalyzer.analyze(
+                        srcRgba, srcW, srcH, node.typeId);
               }
               if (token != _runToken) return;
               instrumentResults[node.id] = node.typeId == 'minmax'
@@ -3002,13 +3153,14 @@ class IspStudioState extends ChangeNotifier {
       return {'kind': kind, 'error': '两路输入尺寸不一致'};
     }
     // 调用侧已限定 psnr/ssim/msssim/fsim（见 _analyzeInstruments 分支）。
-    return compute(dualMetricInIsolate, {
+    final res = await compute(dualMetricInIsolate, {
       'kind': kind,
       'ref': ref.$1,
       'test': test.$1,
       'width': ref.$2,
       'height': ref.$3,
     });
+    return res;
   }
 
   /// 深度评价数字表（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）分析的首选路径：
@@ -3045,12 +3197,24 @@ class IspStudioState extends ChangeNotifier {
       final feed = await _instrumentFrameFeedDown(node, frame, type);
       if (feed == null) return {'kind': kind, 'error': '需要接入输入图'};
       final (rgba, w, h) = feed;
+      if (kind == 'musiq') {
+        // MUSIQ 的进程内实现走 CPU isolate 池（无 GPU 后端）：整体经
+        // compute 在后台 isolate 执行（其内自起 NnPool 跑 tokenizer/
+        // embedding/transformer 的全部 GEMM），UI isolate 不再被
+        // transformer 的同步计算冻结（优化 10）；结果与 musiqScore
+        // 位级一致。
+        nodeRunOnGpu[node.id] = false;
+        final v = await compute(musiqScoreInIsolate,
+            {'rgba': rgba, 'width': w, 'height': h});
+        return {'kind': kind, kind: v};
+      }
       final pool = await _sharedNnPool();
-      // MUSIQ/CLIPIQA 的进程内实现走 CPU isolate 池（无 GPU 后端）。
-      nodeRunOnGpu[node.id] = false;
-      final v = kind == 'musiq'
-          ? await musiqScoreParallel(rgba, w, h, pool: pool)
-          : await clipiqaScoreParallel(rgba, w, h, pool: pool);
+      // CLIPIQA：RN50 主干优先走 GPU 纹理驻留链（ClipRn50Gpu），
+      // attention 走 CPU 池；GPU 任一步失败整链回退 CPU 池。
+      final v = await clipiqaScoreParallel(rgba, w, h,
+          pool: pool,
+          gpuTrunk: await _sharedRn50Gpu(),
+          onBackend: (g) => nodeRunOnGpu[node.id] = g);
       return {'kind': kind, kind: v};
     }
     // pair / dist：双路降采样馈源（与 PSNR 同端口）。
@@ -3094,8 +3258,26 @@ class IspStudioState extends ChangeNotifier {
     final testKey = _feedOfKey(node,
         const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'],
         frame);
-    final (fr, ft) = await _deepIqaFeatCache.putIfAbsent(
-        '$refKey|$testKey', () async {
+    // FID 与 KID 节点共用同一对源时特征只算一次（键含双路馈源键，
+    // 馈源键本身含帧号）。InceptionV3 有 GPU 纹理驻留链时两侧逐
+    // patch 串行提取（UI isolate），失败回退 isolate 并行 CPU 路径。
+    final incGpu = await _sharedInceptionGpu();
+    final featKey = '$refKey|$testKey';
+    final (fr, ft) = await _deepIqaFeatCache.putIfAbsent(featKey, () async {
+      if (incGpu != null && InceptionV3Gpu.enabled) {
+        try {
+          final fr2 =
+              await inceptionPatchFeaturesParallel(ra, rw, rh, gpuNet: incGpu);
+          final ft2 =
+              await inceptionPatchFeaturesParallel(ta, rw, rh, gpuNet: incGpu);
+          _deepIqaFeatOnGpu[featKey] = true;
+          return (fr2, ft2);
+        } catch (e) {
+          // ignore: avoid_print
+          print('[IspStudioState] InceptionV3 GPU 特征提取失败，回退 CPU 池: $e');
+        }
+      }
+      _deepIqaFeatOnGpu[featKey] = false;
       // 两侧并行（各自内部再按 patch 分 isolate，见
       // inceptionPatchFeaturesParallel）。
       final r = await Future.wait([
@@ -3109,8 +3291,8 @@ class IspStudioState extends ChangeNotifier {
       // 样本不足（任一侧 <2 个 patch）：只显示累计进度。
       return {'kind': kind, 'n_ref': accum.nRef, 'n_test': accum.nTest};
     }
-    // FID/KID 的进程内实现走 CPU isolate（特征提取 + 统计计算）。
-    nodeRunOnGpu[node.id] = false;
+    // FID/KID 的特征提取可能走 GPU（见上），统计计算走 CPU isolate。
+    nodeRunOnGpu[node.id] = _deepIqaFeatOnGpu[featKey] ?? false;
     final (featsRef, featsTest) = accum.concat();
     // FID 的 2048² 协方差/特征值求解与 KID 的 Gram 矩阵均为重计算，
     // 放后台 isolate（compute），不在 UI isolate 执行。
@@ -4646,11 +4828,19 @@ class IspStudioState extends ChangeNotifier {
     // 进程内深度评价的共享 NN isolate 池（若曾启动）随状态销毁。
     _nnPool?.dispose();
     _nnPool = null;
-    // VGG16 GPU 纹理驻留链（若曾创建）随状态销毁。
+    // VGG16 / RN50 / InceptionV3 GPU 纹理驻留链（若曾创建）随状态销毁。
     _vggGpu?.dispose();
     _vggGpu = null;
+    _vggGpuStart = null;
+    _rn50Gpu?.dispose();
+    _rn50Gpu = null;
+    _rn50GpuStart = null;
+    _inceptionGpu?.dispose();
+    _inceptionGpu = null;
+    _inceptionGpuStart = null;
     _gpuNnBackend?.dispose();
     _gpuNnBackend = null;
+    _gpuNnBackendStart = null;
     // 深度评价的 Python 桥接进程（若曾启动）随状态销毁。
     unawaited(PyIqaWorker.disposeAll());
     super.dispose();

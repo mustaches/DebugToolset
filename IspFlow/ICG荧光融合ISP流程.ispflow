@@ -9,7 +9,7 @@
       "width": 190.0,
       "extraHeight": 160.0,
       "params": {
-        "filePath": "BayerRGGB/RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\BayerRGGB\\RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
         "width": 1920,
         "height": 1080,
         "bitDepth": "10",
@@ -111,7 +111,7 @@
       "width": 190.0,
       "extraHeight": 160.0,
       "params": {
-        "filePath": "BayerRGGB/RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\BayerRGGB\\RAW_1920x1080_10bits_RGGB_Linear_1frame.raw",
         "width": 1920,
         "height": 1080,
         "bitDepth": "10",

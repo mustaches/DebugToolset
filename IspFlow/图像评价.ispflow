@@ -1,0 +1,329 @@
+{
+  "name": "图像评价",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "image_source",
+      "x": -410.0,
+      "y": 190.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3.jpg",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "image_source",
+      "x": -410.0,
+      "y": 300.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#2",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3noise.png",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "psnr",
+      "x": -130.0,
+      "y": -80.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "PSNR 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n7",
+      "typeId": "ssim",
+      "x": -130.0,
+      "y": 360.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "SSIM 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n8",
+      "typeId": "msssim",
+      "x": 110.0,
+      "y": 360.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "MS-SSIM 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n9",
+      "typeId": "fsim",
+      "x": 110.0,
+      "y": -80.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "FSIM 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n10",
+      "typeId": "lpips",
+      "x": 350.0,
+      "y": 360.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "LPIPS 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n11",
+      "typeId": "dists",
+      "x": 350.0,
+      "y": -80.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "DISTS 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n12",
+      "typeId": "fid",
+      "x": 580.0,
+      "y": 360.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "FID 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n13",
+      "typeId": "kid",
+      "x": 580.0,
+      "y": -80.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "KID 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n30",
+      "typeId": "niqe",
+      "x": 820.0,
+      "y": -100.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "NIQE 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n31",
+      "typeId": "brisque",
+      "x": 820.0,
+      "y": 210.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "BRISQUE 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n32",
+      "typeId": "ilniqe",
+      "x": 820.0,
+      "y": 520.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "ILNIQE 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n33",
+      "typeId": "piqe",
+      "x": 1050.0,
+      "y": 520.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "PIQE 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n34",
+      "typeId": "musiq",
+      "x": 1050.0,
+      "y": 210.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "MUSIQ 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n35",
+      "typeId": "clipiqa",
+      "x": 1050.0,
+      "y": -100.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "CLIPIQA 数字表#1",
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "c14",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n6",
+      "toPort": "in"
+    },
+    {
+      "id": "c15",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n9",
+      "toPort": "in"
+    },
+    {
+      "id": "c16",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n11",
+      "toPort": "in"
+    },
+    {
+      "id": "c17",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n13",
+      "toPort": "in"
+    },
+    {
+      "id": "c18",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n7",
+      "toPort": "in"
+    },
+    {
+      "id": "c19",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n8",
+      "toPort": "in"
+    },
+    {
+      "id": "c20",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n10",
+      "toPort": "in"
+    },
+    {
+      "id": "c21",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n12",
+      "toPort": "in"
+    },
+    {
+      "id": "c22",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n6",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c23",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n9",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c24",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n11",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c25",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n13",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c26",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n7",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c27",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n8",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c28",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n10",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c29",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n12",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c36",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n30",
+      "toPort": "in"
+    },
+    {
+      "id": "c37",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n35",
+      "toPort": "in"
+    },
+    {
+      "id": "c38",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n31",
+      "toPort": "in"
+    },
+    {
+      "id": "c39",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n34",
+      "toPort": "in"
+    },
+    {
+      "id": "c40",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n32",
+      "toPort": "in"
+    },
+    {
+      "id": "c41",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n33",
+      "toPort": "in"
+    }
+  ],
+  "groups": [],
+  "nextId": 42
+}

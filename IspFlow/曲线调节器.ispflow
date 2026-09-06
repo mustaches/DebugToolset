@@ -1,0 +1,91 @@
+{
+  "name": "曲线调节器",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "levels_curves",
+      "x": 630.0,
+      "y": 490.0,
+      "width": 650.0,
+      "extraHeight": 648.0,
+      "name": "曲线调节器#1",
+      "params": {
+        "bypass": false,
+        "points": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            4095.0,
+            4095.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "image_source",
+      "x": 770.0,
+      "y": 340.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3.jpg",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "preview",
+      "x": 1370.0,
+      "y": 340.0,
+      "width": 443.62666666666667,
+      "extraHeight": 800.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "preview",
+      "x": 120.0,
+      "y": 340.0,
+      "width": 443.62666666666667,
+      "extraHeight": 800.0,
+      "name": "预览#2",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c3",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n1",
+      "toPort": "in"
+    },
+    {
+      "id": "c5",
+      "from": "n1",
+      "fromPort": "out",
+      "to": "n4",
+      "toPort": "in"
+    },
+    {
+      "id": "c7",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n6",
+      "toPort": "in"
+    }
+  ],
+  "groups": [],
+  "nextId": 8
+}

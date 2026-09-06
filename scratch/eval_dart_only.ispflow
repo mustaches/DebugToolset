@@ -1,0 +1,31 @@
+{
+  "name": "评价缓存验证（纯Dart指标）",
+  "nodes": [
+    {"id": "n1", "typeId": "image_source", "x": 0.0, "y": 0.0, "width": 190.0, "extraHeight": 0.0, "name": "Image#1",
+     "params": {"filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3.jpg", "bitDepth": "8"}},
+    {"id": "n2", "typeId": "image_source", "x": 0.0, "y": 200.0, "width": 190.0, "extraHeight": 0.0, "name": "Image#2",
+     "params": {"filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3noise.png", "bitDepth": "8"}},
+    {"id": "n6", "typeId": "psnr", "x": 300.0, "y": 0.0, "width": 190.0, "extraHeight": 0.0, "name": "PSNR#1", "params": {}},
+    {"id": "n7", "typeId": "ssim", "x": 300.0, "y": 200.0, "width": 190.0, "extraHeight": 0.0, "name": "SSIM#1", "params": {}},
+    {"id": "n8", "typeId": "msssim", "x": 500.0, "y": 200.0, "width": 190.0, "extraHeight": 0.0, "name": "MSSSIM#1", "params": {}},
+    {"id": "n9", "typeId": "fsim", "x": 500.0, "y": 0.0, "width": 190.0, "extraHeight": 0.0, "name": "FSIM#1", "params": {}},
+    {"id": "n30", "typeId": "niqe", "x": 700.0, "y": 0.0, "width": 190.0, "extraHeight": 0.0, "name": "NIQE#1", "params": {}},
+    {"id": "n31", "typeId": "brisque", "x": 700.0, "y": 200.0, "width": 190.0, "extraHeight": 0.0, "name": "BRISQUE#1", "params": {}},
+    {"id": "n33", "typeId": "piqe", "x": 700.0, "y": 400.0, "width": 190.0, "extraHeight": 0.0, "name": "PIQE#1", "params": {}}
+  ],
+  "connections": [
+    {"id": "c1", "from": "n1", "fromPort": "out_rgb", "to": "n6", "toPort": "in"},
+    {"id": "c2", "from": "n1", "fromPort": "out_rgb", "to": "n7", "toPort": "in"},
+    {"id": "c3", "from": "n1", "fromPort": "out_rgb", "to": "n8", "toPort": "in"},
+    {"id": "c4", "from": "n1", "fromPort": "out_rgb", "to": "n9", "toPort": "in"},
+    {"id": "c5", "from": "n2", "fromPort": "out_rgb", "to": "n6", "toPort": "in_test"},
+    {"id": "c6", "from": "n2", "fromPort": "out_rgb", "to": "n7", "toPort": "in_test"},
+    {"id": "c7", "from": "n2", "fromPort": "out_rgb", "to": "n8", "toPort": "in_test"},
+    {"id": "c8", "from": "n2", "fromPort": "out_rgb", "to": "n9", "toPort": "in_test"},
+    {"id": "c9", "from": "n2", "fromPort": "out_rgb", "to": "n30", "toPort": "in"},
+    {"id": "c10", "from": "n2", "fromPort": "out_rgb", "to": "n31", "toPort": "in"},
+    {"id": "c11", "from": "n2", "fromPort": "out_rgb", "to": "n33", "toPort": "in"}
+  ],
+  "groups": [],
+  "nextId": 40
+}

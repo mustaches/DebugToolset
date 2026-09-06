@@ -17,9 +17,12 @@
 ///
 /// 纯 Dart（无 Flutter 依赖）。[distsScoreInIsolate] 为 compute()
 /// 入口，[distsScoreParallel] 走 NnPool 多 isolate 并行（与同步版
-/// 位级一致）。
+/// 位级一致）；打分头（逐通道统计）经 [_distsHeadParallel] 按切片
+/// 6 路 [Isolate.run] 后台并行（优化 9，同 LPIPS 的 UI 阻塞教训），
+/// 与 [_distsFromFeats] 位级一致。
 library;
 
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../nn/nn_pool.dart';
@@ -145,6 +148,74 @@ double _distsFromFeats(List<NnTensor> feats0, List<NnTensor> feats1,
   return 1 - dist1 - dist2;
 }
 
+/// Isolate.run 入口（优化 9）：单切片的逐通道 S1/S2 统计。消息为
+/// (TransferableTypedData f0, TransferableTypedData f1, c, s)，返回
+/// (Float64List s1, Float64List s2)（每通道一对；统计循环与
+/// [_distsFromFeats] 逐语句相同，位级一致；alpha/beta 加权与跨切片
+/// 累加留在调用侧按原序执行）。
+@pragma('vm:entry-point')
+(Float64List, Float64List) distsSliceStatsInIsolate(
+    (TransferableTypedData, TransferableTypedData, int, int) msg) {
+  const c1 = 1e-6, c2 = 1e-6;
+  final f0 = msg.$1.materialize().asFloat32List();
+  final f1 = msg.$2.materialize().asFloat32List();
+  final c = msg.$3, s = msg.$4;
+  final s1s = Float64List(c);
+  final s2s = Float64List(c);
+  for (var ch = 0; ch < c; ch++) {
+    final base = ch * s;
+    var sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumYY = 0.0, sumXY = 0.0;
+    for (var i = 0; i < s; i++) {
+      final xv = f0[base + i];
+      final yv = f1[base + i];
+      sumX += xv;
+      sumY += yv;
+      sumXX += xv * xv;
+      sumYY += yv * yv;
+      sumXY += xv * yv;
+    }
+    final muX = sumX / s, muY = sumY / s;
+    // 有偏方差（除 HW）：mean(x²) − μ²。
+    final varX = sumXX / s - muX * muX;
+    final varY = sumYY / s - muY * muY;
+    final covXY = sumXY / s - muX * muY;
+    s1s[ch] = (2 * muX * muY + c1) / (muX * muX + muY * muY + c1);
+    s2s[ch] = (2 * covXY + c2) / (varX + varY + c2);
+  }
+  return (s1s, s2s);
+}
+
+/// 打分头（优化 9）：6 个切片各自 Isolate.run 后台并行（特征经
+/// TransferableTypedData 零拷贝进出，调用后 feats 的底层缓冲被转移、
+/// 不可再用——两条调用路径的打分头均只调用一次，无复用）；alpha/beta
+/// 加权与累加按 [_distsFromFeats] 的原序（k 升序、通道升序）在调用
+/// 侧执行，位级一致。
+Future<double> _distsHeadParallel(List<NnTensor> feats0,
+    List<NnTensor> feats1, Float32List alpha, Float32List beta) async {
+  final stats = await Future.wait([
+    for (var k = 0; k < _kChns.length; k++)
+      Isolate.run(
+          () => distsSliceStatsInIsolate((
+                TransferableTypedData.fromList([feats0[k].data]),
+                TransferableTypedData.fromList([feats1[k].data]),
+                feats0[k].channels,
+                feats0[k].height * feats0[k].width,
+              ))),
+  ]);
+  var dist1 = 0.0, dist2 = 0.0;
+  var wOff = 0;
+  for (var k = 0; k < _kChns.length; k++) {
+    final c = feats0[k].channels;
+    final (s1s, s2s) = stats[k];
+    for (var ch = 0; ch < c; ch++) {
+      dist1 += alpha[wOff + ch] * s1s[ch];
+      dist2 += beta[wOff + ch] * s2s[ch];
+    }
+    wOff += c;
+  }
+  return 1 - dist1 - dist2;
+}
+
 void _checkPair(Uint8List rgbaA, Uint8List rgbaB, int width, int height) {
   if (width < 1 || height < 1 || rgbaA.length < width * height * 4) {
     throw ArgumentError('distsScore: 参考帧尺寸/数据长度不符 '
@@ -208,7 +279,7 @@ Future<double> distsScoreParallel(
         ...await vf.forward(_normalizeForNet(x1), useL2Pooling: true),
       ];
       onBackend?.call(true);
-      return _distsFromFeats(feats0, feats1, alpha, beta);
+      return _distsHeadParallel(feats0, feats1, alpha, beta);
     } catch (e) {
       // ignore: avoid_print
       print('[distsScoreParallel] GPU 前向失败，整链回退 CPU 池: $e');
@@ -229,7 +300,7 @@ Future<double> distsScoreParallel(
       ...await vgg.forwardParallel(_normalizeForNet(x1), p,
           useL2Pooling: true),
     ];
-    return _distsFromFeats(feats0, feats1, alpha, beta);
+    return _distsHeadParallel(feats0, feats1, alpha, beta);
   } finally {
     if (ownPool) p.dispose();
   }

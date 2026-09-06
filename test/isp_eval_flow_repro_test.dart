@@ -5,11 +5,16 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/vgg16_dart.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/clip_rn50_gpu.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/inception_v3_gpu.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
-  // flutter_tester 为软件光栅：关闭 VGG16 GPU 驻留链走 CPU 池。
+  // flutter_tester 为软件光栅：关闭 VGG16/RN50/InceptionV3 GPU 驻留链走
+  // CPU 池。
   Vgg16AsyncForward.enabled = false;
+  ClipRn50Gpu.enabled = false;
+  InceptionV3Gpu.enabled = false;
   test('图像评价.ispflow runPreview 全流程计时', () async {
     final state = IspStudioState();
     addTearDown(state.dispose);

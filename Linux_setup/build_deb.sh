@@ -32,6 +32,9 @@ cp -a "$BUNDLE/." "$STAGE/opt/debug_tool_set/"
 for d in bussetup DeviceProtocol docs waveform IspFlow UI_Project; do
   [ -d "$ROOT/$d" ] && cp -a "$ROOT/$d" "$STAGE/opt/debug_tool_set/data/"
 done
+# IQA 桥接脚本（深度评价节点的 Python 后端；不含 tools/ffmpeg，Linux 用系统 ffmpeg）
+mkdir -p "$STAGE/opt/debug_tool_set/data/tools"
+[ -d "$ROOT/tools/iqa" ] && cp -a "$ROOT/tools/iqa" "$STAGE/opt/debug_tool_set/data/tools/"
 
 # ---- 启动器 / 桌面入口 / 图标 ----
 install -Dm755 "$ROOT/Linux_setup/debug-tool-set" "$STAGE/usr/bin/debug-tool-set"

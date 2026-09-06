@@ -1,0 +1,42 @@
+{
+  "name": "高斯模糊",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "image_source",
+      "x": 170.0,
+      "y": 160.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\4.jpg",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "gaussian_blur",
+      "x": 460.0,
+      "y": 160.0,
+      "width": 1200.8,
+      "extraHeight": 800.0,
+      "name": "高斯模糊#1",
+      "params": {
+        "sigma": 10.0,
+        "strength": 1.0
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c3",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n2",
+      "toPort": "in"
+    }
+  ],
+  "groups": [],
+  "nextId": 4
+}

@@ -1,0 +1,192 @@
+{
+  "name": "分解锐化流程",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "image_source",
+      "x": 130.0,
+      "y": 180.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\9.jpg",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "edge_extract",
+      "x": 380.0,
+      "y": 180.0,
+      "width": 1280.0,
+      "extraHeight": 494.0,
+      "name": "高频边缘提取#1",
+      "params": {
+        "gain": 4.0,
+        "threshold": 20.0
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "preview",
+      "x": 1730.0,
+      "y": 850.0,
+      "width": 664.0,
+      "extraHeight": 472.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n7",
+      "typeId": "multiplier",
+      "x": 1740.0,
+      "y": 470.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "乘法器#1",
+      "params": {}
+    },
+    {
+      "id": "n10",
+      "typeId": "yuv_splitter",
+      "x": 130.0,
+      "y": 730.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "YUV 分路器#1",
+      "params": {}
+    },
+    {
+      "id": "n17",
+      "typeId": "bright_contrast_adjuster",
+      "x": 380.0,
+      "y": 850.0,
+      "width": 1280.0,
+      "extraHeight": 524.0,
+      "name": "亮度/对比度调节器#1",
+      "params": {
+        "bypass": false,
+        "bright": 100.0,
+        "baseline": 50.0,
+        "gain": 100.0
+      }
+    },
+    {
+      "id": "n20",
+      "typeId": "morphology",
+      "x": 1740.0,
+      "y": 340.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "腐蚀/膨胀#1",
+      "params": {
+        "bypass": true,
+        "mode": "erode",
+        "radius": 1
+      }
+    },
+    {
+      "id": "n23",
+      "typeId": "adder",
+      "x": 1990.0,
+      "y": 470.0,
+      "width": 570.0,
+      "extraHeight": 160.0,
+      "name": "加法器#1",
+      "params": {
+        "balance": 0.20166352255600678
+      }
+    },
+    {
+      "id": "n24",
+      "typeId": "preview",
+      "x": 2480.0,
+      "y": 850.0,
+      "width": 664.0,
+      "extraHeight": 472.0,
+      "name": "预览#2",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c11",
+      "from": "n1",
+      "fromPort": "out_yuv",
+      "to": "n10",
+      "toPort": "in"
+    },
+    {
+      "id": "c18",
+      "from": "n10",
+      "fromPort": "out_y",
+      "to": "n17",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c19",
+      "from": "n17",
+      "fromPort": "out_mono",
+      "to": "n7",
+      "toPort": "in_mono2"
+    },
+    {
+      "id": "c21",
+      "from": "n20",
+      "fromPort": "out_mono",
+      "to": "n7",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c22",
+      "from": "n2",
+      "fromPort": "out_mono",
+      "to": "n20",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c26",
+      "from": "n7",
+      "fromPort": "out_mono",
+      "to": "n23",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c27",
+      "from": "n1",
+      "fromPort": "out_yuv",
+      "to": "n2",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c28",
+      "from": "n10",
+      "fromPort": "out_y",
+      "to": "n4",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c29",
+      "from": "n23",
+      "fromPort": "out_mono",
+      "to": "n24",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c30",
+      "from": "n10",
+      "fromPort": "out_y",
+      "to": "n23",
+      "toPort": "in_mono2"
+    }
+  ],
+  "groups": [],
+  "nextId": 31
+}

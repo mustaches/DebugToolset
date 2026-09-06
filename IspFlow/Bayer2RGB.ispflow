@@ -1,0 +1,344 @@
+{
+  "name": "Bayer2RGB",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "cis_bayer_rggb",
+      "x": -340.0,
+      "y": 290.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Bayer RGGB#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\temp\\IMG_20260817_213218.raw",
+        "width": 4096,
+        "height": 3072,
+        "bitDepth": "14",
+        "packing": "unpacked_lsb",
+        "littleEndian": true,
+        "frameIndex": 0,
+        "bayerPattern": "RGGB"
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "demosaic",
+      "x": 110.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "去马赛克#1",
+      "params": {
+        "algorithm": "bilinear"
+      }
+    },
+    {
+      "id": "n3",
+      "typeId": "preview",
+      "x": -330.0,
+      "y": 600.0,
+      "width": 480.0,
+      "extraHeight": 382.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "gamma",
+      "x": 1990.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Gamma/色调#1",
+      "params": {
+        "gamma": 2.2,
+        "brightness": 0.0,
+        "contrast": 1.0
+      }
+    },
+    {
+      "id": "n8",
+      "typeId": "preview",
+      "x": 1660.0,
+      "y": 600.0,
+      "width": 660.0,
+      "extraHeight": 512.0,
+      "name": "预览#2",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n13",
+      "typeId": "black_level",
+      "x": -340.0,
+      "y": 380.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "黑电平校正#1",
+      "params": {
+        "r": 64.0,
+        "gr": 64.0,
+        "gb": 64.0,
+        "b": 64.0
+      }
+    },
+    {
+      "id": "n17",
+      "typeId": "white_balance",
+      "x": 330.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "白平衡#1",
+      "params": {
+        "mode": "auto",
+        "rGain": 1.0,
+        "bGain": 1.0
+      }
+    },
+    {
+      "id": "n21",
+      "typeId": "hsl_debugger",
+      "x": 180.0,
+      "y": 600.0,
+      "width": 1280.0,
+      "extraHeight": 570.0,
+      "name": "HSL调节器#1",
+      "params": {
+        "h_shift": 0.0,
+        "s_gain": 1.0,
+        "l_gain": 5.0
+      }
+    },
+    {
+      "id": "n22",
+      "typeId": "csc_rgb2hsl",
+      "x": 550.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "RGB→HSL 转换#1",
+      "params": {}
+    },
+    {
+      "id": "n35",
+      "typeId": "csc_hsl2yuv",
+      "x": 870.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "HSL→YUV 转换#1",
+      "params": {}
+    },
+    {
+      "id": "n36",
+      "typeId": "yuv_splitter",
+      "x": 1080.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "YUV 分路器#1",
+      "params": {}
+    },
+    {
+      "id": "n37",
+      "typeId": "yuv_combiner",
+      "x": 1550.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "YUV 合路器#1",
+      "params": {}
+    },
+    {
+      "id": "n45",
+      "typeId": "csc_yuv2rgb",
+      "x": 1770.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "YUV→RGB 转换#1",
+      "params": {}
+    },
+    {
+      "id": "n49",
+      "typeId": "ahe",
+      "x": 1310.0,
+      "y": 410.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "自适应直方图均衡#1",
+      "params": {
+        "blockSize": 32,
+        "clipLimit": 2.0,
+        "strength": 1.0
+      }
+    },
+    {
+      "id": "n52",
+      "typeId": "grgb_balance",
+      "x": -110.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Gr/Gb 均衡#1",
+      "params": {
+        "strength": 1.0
+      }
+    },
+    {
+      "id": "n55",
+      "typeId": "histogram",
+      "x": 760.0,
+      "y": 30.0,
+      "width": 510.0,
+      "extraHeight": 264.0,
+      "name": "直方图#1",
+      "params": {}
+    },
+    {
+      "id": "n56",
+      "typeId": "histogram",
+      "x": 1560.0,
+      "y": 30.0,
+      "width": 510.0,
+      "extraHeight": 264.0,
+      "name": "直方图#2",
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "c9",
+      "from": "n6",
+      "fromPort": "out",
+      "to": "n8",
+      "toPort": "in"
+    },
+    {
+      "id": "c14",
+      "from": "n1",
+      "fromPort": "out",
+      "to": "n13",
+      "toPort": "in"
+    },
+    {
+      "id": "c18",
+      "from": "n2",
+      "fromPort": "out",
+      "to": "n17",
+      "toPort": "in"
+    },
+    {
+      "id": "c20",
+      "from": "n1",
+      "fromPort": "out",
+      "to": "n3",
+      "toPort": "in_raw"
+    },
+    {
+      "id": "c23",
+      "from": "n17",
+      "fromPort": "out",
+      "to": "n22",
+      "toPort": "in"
+    },
+    {
+      "id": "c27",
+      "from": "n22",
+      "fromPort": "out",
+      "to": "n21",
+      "toPort": "in"
+    },
+    {
+      "id": "c39",
+      "from": "n21",
+      "fromPort": "out",
+      "to": "n35",
+      "toPort": "in"
+    },
+    {
+      "id": "c40",
+      "from": "n35",
+      "fromPort": "out",
+      "to": "n36",
+      "toPort": "in"
+    },
+    {
+      "id": "c41",
+      "from": "n36",
+      "fromPort": "out_u",
+      "to": "n37",
+      "toPort": "in_u"
+    },
+    {
+      "id": "c42",
+      "from": "n36",
+      "fromPort": "out_v",
+      "to": "n37",
+      "toPort": "in_v"
+    },
+    {
+      "id": "c46",
+      "from": "n37",
+      "fromPort": "out",
+      "to": "n45",
+      "toPort": "in"
+    },
+    {
+      "id": "c47",
+      "from": "n45",
+      "fromPort": "out",
+      "to": "n6",
+      "toPort": "in"
+    },
+    {
+      "id": "c50",
+      "from": "n36",
+      "fromPort": "out_y",
+      "to": "n49",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c51",
+      "from": "n49",
+      "fromPort": "out_mono",
+      "to": "n37",
+      "toPort": "in_y"
+    },
+    {
+      "id": "c53",
+      "from": "n52",
+      "fromPort": "out",
+      "to": "n2",
+      "toPort": "in"
+    },
+    {
+      "id": "c54",
+      "from": "n13",
+      "fromPort": "out",
+      "to": "n52",
+      "toPort": "in"
+    },
+    {
+      "id": "c58",
+      "from": "n36",
+      "fromPort": "out_y",
+      "to": "n55",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c60",
+      "from": "n49",
+      "fromPort": "out_mono",
+      "to": "n56",
+      "toPort": "in_mono"
+    }
+  ],
+  "nextId": 61
+}

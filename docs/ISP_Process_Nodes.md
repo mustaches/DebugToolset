@@ -1,8 +1,8 @@
 # ISP Studio Process 节点使用说明
 
-本文档介绍 ISP Studio（`lib/modules/isp_studio/`）中全部 32 个 Process 类节点的功能、算法原理、参数含义与使用注意事项，包括：
+本文档介绍 ISP Studio（`lib/modules/isp_studio/`）中全部 33 个 Process 类节点的功能、算法原理、参数含义与使用注意事项，包括：
 
-- **主链 16 个**：RAW 域 8 个（黑电平校正 → 去马赛克）+ RGB 域 8 个（白平衡 → RGB→YUV 转换；其中高频边缘提取 edge_extract 支持 RGB/YUV/HSL 三域输入输出）；
+- **主链 17 个**：RAW 域 8 个（黑电平校正 → 去马赛克）+ RGB 域 9 个（白平衡 → RGB→YUV 转换，含高斯模糊 gaussian_blur；其中高频边缘提取 edge_extract 支持 RGB/YUV/HSL 三域输入输出）；
 - **色彩空间转换 5 个**：RGB / YUV / HSL 之间的互转（csc_rgb2hsl / csc_yuv2rgb / csc_yuv2hsl / csc_hsl2rgb / csc_hsl2yuv）；
 - **Process → Fluorescence 子分组 6 个**：ICG 荧光 mono 域算子与融合；
 - **调节器 5 个**：sat_bright_adjuster 色饱和度/亮度调节器（3.15）、bright_contrast_adjuster 亮度/对比度调节器（3.16）、levels_curves 曲线调节器（3.17）、color_balance 色彩平衡（3.18）、color_temp_adjuster 色温调节器（3.19）；HSL/RGB/YUV 调节器为同类的单域交互调参节点，本文不展开。
@@ -702,6 +702,25 @@ gain[c] = white(temperature)[c] / white(measured_cct)[c]   c ∈ R/G/B
 - 放在 gamma 之前（线性域操作）。
 - 黑底白线图（如 edge_extract 的 out_mono）上做**腐蚀**会把细线整体抹黑（半径 1 即抹掉大部分），观察效果请用膨胀；腐蚀适合亮区域/灰度图上去除孤立亮点。
 - GPU 快路径已支持本节点（`shaders/isp/isp_morphology.frag`，同一 shader 跑水平/垂直两趟，常量循环界 r≤8，与 CPU 逐值一致）。
+
+### 3.21 gaussian_blur 高斯模糊
+
+**功能**：高斯低通模糊，用于柔化画面/抑制高频噪声/模拟散景。RGB/YUV/HSL/Mono 四域通用：输入端口 `in`(RGB)/`in_yuv`/`in_hsl`/`in_mono`（互斥视频输入组，只接一路），输出端口 `out_rgb`/`out_yuv`/`out_hsl`/`out_mono`（同格式输出；非 mono 输入时 out_mono 为输出帧的亮度通道，同 bright_contrast_adjuster 口径），逐通道独立，帧格式不变。节点内嵌双联对比预览（左调整前/右调整后）+ σ/强度两行滑块。
+
+**算法原理**（`applyGaussianBlur`）：一维高斯核 `k[i] = exp(−i²/2σ²)`（半径 ⌈3σ⌉，归一化）可分离两趟卷积（水平一趟 + 垂直一趟），结果与直接二维高斯完全一致，复杂度从 O(r²) 降为 O(r)；边界复制。输出为原图与模糊图的强度混合：`out = in×(1−strength) + blurred×strength`。高斯权重为凸组合，不产生超范围值，无需钳位。
+
+**参数说明**：
+
+| 参数 (key / 标签) | 默认值 | 范围 | 说明与调整效果 |
+| --- | --- | --- | --- |
+| `sigma` / σ | 1.0 | 0.1 ~ 10 | 高斯核标准差，模糊半径 = ⌈3σ⌉。调大：模糊范围更宽、细节抹除更多；σ 越大计算越慢（每像素每趟 2r+1 次乘加）。 |
+| `strength` / 强度 | 1.0 | 0 ~ 1 | 原图/模糊图混合比。1 = 完全模糊；0.5 = 半强度柔化；0 = 不处理（直通）。 |
+
+**注意事项**：
+
+- 放在 gamma 之前（线性域操作）。
+- 降噪用途建议优先 bayer_dnr / rgb_dnr（保边），高斯模糊会无差别抹掉纹理细节。
+- GPU 快路径已支持本节点（`shaders/isp/isp_gaussian_blur.frag`，同一 shader 跑水平/垂直两趟，常量循环界 r≤30（σ≤10）；水平趟结果经 16 位打包往返一次，与 CPU 逐值差 ≤1）。
 
 ---
 

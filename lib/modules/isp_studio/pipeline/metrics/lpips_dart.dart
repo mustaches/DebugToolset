@@ -12,9 +12,14 @@
 ///
 /// 纯 Dart（无 Flutter 依赖）。计算量大，勿在 UI isolate 直接跑
 /// 同步版；[lpipsScoreInIsolate] 为 compute() 入口，
-/// [lpipsScoreParallel] 走 NnPool 多 isolate 并行（与同步版位级一致）。
+/// [lpipsScoreParallel] 走 NnPool 多 isolate 并行（与同步版位级一致）；
+/// 打分头（归一化+平方差+线性头）经 [_lpipsHeadParallel] 按切片 5 路
+/// [Isolate.run] 后台并行（优化 9：曾在 UI isolate 同步执行，MUSIQ
+/// 争抢下实测 388s 连续 STALL），与 [_lpipsFromFeats] 位级一致。
 library;
 
+import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../nn/nn_pool.dart';
@@ -102,6 +107,79 @@ double _lpipsFromFeats(
   return score;
 }
 
+/// Isolate.run 入口（优化 9）：单切片打分——归一化+平方差+线性头融合
+/// 单遍，消掉两个全尺寸归一化副本（slice0 单张 1.3GB）的分配。
+/// 位级一致要点：归一化中间值经 2 元素 fp32 scratch 强制舍入（原实现
+/// 是写入 Float32List 再读出参与差方）；范数按通道序 double 累加、
+/// norm=sqrt(sumSq)+1e-10（同 ops.l2NormalizeChannels）；除法→减法→
+/// 乘法→加法的 IEEE 运算顺序与原实现逐元素相同。
+/// 消息为 (TransferableTypedData f0, TransferableTypedData f1,
+/// TransferableTypedData linW, c, s)（f0/f1 为 [c,s] NCHW 单切片），
+/// 返回该切片的 layerSum/s。
+@pragma('vm:entry-point')
+double lpipsSliceScoreInIsolate(
+    (TransferableTypedData, TransferableTypedData, TransferableTypedData,
+        int, int) msg) {
+  final f0 = msg.$1.materialize().asFloat32List();
+  final f1 = msg.$2.materialize().asFloat32List();
+  final w = msg.$3.materialize().asFloat32List();
+  final c = msg.$4, s = msg.$5;
+  // 各空间位置的通道 L2 范数。
+  final n0 = Float64List(s);
+  final n1 = Float64List(s);
+  for (var i = 0; i < s; i++) {
+    var sumSq0 = 0.0, sumSq1 = 0.0;
+    for (var ch = 0; ch < c; ch++) {
+      final v0 = f0[ch * s + i];
+      final v1 = f1[ch * s + i];
+      sumSq0 += v0 * v0;
+      sumSq1 += v1 * v1;
+    }
+    n0[i] = math.sqrt(sumSq0) + 1e-10;
+    n1[i] = math.sqrt(sumSq1) + 1e-10;
+  }
+  final scratch = Float32List(2); // 强制 fp32 舍入（位级一致关键）
+  var layerSum = 0.0;
+  for (var ch = 0; ch < c; ch++) {
+    final base = ch * s;
+    final wv = w[ch];
+    var chSum = 0.0;
+    for (var i = 0; i < s; i++) {
+      scratch[0] = f0[base + i] / n0[i];
+      scratch[1] = f1[base + i] / n1[i];
+      final d = scratch[0] - scratch[1];
+      chSum += d * d;
+    }
+    layerSum += wv * chSum;
+  }
+  return layerSum / s;
+}
+
+/// 打分头（优化 9）：5 个切片各自 Isolate.run 后台并行（特征经
+/// TransferableTypedData 零拷贝进出，调用后 feats/linW 的底层缓冲被
+/// 转移、不可再用——两条调用路径的打分头均只调用一次，无复用），
+/// 按 k=0..4 序求和（累加顺序与 [_lpipsFromFeats] 相同，位级一致）。
+Future<double> _lpipsHeadParallel(
+    List<NnTensor> feats0, List<NnTensor> feats1,
+    List<Float32List> linW) async {
+  final parts = await Future.wait([
+    for (var k = 0; k < 5; k++)
+      Isolate.run(
+          () => lpipsSliceScoreInIsolate((
+                TransferableTypedData.fromList([feats0[k].data]),
+                TransferableTypedData.fromList([feats1[k].data]),
+                TransferableTypedData.fromList([linW[k]]),
+                feats0[k].channels,
+                feats0[k].height * feats0[k].width,
+              ))),
+  ]);
+  var score = 0.0;
+  for (var k = 0; k < 5; k++) {
+    score += parts[k];
+  }
+  return score;
+}
+
 void _checkPair(Uint8List rgbaA, Uint8List rgbaB, int width, int height) {
   if (width < 1 || height < 1 || rgbaA.length < width * height * 4) {
     throw ArgumentError('lpipsScore: 参考帧尺寸/数据长度不符 '
@@ -151,7 +229,7 @@ Future<double> lpipsScoreParallel(
       final feats0 = await vf.forward(_lpipsInput(rgbaA, width, height));
       final feats1 = await vf.forward(_lpipsInput(rgbaB, width, height));
       onBackend?.call(true);
-      return _lpipsFromFeats(feats0, feats1, linW);
+      return _lpipsHeadParallel(feats0, feats1, linW);
     } catch (e) {
       // ignore: avoid_print
       print('[lpipsScoreParallel] GPU 前向失败，整链回退 CPU 池: $e');
@@ -166,7 +244,7 @@ Future<double> lpipsScoreParallel(
         await vgg.forwardParallel(_lpipsInput(rgbaA, width, height), p);
     final feats1 =
         await vgg.forwardParallel(_lpipsInput(rgbaB, width, height), p);
-    return _lpipsFromFeats(feats0, feats1, linW);
+    return _lpipsHeadParallel(feats0, feats1, linW);
   } finally {
     if (ownPool) p.dispose();
   }

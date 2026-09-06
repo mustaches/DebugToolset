@@ -15,14 +15,19 @@ import 'package:image/image.dart' as img;
 import 'package:debug_tool_set/modules/isp_studio/pipeline/isp_kernels.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/lpips_dart.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/vgg16_dart.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/clip_rn50_gpu.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/inception_v3_gpu.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/pyiqa_worker.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
-  // flutter_tester 是软件光栅（SkVM）：VGG16 GPU 驻留链在上面要跑
+  // flutter_tester 是软件光栅（SkVM）：VGG16/RN50 GPU 驻留链在上面要跑
   // 分钟级，本文件的用例统一关闭 GPU 路径走 CPU 池（GPU 链由
-  // test/isp_nn_gpu_vgg_test.dart 单独覆盖）。
+  // test/isp_nn_gpu_vgg_test.dart / test/isp_nn_gpu_rn50_test.dart
+  // 单独覆盖）。
   Vgg16AsyncForward.enabled = false;
+  ClipRn50Gpu.enabled = false;
+  InceptionV3Gpu.enabled = false;
 
   /// 256x192 高纹理彩色测试帧（同 test/isp_pyiqa_test.dart）。
   Uint8List busyFrame({bool noisy = false, int noiseSeed = 0}) {

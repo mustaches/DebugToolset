@@ -94,6 +94,40 @@ void main() {
     test('空帧返回 1.0', () {
       expect(fsimRgba(Uint8List(0), Uint8List(0), 0, 0), (1.0, 1.0, 1.0, 1.0));
     });
+
+    test('dualMetricInIsolate 并行路径与 fsimRgba 一致（≥1M 像素触发）',
+        () async {
+      // 1024×1024 确定性测试图（w·h = 1M 像素，恰触发并行阈值）。
+      Uint8List bigFrame({int noiseAmp = 0}) {
+        const w = 1024, h = 1024;
+        final rgba = Uint8List(w * h * 4);
+        for (var i = 0; i < w * h; i++) {
+          final x = i % w, y = i ~/ w;
+          final n =
+              noiseAmp > 0 ? ((i * 31) % (2 * noiseAmp + 1)) - noiseAmp : 0;
+          rgba[i * 4] = (((x * 5 + y * 3) & 0xFF) + n).clamp(0, 255);
+          rgba[i * 4 + 1] = (((x * 2 + y * 11) & 0xFF) + n).clamp(0, 255);
+          rgba[i * 4 + 2] = (((x * 13 + y * 7) & 0xFF) + n).clamp(0, 255);
+          rgba[i * 4 + 3] = 255;
+        }
+        return rgba;
+      }
+
+      final a = bigFrame();
+      final b = bigFrame(noiseAmp: 8);
+      final res = await dualMetricInIsolate({
+        'kind': 'fsim',
+        'ref': a,
+        'test': b,
+        'width': 1024,
+        'height': 1024,
+      });
+      final (v, fr, fg, fb) = fsimRgba(a, b, 1024, 1024);
+      expect(res['fsim'] as double, closeTo(v, 1e-9));
+      expect(res['fsimR'] as double, closeTo(fr, 1e-9));
+      expect(res['fsimG'] as double, closeTo(fg, 1e-9));
+      expect(res['fsimB'] as double, closeTo(fb, 1e-9));
+    });
   });
 
   group('fsim 节点注册', () {

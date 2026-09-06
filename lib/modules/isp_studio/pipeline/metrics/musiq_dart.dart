@@ -33,15 +33,19 @@
 ///     num_class=1，dist_to_mos 恒等，无 clamp/sigmoid）。
 ///
 /// 纯 Dart（无 Flutter 依赖）。计算量大，勿在 UI isolate 直接跑
-/// 同步版；[musiqScoreInIsolate] 为 compute() 入口，
-/// [musiqScoreParallel] 走 NnPool 多 isolate 并行（patch tokenizer
-/// 的 conv 与 embedding 的 gemm 池并行，transformer 序列维不分；
-/// 与同步版位级一致）。
+/// 同步版；[musiqScoreInIsolate] 为 compute() 入口（后台 isolate 内
+/// 自起 NnPool，预处理/patch/tokenizer/embedding/transformer 全部
+/// 移出 UI），[musiqScoreParallel] 走 NnPool 多 isolate 并行（patch
+/// tokenizer 的 conv、embedding 的 gemm 与 transformer 的全部 GEMM
+/// 池并行，per-head mask/softmax 经 Isolate.run 按头并行；与同步版
+/// 位级一致）。
 ///
 /// 黄金值对拍见 test/isp_musiq_dart_test.dart（由
 /// tools/iqa/dump_musiq_golden.py 生成）。
 library;
 
+import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -63,13 +67,25 @@ const List<int> _longerSides = [224, 384];
 
 /// compute() 入口：`{'rgba': Uint8List, 'width': int, 'height': int,
 /// 'weightsPath': String?}` → MUSIQ 分值（double，约 0..100）。
+/// 在后台 isolate 内自起 NnPool（核数-4，同状态层共享池口径）并自行
+/// 从 nnwPath 加载权重（108MB 按需读，避免跨 isolate 传权重），
+/// 预处理/多尺度 patch/tokenizer/embedding/transformer 全部在该
+/// isolate 内完成；结果与 [musiqScore] 位级一致。
 @pragma('vm:entry-point')
-double musiqScoreInIsolate(Map<String, Object?> msg) => musiqScore(
-      msg['rgba'] as Uint8List,
-      msg['width'] as int,
-      msg['height'] as int,
-      weightsPath: (msg['weightsPath'] as String?) ?? musiqWeightsPath,
-    );
+Future<double> musiqScoreInIsolate(Map<String, Object?> msg) async {
+  final model = MusiqDart.load(
+      (msg['weightsPath'] as String?) ?? musiqWeightsPath);
+  final pool = NnPool();
+  await pool.start(math.max(2, Platform.numberOfProcessors - 4));
+  try {
+    return await model.scoreParallel(
+        musiqInput(msg['rgba'] as Uint8List, msg['width'] as int,
+            msg['height'] as int),
+        pool);
+  } finally {
+    pool.dispose();
+  }
+}
 
 /// RGBA8888 → [-1,1] RGB NCHW [1,3,H,W]：先 /255 到 [0,1]，再
 /// (x−0.5)*2（musiq_arch.MUSIQ.forward 的 eval 预处理）。
@@ -502,6 +518,92 @@ class MusiqDart {
     return ops.linear(NnTensor(ctx, [n, _dim]), blk.outW, bias: blk.outB);
   }
 
+  /// 池并行 Linear：与 ops.linear 位级一致（ops.linear 即
+  /// sgemm(x, W, rows, outF, inF, transB: true) + 逐行 bias 加；
+  /// NnPool.parallelGemm 按 M 行块切分，不改变任一输出元素的 k 维
+  /// 累加顺序）。bias 加循环与 ops.linear 逐字一致。
+  static Future<NnTensor> _linearParallel(
+      NnTensor x, NnTensor weight, Float32List? bias, NnPool pool) async {
+    final inF = weight.shape[1], outF = weight.shape[0];
+    if (x.shape.last != inF) {
+      throw ArgumentError(
+          'linear: 输入末维 ${x.shape.last} != in_features $inF');
+    }
+    final rows = x.numel ~/ inF;
+    final out = NnTensor.zeros([...x.shape.sublist(0, x.rank - 1), outF]);
+    await pool.parallelGemm(x.data, weight.data, rows, outF, inF,
+        transB: true, c: out.data);
+    if (bias != null) {
+      for (var r = 0; r < rows; r++) {
+        final base = r * outF;
+        for (var j = 0; j < outF; j++) {
+          out.data[base + j] += bias[j];
+        }
+      }
+    }
+    return out;
+  }
+
+  /// 6 头自注意力的池并行版（与 [_attention] 位级一致）：q/k/v/out
+  /// 投影与 per-head scores（ops.linear(qH,kH) 即 sgemm(m=n,n=n,k=64,
+  /// transB:true)）/AV（ops.matmul(attn,vH) 即 sgemm(m=n,n=64,k=n)）
+  /// 的 GEMM 走 [pool]；mask 填充 + 逐行 softmax 经
+  /// [_maskSoftmaxHeadInIsolate] 按头并行（per-row 独立、逐元素
+  /// 确定性）。per-head 的切片/回写循环与运算顺序与 [_attention]
+  /// 逐字一致（仅缓冲从循环外复用改为每 head 独立分配，不影响数值）。
+  static Future<NnTensor> _attentionParallel(
+      NnTensor x, _TransformerBlockW blk, Int32List mask, NnPool pool) async {
+    final n = x.shape[0];
+    final q = await _linearParallel(x, blk.qW, blk.qB, pool);
+    final k = await _linearParallel(x, blk.kW, blk.kB, pool);
+    final v = await _linearParallel(x, blk.vW, blk.vB, pool);
+    final ctx = Float32List(n * _dim);
+    Future<void> head(int h) async {
+      final off = h * _headDim;
+      final qH = Float32List(n * _headDim);
+      final kH = Float32List(n * _headDim);
+      final vH = Float32List(n * _headDim);
+      for (var t = 0; t < n; t++) {
+        final row = t * _dim + off;
+        qH.setRange(t * _headDim, (t + 1) * _headDim, q.data, row);
+        kH.setRange(t * _headDim, (t + 1) * _headDim, k.data, row);
+        vH.setRange(t * _headDim, (t + 1) * _headDim, v.data, row);
+      }
+      final scores =
+          await pool.parallelGemm(qH, kH, n, n, _headDim, transB: true);
+      final attn = await _maskSoftmaxHeadInIsolate(scores, mask, n);
+      final o = await pool.parallelGemm(attn, vH, n, _headDim, n);
+      for (var t = 0; t < n; t++) {
+        ctx.setRange(
+            t * _dim + off, t * _dim + off + _headDim, o, t * _headDim);
+      }
+    }
+
+    await Future.wait([for (var h = 0; h < _heads; h++) head(h)]);
+    return _linearParallel(
+        NnTensor(ctx, [n, _dim]), blk.outW, blk.outB, pool);
+  }
+
+  /// TransformerBlock（pre-LN）池并行版：LN/gelu/residual 与
+  /// [_blockForward] 逐字一致（同步执行），GEMM 走 [pool]，位级一致。
+  static Future<NnTensor> _blockForwardParallel(NnTensor x,
+      _TransformerBlockW blk, Int32List mask, NnPool pool) async {
+    var y = ops.layerNorm(x, [_dim], blk.norm1W, blk.norm1B, eps: 1e-6);
+    y = await _attentionParallel(y, blk, mask, pool);
+    final out = NnTensor.zeros(x.shape);
+    for (var i = 0; i < x.numel; i++) {
+      out.data[i] = x.data[i] + y.data[i];
+    }
+    y = ops.layerNorm(out, [_dim], blk.norm2W, blk.norm2B, eps: 1e-6);
+    y = await _linearParallel(y, blk.fc1W, blk.fc1B, pool);
+    y = ops.gelu(y);
+    y = await _linearParallel(y, blk.fc2W, blk.fc2B, pool);
+    for (var i = 0; i < out.numel; i++) {
+      out.data[i] += y.data[i];
+    }
+    return out;
+  }
+
   /// TransformerBlock（pre-LN）：x += Attention(LN1(x))；
   /// x += MLP(LN2(x))（fc1→精确 erf GELU→fc2）。
   static NnTensor _blockForward(
@@ -558,6 +660,43 @@ class MusiqDart {
     return score;
   }
 
+  /// [encoderScore] 的池并行版：CLS/posEmb/scaleEmb/mask 前插、末尾
+  /// encoder_norm 与 head 的代码与运算顺序逐字一致；14 层 block 改
+  /// [_blockForwardParallel]（GEMM 走 [pool]、per-head mask/softmax
+  /// 经 Isolate.run 按头并行），结果与 [encoderScore] 位级一致。
+  Future<double> encoderScoreParallel(Float32List emb, Int32List hse,
+      Int32List scaleIds, Int32List mask, NnPool pool) async {
+    final s = hse.length;
+    final n = s + 1;
+    final x = NnTensor.zeros([n, _dim]);
+    // posembed/scale emb 加在 patch token 上，再前插 CLS（musiq_arch
+    // TransformerEncoder.forward 的顺序）。
+    x.data.setRange(_dim, n * _dim, emb);
+    for (var i = 0; i < s; i++) {
+      final row = (i + 1) * _dim;
+      final pb = hse[i] * _dim, sb = scaleIds[i] * _dim;
+      for (var j = 0; j < _dim; j++) {
+        x.data[row + j] += _posEmb[pb + j] + _scaleEmb[sb + j];
+      }
+    }
+    x.data.setRange(0, _dim, _clsToken);
+    final maskFull = Int32List(n);
+    maskFull[0] = 1;
+    maskFull.setRange(1, n, mask);
+
+    var h = x;
+    for (final blk in _blocks) {
+      h = await _blockForwardParallel(h, blk, maskFull, pool);
+    }
+    h = ops.layerNorm(h, [_dim], _encNormW, _encNormB, eps: 1e-6);
+    // head Linear(384→1) 作用于 CLS（第 0 行）。
+    var score = _headB[0];
+    for (var j = 0; j < _dim; j++) {
+      score += h.data[j] * _headW.data[j];
+    }
+    return score;
+  }
+
   /// 拼接三尺度为单条序列：patch 数据 [total,3,32,32] 与逐 patch
   /// 的 hse/尺度索引/mask（torch 的 cat(outputs, dim=-1) 等价物）。
   static (NnTensor, Int32List, Int32List, Int32List) _prepareSeq(
@@ -593,15 +732,71 @@ class MusiqDart {
     return encoderScore(emb.data, hse, scaleIds, mask);
   }
 
-  /// 完整前向（NnPool 池并行）：tokenizer 的 conv 与 embedding 的
-  /// gemm 池并行，transformer 同步；与 [score] 位级一致。
+  /// 完整前向（NnPool 池并行）：tokenizer 的 conv、embedding 的
+  /// gemm 与 transformer 的全部 GEMM 池并行（per-head mask/softmax
+  /// 经 Isolate.run 按头并行）；与 [score] 位级一致。
   Future<double> scoreParallel(NnTensor x, NnPool pool) async {
     final (patches, hse, scaleIds, mask) =
         _prepareSeq(musiqMultiscalePatches(x));
     final tok = await tokenizerForwardParallel(patches, pool);
     final emb = await embeddingForwardParallel(tok, pool);
-    return encoderScore(emb.data, hse, scaleIds, mask);
+    return encoderScoreParallel(emb.data, hse, scaleIds, mask, pool);
   }
+}
+
+/// 单 head 的 mask 填充 + 逐行 softmax：[n,n] scores → attn。
+/// 代码与运算顺序逐字抄自 [MusiqDart._attention] 的内联段
+/// （masked_fill(mask==0,−1000) 非 −inf、softmax 减最大值），
+/// per-row 独立、逐元素确定——经 Isolate.run 在独立 isolate 执行
+/// 与同步执行位级一致（math.exp 为 VM 内建确定性函数）。
+Float32List _maskSoftmaxHead(Float32List scores, Int32List mask, int n) {
+  const scale = 1.0 / 8.0; // head_dim(64)^-0.5
+  final attn = Float32List(n * n);
+  // masked_fill(mask==0, -1e3)，再乘 scale。
+  for (var i = 0; i < n; i++) {
+    final base = i * n;
+    if (mask[i] == 0) {
+      for (var j = 0; j < n; j++) {
+        attn[base + j] = -1e3;
+      }
+      continue;
+    }
+    for (var j = 0; j < n; j++) {
+      attn[base + j] = mask[j] == 0 ? -1e3 : scores[base + j] * scale;
+    }
+  }
+  // 逐行 softmax（减最大值）。
+  for (var i = 0; i < n; i++) {
+    final base = i * n;
+    var maxV = double.negativeInfinity;
+    for (var j = 0; j < n; j++) {
+      if (attn[base + j] > maxV) {
+        maxV = attn[base + j];
+      }
+    }
+    var sum = 0.0;
+    for (var j = 0; j < n; j++) {
+      final e = math.exp(attn[base + j] - maxV);
+      attn[base + j] = e;
+      sum += e;
+    }
+    for (var j = 0; j < n; j++) {
+      attn[base + j] = attn[base + j] / sum;
+    }
+  }
+  return attn;
+}
+
+/// [_maskSoftmaxHead] 的 Isolate.run 包装（n≈5136 时单 head [n,n]
+/// ≈105MB，进出均经 TransferableTypedData 零拷贝传输）。
+Future<Float32List> _maskSoftmaxHeadInIsolate(
+    Float32List scores, Int32List mask, int n) async {
+  final inTtd = TransferableTypedData.fromList([scores]);
+  final outTtd = await Isolate.run(() {
+    final s = inTtd.materialize().asFloat32List();
+    return TransferableTypedData.fromList([_maskSoftmaxHead(s, mask, n)]);
+  });
+  return outTtd.materialize().asFloat32List();
 }
 
 void _checkInput(Uint8List rgba, int width, int height) {

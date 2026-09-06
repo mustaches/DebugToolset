@@ -1,0 +1,118 @@
+{
+  "name": "混叠器测试",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "image_source",
+      "x": 140.0,
+      "y": 10.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\9.jpg",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "edge_extract",
+      "x": 430.0,
+      "y": 860.0,
+      "width": 1280.0,
+      "extraHeight": 494.0,
+      "name": "高频边缘提取#1",
+      "params": {
+        "gain": 2.0021054174872583,
+        "threshold": 20.0
+      }
+    },
+    {
+      "id": "n17",
+      "typeId": "bright_contrast_adjuster",
+      "x": 430.0,
+      "y": 180.0,
+      "width": 1280.0,
+      "extraHeight": 524.0,
+      "name": "亮度/对比度调节器#1",
+      "params": {
+        "bypass": false,
+        "bright": 140.84339615670947,
+        "baseline": 50.0,
+        "gain": 100.0
+      }
+    },
+    {
+      "id": "n24",
+      "typeId": "preview",
+      "x": 2150.0,
+      "y": 180.0,
+      "width": 664.0,
+      "extraHeight": 472.0,
+      "name": "预览#2",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n31",
+      "typeId": "blender",
+      "x": 1840.0,
+      "y": 10.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "混叠器#1",
+      "params": {
+        "mode": "normal",
+        "strength": 1.0
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c27",
+      "from": "n1",
+      "fromPort": "out_yuv",
+      "to": "n2",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c32",
+      "from": "n1",
+      "fromPort": "out_yuv",
+      "to": "n31",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c33",
+      "from": "n17",
+      "fromPort": "out_mono",
+      "to": "n31",
+      "toPort": "in_mask"
+    },
+    {
+      "id": "c34",
+      "from": "n2",
+      "fromPort": "out_mono",
+      "to": "n31",
+      "toPort": "in_blend"
+    },
+    {
+      "id": "c35",
+      "from": "n31",
+      "fromPort": "out_yuv",
+      "to": "n24",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c36",
+      "from": "n1",
+      "fromPort": "out_yuv",
+      "to": "n17",
+      "toPort": "in_yuv"
+    }
+  ],
+  "groups": [],
+  "nextId": 37
+}

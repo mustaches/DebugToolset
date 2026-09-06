@@ -11,5 +11,10 @@ for d in bussetup DeviceProtocol docs waveform IspFlow UI_Project; do
     cp -r "$APP/data/$d" "$DATA/" 2>/dev/null || mkdir -p "$DATA/$d"
   fi
 done
+# IQA 桥接脚本（深度评价节点的 Python 后端）
+mkdir -p "$DATA/tools"
+if [ ! -e "$DATA/tools/iqa" ]; then
+  cp -r "$APP/data/tools/iqa" "$DATA/tools/" 2>/dev/null || true
+fi
 cd "$DATA"
 exec "$APP/debug_tool_set" "$@"

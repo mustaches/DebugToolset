@@ -103,8 +103,15 @@ void main() {
     // ignore: avoid_print
     print('conv 无偏置: relToRms=$rel');
     expect(rel, lessThan(1e-2));
-    // stride 2 → UnsupportedError（调用方回退 CPU）
-    expect(() => g.conv2dAsync(x, wgt, strideH: 2, strideW: 2, padH: 1, padW: 1),
+    // stride 3（GPU 仅支持 stride 1/2）→
+    // UnsupportedError（调用方回退 CPU）
+    expect(() => g.conv2dAsync(x, wgt, strideH: 3, strideW: 3, padH: 1, padW: 1),
+        throwsA(isA<UnsupportedError>()));
+    // 9x9 kernel 超出 ≤7 上限 → UnsupportedError
+    final wgt9 = NnTensor(randF32(cout * cin * 81, 4, scale: 0.05),
+        [cout, cin, 9, 9]);
+    expect(
+        () => g.conv2dAsync(x, wgt9, padH: 4, padW: 4),
         throwsA(isA<UnsupportedError>()));
     // 同步接口未实现（异步入口替代）
     expect(() => g.conv2d(x, wgt, padH: 1, padW: 1),

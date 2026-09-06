@@ -31,6 +31,7 @@ import 'dart:typed_data';
 import '../nn/nnw_reader.dart';
 import '../nn/ops.dart' as ops;
 import '../nn/tensor.dart';
+import 'inception_v3_gpu.dart';
 
 /// InceptionV3（FID 版）权重的缺省路径（相对工作目录）。
 const String inceptionV3WeightsPath = 'tools/iqa/weights/inception_v3_fid.nnw';
@@ -273,12 +274,30 @@ Float32List _featuresChunk(Uint8List rgba, int width, int height,
 /// 整帧 patch 特征（多 isolate 并行版）：patch 分给 [workers] 个
 /// isolate（缺省按 CPU 核数），每个各自加载权重跑完整网络，结果与
 /// [InceptionV3Dart.inceptionPatchFeatures] 位级一致。
+///
+/// [gpuNet]（可选，GPU 纹理驻留的 InceptionV3Gpu）非空且
+/// [InceptionV3Gpu.enabled] 时改走 GPU 路径：逐 patch 驻留前向（UI
+/// isolate 串行，fp16 精度见 test/isp_nn_gpu_inception_test.dart）；
+/// 任一 patch 失败抛异常，由调用方整批回退本函数的 isolate 并行路径。
 Future<Float32List> inceptionPatchFeaturesParallel(
     Uint8List rgba, int width, int height,
-    {String weightsPath = inceptionV3WeightsPath, int? workers}) async {
+    {String weightsPath = inceptionV3WeightsPath,
+    int? workers,
+    InceptionV3Gpu? gpuNet}) async {
   _checkFrame(rgba, width, height);
   final grid = inceptionPatchGrid(width, height);
   final n = grid.length;
+  final gn = gpuNet;
+  if (gn != null && InceptionV3Gpu.enabled) {
+    final out = Float32List(n * inceptionFeatureDim);
+    for (var i = 0; i < n; i++) {
+      final (y0, x0, s) = grid[i];
+      final f = await gn.forward(inceptionPatchInput(rgba, width, y0, x0, s));
+      out.setRange(
+          i * inceptionFeatureDim, (i + 1) * inceptionFeatureDim, f);
+    }
+    return out;
+  }
   final nw =
       math.max(1, math.min(workers ?? (Platform.numberOfProcessors - 2), n));
   if (nw <= 1) {

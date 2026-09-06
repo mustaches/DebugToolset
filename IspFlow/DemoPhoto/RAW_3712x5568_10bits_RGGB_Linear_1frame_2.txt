@@ -1,0 +1,9 @@
+[common]
+Width=3712
+Height=5568
+Bits=10
+Bayer=RGGB
+BlackLevel_R=0
+BlackLevel_Gr=0
+BlackLevel_Gb=0
+BlackLevel_B=0

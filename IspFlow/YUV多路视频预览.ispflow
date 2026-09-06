@@ -10,7 +10,7 @@
       "extraHeight": 444.0,
       "params": {
         "fps": 30,
-        "frameCount": 194761
+        "frameCount": 15458
       }
     },
     {
@@ -22,7 +22,7 @@
       "extraHeight": 444.0,
       "params": {
         "fps": 30,
-        "frameCount": 194761
+        "frameCount": 15458
       }
     },
     {
@@ -34,7 +34,7 @@
       "extraHeight": 444.0,
       "params": {
         "fps": 30,
-        "frameCount": 194761
+        "frameCount": 15458
       }
     },
     {
@@ -82,7 +82,7 @@
       "extraHeight": 444.0,
       "params": {
         "fps": 30,
-        "frameCount": 30
+        "frameCount": 15458
       }
     },
     {
@@ -106,13 +106,13 @@
     {
       "id": "n51",
       "typeId": "preview",
-      "x": 3230.0,
-      "y": -470.0,
-      "width": 520.0,
-      "extraHeight": 800.0,
+      "x": 3120.0,
+      "y": -170.0,
+      "width": 800.0,
+      "extraHeight": 574.0,
       "params": {
         "fps": 30,
-        "frameCount": 194761
+        "frameCount": 15458
       }
     },
     {
@@ -132,7 +132,7 @@
       "width": 190.0,
       "extraHeight": 160.0,
       "params": {
-        "filePath": "K:\\AI网剧\\都市甜宠.mp4",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\本地部署DeepSeek Harness 加 Qwen3.8-27B教程.mp4",
         "bitDepth": "8",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }

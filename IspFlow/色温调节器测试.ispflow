@@ -1,0 +1,42 @@
+{
+  "name": "色温调节器测试",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "color_temp_adjuster",
+      "x": 720.0,
+      "y": 150.0,
+      "width": 1130.0,
+      "extraHeight": 480.0,
+      "name": "色温调节器#1",
+      "params": {
+        "temperature": 3707.0,
+        "measured_cct": 3707
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "image_source",
+      "x": 350.0,
+      "y": 150.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\9.jpg",
+        "bitDepth": "8"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c3",
+      "from": "n2",
+      "fromPort": "out_rgb",
+      "to": "n1",
+      "toPort": "in"
+    }
+  ],
+  "groups": [],
+  "nextId": 4
+}

@@ -17,7 +17,9 @@
 ///         均值 token（共 L=hw+1 个）→ 32 头自注意力（head_dim=64，
 ///         scale=64^-0.5，q/k/v 各自独立 Linear(2048→2048) 带 bias）
 ///         → c_proj Linear(2048→1024) 带 bias → 取第 0 个 token 得
-///         [1024] 图像特征（未 L2 归一化）。
+///         [1024] 图像特征（未 L2 归一化）。实现只算 token 0（Linear
+///         逐行独立 ⇒ 与全量计算位级一致）：q 只投影第 0 行，scores 为
+///         L 向量而非 L×L 矩阵。
 ///
 /// 输入任意分辨率（无 resize），输出维度固定 1024。
 /// 权重从 .nnw 读取（tools/iqa/weights/clipiqa_rn50.nnw，键
@@ -177,6 +179,10 @@ class ClipRn50Dart {
 
   /// AttentionPool2d 前向（pos_embedding=False）。x 为 [1,2048,h,w]，
   /// 返回第 0 个 token（全局均值 token）经 c_proj 后的 [1024] 特征。
+  ///
+  /// 只算 token 0：Linear 逐行独立 ⇒ c_proj(ctx)[0] == c_proj(ctx[0])，
+  /// attn 第 0 行同理，与全量计算位级一致，但 L² 的 scores/attn@vH
+  /// 降为 L 向量（大图 attnpool 从数百 G MACs 降到只剩 k/v 投影）。
   Float32List _attnPoolForward(NnTensor x) {
     final c = x.channels, hw = x.height * x.width;
     if (c != _embedDim || x.batch != 1) {
@@ -194,58 +200,135 @@ class ClipRn50Dart {
       }
       seq.data[ch] = mean / hw;
     }
-    final q = ops.linear(seq, _attnpool.qW, bias: _attnpool.qB);
+    // q 只需第 0 行；k/v 需全部 token。
+    final q0 = ops.linear(
+        NnTensor(Float32List.fromList(seq.data.sublist(0, c)), [1, c]),
+        _attnpool.qW,
+        bias: _attnpool.qB);
     final k = ops.linear(seq, _attnpool.kW, bias: _attnpool.kB);
     final v = ops.linear(seq, _attnpool.vW, bias: _attnpool.vB);
     const scale = 1.0 / 8.0; // head_dim(64)^-0.5
-    final ctx = Float32List(l * c);
-    // 逐头：qH/kH/vH [L,64]（维度切片连续拷贝），softmax(qH·kHᵀ·scale)·vH。
-    final qH = Float32List(l * _headDim);
+    final ctx0 = Float32List(c);
+    // 逐头：kH/vH [L,64]（维度切片连续拷贝），softmax(q0H·kHᵀ·scale)·vH。
     final kH = Float32List(l * _headDim);
     final vH = Float32List(l * _headDim);
-    final attn = Float32List(l * l);
-    final outH = Float32List(l * _headDim);
     for (var h = 0; h < _heads; h++) {
       final off = h * _headDim;
+      final q0H = Float32List.fromList(q0.data.sublist(off, off + _headDim));
       for (var t = 0; t < l; t++) {
         final row = t * c + off;
-        qH.setRange(t * _headDim, (t + 1) * _headDim, q.data, row);
         kH.setRange(t * _headDim, (t + 1) * _headDim, k.data, row);
         vH.setRange(t * _headDim, (t + 1) * _headDim, v.data, row);
       }
-      // attn = qH @ kHᵀ * scale（linear 即 x @ weightᵀ），逐行 softmax
-      // （torch 等价，减最大值）。
+      // scores = q0H @ kHᵀ（linear 即 x @ weightᵀ），softmax（减最大值）。
       final scores = ops.linear(
-          NnTensor(qH, [l, _headDim]), NnTensor(kH, [l, _headDim]));
-      for (var t = 0; t < l; t++) {
-        final base = t * l;
-        var maxV = double.negativeInfinity;
-        for (var i = 0; i < l; i++) {
-          final sv = scores.data[base + i] * scale;
-          scores.data[base + i] = sv;
-          if (sv > maxV) {
-            maxV = sv;
-          }
-        }
-        var sum = 0.0;
-        for (var i = 0; i < l; i++) {
-          final e = math.exp(scores.data[base + i] - maxV);
-          attn[base + i] = e;
-          sum += e;
-        }
-        for (var i = 0; i < l; i++) {
-          attn[base + i] = attn[base + i] / sum;
+          NnTensor(q0H, [1, _headDim]), NnTensor(kH, [l, _headDim]));
+      var maxV = double.negativeInfinity;
+      for (var i = 0; i < l; i++) {
+        final sv = scores.data[i] * scale;
+        scores.data[i] = sv;
+        if (sv > maxV) {
+          maxV = sv;
         }
       }
-      final o = ops.matmul(NnTensor(attn, [l, l]), NnTensor(vH, [l, _headDim]));
-      outH.setRange(0, l * _headDim, o.data);
-      for (var t = 0; t < l; t++) {
-        ctx.setRange(t * c + off, t * c + off + _headDim, outH, t * _headDim);
+      var sum = 0.0;
+      for (var i = 0; i < l; i++) {
+        final e = math.exp(scores.data[i] - maxV);
+        scores.data[i] = e;
+        sum += e;
       }
+      for (var i = 0; i < l; i++) {
+        scores.data[i] = scores.data[i] / sum;
+      }
+      final o = ops.matmul(
+          NnTensor(scores.data, [1, l]), NnTensor(vH, [l, _headDim]));
+      ctx0.setRange(off, off + _headDim, o.data, 0);
     }
-    final proj =
-        ops.linear(NnTensor(ctx, [l, c]), _attnpool.cW, bias: _attnpool.cB);
-    return Float32List.fromList(proj.data.sublist(0, proj.shape[1]));
+    final proj = ops.linear(NnTensor(ctx0, [1, c]), _attnpool.cW,
+        bias: _attnpool.cB);
+    return Float32List.fromList(proj.data);
+  }
+
+  /// AttentionPool2d 前向的 NnPool 并行版（只算 token 0，原理同
+  /// [_attnPoolForward] 头注释）：k/v 两个全量 Linear 走
+  /// [NnPool.parallelGemm]（按 M 行块切分，k 维累加顺序与单线程一
+  /// 致），q0/scores/attn@vH/c_proj 均为 m=1（parallelGemm 退化为本
+  /// 地 sgemm），结果与 [_attnPoolForward] 位级一致。
+  Future<Float32List> attnPoolForwardParallel(
+      NnTensor x, NnPool pool) async {
+    final c = x.channels, hw = x.height * x.width;
+    if (c != _embedDim || x.batch != 1) {
+      throw ArgumentError('attnpool 需要 [1,$_embedDim,h,w] 输入，得到 $x');
+    }
+    final l = hw + 1;
+    // NCHW → (HW+1)×C 序列，第 0 个 token 为全局均值（同同步版）。
+    final seq = NnTensor.zeros([l, c]);
+    for (var ch = 0; ch < c; ch++) {
+      final base = ch * hw;
+      var mean = 0.0;
+      for (var i = 0; i < hw; i++) {
+        mean += x.data[base + i];
+        seq.data[(i + 1) * c + ch] = x.data[base + i];
+      }
+      seq.data[ch] = mean / hw;
+    }
+    // linear 并行版：parallelGemm(transB) + 逐行加 bias（同 ops.linear）。
+    Future<Float32List> linearP(
+        Float32List src, int rows, NnTensor w, Float32List bias) async {
+      final outF = w.shape[0];
+      final out = await pool.parallelGemm(src, w.data, rows, outF, w.shape[1],
+          transB: true);
+      for (var r = 0; r < rows; r++) {
+        final base = r * outF;
+        for (var j = 0; j < outF; j++) {
+          out[base + j] += bias[j];
+        }
+      }
+      return out;
+    }
+
+    // q 只需第 0 行；k/v 需全部 token（并行 gemm 的主要受益者）。
+    final q0 = await linearP(
+        Float32List.fromList(seq.data.sublist(0, c)), 1, _attnpool.qW,
+        _attnpool.qB);
+    final k = await linearP(seq.data, l, _attnpool.kW, _attnpool.kB);
+    final v = await linearP(seq.data, l, _attnpool.vW, _attnpool.vB);
+    const scale = 1.0 / 8.0; // head_dim(64)^-0.5
+    final ctx0 = Float32List(c);
+    // 逐头：kH/vH [L,64]，scores = softmax(q0H·kH^T·scale)（[L] 向量）。
+    final kH = Float32List(l * _headDim);
+    final vH = Float32List(l * _headDim);
+    for (var h = 0; h < _heads; h++) {
+      final off = h * _headDim;
+      final q0H = Float32List.fromList(q0.sublist(off, off + _headDim));
+      for (var t = 0; t < l; t++) {
+        final row = t * c + off;
+        kH.setRange(t * _headDim, (t + 1) * _headDim, k, row);
+        vH.setRange(t * _headDim, (t + 1) * _headDim, v, row);
+      }
+      final scores =
+          await pool.parallelGemm(q0H, kH, 1, l, _headDim, transB: true);
+      var maxV = double.negativeInfinity;
+      for (var i = 0; i < l; i++) {
+        final sv = scores[i] * scale;
+        scores[i] = sv;
+        if (sv > maxV) {
+          maxV = sv;
+        }
+      }
+      var sum = 0.0;
+      for (var i = 0; i < l; i++) {
+        final e = math.exp(scores[i] - maxV);
+        scores[i] = e;
+        sum += e;
+      }
+      for (var i = 0; i < l; i++) {
+        scores[i] = scores[i] / sum;
+      }
+      final o = await pool.parallelGemm(scores, vH, 1, _headDim, l);
+      ctx0.setRange(off, off + _headDim, o, 0);
+    }
+    return linearP(ctx0, 1, _attnpool.cW, _attnpool.cB);
   }
 
   /// 单线程同步前向。[x] 为已归一化的 [1,3,H,W]，返回 [1024] 特征。
@@ -269,8 +352,8 @@ class ClipRn50Dart {
     return _attnPoolForward(h);
   }
 
-  /// NnPool 并行前向（conv 走 parallelConv2d），结果与 [forward]
-  /// 位级一致。
+  /// NnPool 并行前向（conv 走 parallelConv2d、attention 走
+  /// [attnPoolForwardParallel]），结果与 [forward] 位级一致。
   Future<Float32List> forwardParallel(NnTensor x, NnPool pool) async {
     if (x.rank != 4 || x.batch != 1 || x.channels != 3) {
       throw ArgumentError(
@@ -291,6 +374,6 @@ class ClipRn50Dart {
         h = await _blockForwardP(h, blk, pool);
       }
     }
-    return _attnPoolForward(h);
+    return attnPoolForwardParallel(h, pool);
   }
 }

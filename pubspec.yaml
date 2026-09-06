@@ -122,6 +122,10 @@ flutter:
     - shaders/nn/nn_maxpool2x2_f16.frag
     - shaders/nn/nn_l2pool_dists_f16.frag
     - shaders/nn/nn_stitch3_f16.frag
+    - shaders/nn/nn_avgpool2x2_f16.frag
+    - shaders/nn/nn_addrelu_f16.frag
+    - shaders/nn/nn_pool3x3_f16.frag
+    - shaders/nn/nn_concat4_f16.frag
 
   # To add assets to your application, add an assets section, like this:
   # assets:

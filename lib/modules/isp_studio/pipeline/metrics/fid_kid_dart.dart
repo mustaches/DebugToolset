@@ -8,6 +8,10 @@
 ///     λ = σ1σ2 的非对称实矩阵特征值（nn/eig.dart），
 ///     c = Σ Re(√λ)；FID = a + b − 2c。
 ///     两侧各 <2 个样本时抛错（协方差无定义）。
+///     [fidScoreFromFeatures] 在 min(nRef,nTest) < 2048（实跑恒成立）
+///     时走低秩快路径 [_fidLowRank]：λ(σ1σ2) 的非零特征值归约到
+///     min(n)² 小矩阵（λ(AB)=λ(BA)，数学严格等价），2048² 矩阵乘与
+///     特征值求解消失（~40s → 亚秒级）；否则回退 2048² 路径。
 ///
 ///   KID：特征全部驻留 [N,2048]；subset_size = min(1000, 两侧样本数)，
 ///     subsets = subset_size ≥ 50 ? 50 : 10（iqa_bridge 小样本口径）；
@@ -130,12 +134,119 @@ double fidCompute(FidAccumulator ref, FidAccumulator test) {
 }
 
 /// 由两侧特征（[n,2048] fp32 连续排布）直接出 FID 分。
+///
+/// 样本数 < 特征维（实跑恒如此：patch 数十个 vs 2048 维）时走**低秩
+/// 快路径**（[_fidLowRank]）：利用 λ(AB)=λ(BA) 把 σ1σ2 的非零特征值
+/// 归约到 min(nRef,nTest)² 小矩阵求解，与 2048² 路径数学上严格等价
+/// （非近似），耗时从 ~40s 降到亚秒级；否则回退 [FidAccumulator] +
+/// [fidCompute] 的 2048² 路径。
 double fidScoreFromFeatures(
     Float32List refFeatures, int nRef, Float32List testFeatures, int nTest,
     {int dim = fidFeatureDim}) {
+  if (math.min(nRef, nTest) < dim) {
+    return _fidLowRank(refFeatures, nRef, testFeatures, nTest, dim);
+  }
   final accRef = FidAccumulator(dim)..addBatch(refFeatures, nRef);
   final accTest = FidAccumulator(dim)..addBatch(testFeatures, nTest);
   return fidCompute(accRef, accTest);
+}
+
+/// FID 低秩快路径（torchmetrics `_compute_fid` 口径的等价归约）：
+/// σi = XicᵀXic/(ni−1)（Xic 为中心化特征，n×d，rank ≤ n−1）；
+/// σ1σ2 的非零特征值 = P = (X1cX2cᵀ)(X2cX1cᵀ)/((n1−1)(n2−1))（取较小
+/// 样本侧为行）的特征值；trσi = Σ‖x−μi‖²/(ni−1)。
+/// 全部计算 fp64，P 为 min(nRef,nTest)² 小矩阵。
+double _fidLowRank(
+    Float32List ref, int nRef, Float32List test, int nTest, int dim) {
+  if (ref.length < nRef * dim || test.length < nTest * dim) {
+    throw ArgumentError('FID: 特征长度与样本数不符');
+  }
+  if (nRef < 2 || nTest < 2) {
+    throw StateError('FID/KID 需要两侧各 ≥2 个样本（ref=$nRef, '
+        'test=$nTest）');
+  }
+
+  // μ（fp64）与中心化特征 Xc（n×d，fp64）。
+  (Float64List, Float64List) center(Float32List feats, int n) {
+    final mu = Float64List(dim);
+    for (var r = 0; r < n; r++) {
+      final base = r * dim;
+      for (var i = 0; i < dim; i++) {
+        mu[i] += feats[base + i];
+      }
+    }
+    for (var i = 0; i < dim; i++) {
+      mu[i] /= n;
+    }
+    final xc = Float64List(n * dim);
+    for (var r = 0; r < n; r++) {
+      final base = r * dim;
+      for (var i = 0; i < dim; i++) {
+        xc[base + i] = feats[base + i] - mu[i];
+      }
+    }
+    return (mu, xc);
+  }
+
+  final (mu1, x1) = center(ref, nRef);
+  final (mu2, x2) = center(test, nTest);
+
+  // a = Σ(μ1−μ2)²。
+  var a = 0.0;
+  for (var i = 0; i < dim; i++) {
+    final diff = mu1[i] - mu2[i];
+    a += diff * diff;
+  }
+  // b = trσ1 + trσ2 = Σ‖x−μ‖²/(n−1)。
+  double traceOf(Float64List xc, int n) {
+    var s = 0.0;
+    for (var i = 0; i < n * dim; i++) {
+      s += xc[i] * xc[i];
+    }
+    return s / (n - 1);
+  }
+
+  final b = traceOf(x1, nRef) + traceOf(x2, nTest);
+
+  // 小样本侧为 S（ns×d），另一侧为 L（nl×d）：G = S·Lᵀ（ns×nl），
+  // P = G·Gᵀ/((nRef−1)(nTest−1))（ns×ns）。
+  final smallFirst = nRef <= nTest;
+  final s = smallFirst ? x1 : x2, lg = smallFirst ? x2 : x1;
+  final ns = smallFirst ? nRef : nTest, nl = smallFirst ? nTest : nRef;
+  final g = Float64List(ns * nl);
+  for (var i = 0; i < ns; i++) {
+    final sRow = i * dim;
+    for (var j = 0; j < nl; j++) {
+      final lRow = j * dim;
+      var dot = 0.0;
+      for (var k = 0; k < dim; k++) {
+        dot += s[sRow + k] * lg[lRow + k];
+      }
+      g[i * nl + j] = dot;
+    }
+  }
+  final scale = 1.0 / ((nRef - 1) * (nTest - 1));
+  final p = Float64List(ns * ns);
+  for (var i = 0; i < ns; i++) {
+    final gi = i * nl;
+    for (var j = i; j < ns; j++) {
+      final gj = j * nl;
+      var dot = 0.0;
+      for (var m = 0; m < nl; m++) {
+        dot += g[gi + m] * g[gj + m];
+      }
+      p[i * ns + j] = dot * scale;
+      p[j * ns + i] = dot * scale;
+    }
+  }
+  final ev = eigvalsReal(p, ns);
+  var c = 0.0;
+  for (var i = 0; i < ns; i++) {
+    final re = ev.re[i], im = ev.im[i];
+    // Re(√λ) = sqrt((|λ| + Re λ)/2)（同 fidCompute 口径）。
+    c += math.sqrt((math.sqrt(re * re + im * im) + re) / 2);
+  }
+  return a + b - 2 * c;
 }
 
 /// X·Xᵀ 的 Gram 矩阵（fp64；只算上三角再镜像）。

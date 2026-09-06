@@ -24,6 +24,7 @@ import '../nn/nn_pool.dart';
 import '../nn/nnw_reader.dart';
 import '../nn/tensor.dart';
 import 'clip_rn50_dart.dart';
+import 'clip_rn50_gpu.dart';
 
 /// CLIPIQA RN50 权重的缺省路径（相对工作目录）。
 const String clipiqaWeightsPath = 'tools/iqa/weights/clipiqa_rn50.nnw';
@@ -135,9 +136,17 @@ double clipiqaScore(Uint8List rgba, int width, int height,
 /// CLIPIQA 分值（NnPool 多 isolate 并行版）：结果与 [clipiqaScore]
 /// 位级一致。传入共享 [pool] 时直接使用（调用侧负责其生命周期）；
 /// 缺省内部启动 [workers] 个 worker（缺省按 CPU 核数），算完即销毁。
+///
+/// [gpuTrunk]（可选，GPU 纹理驻留的 ClipRn50Gpu）非空且
+/// [ClipRn50Gpu.enabled] 时主干（stem + 16 Bottleneck）走 GPU 驻留链，
+/// AttentionPool2d 仍走 [pool] 并行（GPU 路径同样依赖 [pool]）；任何
+/// 一步失败整链回退 CPU 池路径。GPU 路径的分数精度见
+/// test/isp_nn_gpu_rn50_test.dart 的对拍记录。
 Future<double> clipiqaScoreParallel(Uint8List rgba, int width, int height,
     {String weightsPath = clipiqaWeightsPath, int? workers,
-    NnPool? pool}) async {
+    NnPool? pool,
+    ClipRn50Gpu? gpuTrunk,
+    void Function(bool usedGpu)? onBackend}) async {
   _checkInput(rgba, width, height);
   final rn50 = ClipRn50Dart.load(weightsPath);
   final params = ClipIqaParams.load(weightsPath);
@@ -145,8 +154,21 @@ Future<double> clipiqaScoreParallel(Uint8List rgba, int width, int height,
   final p = pool ?? NnPool();
   if (ownPool) await p.start(workers);
   try {
-    final feat =
-        await rn50.forwardParallel(clipiqaInput(rgba, width, height), p);
+    final input = clipiqaInput(rgba, width, height);
+    final gt = gpuTrunk;
+    if (gt != null && ClipRn50Gpu.enabled) {
+      try {
+        final trunk = await gt.forwardTrunk(input);
+        final feat = await rn50.attnPoolForwardParallel(trunk, p);
+        onBackend?.call(true);
+        return clipiqaScoreFromFeat(feat, params);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[clipiqaScoreParallel] GPU 主干失败，整链回退 CPU 池: $e');
+      }
+    }
+    onBackend?.call(false);
+    final feat = await rn50.forwardParallel(input, p);
     return clipiqaScoreFromFeat(feat, params);
   } finally {
     if (ownPool) p.dispose();

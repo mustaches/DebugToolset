@@ -1,0 +1,128 @@
+{
+  "name": "视频最值测试",
+  "nodes": [
+    {
+      "id": "n16",
+      "typeId": "minmax",
+      "x": 1210.0,
+      "y": 210.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "最值保持器#1",
+      "params": {}
+    },
+    {
+      "id": "n17",
+      "typeId": "minmax",
+      "x": 1210.0,
+      "y": 440.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "最值保持器#2",
+      "params": {}
+    },
+    {
+      "id": "n18",
+      "typeId": "minmax",
+      "x": 1210.0,
+      "y": 670.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "最值保持器#3",
+      "params": {}
+    },
+    {
+      "id": "n19",
+      "typeId": "histogram",
+      "x": 440.0,
+      "y": 440.0,
+      "width": 570.0,
+      "extraHeight": 324.0,
+      "name": "直方图#1",
+      "params": {}
+    },
+    {
+      "id": "n24",
+      "typeId": "yuv_splitter",
+      "x": 720.0,
+      "y": 210.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "YUV 分路器#1",
+      "params": {}
+    },
+    {
+      "id": "n30",
+      "typeId": "video_source",
+      "x": 410.0,
+      "y": 200.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "K:\\AI网剧\\盗版三国志.mp4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n33",
+      "typeId": "preview",
+      "x": 590.0,
+      "y": -420.0,
+      "width": 800.0,
+      "extraHeight": 432.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c26",
+      "from": "n24",
+      "fromPort": "out_y",
+      "to": "n16",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c27",
+      "from": "n24",
+      "fromPort": "out_u",
+      "to": "n17",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c28",
+      "from": "n24",
+      "fromPort": "out_v",
+      "to": "n18",
+      "toPort": "in_mono"
+    },
+    {
+      "id": "c31",
+      "from": "n30",
+      "fromPort": "out_yuv",
+      "to": "n24",
+      "toPort": "in"
+    },
+    {
+      "id": "c32",
+      "from": "n30",
+      "fromPort": "out_yuv",
+      "to": "n19",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c34",
+      "from": "n30",
+      "fromPort": "out_yuv",
+      "to": "n33",
+      "toPort": "in_yuv"
+    }
+  ],
+  "groups": [],
+  "nextId": 35
+}

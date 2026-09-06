@@ -17,6 +17,8 @@ import 'package:image/image.dart' as img;
 import 'package:provider/provider.dart';
 import 'package:debug_tool_set/modules/isp_studio/models/isp_node.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/isp_kernels.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/clip_rn50_gpu.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/inception_v3_gpu.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/clipiqa_dart.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/musiq_dart.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/pyiqa_worker.dart';
@@ -24,6 +26,12 @@ import 'package:debug_tool_set/modules/isp_studio/widgets/node_widget.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
+  // flutter_tester 为软件光栅：VGG16/RN50/InceptionV3 GPU 驻留链在上面
+  // 要跑分钟级，且「进程内 Dart 出分」用例以 CPU 池分数为基准做 1e-6
+  // 断言——统一关闭 GPU 路径走 CPU 池（GPU 链由 test/isp_nn_gpu_*_
+  // test.dart 单独覆盖）。
+  ClipRn50Gpu.enabled = false;
+  InceptionV3Gpu.enabled = false;
   /// 256x192 高纹理彩色测试帧（与 Python 参考对拍同款图案，
   /// 同 test/isp_piqe_test.dart 的 busyFrame）。
   Uint8List busyFrame({bool noisy = false, int noiseSeed = 0}) {

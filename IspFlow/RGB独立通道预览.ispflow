@@ -45,7 +45,7 @@
       "width": 190.0,
       "extraHeight": 160.0,
       "params": {
-        "filePath": "G:\\DebugToolSet\\IspFlow\\Test_Pattern\\ColorBars_1920x1080.png",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\Test_Pattern\\HueSweep_1920x1080.png",
         "bitDepth": "8"
       }
     },
@@ -126,6 +126,15 @@
         "fps": 30,
         "frameCount": 30
       }
+    },
+    {
+      "id": "n47",
+      "typeId": "vectorscope",
+      "x": 3040.0,
+      "y": 1190.0,
+      "width": 800.0,
+      "extraHeight": 800.0,
+      "params": {}
     }
   ],
   "connections": [
@@ -219,7 +228,14 @@
       "fromPort": "out",
       "to": "n45",
       "toPort": "in"
+    },
+    {
+      "id": "c48",
+      "from": "n41",
+      "fromPort": "out",
+      "to": "n47",
+      "toPort": "in"
     }
   ],
-  "nextId": 47
+  "nextId": 49
 }

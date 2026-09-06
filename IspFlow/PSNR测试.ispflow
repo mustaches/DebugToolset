@@ -1,0 +1,138 @@
+{
+  "name": "PSNR测试",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "mux4",
+      "x": 840.0,
+      "y": 590.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "多路选择器#1",
+      "params": {
+        "select": 1
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "psnr",
+      "x": 1190.0,
+      "y": 470.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "PSNR 数字表#1",
+      "params": {}
+    },
+    {
+      "id": "n4",
+      "typeId": "image_source",
+      "x": 490.0,
+      "y": 410.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3ref.png",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "image_source",
+      "x": 490.0,
+      "y": 570.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#2",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3.jpg",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n8",
+      "typeId": "image_source",
+      "x": 490.0,
+      "y": 700.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#3",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3blur.png",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n9",
+      "typeId": "image_source",
+      "x": 490.0,
+      "y": 830.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#4",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3noise.png",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n12",
+      "typeId": "image_source",
+      "x": 490.0,
+      "y": 960.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#5",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\DemoPhoto\\3ref.png",
+        "bitDepth": "8"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c3",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n2",
+      "toPort": "in_test"
+    },
+    {
+      "id": "c5",
+      "from": "n4",
+      "fromPort": "out_rgb",
+      "to": "n2",
+      "toPort": "in"
+    },
+    {
+      "id": "c7",
+      "from": "n6",
+      "fromPort": "out_rgb",
+      "to": "n1",
+      "toPort": "in1"
+    },
+    {
+      "id": "c10",
+      "from": "n8",
+      "fromPort": "out_rgb",
+      "to": "n1",
+      "toPort": "in2"
+    },
+    {
+      "id": "c11",
+      "from": "n9",
+      "fromPort": "out_rgb",
+      "to": "n1",
+      "toPort": "in3"
+    },
+    {
+      "id": "c13",
+      "from": "n12",
+      "fromPort": "out_rgb",
+      "to": "n1",
+      "toPort": "in4"
+    }
+  ],
+  "groups": [],
+  "nextId": 14
+}

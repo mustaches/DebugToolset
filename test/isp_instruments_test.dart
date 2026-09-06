@@ -16,6 +16,23 @@ void main() {
         for (final v in px) ...[v & 0xFF, (v >> 8) & 0xFF],
       ];
 
+  /// 1024×1024 确定性测试图（w·h = 1M 像素，恰触发 dualMetricInIsolate
+  /// 并行路径阈值；[noiseAmp] > 0 时叠加确定性伪噪声）。
+  Uint8List bigFrame({int noiseAmp = 0}) {
+    const w = 1024, h = 1024;
+    final rgba = Uint8List(w * h * 4);
+    for (var i = 0; i < w * h; i++) {
+      final x = i % w, y = i ~/ w;
+      final n =
+          noiseAmp > 0 ? ((i * 31) % (2 * noiseAmp + 1)) - noiseAmp : 0;
+      rgba[i * 4] = (((x * 5 + y * 3) & 0xFF) + n).clamp(0, 255);
+      rgba[i * 4 + 1] = (((x * 2 + y * 11) & 0xFF) + n).clamp(0, 255);
+      rgba[i * 4 + 2] = (((x * 13 + y * 7) & 0xFF) + n).clamp(0, 255);
+      rgba[i * 4 + 3] = 255;
+    }
+    return rgba;
+  }
+
   group('instruments 分析函数', () {
     test('histogramRgb 分通道计数', () {
       // 两个像素：(255, 0, 0) 与 (0, 128, 255)。
@@ -51,6 +68,22 @@ void main() {
       final (mse2, psnr2) = psnrRgba(a, c);
       expect(mse2, closeTo(1.0, 1e-9));
       expect(psnr2, closeTo(48.1308, 1e-3));
+    });
+
+    test('dualMetricInIsolate 并行路径与 psnrRgba 一致（≥1M 像素触发）',
+        () async {
+      final a = bigFrame();
+      final b = bigFrame(noiseAmp: 6);
+      final res = await dualMetricInIsolate({
+        'kind': 'psnr',
+        'ref': a,
+        'test': b,
+        'width': 1024,
+        'height': 1024,
+      });
+      final (mse, psnr) = psnrRgba(a, b);
+      expect(res['mse'] as double, closeTo(mse, 1e-9));
+      expect(res['psnr'] as double, closeTo(psnr, 1e-9));
     });
 
     test('waveformLuma 纯色帧所有计数落在同一亮度级', () {

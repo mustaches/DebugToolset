@@ -4,6 +4,8 @@
 /// 纯 Dart + dart:typed_data，可在后台 isolate 中运行。
 library;
 
+import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -556,19 +558,26 @@ void _drawChannelInto(
 /// 用于评估图像噪声/处理保真度：数值越大越接近参考图。
 (double mse, double psnr) psnrRgba(Uint8List a, Uint8List b) {
   final n = math.min(a.length, b.length) & ~3;
+  final (sum, count) = _psnrBandSum(a, b, 0, n);
+  if (count == 0) return (0.0, double.infinity);
+  final mse = sum / count;
+  if (mse == 0) return (0.0, double.infinity);
+  return (mse, 10 * math.log(255 * 255 / mse) / math.ln10);
+}
+
+/// PSNR 行带部分和：[i0,i1) 字节区间（4 字节像素对齐）内 RGB 三通道
+/// 的平方误差和与样本数；供 [psnrRgba] 整幅串行与并行分带复用。
+(double, int) _psnrBandSum(Uint8List a, Uint8List b, int i0, int i1) {
   var sum = 0.0;
   var count = 0;
-  for (var i = 0; i < n; i += 4) {
+  for (var i = i0; i < i1; i += 4) {
     for (var c = 0; c < 3; c++) {
       final d = a[i + c] - b[i + c];
       sum += d * d;
       count++;
     }
   }
-  if (count == 0) return (0.0, double.infinity);
-  final mse = sum / count;
-  if (mse == 0) return (0.0, double.infinity);
-  return (mse, 10 * math.log(255 * 255 / mse) / math.ln10);
+  return (sum, count);
 }
 
 /// SSIM 块边长（非重叠块 MSSIM 近似）。
@@ -581,14 +590,28 @@ const int _kSsimBlock = 8;
 /// 用于评估图像噪声/压缩损伤的结构保真度：数值越大越接近参考图。
 (double, double, double, double) ssimRgba(
     Uint8List a, Uint8List b, int width, int height) {
-  const c1 = 6.5025; // (0.01·255)²
-  const c2 = 58.5225; // (0.03·255)²
   final bw = width < _kSsimBlock ? width : _kSsimBlock;
   final bh = height < _kSsimBlock ? height : _kSsimBlock;
   if (bw <= 0 || bh <= 0) return (1.0, 1.0, 1.0, 1.0);
-  final sum = [0.0, 0.0, 0.0];
-  final cnt = [0, 0, 0];
-  for (var by = 0; by + bh <= height; by += bh) {
+  final (sum, cnt) = _ssimBandSum(a, b, width, bw, bh, 0, height);
+  if (cnt == 0) return (1.0, 1.0, 1.0, 1.0);
+  final sr = sum[0] / cnt;
+  final sg = sum[1] / cnt;
+  final sb = sum[2] / cnt;
+  return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
+/// SSIM 块行带部分和：[by0,by1) 像素行区间（按 bh 对齐切带）内全部
+/// 不重叠块的 R/G/B 块 SSIM 和（返回长度 3 的数组）与块数；块统计
+/// 口径与遍历顺序同 [ssimRgba] 原串行实现，供串行整幅与并行分带
+/// 复用（C1=(0.01·255)²，C2=(0.03·255)²，总体方差）。
+(Float64List, int) _ssimBandSum(Uint8List a, Uint8List b, int width, int bw,
+    int bh, int by0, int by1) {
+  const c1 = 6.5025; // (0.01·255)²
+  const c2 = 58.5225; // (0.03·255)²
+  final sum = Float64List(3);
+  var cnt = 0;
+  for (var by = by0; by + bh <= by1; by += bh) {
     for (var bx = 0; bx + bw <= width; bx += bw) {
       final n = bw * bh;
       for (var c = 0; c < 3; c++) {
@@ -613,15 +636,11 @@ const int _kSsimBlock = 8;
         final ssim = ((2 * ma * mb + c1) * (2 * cov + c2)) /
             ((ma * ma + mb * mb + c1) * (va + vb + c2));
         sum[c] += ssim;
-        cnt[c]++;
       }
+      cnt++;
     }
   }
-  if (cnt[0] == 0) return (1.0, 1.0, 1.0, 1.0);
-  final sr = sum[0] / cnt[0];
-  final sg = sum[1] / cnt[1];
-  final sb = sum[2] / cnt[2];
-  return ((sr + sg + sb) / 3, sr, sg, sb);
+  return (sum, cnt);
 }
 
 /// MS-SSIM 各尺度权重（Wang 03，5 尺度）；尺度不足时截断并归一化。
@@ -691,47 +710,51 @@ Uint8List _downsample2xPlane(Uint8List p, int w, int h) {
     // 不足一个块：退化为单尺度 SSIM。
     return ssimRgba(a, b, width, height);
   }
-  final perChannel = <double>[];
-  for (var c = 0; c < 3; c++) {
-    var pa = Uint8List(width * height);
-    var pb = Uint8List(width * height);
-    for (var i = 0, j = c; i < pa.length; i++, j += 4) {
-      pa[i] = a[j];
-      pb[i] = b[j];
-    }
-    // 逐尺度统计（亮度项只保留当级值，循环结束即最粗尺度）。
-    final csList = <double>[];
-    var lLast = 1.0;
-    var cw = width, ch = height;
-    while (cw >= _kSsimBlock &&
-        ch >= _kSsimBlock &&
-        csList.length < _msssimWeights.length) {
-      final (l, cs) = _ssimBlockTerms(pa, pb, cw, ch);
-      csList.add(cs.clamp(0.0, 1.0));
-      lLast = l.clamp(0.0, 1.0);
-      if (csList.length == _msssimWeights.length) break;
-      pa = _downsample2xPlane(pa, cw, ch);
-      pb = _downsample2xPlane(pb, cw, ch);
-      cw ~/= 2;
-      ch ~/= 2;
-    }
-    // 权重截断归一化后累乘：cs 每尺度都参与，l 只取最粗尺度。
-    var wSum = 0.0;
-    for (var j = 0; j < csList.length; j++) {
-      wSum += _msssimWeights[j];
-    }
-    var msssim = 1.0;
-    for (var j = 0; j < csList.length; j++) {
-      final wj = _msssimWeights[j] / wSum;
-      msssim *= math.pow(csList[j], wj);
-    }
-    msssim *= math.pow(lLast, _msssimWeights[csList.length - 1] / wSum);
-    perChannel.add(msssim.toDouble());
-  }
-  final sr = perChannel[0];
-  final sg = perChannel[1];
-  final sb = perChannel[2];
+  final sr = _msssimChannel(a, b, width, height, 0);
+  final sg = _msssimChannel(a, b, width, height, 1);
+  final sb = _msssimChannel(a, b, width, height, 2);
   return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
+/// MS-SSIM 单通道值：[msssimRgba] 的 per-channel 主体（通道平面提取、
+/// 逐尺度 cs 按权重累乘、亮度项取最粗尺度），供串行整幅与并行按通道
+/// 复用。
+double _msssimChannel(
+    Uint8List a, Uint8List b, int width, int height, int c) {
+  var pa = Uint8List(width * height);
+  var pb = Uint8List(width * height);
+  for (var i = 0, j = c; i < pa.length; i++, j += 4) {
+    pa[i] = a[j];
+    pb[i] = b[j];
+  }
+  // 逐尺度统计（亮度项只保留当级值，循环结束即最粗尺度）。
+  final csList = <double>[];
+  var lLast = 1.0;
+  var cw = width, ch = height;
+  while (cw >= _kSsimBlock &&
+      ch >= _kSsimBlock &&
+      csList.length < _msssimWeights.length) {
+    final (l, cs) = _ssimBlockTerms(pa, pb, cw, ch);
+    csList.add(cs.clamp(0.0, 1.0));
+    lLast = l.clamp(0.0, 1.0);
+    if (csList.length == _msssimWeights.length) break;
+    pa = _downsample2xPlane(pa, cw, ch);
+    pb = _downsample2xPlane(pb, cw, ch);
+    cw ~/= 2;
+    ch ~/= 2;
+  }
+  // 权重截断归一化后累乘：cs 每尺度都参与，l 只取最粗尺度。
+  var wSum = 0.0;
+  for (var j = 0; j < csList.length; j++) {
+    wSum += _msssimWeights[j];
+  }
+  var msssim = 1.0;
+  for (var j = 0; j < csList.length; j++) {
+    final wj = _msssimWeights[j] / wSum;
+    msssim *= math.pow(csList[j], wj);
+  }
+  msssim *= math.pow(lLast, _msssimWeights[csList.length - 1] / wSum);
+  return msssim.toDouble();
 }
 
 /// ---------------------------------------------------------------------------
@@ -879,29 +902,160 @@ double _fsimChannel(Float64List pa, Float64List pb, int w, int h,
   return ((sr + sg + sb) / 3, sr, sg, sb);
 }
 
+/// FSIM 单通道值（[dualMetricInIsolate] 并行路径用：子 isolate 各自
+/// 提取通道平面并分配工作平面，不复用）。数值与 [fsimRgba] 的
+/// per-channel 计算逐位一致（同一 _pcAndGm/_fsimChannel 调用序列）。
+double _fsimChannelValue(Uint8List a, Uint8List b, int w, int h, int c) {
+  final n = w * h;
+  final pa = Float64List(n);
+  final pb = Float64List(n);
+  for (var i = 0, j = c; i < n; i++, j += 4) {
+    pa[i] = a[j].toDouble();
+    pb[i] = b[j].toDouble();
+  }
+  return _fsimChannel(pa, pb, w, h, Float64List(n), Float64List(n),
+      Float64List(n), Float64List(n), Float64List(n), Float64List(n),
+      Float64List(n));
+}
+
+/// 节点内并行阈值：宽×高 ≥ 1M 像素时 [dualMetricInIsolate] 在自身
+/// isolate 内再起子 isolate 并行；小图走原串行路径，避免 spawn 开销
+/// 超过收益。
+const int _kDualMetricParallelPixels = 1 << 20;
+
+/// 并行子 isolate 数（与 inceptionPatchFeaturesParallel 同口径：
+/// 留 2 核给系统/调用侧，再限幅 8）：heavyCpuLock=2 下两路重 CPU
+/// 指标各自嵌套 14 子 isolate 会在开局窗口超订 CPU（优化 7 实测
+/// 教训）；PSNR/SSIM 部分和是内存带宽型任务，8 路足够吃满。
+int get _dualMetricWorkers =>
+    math.min(8, math.max(2, Platform.numberOfProcessors - 2));
+
+/// PSNR 并行路径：按行带切分为多路 Isolate.run 部分和，按带序确定性
+/// 合并（与串行仅浮点求和顺序不同，差异 ~1e-13 相对量级）。
+Future<(double, double)> _psnrRgbaParallel(
+    Uint8List a, Uint8List b, int w, int h) async {
+  final nw = math.min(_dualMetricWorkers, h);
+  final tasks = <Future<(double, int)>>[];
+  for (var t = 0; t < nw; t++) {
+    final y0 = h * t ~/ nw, y1 = h * (t + 1) ~/ nw;
+    if (y0 >= y1) continue;
+    tasks.add(
+        Isolate.run(() => _psnrBandSum(a, b, y0 * w * 4, y1 * w * 4)));
+  }
+  var sum = 0.0;
+  var count = 0;
+  for (final (s, c) in await Future.wait(tasks)) {
+    sum += s;
+    count += c;
+  }
+  if (count == 0) return (0.0, double.infinity);
+  final mse = sum / count;
+  if (mse == 0) return (0.0, double.infinity);
+  return (mse, 10 * math.log(255 * 255 / mse) / math.ln10);
+}
+
+/// SSIM 并行路径：按 8×8 块行带切分（块高边界对齐）多路 Isolate.run
+/// 部分和，按带序确定性合并（口径与 [ssimRgba] 一致）。
+Future<(double, double, double, double)> _ssimRgbaParallel(
+    Uint8List a, Uint8List b, int w, int h) async {
+  if (h < _kSsimBlock) return ssimRgba(a, b, w, h);
+  const bh = _kSsimBlock;
+  final bw = w < _kSsimBlock ? w : _kSsimBlock;
+  final nb = h ~/ bh; // 块行数
+  final nw = math.min(_dualMetricWorkers, nb);
+  if (nw <= 1) return ssimRgba(a, b, w, h);
+  final tasks = <Future<(Float64List, int)>>[];
+  for (var t = 0; t < nw; t++) {
+    final r0 = nb * t ~/ nw, r1 = nb * (t + 1) ~/ nw;
+    if (r0 >= r1) continue;
+    tasks.add(
+        Isolate.run(() => _ssimBandSum(a, b, w, bw, bh, r0 * bh, r1 * bh)));
+  }
+  final sum = Float64List(3);
+  var cnt = 0;
+  for (final (s, c) in await Future.wait(tasks)) {
+    sum[0] += s[0];
+    sum[1] += s[1];
+    sum[2] += s[2];
+    cnt += c;
+  }
+  if (cnt == 0) return (1.0, 1.0, 1.0, 1.0);
+  final sr = sum[0] / cnt;
+  final sg = sum[1] / cnt;
+  final sb = sum[2] / cnt;
+  return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
+/// MS-SSIM 并行路径：按 R/G/B 通道三路 Isolate.run 并行，按通道序合并
+/// （每通道计算与 [_msssimChannel] 串行调用逐位一致）。
+Future<(double, double, double, double)> _msssimRgbaParallel(
+    Uint8List a, Uint8List b, int w, int h) async {
+  if (w < _kSsimBlock || h < _kSsimBlock) {
+    // 与 msssimRgba 同退化口径。
+    return ssimRgba(a, b, w, h);
+  }
+  final v = await Future.wait([
+    for (var c = 0; c < 3; c++)
+      Isolate.run(() => _msssimChannel(a, b, w, h, c)),
+  ]);
+  final sr = v[0], sg = v[1], sb = v[2];
+  return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
+/// FSIM 并行路径：按 R/G/B 通道三路 Isolate.run 并行（各自分配工作
+/// 平面），按通道序合并（与 [fsimRgba] 逐位一致）。
+Future<(double, double, double, double)> _fsimRgbaParallel(
+    Uint8List a, Uint8List b, int w, int h) async {
+  final v = await Future.wait([
+    for (var c = 0; c < 3; c++)
+      Isolate.run(() => _fsimChannelValue(a, b, w, h, c)),
+  ]);
+  final sr = v[0], sg = v[1], sb = v[2];
+  return ((sr + sg + sb) / 3, sr, sg, sb);
+}
+
 /// compute() 入口：双输入评价指标（PSNR/SSIM/MS-SSIM/FSIM）在后台
-/// isolate 计算，避免大帧指标阻塞 UI isolate。
+/// isolate 计算，避免大帧指标阻塞 UI isolate。宽×高 ≥ 1M 像素且缓冲
+/// 恰为 w×h×4 时，在本 isolate 内再嵌套并行（PSNR 按行带、SSIM 按
+/// 块行带、MS-SSIM/FSIM 按通道三路 Isolate.run，部分和按带/通道序
+/// 确定性合并，与直接函数仅浮点求和顺序差异 ~1e-13 相对量级）；
+/// 否则走原串行路径。
 /// [msg] = `{'kind': 'psnr'|'ssim'|'msssim'|'fsim', 'ref': Uint8List,
 /// 'test': Uint8List, 'width': int, 'height': int}`（ref/test 同尺寸，
 /// 调用侧已完成降采样与尺寸校验）；返回 `{'kind': kind, ...指标}`，
 /// 结果键与各指标直接调用时一致。
 @pragma('vm:entry-point')
-Map<String, Object?> dualMetricInIsolate(Map<String, Object?> msg) {
+Future<Map<String, Object?>> dualMetricInIsolate(
+    Map<String, Object?> msg) async {
   final kind = msg['kind'] as String;
   final ra = msg['ref'] as Uint8List;
   final ta = msg['test'] as Uint8List;
   final w = msg['width'] as int;
   final h = msg['height'] as int;
+  // 并行前提：缓冲恰为 w×h×4（psnrRgba 对不等长缓冲按短者截断，并行
+  // 路径只按 w×h 切带，长度不符时回退串行保证口径一致）。
+  final parallel = w * h >= _kDualMetricParallelPixels &&
+      ra.length == w * h * 4 &&
+      ta.length == w * h * 4;
   if (kind == 'psnr') {
-    final (mse, psnr) = psnrRgba(ra, ta);
+    final (mse, psnr) = parallel
+        ? await _psnrRgbaParallel(ra, ta, w, h)
+        : psnrRgba(ra, ta);
     return {'kind': kind, 'psnr': psnr, 'mse': mse};
   }
   if (kind == 'fsim') {
-    final (v, fr, fg, fb) = fsimRgba(ra, ta, w, h);
+    final (v, fr, fg, fb) = parallel
+        ? await _fsimRgbaParallel(ra, ta, w, h)
+        : fsimRgba(ra, ta, w, h);
     return {'kind': kind, 'fsim': v, 'fsimR': fr, 'fsimG': fg, 'fsimB': fb};
   }
   // SSIM/MS-SSIM 共用结果键（ssim/ssimR/ssimG/ssimB）。
-  final (v, sr, sg, sb) =
-      kind == 'msssim' ? msssimRgba(ra, ta, w, h) : ssimRgba(ra, ta, w, h);
+  final (v, sr, sg, sb) = kind == 'msssim'
+      ? (parallel
+          ? await _msssimRgbaParallel(ra, ta, w, h)
+          : msssimRgba(ra, ta, w, h))
+      : (parallel
+          ? await _ssimRgbaParallel(ra, ta, w, h)
+          : ssimRgba(ra, ta, w, h));
   return {'kind': kind, 'ssim': v, 'ssimR': sr, 'ssimG': sg, 'ssimB': sb};
 }

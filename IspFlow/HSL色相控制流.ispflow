@@ -1,0 +1,84 @@
+{
+  "name": "HSL色相控制流",
+  "nodes": [
+    {
+      "id": "n115",
+      "typeId": "preview",
+      "x": -70.0,
+      "y": -520.0,
+      "width": 690.0,
+      "extraHeight": 422.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    },
+    {
+      "id": "n120",
+      "typeId": "hsl_debugger",
+      "x": 0.0,
+      "y": 100.0,
+      "width": 1280.0,
+      "extraHeight": 800.0,
+      "name": "HSL调节器#1",
+      "params": {
+        "bypass": false,
+        "h_shift": 90.0,
+        "s_gain": 1.0,
+        "l_gain": 1.0
+      }
+    },
+    {
+      "id": "n123",
+      "typeId": "image_source",
+      "x": -380.0,
+      "y": 100.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Image#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\IspFlow\\Test_Pattern\\ColorBars_1920x1080.png",
+        "bitDepth": "8"
+      }
+    },
+    {
+      "id": "n125",
+      "typeId": "preview",
+      "x": 750.0,
+      "y": -520.0,
+      "width": 690.0,
+      "extraHeight": 422.0,
+      "name": "预览#2",
+      "params": {
+        "fps": 30,
+        "frameCount": 30
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c124",
+      "from": "n123",
+      "fromPort": "out_hsl",
+      "to": "n120",
+      "toPort": "in"
+    },
+    {
+      "id": "c128",
+      "from": "n120",
+      "fromPort": "out",
+      "to": "n125",
+      "toPort": "in_hsl"
+    },
+    {
+      "id": "c129",
+      "from": "n123",
+      "fromPort": "out_hsl",
+      "to": "n115",
+      "toPort": "in_hsl"
+    }
+  ],
+  "groups": [],
+  "nextId": 130
+}
