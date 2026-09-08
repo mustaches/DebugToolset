@@ -75,3 +75,6 @@ Linux_setup/Output/
 /IspFlow/本地部署DeepSeek Harness 加 Qwen3.8-27B教程.mp4
 /temp/IMG_20260817_213218.png
 /temp/IMG_20260817_213218.raw
+
+# >40MB 文件不入库（GitHub 推送限制）
+/SIGLENT/Time domain-CN-2026-03.pdf
