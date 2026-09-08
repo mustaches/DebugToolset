@@ -69,6 +69,15 @@
 
 （无）
 
+## 优化 12（Flutter 3.47.2 升级适配，2026-09-08 验收）
+
+- **根因实锤（引擎回归）**：Flutter 3.47.2 在 Windows 默认启用 Impeller（ANGLE `OpenGLESSDF` 后端），NN fp16 runtime-effect shader 链在其下出现两类错误（原语探针 `scratch/nn_gpu_primitive_probe_main.dart`，日志 `scratch/nn_gpu_primitive_probe.log` vs `_skia.log`）：① fp16 加法系统性向下截断 1 ulp（PROBE_BITS down=121078/up=103919，Skia 下 0/0）；② 形状依赖的越界/损坏——16 输入通道 conv、>32 宽小 conv、4 路 concat 小纹理出现 NaN/Inf（65504），banded 链每个输出带最后一行为垃圾（banded_vs_single 仅在末行有 diff）。指标级后果（Impeller 下）：VGG banded LPIPS/DISTS 与 CPU 差恶化 1~2 个数量级（1688×3000 DISTS gross error 0.399 vs 0.109）；CLIPIQA 224² 差 3.1%、1688×3000 差 11.5%；Inception worstCos 0.999998→0.99995 且 220 patch GPU 链 22.9s→61s。VGG 单纹理小图路径不受影响（位级一致）。
+- **处置**：`windows/runner/main.cpp` 设 `project.set_impeller_switch(flutter::ImpellerSwitch::Disabled)`（C++ 包装层枚举为 `ImpellerSwitch::Disabled`；注释须用英文，项目 warnings-as-errors 下 C4819 会拒收中文注释）。注意 `flutter run --no-enable-impeller` 在本版本 Windows release 下**不生效**（日志仍打印 Impeller 后端行），只能改 main.cpp。官方称未来版本将移除该开关，届时须完成 shader 适配或向上游报修。
+- **验收（Skia 下复跑基准，全部回到旧 Flutter 口径）**：VGG banded 1024×768 LPIPS/DISTS GPU-vs-CPU 差 4.5e-5/9.4e-6、1688×3000 2.1e-5/1.5e-6（与 `scratch/bench_vgg_out.txt` 逐位一致）；CLIPIQA vs Python 224²/1024×768/1688×3000/2736×3648 = 1.6e-3/4.1e-3/1.9e-3/2.7e-5（口径 ≤5e-3 ✓）；Inception GOLDEN worstCos 0.999998、220 patch GPU 链 21.3s、FID vs Python 2.6e-3 ✓。
+- **流程级测量**（新基准 `scratch/iqa_flow_bench_main.dart`，复刻 图像评价.ispflow 的 14 指标 + 双锁调度，看门狗 `scratch/run_bench_watchdog.sh`）：Impeller 下总时长 293s 且分数错误；Skia 下 216s 且全部指标分数与 CPU/Python 口径一致。
+- **锁解耦实验（否决）**：FID/KID 独立锁与大链并行实测 227s，慢于单锁串行 216s——Skia 下 Inception 特征仅 43s/两侧，并行争抢反而拖慢双方；`isp_studio_state.dart` 的改动已回退，保持 优化 6 的单 `_gpuMetricLock` 设计。
+- **当前瓶颈结构**（Skia，5MP 馈源）：GPU 串行窗 LPIPS 78s + DISTS 61s + CLIPIQA 14s + FID 特征 44s ≈ 197s；MUSIQ ~119s 与传统指标全部被掩盖。后续可选：LPIPS/DISTS 共享 VGG16 第 1 块（relu1_2 前分叉，省 ~10-15s）；总时长下限由 GPU 串行窗决定。
+
 ## 排队待做
 
 （无）

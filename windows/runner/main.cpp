@@ -18,6 +18,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
   flutter::DartProject project(L"data");
+  // Flutter 3.47.2 Impeller (ANGLE OpenGLESSDF on Windows) corrupts the
+  // NN fp16 runtime-effect shader chains used by ISP Studio deep-IQA
+  // metrics (fp16 add truncation, out-of-bounds banded rows, NaN/Inf in
+  // concat/conv shapes; see scratch/nn_gpu_primitive_probe.log vs
+  // scratch/nn_gpu_primitive_probe_skia.log). Skia produces bit-exact
+  // results, so keep Impeller disabled until the engine issue is fixed.
+  project.set_impeller_switch(flutter::ImpellerSwitch::Disabled);
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
