@@ -47,10 +47,13 @@ class NodeCodePage extends StatelessWidget {
     // 预览运行后，用采样到的真实数据替换契约说明：
     // Output 用本节点输出采样；Input 的数据缓冲用上游节点的输出采样，
     // 参数类输入直接显示节点参数的实际值（无需运行）。
-    final capture = state.nodeOutputCaptures[nodeId];
+    // 注意 GPU 路径会把端口回读子表（'out' → {'data', ...}）合并进同一
+    // 节点的表，不含 'sample' 的表不是运行采样，按未运行处理。
+    final capture = _sampledCapture(state.nodeOutputCaptures[nodeId]);
     final upstreamId = _upstreamNodeId(state, node, type);
-    final upstreamCapture =
-        upstreamId != null ? state.nodeOutputCaptures[upstreamId] : null;
+    final upstreamCapture = upstreamId != null
+        ? _sampledCapture(state.nodeOutputCaptures[upstreamId])
+        : null;
     final inputs =
         _applyInputs(variables.inputs, node, upstreamCapture, upstreamId);
     final outputs = _applyCapture(variables.outputs, capture, nodeId);
@@ -114,6 +117,11 @@ class NodeCodePage extends StatelessWidget {
       ),
     );
   }
+
+  /// 仅当节点输出表含运行采样（'sample'）时返回该表；GPU 路径合并的
+  /// 端口回读子表（仅 'out' → {'data', ...}，无 'sample'）返回 null。
+  static Map<String, Object?>? _sampledCapture(Map<String, Object?>? capture) =>
+      capture != null && capture['sample'] is List ? capture : null;
 
   /// 该节点输入端口所连上游节点的 id（未连接为 null）。
   static String? _upstreamNodeId(

@@ -97,4 +97,58 @@ void main() {
     expect(find.text('2'), findsAtLeastNWidgets(2)); // width 与 height（另有代码行号）
     expect(find.text('0.0'), findsNWidgets(4)); // r / gr / gb / b 默认参数
   });
+
+  testWidgets('GPU 端口回读合并表（无 sample）不视为运行采样', (tester) async {
+    // GPU 路径预览后，端口回读（矢量示波器馈源等）会以 'port' →
+    // {'data','width','height} 子表合并进 nodeOutputCaptures[节点]；
+    // 源节点自身不在 GPU 采样之列，其表可能只有端口子表、没有 'sample'。
+    // 代码页应将这类表按「未运行」处理而不是对 null sample 强转崩溃。
+    final state = IspStudioState();
+    addTearDown(state.dispose);
+    final srcId = state.graph.addNode('image_source', 0, 0);
+    final ccId = state.graph.addNode('color_controller', 220, 0);
+    expect(state.graph.connect(srcId, 'out_hsl', ccId, 'in'), isNull);
+
+    state.nodeOutputCaptures = {
+      // 上游（源节点）：仅端口回读子表，无 sample。
+      srcId: {
+        'out_hsl': {'data': [0, 0, 0, 0], 'width': 2, 'height': 2},
+      },
+      // 本节点：真实采样 + 端口回读子表并存。
+      ccId: {
+        'format': 'hsl',
+        'length': 12,
+        'width': 2,
+        'height': 2,
+        'sample': List<int>.filled(12, 128),
+        'out': {'data': [0, 0, 0, 0], 'width': 2, 'height': 2},
+      },
+    };
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          home: Scaffold(body: NodeCodePage(nodeId: ccId)),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('只读'), findsOneWidget);
+    expect(find.text('Input（未运行）'), findsOneWidget);
+    expect(find.text('Output（运行值）'), findsOneWidget);
+
+    // 源节点自身打开代码页同样不崩溃。
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          home: Scaffold(body: NodeCodePage(nodeId: srcId)),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('只读'), findsOneWidget);
+    expect(find.text('Output（未运行）'), findsOneWidget);
+  });
 }
