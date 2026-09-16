@@ -152,4 +152,50 @@ abstract class Vgg16AsyncForward {
   /// 放弃一个已提交的前向（如配对图的 [forwardSubmit] 失败后清理已
   /// 驻留的那一份）：只释放驻留纹理，不做回读。
   Future<void> discardForward(Vgg16ForwardHandle handle);
+
+  /// 优化 15（可选能力）：是否支持 [channelStatsPair]（DISTS GPU 归约
+  /// 快路径）。false 时调用方应走 [forwardDownload] + CPU 统计。
+  bool get supportsChannelStats => false;
+
+  /// DISTS 归约快路径（优化 15）：两个前向句柄的 5 个切片（relu1_2..
+  /// relu5_3）逐通道 5 项统计（Σa/Σa²/Σb/Σb²/Σab）在 GPU 上按带归约，
+  /// 仅回读微小统计缓冲，跳过 5 切片全量特征的 GB 级下载。与
+  /// [forwardDownload] + CPU 逐元素统计的差异仅浮点求和顺序（~1e-6
+  /// 相对量级，既有 fp16 口径内）。实现侧无论成败都释放两个句柄的
+  /// 驻留纹理；任一步失败抛异常，调用方整链回退 CPU。
+  Future<List<VggSliceStats>> channelStatsPair(
+          Vgg16ForwardHandle h0, Vgg16ForwardHandle h1) =>
+      throw UnimplementedError('channelStatsPair 未实现');
+
+  /// 优化 16（可选能力）：是否支持 [lpipsStatsPair]（LPIPS GPU 归约
+  /// 快路径）。false 时调用方应走 [forwardDownload] + CPU 打分头。
+  bool get supportsLpipsStats => false;
+
+  /// LPIPS 归约快路径（优化 16）：两个前向句柄的 5 个切片逐通道
+  /// 3 项统计（A=Σ(a/na)²、B=Σ(b/nb)²、X=Σ(a/na)(b/nb)，na/nb 为
+  /// 逐像素通道 L2 范数，GPU 上先算范数图再按带归约）——LPIPS 打分
+  /// 头的 (a/na−b/nb)² = A+B−2X 展开。仅回读微小统计缓冲。返回的
+  /// [VggSliceStats.sums] 布局为 `[ch*3+stat]`（stat：0=A 1=B 2=X）。
+  /// 与 [forwardDownload] + CPU 打分头（逐元素 (tA−tB)² fp64 累加）
+  /// 的差异为展开式舍入与求和顺序（真机验收口径见
+  /// DEEP_IQA_PROGRESS.md 优化 16）。实现侧无论成败都释放两个句柄
+  /// 的驻留纹理；任一步失败抛异常，调用方整链回退 CPU。
+  Future<List<VggSliceStats>> lpipsStatsPair(
+          Vgg16ForwardHandle h0, Vgg16ForwardHandle h1) =>
+      throw UnimplementedError('lpipsStatsPair 未实现');
+}
+
+/// [Vgg16AsyncForward.channelStatsPair] 的切片统计结果（优化 15）。
+class VggSliceStats {
+  const VggSliceStats(this.sums, this.pixels, this.channels);
+
+  /// 逐通道 5 项合并统计，布局 `[ch*5+stat]`（stat：0=Σa 1=Σa²
+  /// 2=Σb 3=Σb² 4=Σab；fp32 Kahan 带内部分和经带序 fp64 合并）。
+  final Float64List sums;
+
+  /// 每通道的空间样本数（H×W）。
+  final int pixels;
+
+  /// 通道数。
+  final int channels;
 }

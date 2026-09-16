@@ -366,3 +366,172 @@ double kidScoreInIsolate(Map<String, Object?> msg) => kidCompute(
       msg['test'] as Float32List,
       msg['nTest'] as int,
     );
+
+/// KID 的增量核矩阵累计器（视频逐帧累计场景的出分快路径，纯 Dart，
+/// 无 Flutter 依赖）：新增样本只计算核矩阵的新增块（新×旧、新×新
+/// 三角），每帧 O(n·Δ·d)，替代 [kidCompute] 的每帧全量重算
+/// O(n²·d)（逐帧平方增长、整段播放立方增长）。矩阵元素直接存
+/// polyK 核值；每个点积的 k 升序 fp64 累加顺序与 [_gramSelf]/
+/// [_gramCross] 完全相同（点积两操作数交换不改变累加序列），
+/// [score] 的抽样与求和逻辑与 [kidCompute] 逐语句一致，因此任意
+/// 分批序列下出分与全量重算**逐位一致**（测试断言 ==）。
+///
+/// 内存：三个核矩阵 fp64（gxx/gyy/gxy 各 n² 量级），n=2000 时约
+/// 96MB；行 stride=capacity，容量倍增重打包摊销 O(n²)。
+class KidGramAccum {
+  /// 两侧特征驻留缓冲（容量 [_capRef]/[_capTest] 行，每行 2048）。
+  var _refFeats = Float32List(0);
+  var _testFeats = Float32List(0);
+
+  /// 核矩阵（fp64，行 stride 为对应容量；元素为 polyK 核值）。
+  var _gxx = Float64List(0);
+  var _gyy = Float64List(0);
+  var _gxy = Float64List(0);
+  var _capRef = 0;
+  var _capTest = 0;
+
+  /// 已累计样本数。
+  var nRef = 0;
+  var nTest = 0;
+
+  /// 清空累计（保留已分配缓冲供复用）。
+  void reset() {
+    nRef = 0;
+    nTest = 0;
+  }
+
+  static const _dim = fidFeatureDim;
+
+  /// 特征行 [r] 的点积（k 升序 fp64 累加，与 [_gramSelf]/[_gramCross]
+  /// 的内层循环同序）。
+  double _dot(Float32List a, int ra, Float32List b, int rb) {
+    var s = 0.0;
+    final baseA = ra * _dim, baseB = rb * _dim;
+    for (var k = 0; k < _dim; k++) {
+      s += a[baseA + k] * b[baseB + k];
+    }
+    return s;
+  }
+
+  /// 一侧特征/自核矩阵扩容到至少 [need] 行（容量倍增，行重打包）。
+  static Float64List _growSquare(
+      Float64List g, int oldCap, int newCap, int n) {
+    final out = Float64List(newCap * newCap);
+    for (var i = 0; i < n; i++) {
+      out.setRange(i * newCap, i * newCap + n, g, i * oldCap);
+    }
+    return out;
+  }
+
+  /// 累计一批新样本：两侧各 [dRef]/[dTest] 个 patch 特征（[d,2048]
+  /// 连续排布），只计算核矩阵的新增块。
+  void addBatch(Float32List newRef, int dRef, Float32List newTest, int dTest) {
+    if (newRef.length < dRef * _dim || newTest.length < dTest * _dim) {
+      throw ArgumentError('KidGramAccum.addBatch: 特征长度与样本数不符');
+    }
+    final nRefNew = nRef + dRef, nTestNew = nTest + dTest;
+    // 容量不足时倍增并重打包（gxy 依赖两侧容量，任一侧扩容都需重排）。
+    if (nRefNew > _capRef || nTestNew > _capTest) {
+      final capRefNew =
+          nRefNew > _capRef ? math.max(nRefNew, _capRef * 2) : _capRef;
+      final capTestNew =
+          nTestNew > _capTest ? math.max(nTestNew, _capTest * 2) : _capTest;
+      if (nRefNew > _capRef) {
+        _gxx = _growSquare(_gxx, _capRef, capRefNew, nRef);
+      }
+      if (nTestNew > _capTest) {
+        _gyy = _growSquare(_gyy, _capTest, capTestNew, nTest);
+      }
+      final gxy = Float64List(capRefNew * capTestNew);
+      for (var i = 0; i < nRef; i++) {
+        gxy.setRange(i * capTestNew, i * capTestNew + nTest, _gxy,
+            i * _capTest);
+      }
+      _gxy = gxy;
+      if (nRefNew > _capRef) {
+        final feats = Float32List(capRefNew * _dim);
+        feats.setRange(0, nRef * _dim, _refFeats);
+        _refFeats = feats;
+        _capRef = capRefNew;
+      }
+      if (nTestNew > _capTest) {
+        final feats = Float32List(capTestNew * _dim);
+        feats.setRange(0, nTest * _dim, _testFeats);
+        _testFeats = feats;
+        _capTest = capTestNew;
+      }
+    }
+    _refFeats.setRange(nRef * _dim, nRefNew * _dim, newRef);
+    _testFeats.setRange(nTest * _dim, nTestNew * _dim, newTest);
+    // gxx 新增块：新行 i ∈ [nRef, nRefNew)，j ∈ [0, i]（下三角，镜像
+    // 到上三角；新×新对角线与三角均在列）。
+    for (var i = nRef; i < nRefNew; i++) {
+      final row = i * _capRef;
+      for (var j = 0; j <= i; j++) {
+        final v = _polyK(_dot(_refFeats, i, _refFeats, j));
+        _gxx[row + j] = v;
+        _gxx[j * _capRef + i] = v;
+      }
+    }
+    // gyy 同理。
+    for (var i = nTest; i < nTestNew; i++) {
+      final row = i * _capTest;
+      for (var j = 0; j <= i; j++) {
+        final v = _polyK(_dot(_testFeats, i, _testFeats, j));
+        _gyy[row + j] = v;
+        _gyy[j * _capTest + i] = v;
+      }
+    }
+    // gxy 新增块：新 ref 行 × 全部 test 列（含新列），旧 ref 行 × 新
+    // test 列。
+    for (var i = nRef; i < nRefNew; i++) {
+      final row = i * _capTest;
+      for (var j = 0; j < nTestNew; j++) {
+        _gxy[row + j] = _polyK(_dot(_refFeats, i, _testFeats, j));
+      }
+    }
+    for (var i = 0; i < nRef; i++) {
+      final row = i * _capTest;
+      for (var j = nTest; j < nTestNew; j++) {
+        _gxy[row + j] = _polyK(_dot(_refFeats, i, _testFeats, j));
+      }
+    }
+    nRef = nRefNew;
+    nTest = nTestNew;
+  }
+
+  /// KID 分值：抽样与求和逻辑同 [kidCompute]（subset_size=min(1000,
+  /// 两侧样本数)，subsets=50（size≥50）或 10，固定种子 Fisher–Yates，
+  /// 无偏 MMD 求和顺序），只改为查核值表；任一侧 <2 抛错口径不变。
+  double score({int seed = 0}) {
+    final m = math.min(1000, math.min(nRef, nTest));
+    if (m < 2) {
+      throw StateError('FID/KID 需要两侧各 ≥2 个样本（ref=$nRef, '
+          'test=$nTest）');
+    }
+    final subsets = m >= 50 ? 50 : 10;
+    final rng = math.Random(seed);
+    var total = 0.0;
+    final mm1 = m * (m - 1);
+    final mm = m * m;
+    for (var s = 0; s < subsets; s++) {
+      final idxR = _sampleSubset(rng, nRef, m);
+      final idxT = _sampleSubset(rng, nTest, m);
+      var kxx = 0.0, kyy = 0.0, kxy = 0.0;
+      for (var i = 0; i < m; i++) {
+        final ri = idxR[i], ti = idxT[i];
+        final gxRow = ri * _capRef, gyRow = ti * _capTest;
+        final gxyRow = ri * _capTest;
+        for (var j = 0; j < m; j++) {
+          if (i != j) {
+            kxx += _gxx[gxRow + idxR[j]];
+            kyy += _gyy[gyRow + idxT[j]];
+          }
+          kxy += _gxy[gxyRow + idxT[j]];
+        }
+      }
+      total += (kxx + kyy) / mm1 - 2 * kxy / mm;
+    }
+    return total / subsets;
+  }
+}

@@ -8,12 +8,16 @@ library;
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart' as pkgffi;
+
 import 'exporters.dart' show findFfmpeg;
+import 'ffmpeg_pipe_win.dart';
 
 /// 视频文件的元信息。
 class VideoInfo {
@@ -190,6 +194,9 @@ class VideoFrameStream {
   SendPort? _workerPort;
   StreamSubscription<Object?>? _sub;
   final Queue<Uint8List> _frames = Queue();
+  // Windows 原生缓冲路径（FfmpegRawPipeWin）：帧为原生堆内存视图，
+  // 归还时按视图找回地址传指针（零拷贝）。
+  final _nativeAddr = Expando<int>();
   Completer<void>? _notEmpty;
   String? _error;
   var _eof = false;
@@ -245,7 +252,13 @@ class VideoFrameStream {
   }
 
   void _onMessage(Object? msg) {
-    if (msg is TransferableTypedData) {
+    if (msg is int) {
+      // Windows 原生缓冲路径：指针 → 原生内存视图（零拷贝）
+      final view =
+          ffi.Pointer<ffi.Uint8>.fromAddress(msg).asTypedList(_frameBytes);
+      _nativeAddr[view] = msg;
+      _frames.add(view);
+    } else if (msg is TransferableTypedData) {
       _frames.add(msg.materialize().asUint8List());
     } else if (msg is List && msg.isNotEmpty && msg[0] == 'error') {
       _error = msg.length > 1 ? msg[1]?.toString() : '视频解码失败';
@@ -273,14 +286,27 @@ class VideoFrameStream {
 
   /// 归还 [next] 返回的帧缓冲（内容消费完毕后调用）：
   /// 零拷贝送回 worker 复用；不归还则 worker 用完信用额度后停等。
+  /// 原生缓冲（Windows 快路径）按地址归还，Dart 堆缓冲按
+  /// TransferableTypedData 归还。
   void recycle(Uint8List frame) {
     if (_disposed || frame.length != _frameBytes) return;
+    final addr = _nativeAddr[frame];
+    if (addr != null) {
+      _nativeAddr[frame] = null; // 解除关联，防重复归还
+      _workerPort?.send(addr);
+      return;
+    }
     _workerPort?.send(TransferableTypedData.fromList([frame]));
   }
 
   /// 终止解码：通知 worker 杀 ffmpeg 进程并等其收尾，再结束 isolate。
   Future<void> dispose() async {
     if (_disposed) return;
+    // 队列里的帧先归还（Windows 原生缓冲须回到 worker 的池才能释放），
+    // 再置 _disposed（recycle 在 _disposed 后是空操作）。
+    while (_frames.isNotEmpty) {
+      recycle(_frames.removeFirst());
+    }
     _disposed = true;
     _workerPort?.send('stop');
     // worker 清理完（杀进程）会发 null；等它，超时兜底。
@@ -328,17 +354,28 @@ const int _kStreamPoolSize = 16;
 /// 经 TransferableTypedData 发给 UI；缓冲用完后等 UI 归还（背压）。
 /// 收到 'stop' 或进程结束：发 null 收尾。异常发 ['error', 消息] 后收尾。
 /// 首趟用 GPU 硬解（-hwaccel auto）；一帧未出即失败时回退软件解码重试。
+///
+/// Windows 走 [FfmpegRawPipeWin] 快路径：CreatePipe 大缓冲 + CreateProcessW
+/// + ReadFile 整帧阻塞读——dart:io 的 Process.stdout 按 ~64KB 块经事件
+/// 循环分发（4K yuv420p ≈ 379 事件/帧、~30ms/帧，吞吐锁死 ~33fps），
+/// 而整帧 ReadFile 单帧仅数次系统调用；帧落在原生堆（calloc），跨
+/// isolate 只传指针（int），归还同样传指针，全程零字节拷贝。
 @pragma('vm:entry-point')
 Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   final control = ReceivePort();
   cfg.uiPort.send(control.sendPort);
   final pool = <Uint8List>[];
+  final nativePool = <int>[]; // Windows 快路径：原生缓冲地址池
   var allocated = 0;
   var stopped = false;
   Completer<void>? bufferReturned;
   control.listen((msg) {
     if (msg is TransferableTypedData) {
       pool.add(msg.materialize().asUint8List()); // UI 归还的缓冲
+      bufferReturned?.complete();
+      bufferReturned = null;
+    } else if (msg is int) {
+      nativePool.add(msg); // UI 归还的原生缓冲地址
       bufferReturned?.complete();
       bufferReturned = null;
     } else if (msg == 'stop') {
@@ -442,10 +479,78 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
     }
   }
 
-  var (sent, error) = await runPass(true);
+  /// Windows 快路径单趟解码：FFI 大缓冲管道 + ReadFile 整帧读 +
+  /// 原生堆缓冲池（跨 isolate 传指针零拷贝）。语义与 [runPass] 一致。
+  Future<(int, String?)> runPassWin(bool useHwaccel) async {
+    final pipe = FfmpegRawPipeWin();
+    var framesSent = 0;
+    try {
+      pipe.start(cfg.ffmpeg, [
+        '-hide_banner', '-loglevel', 'error', '-nostdin',
+        if (useHwaccel) ...['-hwaccel', 'auto'],
+        if (cfg.startFrame > 0)
+          ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
+        '-i', cfg.path,
+        if (vf != null) ...['-vf', vf],
+        '-f', 'rawvideo',
+        '-pix_fmt', is444 ? 'yuv444p' : (is420 ? 'yuv420p' : 'rgba'),
+        'pipe:1',
+      ], frameBytes);
+      while (!stopped) {
+        // 每帧让出一次事件循环：'stop'/缓冲归还消息才有机会被处理——
+        // ReadFile 是阻塞式 FFI 调用，不让出的话停止信号要到 EOF 才生效
+        // （ffmpeg 进程滞留导致视频文件删除时占用）。
+        await Future<void>.delayed(Duration.zero);
+        // 信用背压：没有空闲原生缓冲就等 UI 归还（语义同 dart:io 路径）
+        while (nativePool.isEmpty &&
+            allocated >= _kStreamPoolSize &&
+            !stopped) {
+          bufferReturned = Completer<void>();
+          await bufferReturned!.future;
+        }
+        if (stopped) break;
+        final ffi.Pointer<ffi.Uint8> buf;
+        if (nativePool.isNotEmpty) {
+          buf = ffi.Pointer<ffi.Uint8>.fromAddress(nativePool.removeLast());
+        } else {
+          allocated++;
+          buf = pkgffi.calloc<ffi.Uint8>(frameBytes);
+        }
+        final n = pipe.readInto(buf, frameBytes);
+        if (n < frameBytes) {
+          pkgffi.calloc.free(buf); // 短读/EOF：回收未用缓冲
+          break;
+        }
+        cfg.uiPort.send(buf.address); // 指针即帧，零拷贝
+        framesSent++;
+      }
+      if (framesSent == 0 && !stopped) {
+        return (0, 'ffmpeg 解码失败: ${cfg.path}');
+      }
+      return (framesSent, null);
+    } catch (e) {
+      return (framesSent, e.toString());
+    } finally {
+      pipe.stop();
+      // 释放空闲原生缓冲（仍在 UI 侧在途的随流程结束自然结束，
+      // UI 侧 dispose 前会先把队列里的帧归还回来）。
+      for (final addr in nativePool) {
+        pkgffi.calloc.free(ffi.Pointer<ffi.Uint8>.fromAddress(addr));
+      }
+      nativePool.clear();
+    }
+  }
+
+  // 对照开关：--dart-define=NATIVE_PIPE=false 时强制走 dart:io 路径（排障用）。
+  final useNativePipe =
+      bool.fromEnvironment('NATIVE_PIPE', defaultValue: true) &&
+          FfmpegRawPipeWin.supported;
+  var (sent, error) =
+      useNativePipe ? await runPassWin(true) : await runPass(true);
   if (sent == 0 && error != null && !stopped) {
     // 硬解初始化失败（无可用 GPU/驱动）：回退软件解码重试。
-    (sent, error) = await runPass(false);
+    (sent, error) =
+        useNativePipe ? await runPassWin(false) : await runPass(false);
   }
   if (error != null && !stopped) {
     cfg.uiPort.send(['error', error]);

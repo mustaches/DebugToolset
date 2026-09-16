@@ -78,3 +78,12 @@ Linux_setup/Output/
 
 # >40MB 文件不入库（GitHub 推送限制）
 /SIGLENT/Time domain-CN-2026-03.pdf
+
+# 大体积视频录制素材（1.7GB，不入库，仅存本地）
+/4k60VRec/
+
+# 终端字体用户偏好（运行时生成，不入库）
+/terminal_font_settings.json
+
+# scratch 下的二进制产物（dll）
+/scratch/*.dll

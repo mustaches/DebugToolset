@@ -83,6 +83,7 @@ class GpuPipeline {
     'csc_yuv2hsl',
     'csc_hsl2rgb',
     'hsl_debugger',
+    'color_controller',
     'rgb_debugger',
     'color_temp_adjuster',
     'yuv_debugger',
@@ -137,6 +138,19 @@ class GpuPipeline {
         bool motion
       })> _temporalHistory = {};
 
+  /// 源纹理缓存（跨 run() 存活，增量重跑用）：拖动下游参数等场景源帧不变，
+  /// 命中后跳过解码 + rgba8ToRgb16 转换 + 上传 + 源头 CSC（4K 帧为百毫秒
+  /// 级固定开销）。仅保留一条，run 末端的纹理回收跳过缓存持有的纹理。
+  ({
+    String key,
+    ui.Image srcTex,
+    _Port frame,
+    int w,
+    int h,
+    int maxValue,
+    BayerPattern? pattern,
+  })? _srcCache;
+
   /// 视频格式输入组端口名（与 CPU 路径 pipeline_runner 一致）：
   /// 分支感知取帧时按此顺序找第一个已连接的视频组输入。
   static const _kVideoInputPorts = ['in', 'in_yuv', 'in_hsl', 'in_mono', 'in_raw'];
@@ -148,6 +162,10 @@ class GpuPipeline {
     'apply_gains': 'shaders/isp/isp_apply_gains.frag',
     'rgb2hsl': 'shaders/isp/isp_rgb2hsl.frag',
     'hsl_adjust': 'shaders/isp/isp_hsl_adjust.frag',
+    'hsl_band': 'shaders/isp/isp_hsl_band.frag',
+    'rgba8_to_rgb16': 'shaders/isp/isp_rgba8_to_rgb16.frag',
+    'yuv420p_to_rgb16': 'shaders/isp/isp_yuv420p_to_rgb16.frag',
+    'yuv420p_to_hsl16': 'shaders/isp/isp_yuv420p_to_hsl16.frag',
     'hsl2yuv': 'shaders/isp/isp_hsl2yuv.frag',
     'extract_channel': 'shaders/isp/isp_extract_channel.frag',
     'clahe_apply': 'shaders/isp/isp_clahe_apply.frag',
@@ -292,6 +310,14 @@ class GpuPipeline {
     return completer.future;
   }
 
+  /// RGBA8 帧原样上传为 RGBA8888 纹理（播放流式路径用，CPU 零转换）。
+  static Future<ui.Image> uploadRgba8(Uint8List rgba, int width, int height) {
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(
+        rgba, width, height, ui.PixelFormat.rgba8888, completer.complete);
+    return completer.future;
+  }
+
   /// 全屏 pass：绑定 float uniform（按声明顺序）与 sampler，离屏渲染
   /// 到 [outW]×[outH] 纹理并返回（GPU 驻留）。
   static ui.Image runPass(ui.FragmentProgram prog, List<double> uniforms,
@@ -332,6 +358,10 @@ class GpuPipeline {
   /// 并回读 RGBA8（仪器馈源）。
   /// [imageSources]：图片源的共享解码帧（nodeId → RGBA8+宽高，与 CPU
   /// 路径的 sourceRgba 注入同一来源），命中时跳过链内重复解码。
+  /// 逐段计时调试（基准用，默认关闭）：开启后 run() 结束打印
+  /// 源上传/算子循环/末端出图/回读的分段墙钟耗时。
+  static bool debugTiming = false;
+
   Future<GpuChainResult> run(
     List<Map<String, Object?>> chain,
     int frameIndex, {
@@ -339,6 +369,20 @@ class GpuPipeline {
     Map<String, String> displayCaptures = const {},
     Set<String> rgbaReadbackPorts = const {},
     Map<String, (Uint8List, int, int)> imageSources = const {},
+    // 流式播放直传：注入帧为流原始字节，CPU 零转换直接上传，重排/CSC
+    // 交给 GPU pass。'rgba' = RGBA8（isp_rgba8_to_rgb16）；'yuv420p' =
+    // 解码器原生 420 平面（isp_yuv420p_to_rgb16，数据量为 RGBA 的 1/2.67，
+    // 4K60 首选）。流缓冲会被回收复用，此模式跳过源纹理缓存。
+    String? streamFormat,
+    // 流帧是否为 limited(tv) 范围（yuv420p 直传的 CSC 范围扩展用）。
+    bool streamLimited = true,
+    // 调试变量表采样（逐节点微回读，兼作 GPU 同步点）：播放等高频路径
+    // 传 false 跳过——每个同步点都是一次管线排空，4K60 下不可承受。
+    bool captureSamples = true,
+    // 显示图（主出图与捕获图）整数降采样步长：2 = 半分辨率出图。
+    // 播放路径用——4K 显示纹理每帧两张共 66MB，降到 1080p 后
+    // 纹理churn与光栅采样都降为 1/4；仪器馈源回读不受影响（全分辨率）。
+    int displayDownscale = 1,
   }) async {
     final timings = <String, int>{};
     final captures = <String, Map<String, Object?>>{};
@@ -354,35 +398,104 @@ class GpuPipeline {
     var sw = Stopwatch()..start();
     late final int w, h, maxValue;
     late _Port frame;
-    late final ui.Image srcTex;
+    late ui.Image srcTex;
+    ui.Image? srcRgba8Tex; // 流式直传的 RGBA8 中间纹理（末端回收）
     BayerPattern? pattern;
-    if (firstType == 'image_source' || firstType == 'video_source') {
+    // 源纹理缓存命中（增量重跑）：源帧未变时跳过解码 + rgba8ToRgb16
+    // 逐像素转换 + 上传 + 源头 CSC——4K 帧这部分是百毫秒级固定开销，
+    // 拖动下游参数调参（如色彩控制器 ΔH）时全部省掉。流式直传
+    // （streamFormat 非空）的注入帧缓冲会被回收复用，跳过缓存读写。
+    final injected = imageSources[firstNodeId];
+    final outFormat = first['outFormat'] as String? ?? 'rgb';
+    final srcKey = '$firstNodeId|$firstType|$frameIndex|$sp|$outFormat|'
+        '${injected == null ? 0 : identityHashCode(injected.$1)}';
+    if (streamFormat == null && _srcCache != null && _srcCache!.key == srcKey) {
+      final c = _srcCache!;
+      w = c.w;
+      h = c.h;
+      maxValue = c.maxValue;
+      pattern = c.pattern;
+      srcTex = c.srcTex;
+      frame = c.frame;
+    } else if (firstType == 'image_source' || firstType == 'video_source') {
       // 图片/视频源：CPU 解码（图片可注入共享解码帧；视频源仅单帧预览
       // 路径，经 ffmpeg 解码当前帧）→ 16 位 RGB 三通道上传。
       // 两者本身都是 sRGB 显示数据，出图默认 gamma 1.0 直通（见链末）。
       final maxV = bayerMaxValue(
           int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')));
-      final injected = imageSources[firstNodeId];
-      final (rgb, w0, h0) = injected != null
-          ? rgba8ToRgb16(injected.$1, injected.$2, injected.$3, maxV)
-          : firstType == 'image_source'
-              ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
-                  maxValue: maxV)
-              : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
-                  maxValue: maxV, ffmpegPath: _str(sp, 'ffmpegPath'));
-      if (w0.isOdd) {
-        throw StateError('GPU 路径要求偶数宽（当前 $w0 x $h0）');
+      if (injected != null && streamFormat == 'yuv420p') {
+        // 流式播放直传（首选）：解码器原生 yuv420p 平面（数据量为 RGBA 的
+        // 1/2.67）原样打包为 (w/4)x(h*3/2) RGBA 纹理上传，BT.601 CSC +
+        // 范围扩展交给 GPU pass——CPU 全程零逐像素工作。
+        w = injected.$2;
+        h = injected.$3;
+        maxValue = maxV;
+        if (w.isOdd || h.isOdd) {
+          throw StateError('GPU 路径要求偶数宽高（当前 $w x $h）');
+        }
+        if (w % 4 != 0) {
+          throw StateError('GPU 420 直传要求宽为 4 的倍数（当前 $w）');
+        }
+        final packedW = w ~/ 4, packedH = h * 3 ~/ 2;
+        final yuvTex = await uploadRgba8(injected.$1, packedW, packedH);
+        srcRgba8Tex = yuvTex;
+        if (outFormat == 'hsl') {
+          // 出边为 HSL 时走融合 pass（420→HSL 单 pass 完成 CSC + 转换，
+          // 省掉 420→rgb16 中间纹理与 rgb2hsl pass）。
+          srcTex = runPass(_progs['yuv420p_to_hsl16']!, [
+            packedW.toDouble(), packedH.toDouble(), w * 3 / 2,
+            w.toDouble(), h.toDouble(), maxValue.toDouble(),
+            streamLimited ? 1.0 : 0.0,
+          ], [yuvTex], w * 3 ~/ 2, h);
+          frame = _Port(srcTex, w * 3 ~/ 2, h, 'hsl');
+        } else {
+          srcTex = runPass(_progs['yuv420p_to_rgb16']!, [
+            packedW.toDouble(), packedH.toDouble(), w * 3 / 2,
+            w.toDouble(), h.toDouble(), maxValue.toDouble(),
+            streamLimited ? 1.0 : 0.0,
+          ], [yuvTex], w * 3 ~/ 2, h);
+          frame = _Port(srcTex, w * 3 ~/ 2, h, 'rgb');
+        }
+      } else if (injected != null && streamFormat == 'rgba') {
+        // 流式播放直传：RGBA8 帧零转换上传，字节重排为 16 位打包交给
+        // GPU pass（免 CPU rgba8ToRgb16 逐像素转换——4K 下为百毫秒级）。
+        w = injected.$2;
+        h = injected.$3;
+        maxValue = maxV;
+        if (w.isOdd) {
+          throw StateError('GPU 路径要求偶数宽（当前 $w x $h）');
+        }
+        final rgba8Tex = await uploadRgba8(injected.$1, w, h);
+        srcRgba8Tex = rgba8Tex;
+        srcTex = runPass(_progs['rgba8_to_rgb16']!, [
+          w.toDouble(), h.toDouble(), w * 3 / 2, maxValue.toDouble(),
+        ], [rgba8Tex], w * 3 ~/ 2, h);
+        frame = _Port(srcTex, w * 3 ~/ 2, h, 'rgb');
+      } else {
+        final (rgb, w0, h0) = injected != null
+            ? rgba8ToRgb16(injected.$1, injected.$2, injected.$3, maxV)
+            : firstType == 'image_source'
+                ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
+                    maxValue: maxV)
+                : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
+                    maxValue: maxV, ffmpegPath: _str(sp, 'ffmpegPath'));
+        if (w0.isOdd) {
+          throw StateError('GPU 路径要求偶数宽（当前 $w0 x $h0）');
+        }
+        w = w0;
+        h = h0;
+        maxValue = maxV;
+        srcTex = await uploadPacked(rgb, w, h, 3);
+        frame = _Port(srcTex, w * 3 ~/ 2, h, 'rgb');
       }
-      w = w0;
-      h = h0;
-      maxValue = maxV;
-      srcTex = await uploadPacked(rgb, w, h, 3);
-      frame = _Port(srcTex, w * 3 ~/ 2, h, 'rgb');
       // 与 CPU 一致：按源出边端口（compileChain 附加的 outFormat）在源头
       // 转换色彩空间——out_hsl/out_yuv 直连的下游算子（如 HSL 调节器）
-      // 拿到的帧格式与 CPU 路径相同。
-      final outFormat = first['outFormat'] as String? ?? 'rgb';
-      if (outFormat == 'hsl') {
+      // 拿到的帧格式与 CPU 路径相同。yuv420p 直传的 HSL 出边已在上面的
+      // 融合 pass 完成，跳过。
+      final alreadyHsl = injected != null &&
+          streamFormat == 'yuv420p' &&
+          frame.format == 'hsl';
+      if (outFormat == 'hsl' && !alreadyHsl) {
         frame = _Port(
           runPass(_progs['rgb2hsl']!, [
             frame.texW.toDouble(), frame.texH.toDouble(),
@@ -411,7 +524,29 @@ class GpuPipeline {
       srcTex = await uploadPacked(src.data, w, h, 1);
       frame = _Port(srcTex, w ~/ 2, h, src.format); // 'mosaic' | 'mono'
     }
+    // 缓存命中的源未走上面的解码分支，只有新解码的源才写入缓存；
+    // 流式直传帧（缓冲会被回收复用）不读写缓存。
+    if (streamFormat == null && (_srcCache == null || _srcCache!.key != srcKey)) {
+      // 替换旧缓存：旧纹理在其所属 run 末端被排除回收（由缓存持有），
+      // 此处 dispose（srcTex 与 frame.tex 可能同源，按身份去重）。
+      final old = _srcCache;
+      if (old != null) {
+        old.srcTex.dispose();
+        if (!identical(old.frame.tex, old.srcTex)) old.frame.tex.dispose();
+      }
+      _srcCache = (
+        key: srcKey,
+        srcTex: srcTex,
+        frame: frame,
+        w: w,
+        h: h,
+        maxValue: maxValue,
+        pattern: pattern,
+      );
+    }
     timings[firstNodeId] = sw.elapsedMicroseconds;
+    final srcUs = sw.elapsedMicroseconds;
+    final opsSw = Stopwatch()..start();
     // 链末默认色调映射 gamma：图片/视频源已是 sRGB 显示数据，gamma 1.0
     // 直通；RAW 源为线性数据，gamma 2.2 编码（与 CPU 路径一致）。
     final defaultGamma =
@@ -441,6 +576,8 @@ class GpuPipeline {
     // 算子内部产生的临时纹理（非链上帧，如 rgb_dnr 的 YUV 中间产物）：
     // pass 光栅化是异步的，不能用完即 dispose，统一在末端回收。
     final transients = <ui.Image>[];
+    // 流式直传的 RGBA8 中间纹理同样延迟到末端回收（pass 光栅化异步）。
+    if (srcRgba8Tex != null) transients.add(srcRgba8Tex);
 
     Future<void> captureDisplays(String nodeId) async {
       final keys = captureAtNode[nodeId];
@@ -452,7 +589,9 @@ class GpuPipeline {
         // 的汇点预览），此处 += 后会被本节点算子耗时覆盖——算子墙钟
         // 已包含该捕获，语义不丢。
         final csw = Stopwatch()..start();
-        displayImages[key] = _tonemap(frame, w, h, maxValue, defaultGamma, 0, 1.0);
+        displayImages[key] = _tonemap(frame, w, h, maxValue, defaultGamma, 0,
+            1.0,
+            srcStep: displayDownscale);
         if (!key.endsWith('#in')) {
           timings[key] = (timings[key] ?? 0) + csw.elapsedMicroseconds;
         }
@@ -488,8 +627,10 @@ class GpuPipeline {
         ports['$nodeId:out'] = frame;
         if (src2.format == 'mono') ports['$nodeId:out_mono'] = frame;
         await captureDisplays(nodeId);
-        captures[nodeId] =
-            await _sampleCapture(frame, display, w, h, maxValue);
+        if (captureSamples) {
+          captures[nodeId] =
+              await _sampleCapture(frame, display, w, h, maxValue);
+        }
         timings[nodeId] = sw.elapsedMicroseconds;
         continue;
       }
@@ -528,8 +669,10 @@ class GpuPipeline {
           ports['$nodeId:out_mono'] = port('in_mono');
         }
         await captureDisplays(nodeId);
-        captures[nodeId] =
-            await _sampleCapture(frame, display, w, h, maxValue);
+        if (captureSamples) {
+          captures[nodeId] =
+              await _sampleCapture(frame, display, w, h, maxValue);
+        }
         timings[nodeId] = sw.elapsedMicroseconds;
         continue;
       }
@@ -1369,6 +1512,25 @@ class GpuPipeline {
               frame.texW, frame.texH, 'hsl');
           }
           ports['$nodeId:out'] = frame;
+        case 'color_controller':
+          _requireFormat(frame, 'hsl', '色彩控制器');
+          final hCenter = _num(p, 'h_center');
+          final q = (p['q'] as num?)?.toDouble() ?? 2.0;
+          final bandShift = _num(p, 'h_shift');
+          final bandSGain = (p['s_gain'] as num?)?.toDouble() ?? 1.0;
+          final bandLGain = (p['l_gain'] as num?)?.toDouble() ?? 1.0;
+          if (bandShift != 0 || bandSGain != 1.0 || bandLGain != 1.0) {
+            // GPU 直求 exp，σ 按 45°/q 折算为度数传入（CPU 为 LUT 插值，
+            // 对拍口径 ±2 LSB）。
+            frame = _Port(
+              runPass(_progs['hsl_band']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                maxValue.toDouble(), hCenter, 45.0 / q, bandShift,
+                bandSGain, bandLGain,
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'hsl');
+          }
+          ports['$nodeId:out'] = frame;
         case 'rgb_debugger':
           _requireFormat(frame, 'rgb', 'RGB调节器');
           final rGain = (p['r_gain'] as num?)?.toDouble() ?? 1.0;
@@ -1643,7 +1805,8 @@ class GpuPipeline {
           final gamma = _num(p, 'gamma') <= 0 ? 2.2 : _num(p, 'gamma');
           final contrast = _num(p, 'contrast') <= 0 ? 1.0 : _num(p, 'contrast');
           display = _tonemap(
-              frame, w, h, maxValue, gamma, _num(p, 'brightness'), contrast);
+              frame, w, h, maxValue, gamma, _num(p, 'brightness'), contrast,
+              srcStep: displayDownscale);
           ports['$nodeId:out'] = frame; // 主帧不变（CPU 同）
         case 'preview':
         case 'histogram':
@@ -1667,17 +1830,23 @@ class GpuPipeline {
       // 该节点输出处的显示捕获（前缀覆盖的其它预览节点）。
       await captureDisplays(nodeId);
       // 调试变量表采样（微回读，同时充当逐节点 GPU 同步点）。
-      captures[nodeId] = await _sampleCapture(frame, display, w, h, maxValue);
+      if (captureSamples) {
+        captures[nodeId] = await _sampleCapture(frame, display, w, h, maxValue);
+      }
       timings[nodeId] = sw.elapsedMicroseconds;
     }
 
     // ---- 链末出图：gamma 已出图则用之，否则默认色调映射（RAW 源
     // gamma 2.2，图片源 gamma 1.0 直通）----
+    final opsUs = opsSw.elapsedMicroseconds;
     sw = Stopwatch()..start();
-    display ??= _tonemap(frame, w, h, maxValue, defaultGamma, 0, 1.0);
+    display ??= _tonemap(frame, w, h, maxValue, defaultGamma, 0, 1.0,
+        srcStep: displayDownscale);
     final sinkNodeId = chain.last['nodeId'] as String;
     timings[sinkNodeId] = (timings[sinkNodeId] ?? 0) + sw.elapsedMicroseconds;
-    captures[sinkNodeId] = await _sampleCapture(frame, display, w, h, maxValue);
+    if (captureSamples) {
+      captures[sinkNodeId] = await _sampleCapture(frame, display, w, h, maxValue);
+    }
 
     // ---- 仪器馈源端口回读（默认色调映射 RGBA8）----
     for (final key in rgbaReadbackPorts) {
@@ -1688,15 +1857,30 @@ class GpuPipeline {
       img.dispose();
     }
 
-    // 纹理回收（显示图交给调用方，不在此 dispose）。
+    // 纹理回收（显示图交给调用方，不在此 dispose）。源缓存持有的纹理
+    // （_srcCache）跨 run 存活，跳过回收。
+    final cachedTex = <ui.Image>{
+      if (_srcCache != null) ...[_srcCache!.srcTex, _srcCache!.frame.tex],
+    };
     final disposed = <ui.Image>{};
     for (final ref in ports.values) {
+      if (cachedTex.contains(ref.tex)) continue;
       if (disposed.add(ref.tex)) ref.tex.dispose();
     }
-    if (disposed.add(frame.tex)) frame.tex.dispose();
-    if (disposed.add(srcTex)) srcTex.dispose();
+    if (!cachedTex.contains(frame.tex) && disposed.add(frame.tex)) {
+      frame.tex.dispose();
+    }
+    if (!cachedTex.contains(srcTex) && disposed.add(srcTex)) {
+      srcTex.dispose();
+    }
     for (final t in transients) {
       if (disposed.add(t)) t.dispose();
+    }
+
+    if (debugTiming) {
+      // ignore: avoid_print
+      print('[gpu] 源 $srcUs us, 算子循环 $opsUs us, 末端出图+回读 '
+          '${sw.elapsedMicroseconds} us（帧 $frameIndex）');
     }
 
     return GpuChainResult(
@@ -1741,8 +1925,10 @@ class GpuPipeline {
   }
 
   /// 色调映射出图 pass（RGBA8，w×h，可直接作为预览 ui.Image）。
+  /// [srcStep] > 1 时按整数步长最近邻降采样出图（播放路径省纹理/光栅）。
   ui.Image _tonemap(_Port frame, int w, int h, int maxValue, double gamma,
-      double brightness, double contrast) {
+      double brightness, double contrast,
+      {int srcStep = 1}) {
     final format = switch (frame.format) {
       'rgb' => 0.0,
       'mono' || 'mosaic' => 1.0,
@@ -1753,8 +1939,8 @@ class GpuPipeline {
     return runPass(_progs['tonemap']!, [
       frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
       maxValue.toDouble(), format, 1.0 / gamma, brightness, contrast,
-      (maxValue >> 1).toDouble(),
-    ], [frame.tex], w, h);
+      (maxValue >> 1).toDouble(), srcStep.toDouble(),
+    ], [frame.tex], w ~/ srcStep, h ~/ srcStep);
   }
 
   /// 单通道 CLAHE：回读 mono（CPU 算 tile 直方图/CDF）→ LUT 打包上传 →

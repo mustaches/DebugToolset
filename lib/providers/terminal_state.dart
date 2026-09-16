@@ -3,8 +3,9 @@ import 'dart:collection';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
-
-enum ConnectionMode { serial, network }
+import '../utils/serial_port_primer.dart';
+import '../utils/terminal_font_prefs.dart';
+import 'terminal_session.dart';
 
 class TerminalLine {
   String content;
@@ -13,23 +14,92 @@ class TerminalLine {
   TerminalLine(this.content) : timestamp = DateTime.now();
 }
 
-class TerminalState extends ChangeNotifier {
-  static const List<int> rollbackDepths = [2000, 5000, 10000, 20000, 50000, 100000, 200000];
-  
+class TerminalState extends ChangeNotifier implements TerminalSession {
+  static const List<int> rollbackDepths = TerminalSession.rollbackDepths;
+
+  TerminalState() {
+    _loadFontDefaults();
+  }
+
+  /// 启动时读取用户保存的默认字体设置（terminal_font_settings.json 的 serial 节）
+  Future<void> _loadFontDefaults() async {
+    final prefs = await TerminalFontPrefs.load('serial');
+    if (prefs == null) return;
+    _fontSize = prefs.fontSize.clamp(8.0, 24.0);
+    _lineHeight = prefs.lineHeight.clamp(0.5, 2.0);
+    if (TerminalSession.fontFamilies.contains(prefs.fontFamily)) {
+      _fontFamily = prefs.fontFamily;
+    }
+    notifyListeners();
+  }
+
   int _maxLines = 20000;
+  @override
   int get maxLines => _maxLines;
 
+  // --- 输出区字体设置 ---
+  double _fontSize = 12;
+  double _lineHeight = 0.70;
+  String _fontFamily = 'Consolas';
+
+  @override
+  double get fontSize => _fontSize;
+  @override
+  double get lineHeight => _lineHeight;
+  @override
+  String get fontFamily => _fontFamily;
+
+  @override
+  void setFontSize(double size) {
+    final v = size.clamp(8.0, 24.0);
+    if (_fontSize != v) {
+      _fontSize = v;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void setLineHeight(double height) {
+    final v = height.clamp(0.5, 2.0);
+    if (_lineHeight != v) {
+      _lineHeight = v;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void setFontFamily(String family) {
+    if (TerminalSession.fontFamilies.contains(family) && _fontFamily != family) {
+      _fontFamily = family;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void saveFontSettingsAsDefault() {
+    TerminalFontPrefs.save(
+      'serial',
+      TerminalFontPrefs(
+        fontSize: _fontSize,
+        lineHeight: _lineHeight,
+        fontFamily: _fontFamily,
+      ),
+    );
+  }
+
   // --- Connection State ---
-  ConnectionMode _connectionMode = ConnectionMode.serial;
   bool _isConnected = false;
   DateTime? _connectionStartTime;
   bool _showTimestamp = false;
-  
+
+  @override
   FocusNode? commandFocusNode;
 
-  ConnectionMode get connectionMode => _connectionMode;
+  @override
   bool get isConnected => _isConnected;
+  @override
   DateTime? get connectionStartTime => _connectionStartTime;
+  @override
   bool get showTimestamp => _showTimestamp;
 
   // Serial config
@@ -38,19 +108,12 @@ class TerminalState extends ChangeNotifier {
   int _dataBits = 8;
   double _stopBits = 1.0;
   String _parity = 'None';
-  
+
   String get serialPort => _serialPort;
   int get baudRate => _baudRate;
   int get dataBits => _dataBits;
   double get stopBits => _stopBits;
   String get parity => _parity;
-
-  // Network config
-  String _networkIp = '192.168.1.100';
-  int _networkPort = 8080;
-
-  String get networkIp => _networkIp;
-  int get networkPort => _networkPort;
 
   // Logs
   final ListQueue<TerminalLine> _rawDataLog = ListQueue<TerminalLine>();
@@ -63,23 +126,21 @@ class TerminalState extends ChangeNotifier {
   List<TerminalLine> get rawDataLog => _rawDataLog.toList();
   List<TerminalLine> get systemLog => _systemLog.toList();
 
+  // 错误级系统日志计数：视图据此在面板隐藏时自动展开系统交互状态
+  int _systemLogErrorCount = 0;
+  int get systemLogErrorCount => _systemLogErrorCount;
+
   final List<String> _asciiCommandHistory = [];
   int _asciiHistoryIndex = -1;
 
   final List<String> _hexCommandHistory = [];
   int _hexHistoryIndex = -1;
 
+  @override
   void setMaxLines(int limit) {
     if (rollbackDepths.contains(limit) && _maxLines != limit) {
       _maxLines = limit;
       _trimLog(_rawDataLog);
-      notifyListeners();
-    }
-  }
-
-  void setConnectionMode(ConnectionMode mode) {
-    if (_connectionMode != mode) {
-      _connectionMode = mode;
       notifyListeners();
     }
   }
@@ -94,12 +155,6 @@ class TerminalState extends ChangeNotifier {
     _dataBits = data;
     _stopBits = stop;
     _parity = p;
-    notifyListeners();
-  }
-
-  void updateNetworkConfig(String ip, int port) {
-    _networkIp = ip;
-    _networkPort = port;
     notifyListeners();
   }
 
@@ -149,64 +204,81 @@ class TerminalState extends ChangeNotifier {
   }
 
   void _connect() {
-    if (_connectionMode == ConnectionMode.serial) {
-      if (_serialPort.isEmpty) {
-        addSystemLog('\x1b[1;31m[SYSTEM] 请先选择一个串口\x1b[0m');
-        return;
-      }
-      try {
-        _port = SerialPort(_serialPort);
-        if (!_port!.openReadWrite()) {
-          addSystemLog('\x1b[1;31m[SYSTEM] 打开串口 $_serialPort 失败\x1b[0m');
+    if (_serialPort.isEmpty) {
+      addSystemLog('\x1b[1;91m[SYSTEM] 请先选择一个串口\x1b[0m');
+      return;
+    }
+    try {
+      _port = SerialPort(_serialPort);
+      bool opened = _port!.openReadWrite();
+      if (!opened) {
+        // CP2105 等双口芯片的 Standard 口驱动默认波特率非法（1200），
+        // 导致 libserialport 打开时内部 SetCommState 失败；先预置合法波特率再重试
+        final err = SerialPort.lastError;
+        if (primeSerialPortBaudRate(_serialPort, _baudRate)) {
+          opened = _port!.openReadWrite();
+          if (opened) {
+            addSystemLog('\x1b[1;33m[SYSTEM] $_serialPort 首次打开失败，已通过预置波特率修复\x1b[0m');
+          }
+        }
+        if (!opened) {
+          addSystemLog('\x1b[1;91m[SYSTEM] 打开串口 $_serialPort 失败\x1b[0m');
+          // SerialPort.lastError 在 Windows 上只是读取时刻的 GetLastError()，
+          // 可能被失败后的其他系统调用覆盖（曾误报 code=0 操作成功完成）；
+          // 改为立即探测端口独占打开的结果，拿不到时再回退 lastError
+          final probeCode = probeSerialPortError(_serialPort);
+          if (probeCode != null) {
+            addSystemLog('\x1b[97m[SYSTEM] 错误详情: ${win32ErrorMessage(probeCode) ?? '未知错误'} (code=$probeCode)\x1b[0m');
+          } else if (err != null && err.errorCode != 0) {
+            addSystemLog('\x1b[97m[SYSTEM] 错误详情: ${win32ErrorMessage(err.errorCode) ?? err.message} (code=${err.errorCode})\x1b[0m');
+          }
           _port = null;
           return;
         }
-
-        final config = _port!.config;
-        config.baudRate = _baudRate;
-        config.bits = _dataBits;
-        
-        switch (_stopBits) {
-          case 1.0: config.stopBits = 1; break;
-          case 2.0: config.stopBits = 2; break;
-          case 1.5: config.stopBits = 3; break;
-        }
-
-        switch (_parity) {
-          case 'None': config.parity = SerialPortParity.none; break;
-          case 'Odd': config.parity = SerialPortParity.odd; break;
-          case 'Even': config.parity = SerialPortParity.even; break;
-          case 'Mark': config.parity = SerialPortParity.mark; break;
-          case 'Space': config.parity = SerialPortParity.space; break;
-        }
-        
-        _port!.config = config;
-
-        _isConnected = true;
-        _connectionStartTime = DateTime.now();
-        addSystemLog('\x1b[1;32m[SYSTEM] Connected to $_serialPort ($_baudRate, $_dataBits${_parity.substring(0,1)}$_stopBits)\x1b[0m');
-
-        _reader = SerialPortReader(_port!);
-        _reader!.stream.listen((Uint8List data) {
-          _handleIncomingData(data);
-        }, onError: (e) {
-          addSystemLog('\x1b[1;31m[SYSTEM] 致命错误: 设备通信中断，可能已被意外拔出！\x1b[0m');
-          addSystemLog('\x1b[90m$e\x1b[0m');
-          _disconnect();
-        }, onDone: () {
-          addSystemLog('\x1b[1;33m[SYSTEM] 串口已物理断开\x1b[0m');
-          _disconnect();
-        });
-
-      } catch (e) {
-        addSystemLog('\x1b[1;31m[SYSTEM] 无法连接到 $_serialPort: $e\x1b[0m');
-        _disconnect();
       }
-    } else {
-      // TODO: Network TCP Connection Implementation
+
+      final config = _port!.config;
+      config.baudRate = _baudRate;
+      config.bits = _dataBits;
+
+      switch (_stopBits) {
+        case 1.0: config.stopBits = 1; break;
+        case 2.0: config.stopBits = 2; break;
+        case 1.5: config.stopBits = 3; break;
+      }
+
+      switch (_parity) {
+        case 'None': config.parity = SerialPortParity.none; break;
+        case 'Odd': config.parity = SerialPortParity.odd; break;
+        case 'Even': config.parity = SerialPortParity.even; break;
+        case 'Mark': config.parity = SerialPortParity.mark; break;
+        case 'Space': config.parity = SerialPortParity.space; break;
+      }
+
+      _port!.config = config;
+
       _isConnected = true;
       _connectionStartTime = DateTime.now();
-      addSystemLog('\x1b[1;32m[SYSTEM] Connected to $_networkIp:$_networkPort (Mock)\x1b[0m');
+      addSystemLog('\x1b[1;32m[SYSTEM] Connected to $_serialPort ($_baudRate, $_dataBits${_parity.substring(0,1)}$_stopBits)\x1b[0m');
+
+      _reader = SerialPortReader(_port!);
+      _reader!.stream.listen((Uint8List data) {
+        _handleIncomingData(data);
+      }, onError: (e) {
+        // 主动断开时 _isConnected 已置 false，流收尾触发的回调直接忽略
+        if (!_isConnected) return;
+        addSystemLog('\x1b[1;91m[SYSTEM] 致命错误: 设备通信中断，可能已被意外拔出！\x1b[0m');
+        addSystemLog('\x1b[90m${describeSerialError(e)}\x1b[0m');
+        _disconnect();
+      }, onDone: () {
+        if (!_isConnected) return;
+        addSystemLog('\x1b[1;33m[SYSTEM] 串口已物理断开\x1b[0m');
+        _disconnect();
+      });
+
+    } catch (e) {
+      addSystemLog('\x1b[1;91m[SYSTEM] 无法连接到 $_serialPort: ${describeSerialError(e)}\x1b[0m');
+      _disconnect();
     }
     notifyListeners();
   }
@@ -231,10 +303,11 @@ class TerminalState extends ChangeNotifier {
       addSystemLog('\x1b[1;33m[SYSTEM] 端口释放异常 (忽略): $e\x1b[0m');
     }
 
-    addSystemLog('\x1b[1;31m[SYSTEM] Disconnected\x1b[0m');
+    addSystemLog('\x1b[1;33m[SYSTEM] Disconnected\x1b[0m');
     notifyListeners();
   }
 
+  @override
   void sendCommand(String command, {bool isHex = false, String eolMode = 'None'}) {
     if (!_isConnected) return;
     
@@ -278,22 +351,20 @@ class TerminalState extends ChangeNotifier {
 
   void sendData(List<int> data) {
     if (!_isConnected) {
-      addSystemLog('\x1b[1;31m[SYSTEM] 发送失败: 未连接\x1b[0m');
+      addSystemLog('\x1b[1;91m[SYSTEM] 发送失败: 未连接\x1b[0m');
       return;
     }
-    if (_connectionMode == ConnectionMode.serial) {
-      if (_port == null || !_port!.isOpen) {
-        addSystemLog('\x1b[1;31m[SYSTEM] 发送失败：端口已失效或被拔出\x1b[0m');
-        _disconnect();
-        return;
-      }
-      try {
-        _port!.write(Uint8List.fromList(data));
-      } catch (e) {
-        addSystemLog('\x1b[1;31m[SYSTEM] 发送异常：设备可能已被意外拔出！\x1b[0m');
-        addSystemLog('\x1b[90m$e\x1b[0m');
-        _disconnect();
-      }
+    if (_port == null || !_port!.isOpen) {
+      addSystemLog('\x1b[1;91m[SYSTEM] 发送失败：端口已失效或被拔出\x1b[0m');
+      _disconnect();
+      return;
+    }
+    try {
+      _port!.write(Uint8List.fromList(data));
+    } catch (e) {
+      addSystemLog('\x1b[1;91m[SYSTEM] 发送异常：设备可能已被意外拔出！\x1b[0m');
+      addSystemLog('\x1b[90m${describeSerialError(e)}\x1b[0m');
+      _disconnect();
     }
   }
 
@@ -357,6 +428,7 @@ class TerminalState extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   void addSystemLog(String data) {
     // 序列号为4位十进制数，最小值为0001，最大值为9999
     String seqStr = _systemLogSequence.toString().padLeft(4, '0');
@@ -364,6 +436,9 @@ class TerminalState extends ChangeNotifier {
     
     _systemLogSequence++;
     if (_systemLogSequence > 9999) _systemLogSequence = 1;
+
+    // 亮红（1;91）前缀的是错误级日志，计数供视图自动展开面板
+    if (data.contains('\x1b[1;91m')) _systemLogErrorCount++;
 
     _systemLog.addLast(TerminalLine(formattedLog));
     if (_systemLog.length > 2000) _systemLog.removeFirst();
@@ -386,6 +461,7 @@ class TerminalState extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   void addCommandToHistory(String command, {bool isHex = false}) {
     if (command.trim().isEmpty) return;
     
@@ -401,6 +477,7 @@ class TerminalState extends ChangeNotifier {
     }
   }
 
+  @override
   String? getLatestCommand({bool isHex = false}) {
     final history = isHex ? _hexCommandHistory : _asciiCommandHistory;
     if (history.isEmpty) return null;
@@ -412,6 +489,7 @@ class TerminalState extends ChangeNotifier {
     return history.last;
   }
 
+  @override
   String? getPreviousCommand({bool isHex = false}) {
     final history = isHex ? _hexCommandHistory : _asciiCommandHistory;
     int index = isHex ? _hexHistoryIndex : _asciiHistoryIndex;
@@ -429,6 +507,7 @@ class TerminalState extends ChangeNotifier {
     return history.first;
   }
 
+  @override
   String? getNextCommand({bool isHex = false}) {
     final history = isHex ? _hexCommandHistory : _asciiCommandHistory;
     int index = isHex ? _hexHistoryIndex : _asciiHistoryIndex;

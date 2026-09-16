@@ -266,11 +266,13 @@ class IspNode {
                   type.typeId == 'bright_contrast_adjuster' ||
                   type.typeId == 'color_balance' ||
                   type.typeId == 'color_temp_adjuster' ||
+                  type.typeId == 'color_controller' ||
                   type.typeId == 'edge_extract' ||
                   type.typeId == 'levels_curves'
               ? kNodeWidth * 2
               : kNodeWidth,
       extraHeight: type.typeId == 'hsl_debugger' ||
+              type.typeId == 'color_controller' ||
               type.typeId == 'rgb_debugger' ||
               type.typeId == 'yuv_debugger' ||
               type.typeId == 'sat_bright_adjuster' ||
@@ -1035,6 +1037,61 @@ abstract final class IspNodeRegistry {
         IspParamSpec(
           key: 'h_shift',
           label: '色相偏移(°)',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: -180,
+          max: 180,
+        ),
+        IspParamSpec(
+          key: 's_gain',
+          label: '饱和度增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+        IspParamSpec(
+          key: 'l_gain',
+          label: '亮度增益',
+          type: IspParamType.doubleNumber,
+          defaultValue: 1.0,
+          min: 0,
+          max: 5,
+        ),
+      ],
+    ),
+    // ---- 色彩控制器：选定色相中心 H + Q 值控制的高斯色相带（Q 越高带越窄，
+    // 左右边带正态分布衰减），带内像素按权重施加 ±180° 色相调整与 S/L 增益 ----
+    'color_controller': IspNodeType(
+      typeId: 'color_controller',
+      displayName: '色彩控制器',
+      colorValue: 0xFF5E566A,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'h_center',
+          label: '色相中心(°)',
+          type: IspParamType.doubleNumber,
+          defaultValue: 0.0,
+          min: 0,
+          max: 360,
+        ),
+        IspParamSpec(
+          key: 'q',
+          label: 'Q值(带宽)',
+          type: IspParamType.doubleNumber,
+          defaultValue: 2.0,
+          min: 0.5,
+          max: 100,
+        ),
+        IspParamSpec(
+          key: 'h_shift',
+          label: '色相调整(°)',
           type: IspParamType.doubleNumber,
           defaultValue: 0.0,
           min: -180,
@@ -2367,6 +2424,7 @@ abstract final class IspNodeRegistry {
     'csc_hsl2rgb',
     'csc_hsl2yuv',
     'hsl_debugger',
+    'color_controller',
     'rgb_debugger',
     'yuv_debugger',
     'sat_bright_adjuster',

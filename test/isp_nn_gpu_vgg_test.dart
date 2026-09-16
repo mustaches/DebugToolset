@@ -415,6 +415,159 @@ void main() {
     });
   });
 
+  group('Vgg16Gpu.channelStatsPair 归约快路径（优化 15）', () {
+    /// CPU fp64 逐通道统计参考（与 dists 打分头同累加口径）。
+    Float64List cpuStats(NnTensor a, NnTensor b) {
+      final c = a.channels, s = a.height * a.width;
+      final out = Float64List(c * 5);
+      for (var ch = 0; ch < c; ch++) {
+        final base = ch * s;
+        var sa = 0.0, sa2 = 0.0, sb = 0.0, sb2 = 0.0, sab = 0.0;
+        for (var i = 0; i < s; i++) {
+          final x = a.data[base + i];
+          final y = b.data[base + i];
+          sa += x;
+          sa2 += x * x;
+          sb += y;
+          sb2 += y * y;
+          sab += x * y;
+        }
+        out[ch * 5] = sa;
+        out[ch * 5 + 1] = sa2;
+        out[ch * 5 + 2] = sb;
+        out[ch * 5 + 3] = sb2;
+        out[ch * 5 + 4] = sab;
+      }
+      return out;
+    }
+
+    Future<void> checkStats(int w, int h, {bool forceBanded = false}) async {
+      final vg = vggGpu;
+      if (vg == null) return;
+      final x0 = lpipsInput(busyFrame(w, h), w, h);
+      final x1 = lpipsInput(busyFrame(w, h, noisy: true), w, h);
+      if (forceBanded) {
+        Vgg16Gpu.debugForceBanded = true;
+        GpuNnBackend.debugMaxBandTexels = 65536;
+      }
+      try {
+        final h0 = await vg.forwardSubmit(x0, useL2Pooling: true);
+        final h1 = await vg.forwardSubmit(x1, useL2Pooling: true);
+        final stats = await vg.channelStatsPair(h0, h1);
+        final f0 = await vg.forward(x0, useL2Pooling: true);
+        final f1 = await vg.forward(x1, useL2Pooling: true);
+        expect(stats.length, 5);
+        for (var k = 0; k < 5; k++) {
+          expect(stats[k].channels, f0[k].channels);
+          expect(stats[k].pixels, f0[k].height * f0[k].width);
+          final ref = cpuStats(f0[k], f1[k]);
+          for (var i = 0; i < ref.length; i++) {
+            final d = (stats[k].sums[i] - ref[i]).abs();
+            final rel = d / (ref[i].abs() + 1e-12);
+            // 差异仅 fp32 求和路径（~1e-7 量级，容差放到 1e-4 覆盖
+            // 软件光栅与真机驱动的重结合差异）；若坏会差出数量级。
+            expect(d < 1e-3 || rel < 1e-4, isTrue,
+                reason: 'slice$k idx$i banded=$forceBanded '
+                    'gpu=${stats[k].sums[i]} cpu=${ref[i]}');
+          }
+        }
+      } finally {
+        if (forceBanded) {
+          Vgg16Gpu.debugForceBanded = false;
+          GpuNnBackend.debugMaxBandTexels = 0;
+        }
+      }
+    }
+
+    test('单纹理 64x48（5 切片逐通道统计 vs CPU）',
+        () => checkStats(64, 48),
+        timeout: const Timeout(Duration(minutes: 10)));
+    test('分块（强制小带预算）64x48（逐带部分和 + 带序合并）',
+        () => checkStats(64, 48, forceBanded: true),
+        timeout: const Timeout(Duration(minutes: 10)));
+  });
+
+  group('Vgg16Gpu.lpipsStatsPair 归约快路径（优化 16）', () {
+    /// CPU 参考：由下载特征算逐像素范数（fp64）+ 逐通道 3 项统计
+    ///（与 lpips 打分头的 (tA−tB)² 不同的展开式参考——A/B/X 口径）。
+    Float64List cpuLpipsStats(NnTensor a, NnTensor b) {
+      final c = a.channels, s = a.height * a.width;
+      final n0 = Float64List(s);
+      final n1 = Float64List(s);
+      for (var i = 0; i < s; i++) {
+        var s0 = 0.0, s1 = 0.0;
+        for (var ch = 0; ch < c; ch++) {
+          final v0 = a.data[ch * s + i];
+          final v1 = b.data[ch * s + i];
+          s0 += v0 * v0;
+          s1 += v1 * v1;
+        }
+        n0[i] = math.sqrt(s0) + 1e-10;
+        n1[i] = math.sqrt(s1) + 1e-10;
+      }
+      final out = Float64List(c * 3);
+      for (var ch = 0; ch < c; ch++) {
+        var sa = 0.0, sb = 0.0, sx = 0.0;
+        for (var i = 0; i < s; i++) {
+          final ta = a.data[ch * s + i] / n0[i];
+          final tb = b.data[ch * s + i] / n1[i];
+          sa += ta * ta;
+          sb += tb * tb;
+          sx += ta * tb;
+        }
+        out[ch * 3] = sa;
+        out[ch * 3 + 1] = sb;
+        out[ch * 3 + 2] = sx;
+      }
+      return out;
+    }
+
+    Future<void> checkLpipsStats(int w, int h, {bool forceBanded = false}) async {
+      final vg = vggGpu;
+      if (vg == null) return;
+      final x0 = lpipsInput(busyFrame(w, h), w, h);
+      final x1 = lpipsInput(busyFrame(w, h, noisy: true), w, h);
+      if (forceBanded) {
+        Vgg16Gpu.debugForceBanded = true;
+        GpuNnBackend.debugMaxBandTexels = 65536;
+      }
+      try {
+        final h0 = await vg.forwardSubmit(x0);
+        final h1 = await vg.forwardSubmit(x1);
+        final stats = await vg.lpipsStatsPair(h0, h1);
+        final f0 = await vg.forward(x0);
+        final f1 = await vg.forward(x1);
+        expect(stats.length, 5);
+        for (var k = 0; k < 5; k++) {
+          expect(stats[k].channels, f0[k].channels);
+          expect(stats[k].pixels, f0[k].height * f0[k].width);
+          final ref = cpuLpipsStats(f0[k], f1[k]);
+          for (var i = 0; i < ref.length; i++) {
+            final d = (stats[k].sums[i] - ref[i]).abs();
+            final rel = d / (ref[i].abs() + 1e-12);
+            // 差异为 fp32 求和路径 + 展开式舍入（~1e-6 量级）；坏时会
+            // 差出数量级（范数图错位/带合并错误等）。
+            expect(d < 1e-3 || rel < 1e-3, isTrue,
+                reason: 'slice$k idx$i banded=$forceBanded '
+                    'gpu=${stats[k].sums[i]} cpu=${ref[i]}');
+          }
+        }
+      } finally {
+        if (forceBanded) {
+          Vgg16Gpu.debugForceBanded = false;
+          GpuNnBackend.debugMaxBandTexels = 0;
+        }
+      }
+    }
+
+    test('单纹理 64x48（范数图 + 3 项统计 vs CPU）',
+        () => checkLpipsStats(64, 48),
+        timeout: const Timeout(Duration(minutes: 10)));
+    test('分块（强制小带预算）64x48（逐带范数与部分和）',
+        () => checkLpipsStats(64, 48, forceBanded: true),
+        timeout: const Timeout(Duration(minutes: 10)));
+  });
+
   group('端到端分数对拍（GPU 路径 vs Python 基线）', () {
     /// 调 iqa_bridge.py 一次性模式取参考分（同
     /// test/isp_lpips_dists_dart_test.dart）。

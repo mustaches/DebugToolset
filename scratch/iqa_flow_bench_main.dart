@@ -196,13 +196,18 @@ Future<void> bench() async {
         {'rgba': ta, 'width': w, 'height': h}));
     _report('ilniqe', t.elapsedMilliseconds, 'cpu', v);
   }();
-  tasks['musiq'] = () async {
-    final t = Stopwatch()..start();
-    final v = await _heavyLock(() => compute(musiqScoreInIsolate,
-        {'rgba': ta, 'width': w, 'height': h}));
-    _report('musiq', t.elapsedMilliseconds, 'cpu', v);
-  }();
-
+  // --dart-define=SKIP_MUSIQ=true 时跳过 MUSIQ（测量其争抢税上限：
+  // 等价于「MUSIQ 被无限加速」时的流程总时长。实测 216s→168s）。
+  // 注：MUSIQ 限核实验（NnPool 72 vs 108 workers）耗时同为 ~119s，
+  // 证明其为内存带宽瓶颈，限核无法回收争抢税（总时长 217s 不变）。
+  if (!const bool.fromEnvironment('SKIP_MUSIQ')) {
+    tasks['musiq'] = () async {
+      final t = Stopwatch()..start();
+      final v = await _heavyLock(() => compute(musiqScoreInIsolate,
+          {'rgba': ta, 'width': w, 'height': h}));
+      _report('musiq', t.elapsedMilliseconds, 'cpu', v);
+    }();
+  }
   void gpuPair(String kind) {
     tasks[kind] = () async {
       final t = Stopwatch()..start();

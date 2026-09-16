@@ -159,6 +159,8 @@ class IspNodeWidget extends StatelessWidget {
                   if (type.typeId == 'preview') _buildPreviewExtra(state),
                   if (type.typeId == 'hsl_debugger')
                     _buildHslDebugExtra(state),
+                  if (type.typeId == 'color_controller')
+                    _buildColorControllerExtra(state),
                   if (type.typeId == 'rgb_debugger')
                     _buildRgbDebugExtra(state),
                   if (type.typeId == 'yuv_debugger')
@@ -267,8 +269,7 @@ class IspNodeWidget extends StatelessWidget {
           final side =
               math.min(constraints.maxWidth, constraints.maxHeight) * 0.82;
           return SizedBox.expand(
-            child: CustomPaint(
-              foregroundPainter: const VectorscopeGraticule(),
+            child: _VectorscopeHoverRegion(
               child: Center(
                 child: SizedBox(
                   width: side,
@@ -1071,6 +1072,127 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
+  /// 色彩控制器附加区：双联矢量示波器（左调整前/右调整后，表盘叠加高斯
+  /// 色相带）+ H中心/Q/ΔH/S/L 五行紧凑滑块 + 底部拖动手柄。
+  /// 拖动滑块只写参数（实时重绘色相带），松手才重跑流水线更新示波器图。
+  Widget _buildColorControllerExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildColorControllerContent(state),
+    );
+  }
+
+  Widget _buildColorControllerContent(IspStudioState state) {
+    final scopeImage = state.hslVectorscopes[node.id];
+    final inputScopeImage = state.hslInputVectorscopes[node.id];
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null;
+    final extra = state.previewExtraHeight(node.id);
+    final hCenter = (node.paramValues['h_center'] as num?)?.toDouble() ?? 0;
+    final q = (node.paramValues['q'] as num?)?.toDouble() ?? 2;
+    final hShift = (node.paramValues['h_shift'] as num?)?.toDouble() ?? 0;
+    // 5 行滑块各 24，顶部留白 4，底部手柄 10，其余归示波器区。
+    final scopeHeight = math.max(0.0, extra - 4 - 24 * 5 - 10);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            child: SizedBox(
+              height: scopeHeight,
+              child: Row(
+                children: [
+                  // 左半：调整前（输入链统计），色带以 H 为中心（白色标线）；
+                  // 右半：调整后（输出链统计），色带以 H+ΔH 为中心（黄色标线），
+                  // 另有白色静态标线指回原 H 位置便于对比。
+                  Expanded(
+                      child: _buildBandScopePane(
+                          inputScopeImage,
+                          '调整前',
+                          hasInput ? '运行预览后显示' : '未连接输入',
+                          hCenter, q)),
+                  const SizedBox(width: 4),
+                  Expanded(
+                      child: _buildBandScopePane(scopeImage, '调整后',
+                          '运行预览后显示效果', hCenter + hShift, q,
+                          referenceDeg: hCenter,
+                          centerColor: const Color(0xFFF5F543))),
+                ],
+              ),
+            ),
+          ),
+          _buildHslSliderRow(state, 'H中心', 'h_center', 0, 360, 0,
+              (v) => '${v.toStringAsFixed(0)}°',
+              labelWidth: 34, livePreview: true),
+          _buildHslSliderRow(state, 'Q', 'q', 0.5, 100, 2,
+              // 右侧同时显示高斯带宽 σ = 45°/Q
+              (v) => '${v.toStringAsFixed(1)} σ=${(45 / v).toStringAsFixed(1)}°',
+              labelWidth: 34, valueWidth: 92, livePreview: true),
+          _buildHslSliderRow(state, 'ΔH', 'h_shift', -180, 180, 0,
+              (v) => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(1)}°',
+              labelWidth: 34, livePreview: true),
+          _buildHslSliderRow(state, 'S', 's_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}',
+              labelWidth: 34, livePreview: true),
+          _buildHslSliderRow(state, 'L', 'l_gain', 0, 5, 1,
+              (v) => '×${v.toStringAsFixed(2)}',
+              labelWidth: 34, livePreview: true),
+          // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+          _buildResizeBar(state),
+        ],
+      ),
+    );
+  }
+
+  /// 色彩控制器矢量示波器的半区：迹线图 → 高斯色相带 → 坐标格三层叠加
+  /// （无图时显示占位文案 [hint]），左上角叠加半透明小标签 [label]。
+  /// 色相带以 [bandCenterDeg] 为中心（调整前传 H，调整后传 H+ΔH 并加
+  /// 白色参考线指回原 H）。
+  /// 布局与 vectorscope 仪器一致：数据区是居中、边长为短边 82% 的正方形。
+  Widget _buildBandScopePane(ui.Image? image, String label, String hint,
+      double bandCenterDeg, double q,
+      {double? referenceDeg, Color centerColor = Colors.white}) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final side =
+            math.min(constraints.maxWidth, constraints.maxHeight) * 0.82;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            _VectorscopeHoverRegion(
+              bandPainter: _HueBandPainter(
+                  centerDeg: bandCenterDeg,
+                  q: q,
+                  centerColor: centerColor,
+                  referenceDeg: referenceDeg),
+              child: Container(
+                color: Colors.black,
+                alignment: Alignment.center,
+                child: SizedBox(
+                  width: side,
+                  height: side,
+                  child: image == null
+                      ? Center(
+                          child: Text(hint,
+                              style: const TextStyle(
+                                  fontSize: 11, color: Colors.grey)))
+                      : RawImage(image: image, fit: BoxFit.fill),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 2,
+              top: 2,
+              child: Text(label,
+                  style:
+                      const TextStyle(fontSize: 10, color: Colors.white54)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   /// HSL 调节器矢量示波器的半区：矢量示波器坐标格 + 迹线图（无图时
   /// 显示占位文案 [hint]），左上角叠加半透明小标签 [label]
   /// （「调整前」/「调整后」）。布局与 vectorscope 仪器一致：数据区
@@ -1083,8 +1205,7 @@ class IspNodeWidget extends StatelessWidget {
         return Stack(
           fit: StackFit.expand,
           children: [
-            CustomPaint(
-              foregroundPainter: const VectorscopeGraticule(),
+            _VectorscopeHoverRegion(
               child: Container(
                 color: Colors.black,
                 alignment: Alignment.center,
@@ -2127,7 +2248,7 @@ class IspNodeWidget extends StatelessWidget {
   /// [format] 把参数值格式化为显示文本（H 带符号角度，S/L 增益倍数）。
   Widget _buildHslSliderRow(IspStudioState state, String label, String key,
       double min, double max, double fallback, String Function(double) format,
-      {double labelWidth = 12}) {
+      {double labelWidth = 12, double valueWidth = 48, bool livePreview = false}) {
     final value = (node.paramValues[key] as num?)?.toDouble() ?? fallback;
     return SizedBox(
       height: 24,
@@ -2146,14 +2267,19 @@ class IspNodeWidget extends StatelessWidget {
                 value: value.clamp(min, max),
                 min: min,
                 max: max,
-                // 拖动中只写参数（不重跑流水线），松手才重跑。
-                onChanged: (v) => state.setParam(node.id, key, v),
+                // 拖动中只写参数（不重跑流水线），松手才重跑；
+                // livePreview 的行（色彩控制器）拖动中实时重跑——运行中
+                // 的请求由 requestLivePreview 置脏标记合并，取最新参数。
+                onChanged: (v) {
+                  state.setParam(node.id, key, v);
+                  if (livePreview) state.requestLivePreview();
+                },
                 onChangeEnd: (_) => state.runPreview(),
               ),
             ),
           ),
           SizedBox(
-            width: 48,
+            width: valueWidth,
             child: Text(format(value),
                 style: const TextStyle(fontSize: 10, color: Colors.white70)),
           ),
@@ -2402,11 +2528,16 @@ class _HistogramPainter extends CustomPainter {
       old.showY != showY;
 }
 
-/// 矢量示波器坐标格（参照经典矢量示波器面板）：外圈刻度环、U/V 轴、
-/// 75%/100% 六色目标框、双三角连线（Mg-Yl-Cy / R-G-B）与色标文字。
+/// 矢量示波器坐标格（参照经典矢量示波器面板）：最外圈 8px 色环、外圈刻度环、
+/// U/V 轴、75%/100% 六色目标框、双三角连线（Mg-Yl-Cy / R-G-B）与色标文字。
 /// 数据坐标：x = Cb（0 左 255 右），y = Cr（0 下 255 上），中心 (128,128)。
+/// [hover] 为鼠标悬停位置（画布局部坐标），非空时在光标处绘制采样标记和
+/// HSL 气泡：H 为 (Cb,Cr) 方向对应的色相，S 为径向距离占该色相 100% 饱和
+/// 色色度半径的百分比，L 为参考亮度 50%（矢量示波器无亮度信息）。
 class VectorscopeGraticule extends CustomPainter {
-  const VectorscopeGraticule();
+  const VectorscopeGraticule({this.hover});
+
+  final Offset? hover;
 
   /// 100% 彩条的 (Cb, Cr) 目标点（BT.601，8bit 全范围）。
   static const _targets = <String, (double, double)>{
@@ -2436,9 +2567,34 @@ class VectorscopeGraticule extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
 
+    // 最外圈 8px 色环（贴画布边缘）：色相随 (Cb,Cr) 平面实际角度排布，
+    // 对饱和色用 BT.601 反推其在屏幕上的角度，逐 0.5° 色相画弧段。
+    final half = math.min(size.width, size.height) / 2;
+    const colorRingWidth = 8.0;
+    final ringRect = Rect.fromCircle(
+        center: center, radius: half - 1 - colorRingWidth / 2);
+    for (var h = 0.0; h < 360; h += 0.5) {
+      final c = HSVColor.fromAHSV(1, h, 1, 1).toColor();
+      final r = c.r * 255, g = c.g * 255, b = c.b * 255;
+      final y = 0.299 * r + 0.587 * g + 0.114 * b;
+      final cb = 128 + 0.564 * (b - y);
+      final cr = 128 + 0.713 * (r - y);
+      final a = math.atan2(-(cr - 128), cb - 128);
+      canvas.drawArc(
+          ringRect,
+          a,
+          0.035,
+          false,
+          Paint()
+            ..color = c
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = colorRingWidth);
+    }
+
     // 外圈 + 刻度环（2° 小刻度，10° 长刻度，朝内）。
-    // 半径 150 单位：100% 彩条目标点（径向约 130-135）落在环内侧。
-    final ringRadius = 150 * ds;
+    // 半径贴在色环内侧（留 2px 间隙）；512px 画布时约等于原 150 单位，
+    // 100% 彩条目标点（径向约 130-135）落在环内侧。
+    final ringRadius = half - colorRingWidth - 3;
     canvas.drawCircle(center, ringRadius, faint);
     for (var deg = 0; deg < 360; deg += 2) {
       final a = deg * math.pi / 180;
@@ -2509,6 +2665,117 @@ class VectorscopeGraticule extends CustomPainter {
       final pos = centers100[e.key]! + unit * (bh + 9 * ds);
       _textCentered(canvas, pos, e.key);
     }
+
+    // 鼠标悬停：采样点标记 + HSL 气泡
+    final h = hover;
+    if (h != null) _drawHoverBubble(canvas, size, center, ds, h);
+  }
+
+  /// 色相 h（0-360）的 100% 饱和色在 (Cb,Cr) 平面相对中心的偏移。
+  static (double, double) chromaOfHue(double h) {
+    // 色相环绕归一：H+ΔH 可能越出 0..360（HSVColor 断言 hue >= 0），
+    // 负值与超界都按色环折回。
+    final c = HSVColor.fromAHSV(1, ((h % 360) + 360) % 360, 1, 1).toColor();
+    final r = c.r * 255, g = c.g * 255, b = c.b * 255;
+    final y = 0.299 * r + 0.587 * g + 0.114 * b;
+    return (0.564 * (b - y), 0.713 * (r - y));
+  }
+
+  /// 反查 (du,dv) 方向对应的色相：整数度粗扫 + 三分法细化。
+  static double hueForDirection(double du, double dv) {
+    final target = math.atan2(dv, du);
+    double diff(double h) {
+      final (u, v) = chromaOfHue(h % 360);
+      var d = math.atan2(v, u) - target;
+      while (d > math.pi) {
+        d -= 2 * math.pi;
+      }
+      while (d < -math.pi) {
+        d += 2 * math.pi;
+      }
+      return d.abs();
+    }
+
+    var best = 0.0;
+    var bestD = double.infinity;
+    for (var h = 0.0; h < 360; h += 1) {
+      final d = diff(h);
+      if (d < bestD) {
+        bestD = d;
+        best = h;
+      }
+    }
+    var lo = best - 1, hi = best + 1;
+    for (var i = 0; i < 8; i++) {
+      final m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+      if (diff(m1) < diff(m2)) {
+        hi = m2;
+      } else {
+        lo = m1;
+      }
+    }
+    return ((lo + hi) / 2) % 360;
+  }
+
+  void _drawHoverBubble(
+      Canvas canvas, Size size, Offset center, double ds, Offset pos) {
+    final du = (pos.dx - center.dx) / ds;
+    final dv = -(pos.dy - center.dy) / ds;
+    final dist = math.sqrt(du * du + dv * dv);
+    final hue = dist < 1e-6 ? 0.0 : hueForDirection(du, dv);
+    final (mu, mv) = chromaOfHue(hue);
+    final maxR = math.sqrt(mu * mu + mv * mv);
+    final sat = maxR > 0 ? dist / maxR * 100 : 0.0;
+    final swatchColor = HSLColor.fromAHSL(
+            1, hue, (sat / 100).clamp(0.0, 1.0), 0.5)
+        .toColor();
+
+    // 采样点标记
+    canvas.drawCircle(
+        pos,
+        4,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2);
+
+    final tp = TextPainter(
+      text: TextSpan(
+          text: 'H ${hue.round()}°  S ${sat.round()}%  L 50%',
+          style: const TextStyle(fontSize: 10, color: Colors.white)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    const swatch = 10.0, pad = 5.0, gap = 5.0;
+    final w = pad + swatch + gap + tp.width + pad;
+    final h = tp.height + pad * 2;
+    // 默认放在光标右上方，越界则换侧并夹进画布
+    var bx = pos.dx + 12;
+    var by = pos.dy - 12 - h;
+    if (bx + w > size.width - 1) bx = pos.dx - 12 - w;
+    if (by < 1) by = pos.dy + 12;
+    bx = bx.clamp(1.0, math.max(1.0, size.width - 1 - w));
+    by = by.clamp(1.0, math.max(1.0, size.height - 1 - h));
+
+    final rect = Rect.fromLTWH(bx, by, w, h);
+    const radius = Radius.circular(3);
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, radius),
+        Paint()..color = const Color(0xD9000000));
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, radius),
+        Paint()
+          ..color = const Color(0x99FFFFFF)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8);
+    final swatchRect = Rect.fromLTWH(bx + pad, by + (h - swatch) / 2, swatch, swatch);
+    canvas.drawRect(swatchRect, Paint()..color = swatchColor);
+    canvas.drawRect(
+        swatchRect,
+        Paint()
+          ..color = const Color(0x99FFFFFF)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8);
+    tp.paint(canvas, Offset(bx + pad + swatch + gap, by + pad));
   }
 
   void _text(Canvas canvas, Offset at, String s) {
@@ -2532,7 +2799,116 @@ class VectorscopeGraticule extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(VectorscopeGraticule old) => false;
+  bool shouldRepaint(VectorscopeGraticule old) => old.hover != hover;
+}
+
+/// 色彩控制器的高斯色相带叠加层（画在迹线与坐标格之间）。
+/// 以 [centerDeg] 为带中心：每个屏幕角度经色相 LUT 反查 HSL 色相，按
+/// w = exp(-(Δ/σ)²/2) 决定扇形不透明度（σ = 45°/q，Q 越高带越窄，左右
+/// 边带正态衰减），扇形颜色取该角度的饱和色；带中心标线颜色为
+/// [centerColor]（默认白），[referenceDeg] 非空时另画一条白色静态参考标线。
+/// 调整前半区传 H 中心；调整后半区带中心传 H+ΔH（黄线），参考线传 H（白线）。
+class _HueBandPainter extends CustomPainter {
+  final double centerDeg;
+  final double q;
+  final Color centerColor;
+  final double? referenceDeg;
+
+  const _HueBandPainter({
+    required this.centerDeg,
+    required this.q,
+    this.centerColor = Colors.white,
+    this.referenceDeg,
+  });
+
+  /// 屏幕角度（度，y 向下）→ HSL 色相的查询表，首次使用时惰性构建。
+  static final List<double> _hueByScreenDeg = List<double>.generate(360, (deg) {
+    final a = deg * math.pi / 180;
+    // 屏幕方向 (cos a, sin a) 对应数据方向 (cos a, -sin a)（数据 y 向上）。
+    return VectorscopeGraticule.hueForDirection(math.cos(a), -math.sin(a));
+  });
+
+  /// 色相 H（度）对应的屏幕方向角（弧度）。
+  static double _screenAngleOfHue(double hDeg) {
+    final (u, v) = VectorscopeGraticule.chromaOfHue(hDeg);
+    return math.atan2(-v, u);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final half = math.min(size.width, size.height) / 2;
+    final center = size.center(Offset.zero);
+    final bandR = half - 13; // 刻度环（半径 half-11）内侧
+    if (bandR <= 0) return;
+    final sigma = 45.0 / q;
+    final rect = Rect.fromCircle(center: center, radius: bandR);
+    const step = 2.0; // 扇形步进（度）
+    for (var deg = 0.0; deg < 360; deg += step) {
+      final hue = _hueByScreenDeg[deg.round() % 360];
+      var d = (hue - centerDeg).abs() % 360.0;
+      if (d > 180) d = 360 - d;
+      final w = math.exp(-0.5 * (d / sigma) * (d / sigma));
+      if (w < 0.02) continue;
+      final color = HSVColor.fromAHSV(w * 0.4, hue, 1.0, 1.0).toColor();
+      canvas.drawArc(rect, (deg - step / 2) * math.pi / 180,
+          step * math.pi / 180, true, Paint()..color = color);
+    }
+
+    void marker(double hDeg, Color color, double width) {
+      final a = _screenAngleOfHue(hDeg);
+      final dir = Offset(math.cos(a), math.sin(a));
+      canvas.drawLine(center + dir * (bandR * 0.25), center + dir * bandR,
+          Paint()
+            ..color = color
+            ..strokeWidth = width);
+    }
+
+    // 静态参考标线（白，如调整后半区的原 H 位置）+ 带中心标线
+    final ref = referenceDeg;
+    if (ref != null) marker(ref, Colors.white, 2);
+    marker(centerDeg, centerColor, 2);
+  }
+
+  @override
+  bool shouldRepaint(_HueBandPainter old) =>
+      old.centerDeg != centerDeg ||
+      old.q != q ||
+      old.centerColor != centerColor ||
+      old.referenceDeg != referenceDeg;
+}
+
+/// 矢量示波器悬停层：跟踪鼠标位置并交给 [VectorscopeGraticule] 绘制
+/// 采样标记与 HSL 气泡。仪器节点与 HSL 调节器半区共用。
+/// [bandPainter] 非空时作为中间叠加层（画在迹线与坐标格之间），
+/// 色彩控制器用它叠加高斯色相带。
+class _VectorscopeHoverRegion extends StatefulWidget {
+  final Widget child;
+  final CustomPainter? bandPainter;
+
+  const _VectorscopeHoverRegion({required this.child, this.bandPainter});
+
+  @override
+  State<_VectorscopeHoverRegion> createState() =>
+      _VectorscopeHoverRegionState();
+}
+
+class _VectorscopeHoverRegionState extends State<_VectorscopeHoverRegion> {
+  Offset? _hover;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onHover: (e) => setState(() => _hover = e.localPosition),
+      onExit: (_) => setState(() => _hover = null),
+      child: CustomPaint(
+        foregroundPainter: VectorscopeGraticule(hover: _hover),
+        child: widget.bandPainter == null
+            ? widget.child
+            : CustomPaint(
+                foregroundPainter: widget.bandPainter, child: widget.child),
+      ),
+    );
+  }
 }
 
 /// 波形监视器标准坐标格：外框 + 横向 10 等分（纵轴 0% 在底，

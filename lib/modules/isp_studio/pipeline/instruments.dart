@@ -853,8 +853,16 @@ double _fsimChannel(Float64List pa, Float64List pb, int w, int h,
     Float64List s1, Float64List s2, Float64List s3) {
   _pcAndGm(pa, w, h, pc1, g1, s1, s2, s3);
   _pcAndGm(pb, w, h, pc2, g2, s1, s2, s3);
+  return _fsimCombine(pc1, g1, pc2, g2);
+}
+
+/// FSIM 合并阶段（[_fsimChannel] 尾部原式）：逐像素 S_PC·S_G 以
+/// PCm 加权累加。供 6 路并行路径（[_fsimRgbaParallel]）在调用侧
+/// 复用同一求和顺序，与串行逐位一致。
+double _fsimCombine(
+    Float64List pc1, Float64List g1, Float64List pc2, Float64List g2) {
   var num = 0.0, den = 0.0;
-  for (var i = 0; i < pa.length; i++) {
+  for (var i = 0; i < pc1.length; i++) {
     final spc = (2 * pc1[i] * pc2[i] + _kFsimT1) /
         (pc1[i] * pc1[i] + pc2[i] * pc2[i] + _kFsimT1);
     final sg = (2 * g1[i] * g2[i] + _kFsimT2) /
@@ -864,6 +872,22 @@ double _fsimChannel(Float64List pa, Float64List pb, int w, int h,
     den += pcm;
   }
   return den <= 0 ? 1.0 : num / den;
+}
+
+/// FSIM (通道, 图侧) 特征提取（6 路并行路径用）：提取通道平面并算
+/// PC/GM（与 [_fsimChannel] 内的 [_pcAndGm] 调用逐位一致，仅调度
+/// 方式不同），以 TransferableTypedData 零拷贝返回 [pc, gm]。
+TransferableTypedData _fsimPcGmIsolated(
+    Uint8List img, int w, int h, int c) {
+  final n = w * h;
+  final p = Float64List(n);
+  for (var i = 0, j = c; i < n; i++, j += 4) {
+    p[i] = img[j].toDouble();
+  }
+  final pc = Float64List(n);
+  final gm = Float64List(n);
+  _pcAndGm(p, w, h, pc, gm, Float64List(n), Float64List(n), Float64List(n));
+  return TransferableTypedData.fromList([pc, gm]);
 }
 
 /// FSIM（特征相似度）：两幅 RGBA8888 图（同尺寸）按 R/G/B 三通道
@@ -1002,10 +1026,32 @@ Future<(double, double, double, double)> _msssimRgbaParallel(
   return ((sr + sg + sb) / 3, sr, sg, sb);
 }
 
-/// FSIM 并行路径：按 R/G/B 通道三路 Isolate.run 并行（各自分配工作
-/// 平面），按通道序合并（与 [fsimRgba] 逐位一致）。
+/// FSIM 并行路径（优化 14）：[_dualMetricWorkers] ≥ 6 时按
+/// (3 通道 × 2 图侧) 6 路 Isolate.run 并行提取 PC/GM 特征（零拷贝
+/// 回传），合并阶段在调用侧按通道序执行（与串行同一循环、同一求和
+/// 顺序，逐位一致）；小核数机器退回按通道 3 路（各自算完整通道）。
 Future<(double, double, double, double)> _fsimRgbaParallel(
     Uint8List a, Uint8List b, int w, int h) async {
+  if (_dualMetricWorkers >= 6) {
+    final tasks = <Future<TransferableTypedData>>[];
+    for (var c = 0; c < 3; c++) {
+      tasks.add(Isolate.run(() => _fsimPcGmIsolated(a, w, h, c)));
+      tasks.add(Isolate.run(() => _fsimPcGmIsolated(b, w, h, c)));
+    }
+    final feats = await Future.wait(tasks);
+    final perChannel = <double>[];
+    final n = w * h;
+    for (var c = 0; c < 3; c++) {
+      // buffer 视图切分（零拷贝）：前 n 个为 PC、后 n 个为 GM。
+      final ba = feats[2 * c].materialize();
+      final bb = feats[2 * c + 1].materialize();
+      perChannel.add(_fsimCombine(ba.asFloat64List(0, n),
+          ba.asFloat64List(n * 8, n), bb.asFloat64List(0, n),
+          bb.asFloat64List(n * 8, n)));
+    }
+    final sr = perChannel[0], sg = perChannel[1], sb = perChannel[2];
+    return ((sr + sg + sb) / 3, sr, sg, sb);
+  }
   final v = await Future.wait([
     for (var c = 0; c < 3; c++)
       Isolate.run(() => _fsimChannelValue(a, b, w, h, c)),

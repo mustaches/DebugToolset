@@ -2,13 +2,22 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../../providers/terminal_state.dart';
+import '../../providers/terminal_session.dart';
 import '../../providers/macro_state.dart';
 import 'macro_toolbar.dart';
 import '../../utils/terminal_input_formatter.dart';
 
 class TerminalInputBox extends StatefulWidget {
-  const TerminalInputBox({super.key});
+  final TerminalSession session;
+  final bool showMacroToolbar;
+  final VoidCallback? onHideMacro;
+
+  const TerminalInputBox({
+    super.key,
+    required this.session,
+    this.showMacroToolbar = true,
+    this.onHideMacro,
+  });
 
   @override
   State<TerminalInputBox> createState() => _TerminalInputBoxState();
@@ -24,16 +33,16 @@ class _TerminalInputBoxState extends State<TerminalInputBox> {
     _focusNode = FocusNode(
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
-          final terminalState = context.read<TerminalState>();
+          final session = widget.session;
           if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-            String? prev = terminalState.getPreviousCommand(isHex: _isHexMode);
+            String? prev = session.getPreviousCommand(isHex: _isHexMode);
             if (prev != null) {
               _controller.text = prev;
               _controller.selection = TextSelection.collapsed(offset: prev.length);
             }
             return KeyEventResult.handled;
           } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-            String? next = terminalState.getNextCommand(isHex: _isHexMode);
+            String? next = session.getNextCommand(isHex: _isHexMode);
             if (next != null) {
               _controller.text = next;
               _controller.selection = TextSelection.collapsed(offset: next.length);
@@ -44,6 +53,8 @@ class _TerminalInputBoxState extends State<TerminalInputBox> {
         return KeyEventResult.ignored;
       },
     );
+    // 注册到会话：输出区点击聚焦、闪烁光标的焦点信号都依赖它
+    widget.session.commandFocusNode = _focusNode;
   }
 
   bool _isHexMode = false;
@@ -57,15 +68,18 @@ class _TerminalInputBoxState extends State<TerminalInputBox> {
   @override
   void dispose() {
     _periodicTimer?.cancel();
+    if (widget.session.commandFocusNode == _focusNode) {
+      widget.session.commandFocusNode = null;
+    }
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
   void _submitCommand() {
-    final terminalState = context.read<TerminalState>();
-    if (!terminalState.isConnected) {
-      terminalState.addSystemLog('\x1b[33m[Warning] 请先连接设备。\x1b[0m');
+    final session = widget.session;
+    if (!session.isConnected) {
+      session.addSystemLog('\x1b[33m[Warning] 请先连接设备。\x1b[0m');
       return;
     }
 
@@ -86,24 +100,24 @@ class _TerminalInputBoxState extends State<TerminalInputBox> {
       if (_periodicTimer != null) {
         _periodicTimer!.cancel();
         _periodicTimer = null;
-        terminalState.addSystemLog('\x1b[33m[SYSTEM] 停止定时发送。\x1b[0m');
+        session.addSystemLog('\x1b[33m[SYSTEM] 停止定时发送。\x1b[0m');
       } else {
-        terminalState.addSystemLog('\x1b[33m[SYSTEM] 开启定时发送，间隔 ${_periodicIntervalMs}ms。\x1b[0m');
+        session.addSystemLog('\x1b[33m[SYSTEM] 开启定时发送，间隔 ${_periodicIntervalMs}ms。\x1b[0m');
         _periodicTimer = Timer.periodic(Duration(milliseconds: _periodicIntervalMs), (timer) {
-          if (!mounted || !terminalState.isConnected) {
+          if (!mounted || !session.isConnected) {
             timer.cancel();
             setState(() { _periodicTimer = null; });
-            terminalState.addSystemLog('\x1b[33m[SYSTEM] 设备断开，定时发送自动停止。\x1b[0m');
+            session.addSystemLog('\x1b[33m[SYSTEM] 设备断开，定时发送自动停止。\x1b[0m');
             return;
           }
-          terminalState.sendCommand(command, isHex: _isHexMode, eolMode: _eolMode);
+          session.sendCommand(command, isHex: _isHexMode, eolMode: _eolMode);
         });
       }
       setState(() {});
     } else {
-      terminalState.sendCommand(command, isHex: _isHexMode, eolMode: _eolMode);
+      session.sendCommand(command, isHex: _isHexMode, eolMode: _eolMode);
     }
-    terminalState.addCommandToHistory(command, isHex: _isHexMode);
+    session.addCommandToHistory(command, isHex: _isHexMode);
     context.read<MacroState>().recordStep(command, _isHexMode, _eolMode);
 
     if (!_isPeriodic) {
@@ -121,21 +135,24 @@ class _TerminalInputBoxState extends State<TerminalInputBox> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 第一行：独立的宏工具栏
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
-              borderRadius: BorderRadius.circular(6),
-              color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.05),
+          // 第一行：独立的宏工具栏（可隐藏，由视图层的恢复条恢复）
+          if (widget.showMacroToolbar) ...[
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(6),
+                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.05),
+              ),
+              child: MacroToolbar(
+                session: widget.session,
+                onPlayCommand: (command, isHex, eolMode) {
+                  widget.session.sendCommand(command, isHex: isHex, eolMode: eolMode);
+                },
+                onHide: widget.onHideMacro,
+              ),
             ),
-            child: MacroToolbar(
-              onPlayCommand: (command, isHex, eolMode) {
-                final terminalState = context.read<TerminalState>();
-                terminalState.sendCommand(command, isHex: isHex, eolMode: eolMode);
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
+            const SizedBox(height: 8),
+          ],
           
           // 第二行：命令行靠左，发送设置靠右
           IntrinsicHeight(
@@ -202,12 +219,17 @@ class _TerminalInputBoxState extends State<TerminalInputBox> {
                       const Text('结束符: ', style: TextStyle(fontSize: 12)),
                       const SizedBox(width: 4),
                       SizedBox(
-                        width: 85,
+                        width: 130,
                         child: DropdownButtonFormField<String>(
                           initialValue: _eolMode,
                           isExpanded: true,
                           decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.all(4), border: OutlineInputBorder()),
-                          items: ['None', 'CR', 'LF', 'CRLF'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 12)))).toList(),
+                          items: const {
+                            'None': 'None',
+                            'CR': 'CR (0D)',
+                            'LF': 'LF (0A)',
+                            'CRLF': 'CRLF (0D 0A)',
+                          }.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12)))).toList(),
                           onChanged: _periodicTimer != null || _isHexMode ? null : (val) {
                             if (val != null) setState(() => _eolMode = val);
                           },
@@ -220,15 +242,15 @@ class _TerminalInputBoxState extends State<TerminalInputBox> {
                             value: _isHexMode,
                             onChanged: _periodicTimer != null ? null : (val) {
                               if (val != null) {
-                                final terminalState = context.read<TerminalState>();
+                                final session = widget.session;
                                 setState(() {
                                   if (_controller.text.trim().isNotEmpty) {
-                                    terminalState.addCommandToHistory(_controller.text, isHex: _isHexMode);
+                                    session.addCommandToHistory(_controller.text, isHex: _isHexMode);
                                   }
                                   
                                   _isHexMode = val;
                                   
-                                  String latest = terminalState.getLatestCommand(isHex: _isHexMode) ?? '';
+                                  String latest = session.getLatestCommand(isHex: _isHexMode) ?? '';
                                   _controller.text = latest;
                                   _controller.selection = TextSelection.collapsed(offset: latest.length);
                                 });

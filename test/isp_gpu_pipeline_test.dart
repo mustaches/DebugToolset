@@ -7,6 +7,8 @@ import 'dart:ui' as ui;
 
 import 'package:debug_tool_set/modules/isp_studio/pipeline/gpu/gpu_pipeline.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/isp_kernels.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/video_source.dart'
+    show rgba8ToRgb16;
 import 'package:flutter_test/flutter_test.dart';
 
 const w = 16, h = 12, maxValue = 16383; // 14bit
@@ -184,6 +186,99 @@ void main() {
     expectClose(gpuOut, cpu, 1, 'hsl_adjust');
   });
 
+  test('hsl_band（色彩控制器）', () async {
+    final src = randFrame(w * h * 3, 8);
+    final cpu = adjustHslBand(src,
+        maxValue: maxValue, hCenterDeg: 37.5, q: 7.3,
+        hShiftDeg: -42.5, sGain: 1.8, lGain: 0.6);
+    // GPU 直求 exp（CPU 为 0.05° LUT 插值），容差 ±2 LSB。
+    final gpuOut = await runShader(
+        prog('hsl_band'),
+        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
+         37.5, 45.0 / 7.3, -42.5, 1.8, 0.6],
+        [src], [3], 3);
+    expectClose(gpuOut, cpu, 2, 'hsl_band');
+  });
+
+  test('rgba8_to_rgb16（流式源重排）', () async {
+    final rgba = Uint8List.fromList(
+        [for (final v in randFrame(w * h * 4, 9)) v % 256]);
+    final cpu = rgba8ToRgb16(rgba, w, h, maxValue).$1;
+    final srcTex = await GpuPipeline.uploadRgba8(rgba, w, h);
+    final out = GpuPipeline.runPass(prog('rgba8_to_rgb16'),
+        [w.toDouble(), h.toDouble(), w * 3 / 2, maxValue.toDouble()],
+        [srcTex], w * 3 ~/ 2, h);
+    final bytes = await GpuPipeline.readbackBytes(out);
+    srcTex.dispose();
+    out.dispose();
+    expectClose(bytes.buffer.asUint16List(), cpu, 1, 'rgba8_to_rgb16');
+  });
+
+  test('yuv420p_to_hsl16（420 直传融合 CSC）', () async {
+    final yuv = Uint8List.fromList(
+        [for (final v in randFrame(w * h * 3 ~/ 2, 10)) v % 256]);
+    // CPU 参照：BT.601 limited→full 钳位取整到 0..maxValue 后 rgbToHsl
+    final rgb16 = Uint16List(w * h * 3);
+    for (var px = 0; px < w * h; px++) {
+      final x = px % w, y = px ~/ w;
+      final Y = yuv[y * w + x].toDouble();
+      final U = yuv[w * h + (y ~/ 2) * (w ~/ 2) + (x ~/ 2)].toDouble();
+      final V = yuv[w * h + w * h ~/ 4 + (y ~/ 2) * (w ~/ 2) + (x ~/ 2)]
+          .toDouble();
+      final yf = 1.164 * (Y - 16.0);
+      for (var (i, v) in [
+        yf + 1.596 * (V - 128.0),
+        yf - 0.391 * (U - 128.0) - 0.813 * (V - 128.0),
+        yf + 2.018 * (U - 128.0),
+      ].indexed) {
+        final c = v.clamp(0.0, 255.0);
+        rgb16[px * 3 + i] = (c * maxValue / 255.0 + 0.5).floor();
+      }
+    }
+    final cpu = rgbToHsl(rgb16, maxValue: maxValue);
+    final srcTex = await GpuPipeline.uploadRgba8(yuv, w ~/ 4, h * 3 ~/ 2);
+    final out = GpuPipeline.runPass(prog('yuv420p_to_hsl16'),
+        [w / 4, h * 3 / 2, w * 3 / 2, w.toDouble(), h.toDouble(),
+         maxValue.toDouble(), 1.0],
+        [srcTex], w * 3 ~/ 2, h);
+    final bytes = await GpuPipeline.readbackBytes(out);
+    srcTex.dispose();
+    out.dispose();
+    expectClose(bytes.buffer.asUint16List(), cpu, 2, 'yuv420p_to_hsl16');
+  });
+
+  test('yuv420p_to_rgb16（420 直传 CSC）', () async {
+    // 构造 yuv420p 平面帧：Y 全尺寸 + U/V 四分之一尺寸
+    final yuv = Uint8List.fromList(
+        [for (final v in randFrame(w * h * 3 ~/ 2, 10)) v % 256]);
+    // CPU 参照（与 shader 同一 BT.601 公式；limited 范围扩展）
+    final cpu = Uint16List(w * h * 3);
+    for (var px = 0; px < w * h; px++) {
+      final x = px % w, y = px ~/ w;
+      final Y = yuv[y * w + x].toDouble();
+      final U = yuv[w * h + (y ~/ 2) * (w ~/ 2) + (x ~/ 2)].toDouble();
+      final V = yuv[w * h + w * h ~/ 4 + (y ~/ 2) * (w ~/ 2) + (x ~/ 2)]
+          .toDouble();
+      final yf = 1.164 * (Y - 16.0);
+      final r = yf + 1.596 * (V - 128.0);
+      final g = yf - 0.391 * (U - 128.0) - 0.813 * (V - 128.0);
+      final b = yf + 2.018 * (U - 128.0);
+      for (var (i, v) in [r, g, b].indexed) {
+        final c = v.clamp(0.0, 255.0);
+        cpu[px * 3 + i] = (c * maxValue / 255.0 + 0.5).floor();
+      }
+    }
+    final srcTex = await GpuPipeline.uploadRgba8(yuv, w ~/ 4, h * 3 ~/ 2);
+    final out = GpuPipeline.runPass(prog('yuv420p_to_rgb16'),
+        [w / 4, h * 3 / 2, w * 3 / 2, w.toDouble(), h.toDouble(),
+         maxValue.toDouble(), 1.0],
+        [srcTex], w * 3 ~/ 2, h);
+    final bytes = await GpuPipeline.readbackBytes(out);
+    srcTex.dispose();
+    out.dispose();
+    expectClose(bytes.buffer.asUint16List(), cpu, 2, 'yuv420p_to_rgb16');
+  });
+
   test('csc_hsl2yuv', () async {
     final src = randFrame(w * h * 3, 7);
     final cpu = hslToYuv(src, maxValue: maxValue);
@@ -294,12 +389,13 @@ void main() {
 
     const inv = 1 / 2.2;
     final half = (maxValue >> 1).toDouble();
+    const step = 1.0; // uSrcStep：测试全分辨率
     // rgb
     final rgb = randFrame(w * h * 3, 13);
     expectRgbaClose(
         await tonemap(
             [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             0, inv, 0, 1, half], rgb, 3),
+             0, inv, 0, 1, half, step], rgb, 3),
         tonemapToRgba(rgb, maxValue: maxValue, gamma: 2.2),
         'tonemap rgb');
     // mono
@@ -307,7 +403,7 @@ void main() {
     expectRgbaClose(
         await tonemap(
             [w / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             1, inv, 0, 1, half], mono, 1),
+             1, inv, 0, 1, half, step], mono, 1),
         monoToRgba(mono, maxValue: maxValue, gamma: 2.2),
         'tonemap mono');
     // yuv
@@ -315,7 +411,7 @@ void main() {
     expectRgbaClose(
         await tonemap(
             [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             2, inv, 0, 1, half], yuv, 3),
+             2, inv, 0, 1, half, step], yuv, 3),
         yuvToRgba(yuv, maxValue: maxValue, gamma: 2.2),
         'tonemap yuv');
     // hsl
@@ -323,7 +419,7 @@ void main() {
     expectRgbaClose(
         await tonemap(
             [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             3, inv, 0, 1, half], hsl, 3),
+             3, inv, 0, 1, half, step], hsl, 3),
         tonemapToRgba(hslToRgb(hsl, maxValue: maxValue),
             maxValue: maxValue, gamma: 2.2),
         'tonemap hsl');
@@ -354,6 +450,20 @@ void main() {
       op('n3', 'preview'),
     ];
     expect(GpuPipeline.isSupportedChain(colorTemp), isTrue);
+    // 色彩控制器（HSL 高斯带）支持：视频源 → rgb2hsl → color_controller → 预览
+    final colorCtrl = [
+      {
+        'typeId': 'video_source',
+        'nodeId': 'n1',
+        'params': {'filePath': 'x.mp4'},
+        'inputs': <String, Object?>{},
+      },
+      op('n2', 'csc_rgb2hsl'),
+      op('n4', 'color_controller', {},
+          {'h_center': 27.0, 'q': 9.4, 'h_shift': -30.0}),
+      op('n3', 'preview'),
+    ];
+    expect(GpuPipeline.isSupportedChain(colorCtrl), isTrue);
     // 高级去马赛克算法不支持
     final badAlgo = [
       src(),

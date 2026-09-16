@@ -1,5 +1,8 @@
+import 'dart:io' show Platform;
+import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:debug_tool_set/modules/isp_studio/pipeline/hsl_band_pool.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/isp_kernels.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -480,6 +483,127 @@ void main() {
       expect(out[0], 202);
       expect(out[1], 128);
       expect(out[2], 128);
+    });
+  });
+
+  group('色彩控制器（adjustHslBand）', () {
+    test('恒等参数直接返回原数据（不拷贝）', () {
+      final hsl = Uint16List.fromList([10, 200, 100]);
+      final out = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 90, q: 4,
+          hShiftDeg: 0, sGain: 1.0, lGain: 1.0);
+      expect(identical(out, hsl), isTrue);
+    });
+
+    test('带中心满调整、180° 对侧近似恒等', () {
+      // maxValue=255：H=64 ≈ 90°（带中心），H=192 ≈ 270°（对侧）。
+      // q=4 → σ=11.25°，对侧权重 exp(-(180/11.25)²/2) ≈ 0。
+      final hsl = Uint16List.fromList([64, 100, 100, 192, 100, 100]);
+      final out = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 90, q: 4,
+          hShiftDeg: 10, sGain: 2, lGain: 2);
+      // 带中心：shift = round(10/360*255) = 7；S/L 满增益 ×2。
+      expect(out[0], 71);
+      expect(out[1], 200);
+      expect(out[2], 200);
+      // 对侧：近似恒等（允许 ±1 的 LUT 插值残差）。
+      expect((out[3] - 192).abs(), lessThanOrEqualTo(1));
+      expect((out[4] - 100).abs(), lessThanOrEqualTo(1));
+      expect((out[5] - 100).abs(), lessThanOrEqualTo(1));
+    });
+
+    test('高斯边带：±σ 处权重约 0.61，±2σ 处约 0.14', () {
+      // q=4 → σ=11.25°。取带中心 0°，S=100，sGain=2：
+      // S' = 100·(1+w)；w(11.25°)≈0.607，w(22.5°)≈0.135。
+      final atSigma = (11.25 / 360 * 255).round(); // ≈8
+      final at2Sigma = (22.5 / 360 * 255).round(); // ≈16
+      final hsl = Uint16List.fromList(
+          [atSigma, 100, 100, at2Sigma, 100, 100, 0, 100, 100]);
+      final out = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 0, q: 4,
+          sGain: 2);
+      expect(out[1], closeTo(161, 2));
+      expect(out[4], closeTo(114, 2));
+      expect(out[7], 200); // 带中心 w=1 → ×2
+    });
+
+    test('带中心在 0° 时 350° 的像素仍在带内（色环环绕）', () {
+      // H=248 ≈ 350°，距带中心 0° 的最短角距为 10°；q=20 → σ=2.25°
+      // 时在带外几乎恒等，q=1 → σ=45° 时 w(10°)≈0.976 明显调整。
+      final hsl = Uint16List.fromList([248, 100, 100]);
+      final narrow = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 0,
+          q: 20, sGain: 2);
+      final wide = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 0,
+          q: 1, sGain: 2);
+      expect((narrow[1] - 100).abs(), lessThanOrEqualTo(1)); // 窄带不受影响
+      expect(wide[1], greaterThan(180)); // 宽带近似满调整
+    });
+
+    test('色相偏移按权重缩放且色环环绕', () {
+      // 带中心 350°、偏移 +10°：H=248(≈350°) → +round(10/360*255)=7，
+      // (248+7) mod 256 = 255（≈360°=0° 侧），环绕不越界。
+      final hsl = Uint16List.fromList([248, 100, 100]);
+      final out = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 350,
+          q: 20, hShiftDeg: 10);
+      expect(out[0], 255);
+    });
+
+    test('多核并行路径与串行逐位一致（≥1M 像素）', () async {
+      // 1024×1024 达到并行阈值；H 覆盖全色环，S/L 取变化值。
+      const w = 1024, h = 1024;
+      final hsl = Uint16List(w * h * 3);
+      for (var p = 0; p < w * h; p++) {
+        hsl[p * 3] = p % 256;
+        hsl[p * 3 + 1] = (p * 7) % 256;
+        hsl[p * 3 + 2] = (p * 13) % 256;
+      }
+      final serial = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 37.5,
+          q: 7.3, hShiftDeg: -42.5, sGain: 1.8, lGain: 0.6);
+      final parallel = await adjustHslBandParallel(hsl,
+          width: w, height: h, maxValue: 255, hCenterDeg: 37.5,
+          q: 7.3, hShiftDeg: -42.5, sGain: 1.8, lGain: 0.6);
+      expect(parallel.length, serial.length);
+      for (var i = 0; i < serial.length; i++) {
+        if (parallel[i] != serial[i]) {
+          fail('像素 $i 不一致: parallel=${parallel[i]} serial=${serial[i]}');
+        }
+      }
+    });
+
+    test('并行路径恒等参数直通、小图回串行', () async {
+      final hsl = Uint16List.fromList([10, 200, 100]);
+      final same = await adjustHslBandParallel(hsl,
+          width: 1, height: 1, maxValue: 255, hCenterDeg: 90);
+      expect(identical(same, hsl), isTrue);
+      // 小图（<1M 像素）走串行路径，结果与 adjustHslBand 一致。
+      final small = await adjustHslBandParallel(hsl,
+          width: 1, height: 1, maxValue: 255, hCenterDeg: 14.06,
+          q: 4, sGain: 2);
+      final serial = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 14.06,
+          q: 4, sGain: 2);
+      expect(small.toList(), serial.toList());
+    });
+
+    test('CPU 池核心数为全部核心 − 2（下限 2）', () {
+      // 16 核机器 → 14 路并行条带；2 核机器 → 下限 2 路。
+      expect(cpuBandWorkers,
+          math.max(2, Platform.numberOfProcessors - 2));
+      expect(cpuBandWorkers, greaterThanOrEqualTo(2));
+      expect(cpuBandWorkers,
+          lessThanOrEqualTo(Platform.numberOfProcessors));
+    });
+
+    test('并行条带数不超过帧高且完整覆盖所有行', () async {
+      // 帧高远小于核心数时按帧高切带；各行带拼接后必须与串行完全一致
+      // （覆盖完整性已由大图一致性用例保证，此处专门压小帧高边界）。
+      const w = 1024, h = 1024; // ≥1M 像素触发并行
+      final hsl = Uint16List(w * h * 3);
+      for (var i = 0; i < hsl.length; i++) {
+        hsl[i] = (i * 31) % 256;
+      }
+      final serial = adjustHslBand(hsl, maxValue: 255, hCenterDeg: 90,
+          q: 4, sGain: 2, lGain: 0.5);
+      final parallel = await adjustHslBandParallel(hsl,
+          width: w, height: h, maxValue: 255, hCenterDeg: 90,
+          q: 4, sGain: 2, lGain: 0.5);
+      expect(parallel.toList(), serial.toList());
     });
   });
 

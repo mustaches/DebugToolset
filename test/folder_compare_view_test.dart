@@ -41,8 +41,12 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final state = TextEditorState();
-    await state.loadOriginalFolder(dirA);
-    await state.loadModifiedFolder(dirB);
+    // Flutter 3.47 起 testWidgets 的假异步区内真实 isolate（compute）
+    // 结果不再自动完成，须在 runAsync（真实事件循环）中等待。
+    await tester.runAsync(() async {
+      await state.loadOriginalFolder(dirA);
+      await state.loadModifiedFolder(dirB);
+    });
 
     await tester.pumpWidget(
       ChangeNotifierProvider<TextEditorState>.value(
@@ -92,6 +96,13 @@ void main() {
     await tester.tap(find.text(fileName).first);
     expect(state.selectedFolderFile, fileName);
 
+    // 打开文件走 compute isolate（3.47 起需 runAsync 等待真实异步）。
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      while (state.isOpeningFolderFile) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    });
     await tester.pumpAndSettle();
 
     // Both frames show the file as a side-by-side diff pane.
@@ -101,7 +112,7 @@ void main() {
 
   testWidgets('diff panes scroll in sync', (tester) async {
     final state = await pumpView(tester);
-    await state.openFolderFile(fileName);
+    await tester.runAsync(() => state.openFolderFile(fileName));
     await tester.pumpAndSettle();
 
     final (leftPane, rightPane) = findDiffPanes(tester);
@@ -183,8 +194,11 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final state = TextEditorState();
-    await state.loadOriginalFolder(dirA);
-    await state.loadModifiedFolder(dirB);
+    // 3.47 起假异步区内 compute 需 runAsync 等待（同 pumpView）。
+    await tester.runAsync(() async {
+      await state.loadOriginalFolder(dirA);
+      await state.loadModifiedFolder(dirB);
+    });
 
     await tester.pumpWidget(
       ChangeNotifierProvider<TextEditorState>.value(
@@ -208,6 +222,13 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
     // When it finishes the dialog closes and the button becomes 放弃差异.
+    // 比较在 Isolate.spawn 中进行（真实 isolate，3.47 起需 runAsync）。
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      while (!state.folderCompared) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    });
     await tester.pumpAndSettle();
     expect(find.text('正在比较文件夹差异'), findsNothing);
     expect(state.folderCompared, isTrue);

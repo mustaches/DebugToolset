@@ -2,8 +2,9 @@
 /// Bayer / 非 Bayer CFA（RCCB/RCCG、RCCC、RYYCy、RGB-IR）/ MONO
 /// RAW 帧到 RGB 图像的转换，以及 YUV/HSL 色彩空间转换。
 ///
-/// Everything in this file is top-level and depends only on `dart:math` and
-/// `dart:typed_data`, so it can run inside background isolates.
+/// Everything in this file is top-level and depends only on `dart:io`
+/// (Platform.numberOfProcessors)、`dart:math` and `dart:typed_data`, so it
+/// can run inside background isolates.
 ///
 /// Buffer conventions:
 /// - Bayer frames: `Uint16List` of length `width * height`, row-major.
@@ -12,6 +13,7 @@
 /// - Final output: `Uint8List` of length `width * height * 4`, RGBA, alpha 255.
 library;
 
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -1201,6 +1203,78 @@ Uint16List adjustHsl(Uint16List hsl,
   }
   return out;
 }
+
+/// 色彩控制器（color_controller 节点）：只调整色相落在以 [hCenterDeg]
+/// 为中心的高斯带内的像素。带内权重 w(Δ°) = exp(-(Δ/σ)²/2)，其中 Δ 为
+/// 色环上的最短角距（0..180°），σ = 45°/[q] —— Q 越高带宽越窄，左右边带
+/// 按正态分布衰减。带内像素按权重插值施加调整：
+/// H' = H + w·[hShiftDeg]（色环循环），S/L 的增益按 1+w·(gain-1) 插值，
+/// 即 w=1 处满增益、w=0 处恒等，钳位到 0..maxValue。
+/// 三个调整量均为恒等值时直接返回原数据（不拷贝）。
+Uint16List adjustHslBand(Uint16List hsl,
+    {required int maxValue,
+    double hCenterDeg = 0,
+    double q = 2.0,
+    double hShiftDeg = 0,
+    double sGain = 1.0,
+    double lGain = 1.0}) {
+  if (hShiftDeg == 0 && sGain == 1.0 && lGain == 1.0) return hsl;
+  return adjustHslBandRows(hsl, 0, hsl.length ~/ 3,
+      maxValue: maxValue,
+      hCenterDeg: hCenterDeg,
+      q: q,
+      hShiftDeg: hShiftDeg,
+      sGain: sGain,
+      lGain: lGain);
+}
+
+/// 色彩控制器的像素区间版本：处理 [startPx, endPx) 像素并返回新区间数据。
+/// 逐像素操作无跨像素依赖，供 [adjustHslBand] 整幅串行与
+/// adjustHslBandParallel（hsl_band_pool.dart）条带并行复用（两者逐位一致）。
+///
+/// 实现按 H 取值（0..maxValue）预计算三张 LUT：H 偏移量（含高斯权重与
+/// 取整）、S 乘子、L 乘子（权重为该 H 值上的精确 exp，无角度插值），
+/// 逐像素只剩 3 次查表 + 2 次乘法 + 1 次取模。
+Uint16List adjustHslBandRows(Uint16List hsl, int startPx, int endPx,
+    {required int maxValue,
+    required double hCenterDeg,
+    required double q,
+    required double hShiftDeg,
+    required double sGain,
+    required double lGain}) {
+  final m = maxValue + 1; // 色环模数：H 在 0..maxValue 上循环
+  final sigma = 45.0 / q;
+  final shiftLut = Int32List(m);
+  final sMulLut = Float64List(m);
+  final lMulLut = Float64List(m);
+  for (var hv = 0; hv < m; hv++) {
+    final hDeg = hv * 360.0 / maxValue;
+    var d = (hDeg - hCenterDeg).abs() % 360.0;
+    if (d > 180) d = 360 - d;
+    final x = d / sigma;
+    final w = math.exp(-0.5 * x * x);
+    shiftLut[hv] = (hShiftDeg * w / 360 * maxValue).round();
+    sMulLut[hv] = 1 + (sGain - 1) * w;
+    lMulLut[hv] = 1 + (lGain - 1) * w;
+  }
+
+  final out = Uint16List((endPx - startPx) * 3);
+  var o = 0;
+  for (var i = startPx * 3; i < endPx * 3; i += 3) {
+    final hv = hsl[i];
+    // Dart 的 % 对负数返回负值，用 ((x % m) + m) % m 修正环绕。
+    out[o] = (((hv + shiftLut[hv]) % m) + m) % m;
+    out[o + 1] = _clampTo(hsl[i + 1] * sMulLut[hv], maxValue);
+    out[o + 2] = _clampTo(hsl[i + 2] * lMulLut[hv], maxValue);
+    o += 3;
+  }
+  return out;
+}
+
+/// 条带并行 CPU 池大小：全部处理器核心数 − 2（留 2 核给系统/调用侧），
+/// 下限 2。色彩控制器等按行带并行的核共用此口径（池实现见
+/// hsl_band_pool.dart 的 adjustHslBandParallel）。
+int get cpuBandWorkers => math.max(2, Platform.numberOfProcessors - 2);
 
 /// RGB 调节器（RGB 域调参节点）：R/G/B 三通道分别乘增益后钳位到
 /// 0..maxValue。三个增益均为恒等 1 时直接返回原数据（不拷贝）。

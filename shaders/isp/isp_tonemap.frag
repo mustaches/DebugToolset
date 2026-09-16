@@ -16,6 +16,7 @@ uniform float uInvGamma;   // 1/gamma
 uniform float uBrightness;
 uniform float uContrast;
 uniform float uHalf;       // maxValue>>1（YUV 用）
+uniform float uSrcStep;    // 输出相对输入的整数降采样步长（1 = 原分辨率）
 uniform sampler2D uTex;
 
 out vec4 fragColor;
@@ -55,7 +56,9 @@ float tonemapChan(float v) {
 
 void main() {
   vec2 fc = floor(FlutterFragCoord().xy);
-  int p = int(fc.y) * int(uWidth) + int(fc.x);
+  int step = int(uSrcStep);
+  // 输出坐标按步长映射回输入像素（最近邻降采样；值流寻址与全分辨率一致）
+  int p = (int(fc.y) * step) * int(uWidth) + int(fc.x) * step;
   float r, g, b;
   if (uFormat < 0.5) {
     r = fetchVal(p * 3);

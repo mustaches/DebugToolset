@@ -24,6 +24,7 @@ import '../modules/isp_studio/pipeline/metrics/clipiqa_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/dists_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/fid_kid_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/inception_dart.dart';
+import '../modules/isp_studio/pipeline/metrics/kid_score_worker.dart';
 import '../modules/isp_studio/pipeline/metrics/lpips_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/musiq_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/vgg16_gpu.dart';
@@ -127,10 +128,11 @@ Map<String, List<String>> deepIqaWeightFiles = {
 bool deepIqaWeightsAvailable(String kind) =>
     (deepIqaWeightFiles[kind] ?? const []).every((f) => File(f).existsSync());
 
-/// FID/KID 进程内（Dart 路径）的逐帧累计状态：两侧 patch 特征分块
+/// FID 进程内（Dart 路径）的逐帧累计状态：两侧 patch 特征分块
 /// 驻留，出分时拼接为 [n,2048] 连续排布交后台 isolate 计算（FID 的
-/// 2048² 协方差/特征值与 KID 的 Gram 矩阵均为重计算，见
-/// fidScoreInIsolate / kidScoreInIsolate）。
+/// 2048² 协方差/特征值（低秩快路径归约）为重计算，见
+/// fidScoreInIsolate）。KID 的累计/出分走常驻 isolate 的增量核矩阵
+///（kid_score_worker.dart / KidGramAccum），不使用本类。
 class _DeepIqaDistAccum {
   final List<Float32List> refChunks = [];
   final List<Float32List> testChunks = [];
@@ -259,6 +261,20 @@ class IspStudioState extends ChangeNotifier {
 
   // ---- 执行状态 ----
   bool isProcessing = false;
+
+  /// 实时预览脏标记：拖动滑块等连续调参期间请求了重跑但当时正在运行。
+  bool _livePreviewDirty = false;
+
+  /// 连续调参（如拖动色彩控制器 ΔH 滑块）时的实时预览：空闲直接重跑，
+  /// 运行中则置脏标记、当前运行结束后用最新参数合并补跑一次。
+  void requestLivePreview() {
+    if (isProcessing) {
+      _livePreviewDirty = true;
+      return;
+    }
+    runPreview();
+  }
+
   double progress = 0;
   String statusMessage = '';
   final List<String> errors = [];
@@ -337,8 +353,14 @@ class IspStudioState extends ChangeNotifier {
   /// 运行文件未变（按 mtime+大小校验）也直接复用。
   final Map<String, (Uint8List, int, int, int, int)> _imageSourceRgbaCache = {};
 
+  /// [_imageSourceRgba] 的在途解码去重：并发调用方共享同一次后台
+  /// 解码（多仪器并发启动时同一文件不再重复解码）。
+  final Map<String, Future<(Uint8List, int, int)>> _imageSourceRgbaInFlight =
+      {};
+
   /// 取图片源的 RGBA8888 解码结果（缓存命中直接返回；未命中后台
-  /// isolate 解码并缓存）。文件不存在/无法解码时抛 [StateError]。
+  /// isolate 解码并缓存；在途解码去重）。文件不存在/无法解码时抛
+  /// [StateError]。
   Future<(Uint8List, int, int)> _imageSourceRgba(String filePath) async {
     final stat = await File(filePath).stat();
     final mtime = stat.modified.millisecondsSinceEpoch;
@@ -346,11 +368,17 @@ class IspStudioState extends ChangeNotifier {
     if (cached != null && cached.$4 == mtime && cached.$5 == stat.size) {
       return (cached.$1, cached.$2, cached.$3);
     }
-    // 简易容量上限：图片帧很大（20MP ≈ 81MB），不长期累积。
-    if (_imageSourceRgbaCache.length >= 4) _imageSourceRgbaCache.clear();
-    final (rgba, w, h) = await compute(decodeImageFileToRgba8, filePath);
-    _imageSourceRgbaCache[filePath] = (rgba, w, h, mtime, stat.size);
-    return (rgba, w, h);
+    return _imageSourceRgbaInFlight.putIfAbsent(filePath, () async {
+      try {
+        // 简易容量上限：图片帧很大（20MP ≈ 81MB），不长期累积。
+        if (_imageSourceRgbaCache.length >= 4) _imageSourceRgbaCache.clear();
+        final (rgba, w, h) = await compute(decodeImageFileToRgba8, filePath);
+        _imageSourceRgbaCache[filePath] = (rgba, w, h, mtime, stat.size);
+        return (rgba, w, h);
+      } finally {
+        _imageSourceRgbaInFlight.remove(filePath);
+      }
+    });
   }
 
   /// GPU 预览加速开关（默认开）：单帧预览的算子链优先在 GPU 上执行
@@ -386,7 +414,16 @@ class IspStudioState extends ChangeNotifier {
 
   /// FID/KID 进程内 Dart 路径的逐帧累计状态（nodeId → 两侧 patch
   /// 特征）。复位时机同 [_pyiqaDistTokens]；图替换/节点移除时清理。
+  /// KID 的累计/出分已改走 [_kidWorkers]（增量核矩阵），本表仅 FID
+  /// 使用。
   final Map<String, _DeepIqaDistAccum> _deepIqaDist = {};
+
+  /// KID 节点的常驻出分 isolate（nodeId → worker，懒创建）：worker 内
+  /// 持有增量核矩阵（KidGramAccum），每帧只发新增特征、只算核矩阵
+  /// 新增块，替代每帧全量特征拼接 + Gram 重算；出分与全量重算逐位
+  /// 一致。新一轮运行（token 变化）时 dispose 重建（见
+  /// [_analyzeDeepIqa] dist 分支）；图替换/节点移除时清理。
+  final Map<String, KidScoreWorker> _kidWorkers = {};
 
   /// 单次运行内的 Inception patch 特征缓存（双路馈源键 → 两侧特征
   /// Future）：同一次运行内 FID 与 KID 节点接同一对源时只算一次。
@@ -618,11 +655,12 @@ class IspStudioState extends ChangeNotifier {
   static const double kMinPreviewNodeWidth = 140;
   static const double kMaxPreviewNodeWidth = 800;
 
-  /// 节点宽度上限：调节器（HSL/RGB/YUV、色饱和度/亮度、亮度/对比度、
-  /// 色彩平衡、色温）、高频边缘提取与曲线调节器为附加显示区需要更宽，
+  /// 节点宽度上限：调节器（HSL/RGB/YUV、色彩控制器、色饱和度/亮度、
+  /// 亮度/对比度、色彩平衡、色温）、高频边缘提取与曲线调节器为附加显示区需要更宽，
   /// 放宽到全局上限的 1.6 倍，其余节点用全局上限。
   static double maxNodeWidthFor(String typeId) =>
       (typeId == 'hsl_debugger' ||
+          typeId == 'color_controller' ||
           typeId == 'rgb_debugger' ||
           typeId == 'yuv_debugger' ||
           typeId == 'sat_bright_adjuster' ||
@@ -1130,6 +1168,7 @@ class IspStudioState extends ChangeNotifier {
         if (img != null && img.height > 0) return 2.0 * img.width / img.height;
         return null;
       case 'hsl_debugger':
+      case 'color_controller':
         return 2.0; // 双联方形矢量示波器
       case 'levels_curves':
       case 'vectorscope':
@@ -1150,6 +1189,7 @@ class IspStudioState extends ChangeNotifier {
         'color_balance' =>
           (20.0, 86.0), // 横 8+4+8；纵 4+滑块 24*3+手柄 10
         'sat_bright_adjuster' => (20.0, 62.0), // 滑块 24*2
+        'color_controller' => (20.0, 134.0), // 滑块 24*5
         'gaussian_blur' => (20.0, 62.0), // 滑块 24*2
         'edge_extract' => (20.0, 62.0), // 滑块 24*2
         'color_temp_adjuster' => (20.0, 126.0), // 温度行 24+滑块 24+底行 64
@@ -1937,14 +1977,17 @@ class IspStudioState extends ChangeNotifier {
           }
         }
       }
-      // HSL 调节器矢量示波器馈源：被 GPU 覆盖的 hsl_debugger 节点不再走
+      // HSL 调节器/色彩控制器矢量示波器馈源：被 GPU 覆盖的 hsl_debugger /
+      // color_controller 节点不再走
       // CPU 闭包（其矢量图在那里由链末端 RGBA 统计），此处对其自身输出
       // 与输入链末端端口做同样的 RGBA 回读，运行后据此渲染矢量图。
       // 键为回读端口 'nodeId:port'，值为目标缓存 key（节点 id = 调整后，
       // 'id#in' = 调整前）。
       final hslScopeFeeds = <String, String>{};
       for (final node in graph.nodes.values) {
-        if (node.typeId != 'hsl_debugger') continue;
+        if (node.typeId != 'hsl_debugger' && node.typeId != 'color_controller') {
+          continue;
+        }
         if (covered.contains(node.id) || node.id == mainSink) {
           final key = '${node.id}:out';
           readbackPorts.add(key);
@@ -2195,13 +2238,13 @@ class IspStudioState extends ChangeNotifier {
   /// _legacyPreviewImage/previewImage 入口）。
   Future<void> runPreview() async {
     if (isProcessing) return;
-
     // 收集所有可编译的预览节点（含调节器：作为运行目标汇点跑链，
     // 链末端帧的默认色调映射出图后存入 previewImages）。
     final previewNodes = <IspNode>[];
     for (final node in graph.nodes.values) {
       if (node.typeId == 'preview' ||
           node.typeId == 'hsl_debugger' ||
+          node.typeId == 'color_controller' ||
           node.typeId == 'rgb_debugger' ||
           node.typeId == 'yuv_debugger' ||
           node.typeId == 'sat_bright_adjuster' ||
@@ -2257,6 +2300,7 @@ class IspStudioState extends ChangeNotifier {
           // 无法编译的节点在并行执行阶段同样跳过。
         }
         if (pvNode.typeId == 'hsl_debugger' ||
+            pvNode.typeId == 'color_controller' ||
             pvNode.typeId == 'rgb_debugger' ||
             pvNode.typeId == 'yuv_debugger' ||
             pvNode.typeId == 'sat_bright_adjuster' ||
@@ -2304,14 +2348,23 @@ class IspStudioState extends ChangeNotifier {
       previewFrame = frame;
       // 图片源整图只解码一次：各预览链（含调节器「调整前」输入链）经
       // sourceRgba 注入共享同一解码结果，避免每条链独立完整解码同一
-      // 文件（大图纯 Dart 解码为秒级，多链时成倍放大）。
+      // 文件（大图纯 Dart 解码为秒级，多链时成倍放大）。多个源并发
+      // 解码（在途去重见 _imageSourceRgbaInFlight，优化 13）。
       final imageSrcRgba = <String, (Uint8List, int, int)>{}; // 源 nodeId → 帧
+      final srcFutures = <String, Future<(Uint8List, int, int)>>{};
       for (final c in [...chains.values, ...inputChains.values]) {
         if (c.first['typeId'] != 'image_source') continue;
         final srcId = c.first['nodeId'] as String;
-        if (imageSrcRgba.containsKey(srcId)) continue;
+        if (srcFutures.containsKey(srcId)) continue;
         final p = (c.first['params'] as Map).cast<String, Object?>();
-        imageSrcRgba[srcId] = await _imageSourceRgba('${p['filePath'] ?? ''}');
+        srcFutures[srcId] = _imageSourceRgba('${p['filePath'] ?? ''}');
+      }
+      // Future.wait 等全部落定（个别失败也在所有解码结束后抛首个
+      // 错误），不留未处理的孤儿 Future。
+      final decoded = await Future.wait(srcFutures.values);
+      final srcIds = srcFutures.keys.toList();
+      for (var i = 0; i < decoded.length; i++) {
+        imageSrcRgba[srcIds[i]] = decoded[i];
       }
       final firstSrcId = firstChain.first['nodeId'] as String;
       final (w, h) = srcTypeId == 'image_source'
@@ -2477,13 +2530,14 @@ class IspStudioState extends ChangeNotifier {
                   inputWaveformImage = await decodeWaveform(inputRgba);
                 }
               }
-              // HSL 调节器：由输出链/输入链末端 RGBA 分别统计 Cb/Cr
-              // 矢量示波器（与 vectorscope 仪器同一口径），渲染成图供
+              // HSL 调节器/色彩控制器：由输出链/输入链末端 RGBA 分别统计
+              // Cb/Cr 矢量示波器（与 vectorscope 仪器同一口径），渲染成图供
               // 节点右半（调整后）/左半（调整前）显示。统计走仪器
               // worker 池（降采样 + 后台 isolate），两图并行。
               ui.Image? vectorscopeImage;
               ui.Image? inputVectorscopeImage;
-              if (pvNode.typeId == 'hsl_debugger') {
+              if (pvNode.typeId == 'hsl_debugger' ||
+                  pvNode.typeId == 'color_controller') {
                 final outScope = _hslVectorscopeImage(rgba, w, h);
                 final inScope = inputRgba == null
                     ? null
@@ -2519,14 +2573,19 @@ class IspStudioState extends ChangeNotifier {
                       inputWaveformImage;
                 }
               }
-              if (pvNode.typeId == 'hsl_debugger') {
+              if (pvNode.typeId == 'hsl_debugger' ||
+                  pvNode.typeId == 'color_controller') {
                 hslVectorscopes.remove(pvNode.id)?.dispose();
                 if (vectorscopeImage != null) {
                   hslVectorscopes[pvNode.id] = vectorscopeImage;
                 }
-                hslInputVectorscopes.remove(pvNode.id)?.dispose();
-                if (inputVectorscopeImage != null) {
-                  hslInputVectorscopes[pvNode.id] = inputVectorscopeImage;
+                // 输入链被 GPU 覆盖时 inputRgba 为空，输入矢量图由
+                // _tryGpuPreview 的回读路径补齐，此处不能清掉。
+                if (!gpuCovered.contains('${pvNode.id}#in')) {
+                  hslInputVectorscopes.remove(pvNode.id)?.dispose();
+                  if (inputVectorscopeImage != null) {
+                    hslInputVectorscopes[pvNode.id] = inputVectorscopeImage;
+                  }
                 }
               }
               // 曲线调节器：输入链末端 RGBA 统计 Y 直方图（2x2 降采样
@@ -2621,6 +2680,11 @@ class IspStudioState extends ChangeNotifier {
       if (token == _runToken) {
         isProcessing = false;
         notifyListeners();
+        // 拖动调参期间积累的实时预览请求：用最新参数合并补跑一次
+        if (_livePreviewDirty) {
+          _livePreviewDirty = false;
+          requestLivePreview();
+        }
       }
     }
   }
@@ -2718,6 +2782,7 @@ class IspStudioState extends ChangeNotifier {
         _instrumentSigs.remove(node.id);
         _minmaxHold.remove(node.id);
         _deepIqaDist.remove(node.id);
+        _kidWorkers.remove(node.id)?.dispose();
         instrumentImages.remove(node.id)?.dispose();
       }
     }
@@ -2728,6 +2793,7 @@ class IspStudioState extends ChangeNotifier {
         _instrumentSigs.remove(id);
         _minmaxHold.remove(id);
         _deepIqaDist.remove(id);
+        _kidWorkers.remove(id)?.dispose();
         instrumentImages.remove(id)?.dispose();
       }
     }
@@ -3026,6 +3092,26 @@ class IspStudioState extends ChangeNotifier {
     Map<String, Object?>? inject;
     if (chain.first['typeId'] == 'image_source') {
       final p0 = chain.first['params'] as Map<String, Object?>;
+      // 8 位单节点 out_rgb 链短路（与 _instrumentFeedOfUncached 同
+      // 口径）：共享解码缓存即链输出，跳过 16 位往返与链重跑。
+      final bitDepth = '${p0['bitDepth'] ?? ''}';
+      if (chain.length == 1 &&
+          (chain.first['outFormat'] ?? 'rgb') == 'rgb' &&
+          (bitDepth.isEmpty || bitDepth == '8')) {
+        var rgbPort = false;
+        if (type != null) {
+          for (final inputSpec in type.inputs) {
+            final c = graph.connectionAt(node.id, inputSpec.name);
+            if (c != null) {
+              rgbPort = c.fromPort == 'out_rgb';
+              break;
+            }
+          }
+        }
+        if (rgbPort) {
+          return _imageSourceRgba('${p0['filePath'] ?? ''}');
+        }
+      }
       final inj = await _imageSourceRgba('${p0['filePath'] ?? ''}');
       inject = {
         'sourceRgba': inj.$1,
@@ -3094,6 +3180,17 @@ class IspStudioState extends ChangeNotifier {
       Map<String, Object?>? inject;
       if (chain.first['typeId'] == 'image_source') {
         final p0 = chain.first['params'] as Map<String, Object?>;
+        // 8 位单节点 out_rgb 链短路：共享解码缓存即链输出
+        //（rgba8ToRgb16 + tonemap 在 maxValue=255/gamma=1.0 下恒等，
+        // 已验证位级一致），跳过 16 位往返、GPU/CPU 链重跑与 ~81MB
+        // isolate 消息（20MP 每路省 2~3s）。
+        final bitDepth = '${p0['bitDepth'] ?? ''}';
+        if (chain.length == 1 &&
+            conn.fromPort == 'out_rgb' &&
+            (chain.first['outFormat'] ?? 'rgb') == 'rgb' &&
+            (bitDepth.isEmpty || bitDepth == '8')) {
+          return _imageSourceRgba('${p0['filePath'] ?? ''}');
+        }
         final inj =
             await _imageSourceRgba('${p0['filePath'] ?? ''}');
         inject = {
@@ -3142,10 +3239,15 @@ class IspStudioState extends ChangeNotifier {
   Future<Map<String, Object?>> _analyzeDualInput(IspNode node, int frame) async {
     final kind = node.typeId;
     // 降采样馈源（后台 isolate 降采样，同源多指标去重共享）。
-    final ref = await _instrumentFeedOfDown(
-        node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame);
-    final test = await _instrumentFeedOfDown(node,
-        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'], frame);
+    // 两路并行取：冷缓存时两张图的解码并发进行（优化 13）。
+    final feeds = await Future.wait([
+      _instrumentFeedOfDown(
+          node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame),
+      _instrumentFeedOfDown(node,
+          const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'], frame),
+    ]);
+    final ref = feeds[0];
+    final test = feeds[1];
     if (ref == null || test == null) {
       return {'kind': kind, 'error': '需要接入参考图与测试图'};
     }
@@ -3217,12 +3319,17 @@ class IspStudioState extends ChangeNotifier {
           onBackend: (g) => nodeRunOnGpu[node.id] = g);
       return {'kind': kind, kind: v};
     }
-    // pair / dist：双路降采样馈源（与 PSNR 同端口）。
-    final ref = await _instrumentFeedOfDown(
-        node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame);
-    final test = await _instrumentFeedOfDown(node,
-        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'],
-        frame);
+    // pair / dist：双路降采样馈源（与 PSNR 同端口）。两路并行取
+    // （优化 13，同 [_analyzeDualInput]）。
+    final feeds = await Future.wait([
+      _instrumentFeedOfDown(
+          node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame),
+      _instrumentFeedOfDown(node,
+          const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'],
+          frame),
+    ]);
+    final ref = feeds[0];
+    final test = feeds[1];
     if (ref == null || test == null) {
       return {'kind': kind, 'error': '需要接入参考图与测试图'};
     }
@@ -3246,10 +3353,16 @@ class IspStudioState extends ChangeNotifier {
       return {'kind': kind, kind: v};
     }
     // dist：新一轮运行先复位累计，再逐帧向两侧各 add 一帧的 patch 特征。
-    final accum = _deepIqaDist.putIfAbsent(node.id, _DeepIqaDistAccum.new);
+    // KID 的累计/出分走常驻 isolate（[_kidWorkers]，增量核矩阵），
+    // _deepIqaDist 仅 FID 使用；KID 新一轮运行时 dispose 旧 worker
+    // （懒创建的新 worker 即空状态，等效 reset）。
+    final accum = kind == 'kid'
+        ? null
+        : _deepIqaDist.putIfAbsent(node.id, _DeepIqaDistAccum.new);
     if (_pyiqaDistTokens[node.id] != token) {
       _pyiqaDistTokens[node.id] = token;
-      accum.reset();
+      accum?.reset();
+      _kidWorkers.remove(node.id)?.dispose();
     }
     // FID 与 KID 节点共用同一对源时特征只算一次（键含双路馈源键，
     // 馈源键本身含帧号）。
@@ -3286,18 +3399,44 @@ class IspStudioState extends ChangeNotifier {
       ]);
       return (r[0], r[1]);
     });
-    accum.add(fr, ft);
+    if (kind == 'kid') {
+      // KID：累计与出分在常驻 isolate 的增量核矩阵
+      //（kid_score_worker.dart / KidGramAccum）——每帧只发本帧新增
+      // 特征（fp32 拷贝，fr/ft 与 FID/特征缓存共享所有权），worker 内
+      // 只算核矩阵新增块（每帧 O(n·Δ·d) 替代全量重算 O(n²·d)），出分
+      // 与全量 kidCompute 逐位一致（测试断言 ==）。
+      var worker = _kidWorkers[node.id];
+      if (worker == null) {
+        worker = KidScoreWorker();
+        await worker.start();
+        _kidWorkers[node.id] = worker;
+      }
+      final (nRef, nTest) = await worker.add(fr, ft);
+      if (nRef < 2 || nTest < 2) {
+        // 样本不足（任一侧 <2 个 patch）：只显示累计进度。
+        return {'kind': kind, 'n_ref': nRef, 'n_test': nTest};
+      }
+      // 特征提取可能走 GPU（见上），统计计算在常驻 isolate（CPU）。
+      nodeRunOnGpu[node.id] = _deepIqaFeatOnGpu[featKey] ?? false;
+      final v = await worker.score();
+      return {
+        'kind': kind,
+        kind: v,
+        'n_ref': nRef,
+        'n_test': nTest,
+      };
+    }
+    accum!.add(fr, ft);
     if (accum.nRef < 2 || accum.nTest < 2) {
       // 样本不足（任一侧 <2 个 patch）：只显示累计进度。
       return {'kind': kind, 'n_ref': accum.nRef, 'n_test': accum.nTest};
     }
-    // FID/KID 的特征提取可能走 GPU（见上），统计计算走 CPU isolate。
+    // FID 的特征提取可能走 GPU（见上），统计计算走 CPU isolate。
     nodeRunOnGpu[node.id] = _deepIqaFeatOnGpu[featKey] ?? false;
     final (featsRef, featsTest) = accum.concat();
-    // FID 的 2048² 协方差/特征值求解与 KID 的 Gram 矩阵均为重计算，
-    // 放后台 isolate（compute），不在 UI isolate 执行。
-    final v = await compute(
-        kind == 'fid' ? fidScoreInIsolate : kidScoreInIsolate, {
+    // FID 的 2048² 协方差/特征值求解为重计算，放后台 isolate
+    //（compute），不在 UI isolate 执行。
+    final v = await compute(fidScoreInIsolate, {
       'ref': featsRef,
       'nRef': accum.nRef,
       'test': featsTest,
@@ -3340,11 +3479,16 @@ class IspStudioState extends ChangeNotifier {
       final v = await PyIqaWorker.forMetric(kind).singleScore(path);
       return {'kind': kind, kind: v};
     }
-    // pair / dist：双路降采样馈源（与 PSNR 同端口）。
-    final ref = await _instrumentFeedOfDown(
-        node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame);
-    final test = await _instrumentFeedOfDown(node,
-        const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'], frame);
+    // pair / dist：双路降采样馈源（与 PSNR 同端口）。两路并行取
+    // （优化 13，同 [_analyzeDualInput]）。
+    final feeds = await Future.wait([
+      _instrumentFeedOfDown(
+          node, const ['in', 'in_yuv', 'in_hsl', 'in_mono'], frame),
+      _instrumentFeedOfDown(node,
+          const ['in_test', 'in_test_yuv', 'in_test_hsl', 'in_test_mono'], frame),
+    ]);
+    final ref = feeds[0];
+    final test = feeds[1];
     if (ref == null || test == null) {
       return {'kind': kind, 'error': '需要接入参考图与测试图'};
     }
@@ -3605,6 +3749,11 @@ class IspStudioState extends ChangeNotifier {
       var frame = previewFrame.clamp(0, total - 1);
       // 全部预览链都消费 YUV 时让 ffmpeg 直出平面 YUV，配合 GPU 硬解，
       // 每条链省掉 RGBA→RGB16→YUV 两道逐像素全帧转换。
+      // GPU 链播放（gpuChain，判定在 gpuPlanes 之后）：全部预览链都有
+      // GPU shader 实现且管线可用时，播放帧在 UI isolate 的 GPU 管线执行
+      // （RGBA 直传免 CPU 转换 + 全 pass 驻留 + 免回读上屏），支撑 4K60
+      // 级吞吐；平面直出/直连等更省的形态优先，不满足时回退 CPU worker 池。
+      final gpu = isVideo ? await _gpuPipeline() : null;
       final yuvDirect = isVideo &&
           validChains.values.every(
               (c) => (c.first['outFormat'] as String? ?? 'rgb') == 'yuv');
@@ -3644,8 +3793,21 @@ class IspStudioState extends ChangeNotifier {
           } catch (_) {} // shader 不可用：回退 CPU 流水线
         }
       }
-      final pixelFormat =
-          gpuPlanes ? 'yuv420p' : (yuvDirect ? 'yuv444p' : 'rgba');
+      // GPU 链播放判定：平面直出（gpuPlanes）与直连（videoDirect）等更省
+      // 的形态优先；全部预览链有 GPU 实现且管线可用时走 GPU 管线。
+      // 流帧格式取解码器原生 yuv420p（数据量为 RGBA 的 1/2.67，4K60 上传
+      // 带宽的关键），须宽为 4 倍数、高为偶数，否则回退 CPU worker 池。
+      final videoDirect = isVideo &&
+          (chain.first['outFormat'] as String? ?? 'rgb') == 'rgb' &&
+          chain.skip(1).every((op) => sinkNodeTypes.contains(op['typeId']));
+      final gpuChain = gpu != null &&
+          !gpuPlanes &&
+          !videoDirect &&
+          (!isVideo || (w % 4 == 0 && h % 2 == 0)) &&
+          validChains.values.every(GpuPipeline.isSupportedChain);
+      final pixelFormat = gpuPlanes
+          ? 'yuv420p'
+          : (gpuChain ? 'yuv420p' : (yuvDirect ? 'yuv444p' : 'rgba'));
       // 视频源：从当前帧起顺序流式解码（内部前向缓冲，背压限速）。
       // 全分辨率出帧：预览按原始尺寸播放，不做降采样。
       var stream = isVideo
@@ -3672,15 +3834,13 @@ class IspStudioState extends ChangeNotifier {
       final fps = (graph.nodes[firstEntry.key]!.paramValues['fps'] as num?)?.toInt() ?? 30;
       final frameDuration =
           Duration(microseconds: (1000000 / fps.clamp(1, 60)).round());
-      final videoDirect = isVideo &&
-          (chain.first['outFormat'] as String? ?? 'rgb') == 'rgb' &&
-          chain.skip(1).every((op) => sinkNodeTypes.contains(op['typeId']));
-      final poolSize = videoDirect || gpuPlanes
+      final poolSize = videoDirect || gpuPlanes || gpuChain
           ? 0
           : math.min(validChains.length,
               math.max(1, Platform.numberOfProcessors - 1));
-      final pipeline =
-          videoDirect || gpuPlanes ? null : PipelineWorkerPool(count: poolSize);
+      final pipeline = videoDirect || gpuPlanes || gpuChain
+          ? null
+          : PipelineWorkerPool(count: poolSize);
       // 预热流水线 worker：isolate 启动与上面的流解码/音频初始化并行，
       // 首帧生产不再承担 ~0.5s 的 spawn 开销。
       pipeline?.warmup();
@@ -3805,6 +3965,71 @@ class IspStudioState extends ChangeNotifier {
                 ui.PixelFormat.rgba8888, completer.complete);
             images[firstEntry.key] = await completer.future;
             rgbaMap = {firstEntry.key: workBytes};
+          } else if (gpuChain) {
+            // GPU 链播放：解码器原生 yuv420p 流帧原样上传（免 CPU 逐像素
+            // 转换、上传带宽为 RGBA 的 1/2.67），CSC + 链上 pass 全 GPU
+            // 执行，出图为 GPU 驻留 ui.Image 直接上屏（免回读免
+            // decodeImageFromPixels）；有图像仪器时才回读 RGBA 馈源。
+            // 前缀覆盖去重（口径与 _tryGpuPreview 一致）：同源的短链
+            // （如「调整前」直看预览）是最长主链的前缀，由主链顺带捕获
+            // 出图，不再重复上传/转换/跑链；播放跳过逐节点调试采样
+            // （captureSamples=false，每个采样点是一次 GPU 管线排空）。
+            final srcId = chain.first['nodeId'] as String;
+            final limited = !(stream?.info.fullRange ?? false);
+            final mainEntry = validChains.entries
+                .reduce((a, b) => a.value.length >= b.value.length ? a : b);
+            final mainIds = [
+              for (final op in mainEntry.value) op['nodeId'] as String
+            ];
+            final displayCaptures = <String, String>{};
+            final extraRuns =
+                <MapEntry<String, List<Map<String, Object?>>>>[];
+            for (final e in validChains.entries) {
+              if (e.key == mainEntry.key) continue;
+              if (gpuChainPrefixCovered(e.value, mainIds)) {
+                final last = e.value.last;
+                final sinkId = last['nodeId'] as String;
+                displayCaptures[e.key] =
+                    (last['typeId'] == 'preview' ||
+                                last['typeId'] == 'histogram') &&
+                            mainIds.contains(sinkId)
+                        ? sinkId
+                        : gpuProcChainOf(e.value).last['nodeId'] as String;
+              } else {
+                extraRuns.add(e);
+              }
+            }
+            final r = await gpu.run(mainEntry.value, f,
+                imageSources: {srcId: (workBytes, workW, workH)},
+                streamFormat: 'yuv420p',
+                streamLimited: limited,
+                displayCaptures: displayCaptures,
+                captureSamples: false);
+            images[mainEntry.key] = r.image;
+            images.addAll(r.displayImages);
+            for (final e in extraRuns) {
+              final r2 = await gpu.run(e.value, f,
+                  imageSources: {srcId: (workBytes, workW, workH)},
+                  streamFormat: 'yuv420p',
+                  streamLimited: limited,
+                  captureSamples: false);
+              images[e.key] = r2.image;
+            }
+            if (allImageInstruments.isNotEmpty) {
+              for (final entry in images.entries) {
+                rgbaMap[entry.key] =
+                    await GpuPipeline.readbackBytes(entry.value);
+              }
+            } else {
+              // 无仪器时 rgbaMap 仅供暂停复用占位，无需逐链回读。
+              rgbaMap = {firstEntry.key: workBytes};
+            }
+            primaryRgba = rgbaMap[firstEntry.key] ?? workBytes;
+            if (debugPlaybackTiming) {
+              // ignore: avoid_print
+              print('prod f=$f: 取流 $downUs us, GPU链生产 '
+                  '${prodSw.elapsedMicroseconds - downUs} us');
+            }
           } else {
             rgbaMap = await pipeline!.runParallel(validChains, f,
                 sourceRgba: yuvDirect ? null : workBytes,
@@ -3869,13 +4094,15 @@ class IspStudioState extends ChangeNotifier {
         }
       }
 
-      // 预缓冲：最多 2 帧在途生产（取帧经 fetchGate 串行、流水线计算
+      // 预缓冲：最多 4 帧在途生产（取帧经 fetchGate 串行、流水线计算
       // 在 worker 池中并行），播放节拍抖动由在途帧吸收，解码/流水线
-      // 偶发慢帧不再直接造成上屏断档。
+      // 偶发慢帧不再直接造成上屏断档。GPU 链播放时取流/上传/跑链
+      // 三段重叠更充分（4K60 的 16.6ms 帧预算对单段延迟极敏感；
+      // 实测 4 帧与 5 帧等效，不再加大内存占用）。
       final inflight = Queue.of([produceFrame(frame)]);
       var nextProduceFrame = (frame + 1) % total;
       void refillInflight() {
-        while (inflight.length < 2) {
+        while (inflight.length < 4) {
           final f0 = nextProduceFrame;
           inflight.add(produceFrame(f0));
           nextProduceFrame = (f0 + 1) % total;
@@ -3958,7 +4185,11 @@ class IspStudioState extends ChangeNotifier {
           // 瞬时值不计入节拍估计，避免冷启动拖慢整段播放的帧率显示与
           // 走帧节奏。
           final prod = Duration(microseconds: prodUs);
-          if (playbackDisplayed > 2 || prod < frameDuration * 4) {
+          // 瞬时尖刺（冷启动硬解初始化、取流/上传的事件循环延迟抖动）
+          // 不代表持续产能，超 2 倍帧预算的样本不进入 EMA——否则少数
+          // 尖刺会把节拍长期拖在低位，帧率陷在「自限平衡」里爬不上去
+          // （4K60 实测教训）。
+          if (prod < frameDuration * 2) {
             final prevEma = emaProd;
             final ema = prevEma == null
                 ? prod
@@ -4432,6 +4663,7 @@ class IspStudioState extends ChangeNotifier {
     final t = graph.nodes[nodeId]?.typeId;
     return t == 'preview' ||
         t == 'hsl_debugger' ||
+        t == 'color_controller' ||
         t == 'rgb_debugger' ||
         t == 'yuv_debugger' ||
         t == 'sat_bright_adjuster' ||
@@ -4752,6 +4984,10 @@ class IspStudioState extends ChangeNotifier {
     _minmaxHold.clear(); // 保持值属于旧图（节点 id 可能撞名）
     _pyiqaDistTokens.clear(); // FID/KID 样本复位标记同理
     _deepIqaDist.clear(); // FID/KID 进程内累计样本同理
+    for (final w in _kidWorkers.values) {
+      w.dispose();
+    }
+    _kidWorkers.clear(); // KID 常驻出分 isolate 同理
     _histogramChannels.clear();
     for (final img in instrumentImages.values) {
       img.dispose();
@@ -4828,6 +5064,11 @@ class IspStudioState extends ChangeNotifier {
     // 进程内深度评价的共享 NN isolate 池（若曾启动）随状态销毁。
     _nnPool?.dispose();
     _nnPool = null;
+    // KID 节点的常驻出分 isolate（若曾启动）随状态销毁。
+    for (final w in _kidWorkers.values) {
+      w.dispose();
+    }
+    _kidWorkers.clear();
     // VGG16 / RN50 / InceptionV3 GPU 纹理驻留链（若曾创建）随状态销毁。
     _vggGpu?.dispose();
     _vggGpu = null;

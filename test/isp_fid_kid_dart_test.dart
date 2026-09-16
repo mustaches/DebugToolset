@@ -22,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/fid_kid_dart.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/inception_dart.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/metrics/kid_score_worker.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/nn/eig.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/nn/nnw_reader.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/pyiqa_worker.dart';
@@ -200,6 +201,87 @@ void main() {
       expect(kidDiff, greaterThan(kidSame.abs() * 10 + 0.1));
       // ignore: avoid_print
       print('KID 自洽：kid(x,x)=$kidSame kid(x,y)=$kidDiff');
+    });
+
+    test('KidGramAccum：任意分批与全量 kidCompute 逐位一致', () {
+      // 多种分批形状：对称/不对称两侧、单样本批、混合大批；每批后
+      // 出分与同节点全量重算断言 ==（含逐帧出分序列的全序列比对）。
+      final cases = <(int, int, List<(int, int)>)>[
+        (12, 12, [(12, 12)]), // 单批（等效一次性）
+        (12, 12, [(1, 1), (5, 5), (6, 6)]), // 对称小批
+        (12, 20, [(4, 9), (8, 11)]), // 不对称两侧
+        (30, 25, [(1, 25), (29, 0)]), // 一侧先满
+        (40, 40, [(10, 10), (10, 10), (10, 10), (10, 10)]), // 多批等分
+      ];
+      var caseIdx = 0;
+      for (final (nRef, nTest, batches) in cases) {
+        caseIdx++;
+        final x = randFeats(nRef, fidFeatureDim, 100 + caseIdx);
+        final y =
+            randFeats(nTest, fidFeatureDim, 200 + caseIdx, offset: 0.3);
+        final accum = KidGramAccum();
+        var offR = 0, offT = 0;
+        for (final (dR, dT) in batches) {
+          accum.addBatch(
+              Float32List.sublistView(
+                  x, offR * fidFeatureDim, (offR + dR) * fidFeatureDim),
+              dR,
+              Float32List.sublistView(
+                  y, offT * fidFeatureDim, (offT + dT) * fidFeatureDim),
+              dT);
+          offR += dR;
+          offT += dT;
+          expect(accum.nRef, offR);
+          expect(accum.nTest, offT);
+          if (offR < 2 || offT < 2) {
+            expect(() => accum.score(), throwsStateError,
+                reason: 'case$caseIdx 样本不足抛错（ref=$offR test=$offT）');
+            continue;
+          }
+          // 中间态与终态都与全量重算逐位一致。
+          final expectScore = kidCompute(x, offR, y, offT);
+          final got = accum.score();
+          expect(got, expectScore,
+              reason: 'case$caseIdx 分批($offR,$offT)：accum=$got '
+                  '全量=$expectScore');
+        }
+        // reset 后复用：重新单批喂入仍逐位一致。
+        accum.reset();
+        expect(accum.nRef, 0);
+        expect(accum.nTest, 0);
+        accum.addBatch(x, nRef, y, nTest);
+        expect(accum.score(), kidCompute(x, nRef, y, nTest),
+            reason: 'case$caseIdx reset 后复用');
+      }
+    });
+
+    test('KidScoreWorker：add/score/reset 与同步 KidGramAccum 一致', () async {
+      final x = randFeats(24, fidFeatureDim, 7);
+      final y = randFeats(30, fidFeatureDim, 8, offset: 0.5);
+      final worker = KidScoreWorker();
+      await worker.start();
+      addTearDown(worker.dispose);
+      // 分两批 add，逐批对拍计数与分值。
+      final sync = KidGramAccum();
+      var counts = await worker.add(
+          Float32List.sublistView(x, 0, 10 * fidFeatureDim),
+          Float32List.sublistView(y, 0, 12 * fidFeatureDim));
+      expect(counts, (10, 12));
+      sync.addBatch(Float32List.sublistView(x, 0, 10 * fidFeatureDim), 10,
+          Float32List.sublistView(y, 0, 12 * fidFeatureDim), 12);
+      expect(await worker.score(), sync.score());
+      counts = await worker.add(
+          Float32List.sublistView(x, 10 * fidFeatureDim),
+          Float32List.sublistView(y, 12 * fidFeatureDim));
+      expect(counts, (24, 30));
+      sync.addBatch(Float32List.sublistView(x, 10 * fidFeatureDim), 14,
+          Float32List.sublistView(y, 12 * fidFeatureDim), 18);
+      expect(await worker.score(), sync.score());
+      // reset 后重新累计，结果与一次性全量一致。
+      await worker.reset();
+      counts = await worker.add(x, y);
+      expect(counts, (24, 30));
+      expect(await worker.score(), kidCompute(x, 24, y, 30));
     });
   });
 

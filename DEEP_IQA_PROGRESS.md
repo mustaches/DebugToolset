@@ -77,6 +77,14 @@
 - **流程级测量**（新基准 `scratch/iqa_flow_bench_main.dart`，复刻 图像评价.ispflow 的 14 指标 + 双锁调度，看门狗 `scratch/run_bench_watchdog.sh`）：Impeller 下总时长 293s 且分数错误；Skia 下 216s 且全部指标分数与 CPU/Python 口径一致。
 - **锁解耦实验（否决）**：FID/KID 独立锁与大链并行实测 227s，慢于单锁串行 216s——Skia 下 Inception 特征仅 43s/两侧，并行争抢反而拖慢双方；`isp_studio_state.dart` 的改动已回退，保持 优化 6 的单 `_gpuMetricLock` 设计。
 - **当前瓶颈结构**（Skia，5MP 馈源）：GPU 串行窗 LPIPS 78s + DISTS 61s + CLIPIQA 14s + FID 特征 44s ≈ 197s；MUSIQ ~119s 与传统指标全部被掩盖。后续可选：LPIPS/DISTS 共享 VGG16 第 1 块（relu1_2 前分叉，省 ~10-15s）；总时长下限由 GPU 串行窗决定。
+- **MUSIQ 评估（2026-09-08，结论：不 GPU 化）**：① MUSIQ ~119s 完全被 GPU 串行窗掩盖，单独加速对流程总时长**零收益**（且 GPU 化后须进 `_gpuMetricLock` 串行窗，反而拉长）；② 但 MUSIQ 的 CPU 风暴对并行窗口内的 GPU 链有 **~48s 争抢税**（`SKIP_MUSIQ` 对照：总时长 216s→168s，LPIPS 78s→44s 全部回到单跑速度）；③ 限核无法回收——NnPool 72 vs 108 workers 下 MUSIQ 耗时同为 ~119s（内存带宽瓶颈而非核数瓶颈），总时长 217s 不变。故争抢税无低成本解法；GPU 化 MUSIQ 的唯一收益是消掉这 48s（总时长理论下限 ~168s），工程量（transformer GEMM/softmax 的 fragment shader 原语 + fp16 精度风险）与收益不成比例，待 Flutter GPU compute 桌面端落地（flutter/flutter#188474 Wave 3）后再评估。
+
+## 优化 13（仪器馈源加速，2026-09-08 验收）
+
+- **背景**：PSNR图像评价.ispflow（20MP×2 直连 PSNR）节点耗时 15.7s，其中 PSNR 本体仅 38ms——探针（`scratch/psnr_feed_probe.dart`/`decode8_probe.dart`）分解证实大头在馈源准备：纯 Dart 解码（jpg 1.7s + png 2.2s）、`decodeImageFileToRgba8` 的 convert 通用逐像素遍历（+1.6s/张）、逐仪器节点的 16 位往返（rgba8ToRgb16+tonemap ~1.1s/路）。
+- **改动**：① `decodeImageFileToRgba8` 快速通道——uint8 无调色板图直通（4ch 零拷贝、3ch 紧凑循环扩 alpha），解码 7.4s→3.7s（-50%）；② 8 位单节点 out_rgb 图片链**短路直通**（`_instrumentFeedOfUncached`/`_instrumentFrameFeedUncached`：chain.length==1 且 bitDepth 8 且 out_rgb 时直接返回共享解码缓存，跳过 16 位往返与链重跑 isolate 往返）；③ 双路馈源并行取（`_analyzeDualInput`/`_analyzeDeepIqa`/`_analyzePyIqa` 的 ref/test Future.wait）+ 预览阶段多源并发解码 + `_imageSourceRgba` 在途解码去重（`_imageSourceRgbaInFlight`）。
+- **位级验证**：`test/isp_image_source_test.dart`（4 用例：3ch/4ch PNG 与 JPEG 快速通道 vs 旧 convert 路径逐字节一致；rgba8ToRgb16+tonemap 恒等性——短路的安全依据）；`scratch/psnr_feed_probe.dart` 真图验证 rgba8_identity=true、PSNR 29.00506024893544 不变；`flutter analyze` 干净；flow bench（`scratch/iqa_flow_bench_opt13.log`）15 指标分数与优化 12 逐位一致，总时长 216s→214s（解码 8.1s→4.1s）。
+- **预期真机**：PSNR图像评价.ispflow 节点 15.7s → 冷启 ~2.5s / 缓存命中 ~0.3s；多仪器流程（图像评价.ispflow）首次运行的馈源准备时间成倍缩短。
 
 ## 排队待做
 
@@ -86,3 +94,33 @@
 
 - 全量回归中 8 个失败为既有问题：folder_compare_view_test 4 个超时、isp_graph_test 节点数断言过期（74→80）、isp_studio_tabs_test、text_editor_gutter_alignment_test。
 - `test/isp_eval_flow_repro_test.dart` 是手动诊断用例（skip 中），全流程约 45 分钟。
+
+## 优化 14（FSIM 六路并行，2026-09-08 验收）
+
+- **分析**：FSIM 本体（5MP 串行 1.99s）是 21 趟 Float64 全帧平面遍历，内存带宽型；既有并行路径仅按 R/G/B 通道 3 路，每路内参考/测试两图的 PC/GM 特征提取串行，且合并循环只占 1/7 工作量。
+- **改动**（`pipeline/instruments.dart`）：`_dualMetricWorkers ≥ 6` 时按 (3 通道 × 2 图侧) **6 路 Isolate.run** 并行提取 PC/GM（`_fsimPcGmIsolated`，TransferableTypedData 零拷贝回传，调用侧 ByteBuffer 视图切分）；合并阶段抽为 `_fsimCombine` 在调用侧按通道序执行——与串行同一循环、同一求和顺序，**逐位一致**；小核数机器（<6）退回原 3 路路径。
+- **验收**（`scratch/fsim_par_probe.exe`，AOT 生产路径 `dualMetricInIsolate`）：FSIM 5MP **643ms**（旧 3 路 ~1.3s、串行 1.99s，约 3.1×），与串行 `fsimRgba` **bitexact=true**；`isp_fsim_test`/`isp_instruments_test`/`isp_eval_reference_test` 全绿；`flutter analyze` 干净。
+- **不做的方向**：fp32 平面（再快 ~1.5× 但动 ~1e-7 数值口径）与 GPU 化（fp16 存储显著改口径）均放弃。
+
+## 优化 15（DISTS 打分头 GPU 归约，2026-09-08 验收）
+
+- **背景**：DISTS 单跑 GPU 49.63s。分解探针（`scratch/dists_breakdown_main.dart`，1688×3000）：提交 3.2s，双图 5 切片全量特征下载+解包 27.4s（2×1.23GB fp16，逐带逐切片同步回读 ~105 次 × 50-90ms 固定开销，有效带宽仅 ~128MB/s），打分头与馈源 ~10s。瓶颈在回读不在计算。
+- **方案**：打分头需要的只是逐通道 5 项统计（Σa/Σa²/Σb/Σb²/Σab）——新 shader `shaders/nn/nn_chstats_f16.frag` 按带在 GPU 上归约（Kahan 补偿 fp32 部分和，fp32 位手动打包进 RGBA8——SkSL 不支持 uint/floatBitsToUint 且循环上界须常量，均已在 shader 内适配），全部带/切片的 pass 经 `GpuChannelStatsBatch`（nn_gpu.dart）录进同一 Picture **一次物化+回读**（105 次小同步 → 1 次），带序 fp64 合并后公式与 `_distsFromFeats` 同语句。`Vgg16AsyncForward` 新增可选能力 `supportsChannelStats`/`channelStatsPair`（`vgg16_dart.dart` 纯 Dart 侧定义 `VggSliceStats`，保持 dists_dart 无 Flutter 依赖）；层 0（原图）统计仍在 CPU（`_inputChannelStats`，位级不变）。失败回退下载+CPU 统计路径。
+- **验收**：单测 `isp_nn_gpu_vgg_test.dart` 新增 channelStatsPair 单纹理/分块两用例（vs CPU fp64 统计）；端到端 DISTS GPU 路径 vs Python relErr 1.6e-4（口径 ≤1e-3 ✓）；真机基准（`scratch/nn_gpu_vgg_bench_stats15.log`）：**DISTS 1688×3000 GPU路径 45.1s→13.8s（3.3×），vs CPU池 diff 1.48e-6（与原下载路径同量级）**；512×384 2.6s→0.78s；探针 `scratch/dists_stats_probe_main.dart`：5MP channelStatsPair 10.6s（含整链光栅）vs 串行 forward 31.9s，逐通道统计 worstRel 1.7e-4（ANGLE fp32 加法重结合使 Kahan 退化的预期量级，端到端口径内）。
+- **流程级**（`scratch/iqa_flow_bench_opt15.log`）：dists 61s→15.5s，图像评价.ispflow 总时长 214s→**178.7s**，全部指标分数不变（dists 仅归约顺序差 2.3e-8）。DISTS 单跑流程预期 49.6s→~18s。
+- **后续可选**：LPIPS 同构归约（其 head 需逐像素跨通道归一化，需额外 norm-map pass，尚未做）；FID 特征提取（现流程尾部长项，~52s）。
+
+## 优化 16（LPIPS 打分头 GPU 归约，2026-09-09 验收）
+
+- **方案**：LPIPS head 的 (a/na−b/nb)² 按 A+B−2X 展开——na/nb 为逐像素通道 L2 范数。新增两个 shader：`nn_pixnorm_f16.frag`（逐像素范数图，每像素 2 个 fp32 位打包纹素，fp32 累加数百项无需 Kahan）与 `nn_lpips_stats_f16.frag`（逐通道 3 项统计 A=Σ(a/na)²、B=Σ(b/nb)²、X=Σ(a/na)(b/nb)，Kahan fp32 部分和，复用优化 15 的 fp32 手动位打包）；`GpuChannelStatsBatch.addLpipsPair` 与 DISTS 共用单次物化+回读的批次机制。`Vgg16AsyncForward` 新增 `supportsLpipsStats`/`lpipsStatsPair`；`lpips_dart.dart` GPU 分支接入（`_lpipsFromSliceStats`：A+B−2X 合并、空间平均与线性头加权同原口径），失败回退下载+CPU 打分头。
+- **验收**：单测 `isp_nn_gpu_vgg_test.dart` 新增 lpipsStatsPair 单纹理/分块两用例（vs CPU fp64 参考）；端到端 LPIPS GPU 路径 vs Python relErr 6.5e-5（口径 ≤1e-3 ✓）；真机探针（`scratch/lpips_stats_probe_main.dart`）：**同图恒等 0.0（无消减噪声）**；256×192/1024×768/1688×3000 vs CPU池 diff = 9.9e-6/1.2e-5/3.4e-5（原下载路径同量级）；**1688×3000 GPU路径 41.5s→16.2s（2.6×）**。
+- **流程级**（`scratch/iqa_flow_bench_opt16.log`）：lpips 77s→16.1s（流程内），图像评价.ispflow 总时长 178.7s→**157.2s**，其余指标分数逐位不变（lpips 与旧 GPU 下载路径差 5.3e-6）。LPIPS 单跑流程预期 ~45s→~19s。
+- **本轮累计**（Flutter 3.47.2 适配 + 优化 12-16）：图像评价.ispflow 从升级前的 ~216s（旧 Flutter）到 **157.2s**，且修复了升级引入的 Impeller 精度回归；单指标流程（PSNR/FSIM/DISTS/LPIPS）冷启动大头（解码/馈源/下载）均已消除。
+
+## 优化 17（KID 出分增量核矩阵 + 常驻 isolate，2026-09-09 验收）
+
+- **根因**：视频逐帧累计场景下，KID 节点每帧把全部历史特征 `concat` 后经 `compute(kidScoreInIsolate)` **从零重算**三个 Gram 矩阵（gxx/gyy 各 n²/2 + gxy n² 个 2048 维 fp64 点积 ≈ 2n²·2048 乘加/帧）——逐帧平方增长、整段播放立方增长，样本越多越卡（如 1500 样本时单帧 ~20s）；特征全量拷贝也随帧线性增长。
+- **方案**：① `fid_kid_dart.dart` 新增 `KidGramAccum`（纯 Dart）——两侧特征与三个核矩阵（元素直接存 polyK 核值）驻留，行 stride=capacity 容量倍增；`addBatch` 只算新增块（新×旧、新×新三角），每帧 O(n·Δ·d)；点积 k 升序 fp64 累加顺序与 `_gramSelf`/`_gramCross` 完全相同（点积两操作数交换不改累加序列），`score()` 抽样与求和逻辑与 `kidCompute` 逐语句一致 → 任意分批下出分与全量重算**逐位一致**。② 新文件 `pipeline/metrics/kid_score_worker.dart`：每 KID 节点一个常驻 isolate（仿 NnPool 的 spawn+SendPort 协议）持有 `KidGramAccum`，每帧消息量仅新增特征（fp32 拷贝发送，特征与 FID/特征缓存共享所有权），UI 不阻塞。③ `_analyzeDeepIqa` dist 分支 kind=='kid' 改走 worker（`_kidWorkers`，懒创建；token 变化 dispose 重建等效 reset；图替换/节点移除/状态 dispose 时同步清理）；FID 分支（`_DeepIqaDistAccum` + 低秩快路径）不动。
+- **验收**：`isp_fid_kid_dart_test` 新增「任意分批（对称/不对称/单样本批/一侧先满/多批等分）每批后 score 与全量 kidCompute `==` 逐位一致 + reset 复用」与「KidScoreWorker add/score/reset 协议对拍」两用例，全文件 10/10 全绿（含 eval_venv 端到端：FID relErr 1.0e-3、KID 与 Python 同量级 0.11991 vs 0.11978）；`flutter analyze` 干净。
+- **基准**（`scratch/kid_accum_bench.dart`，模拟 15 帧 × 100 patch/侧）：逐帧分数新旧路径全部**位级一致**；总耗时 113.0s→20.1s（**5.6×**，加速比随帧数线性增长 ≈F/3，30 帧 ~11×）；尾帧（n=1500）单帧 20.6s→2.6s。
+- **后续可选**：FID 低秩路径的 G 矩阵同样每帧全量重算（O(n²·d)/帧），可同构增量化；核矩阵新增块按行多 isolate 并行（需特征分片驻留，复杂度高，暂不做）。

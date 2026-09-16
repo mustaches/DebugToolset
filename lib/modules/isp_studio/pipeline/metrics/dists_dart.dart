@@ -148,6 +148,67 @@ double _distsFromFeats(List<NnTensor> feats0, List<NnTensor> feats1,
   return 1 - dist1 - dist2;
 }
 
+/// 层 0（[0,1] 原图平面）的逐通道统计（CPU，统计循环与
+/// [_distsFromFeats] 逐语句相同——该层位级不变）。
+VggSliceStats _inputChannelStats(NnTensor x0, NnTensor x1) {
+  final c = x0.channels;
+  final s = x0.height * x0.width;
+  final sums = Float64List(c * 5);
+  for (var ch = 0; ch < c; ch++) {
+    final base = ch * s;
+    var sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumYY = 0.0, sumXY = 0.0;
+    for (var i = 0; i < s; i++) {
+      final xv = x0.data[base + i];
+      final yv = x1.data[base + i];
+      sumX += xv;
+      sumY += yv;
+      sumXX += xv * xv;
+      sumYY += yv * yv;
+      sumXY += xv * yv;
+    }
+    sums[ch * 5] = sumX;
+    sums[ch * 5 + 1] = sumXX;
+    sums[ch * 5 + 2] = sumY;
+    sums[ch * 5 + 3] = sumYY;
+    sums[ch * 5 + 4] = sumXY;
+  }
+  return VggSliceStats(sums, s, c);
+}
+
+/// 优化 15 归约快路径的打分：层 0 用 [_inputChannelStats]（CPU，
+/// 位级不变），层 1..5 用 GPU 归约的合并统计 [stats]；加权公式与
+/// 累加顺序（切片序 → 通道序）同 [_distsFromFeats]，差异仅 GPU 侧
+/// 求和顺序（~1e-6 相对量级，既有 fp16 口径内）。
+double _distsFromSliceStats(NnTensor x0, NnTensor x1,
+    List<VggSliceStats> stats, Float32List alpha, Float32List beta) {
+  const c1 = 1e-6, c2 = 1e-6;
+  var dist1 = 0.0, dist2 = 0.0;
+  var wOff = 0;
+  for (var k = 0; k < _kChns.length; k++) {
+    final st = k == 0 ? _inputChannelStats(x0, x1) : stats[k - 1];
+    final c = st.channels;
+    final s = st.pixels.toDouble();
+    for (var ch = 0; ch < c; ch++) {
+      final sumX = st.sums[ch * 5];
+      final sumXX = st.sums[ch * 5 + 1];
+      final sumY = st.sums[ch * 5 + 2];
+      final sumYY = st.sums[ch * 5 + 3];
+      final sumXY = st.sums[ch * 5 + 4];
+      final muX = sumX / s, muY = sumY / s;
+      // 有偏方差（除 HW）：mean(x²) − μ²。
+      final varX = sumXX / s - muX * muX;
+      final varY = sumYY / s - muY * muY;
+      final covXY = sumXY / s - muX * muY;
+      final s1 = (2 * muX * muY + c1) / (muX * muX + muY * muY + c1);
+      final s2 = (2 * covXY + c2) / (varX + varY + c2);
+      dist1 += alpha[wOff + ch] * s1;
+      dist2 += beta[wOff + ch] * s2;
+    }
+    wOff += c;
+  }
+  return 1 - dist1 - dist2;
+}
+
 /// Isolate.run 入口（优化 9）：单切片的逐通道 S1/S2 统计。消息为
 /// (TransferableTypedData f0, TransferableTypedData f1, c, s)，返回
 /// (Float64List s1, Float64List s2)（每通道一对；统计循环与
@@ -283,6 +344,16 @@ Future<double> distsScoreParallel(
         await vf.discardForward(h0); // 防切片纹理泄漏
         rethrow;
       }
+      // 优化 15：GPU 归约快路径——打分头的逐通道统计（Σa/Σa²/Σb/
+      // Σb²/Σab）在 GPU 上按带归约，只回读微小统计缓冲，跳过 5 切片
+      // 全量特征的 GB 级回读（5MP 双图下载 ~27s → ~1s）。与下载+CPU
+      // 统计路径的差异仅浮点求和顺序（既有 fp16 口径内）。
+      // channelStatsPair 无论成败都接管（释放）两个句柄。
+      if (vf.supportsChannelStats) {
+        final stats = await vf.channelStatsPair(h0, h1);
+        onBackend?.call(true);
+        return _distsFromSliceStats(x0, x1, stats, alpha, beta);
+      }
       List<NnTensor> feats0;
       try {
         feats0 = await vf.forwardDownload(h0);
@@ -292,7 +363,7 @@ Future<double> distsScoreParallel(
       }
       final feats1 = await vf.forwardDownload(h1);
       onBackend?.call(true);
-      return _distsHeadParallel(
+      return await _distsHeadParallel(
           [x0, ...feats0], [x1, ...feats1], alpha, beta);
     } catch (e) {
       // ignore: avoid_print
@@ -314,7 +385,7 @@ Future<double> distsScoreParallel(
       ...await vgg.forwardParallel(_normalizeForNet(x1), p,
           useL2Pooling: true),
     ];
-    return _distsHeadParallel(feats0, feats1, alpha, beta);
+    return await _distsHeadParallel(feats0, feats1, alpha, beta);
   } finally {
     if (ownPool) p.dispose();
   }

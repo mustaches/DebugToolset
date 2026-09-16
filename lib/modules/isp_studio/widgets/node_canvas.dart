@@ -415,7 +415,10 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                // (a) 点阵背景（屏幕空间绘制）。
+                // (a) 深色背景 + 点阵（屏幕空间绘制）。
+                const Positioned.fill(
+                  child: ColoredBox(color: Color(0xFF121212)),
+                ),
                 Positioned.fill(
                   child: CustomPaint(
                     painter:
@@ -636,7 +639,7 @@ class _GroupFramesPainter extends CustomPainter {
         canvas.drawRect(
             Rect.fromLTWH(textPos.dx - 2, textPos.dy - 1,
                 tp.width + 4, tp.height + 2),
-            Paint()..color = const Color(0xFF1E1E1E));
+            Paint()..color = const Color(0xFF121212));
         tp.paint(canvas, textPos);
       }
     }

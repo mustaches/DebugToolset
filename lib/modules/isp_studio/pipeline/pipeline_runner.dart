@@ -13,6 +13,7 @@ import 'video_source.dart';
 import 'instruments.dart';
 import 'brisque.dart';
 import 'isp_kernels.dart';
+import 'hsl_band_pool.dart';
 import 'levels_curve.dart';
 import 'niqe.dart';
 import 'piqe.dart';
@@ -1007,6 +1008,29 @@ Future<Uint8List> runChainFrame(
         frame = _Frame(
           data: adjustHsl(frame.data,
               maxValue: max,
+              hShiftDeg: _double(p, 'h_shift'),
+              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+              sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,
+              lGain: (p['l_gain'] as num?)?.toDouble() ?? 1.0),
+          format: 'hsl',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
+      // ---- 色彩控制器：高斯色相带内按权重施加色相偏移与 S/L 增益 ----
+      case 'color_controller':
+        frame.requireHsl('色彩控制器');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        frame = _Frame(
+          // ≥1M 像素按行带多核并行（与串行逐位一致），小图核内自动回串行。
+          data: await adjustHslBandParallel(frame.data,
+              width: w,
+              height: h,
+              maxValue: max,
+              hCenterDeg: _double(p, 'h_center'),
+              q: (p['q'] as num?)?.toDouble() ?? 2.0,
               hShiftDeg: _double(p, 'h_shift'),
               // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
               sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,

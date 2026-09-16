@@ -268,6 +268,144 @@ class Vgg16Gpu implements Vgg16AsyncForward {
     (handle as Vgg16GpuForwardHandle).dispose();
   }
 
+  @override
+  bool get supportsChannelStats => true;
+
+  /// DISTS 归约快路径（优化 15）：两个前向句柄的 5 个切片逐通道统计
+  /// 在 GPU 上按带归约（nn_chstats_f16.frag，Kahan fp32 部分和），
+  /// 全部 pass 录进同一 Picture 一次物化+回读（见
+  /// [GpuChannelStatsBatch]），带序 fp64 合并。仅回读统计缓冲（KB 级），
+  /// 跳过 5 切片全量特征的 GB 级下载。无论成败都释放两个句柄的
+  /// 驻留纹理。
+  @override
+  Future<List<VggSliceStats>> channelStatsPair(
+      Vgg16ForwardHandle handle0, Vgg16ForwardHandle handle1) async {
+    final h0 = handle0 as Vgg16GpuForwardHandle;
+    final h1 = handle1 as Vgg16GpuForwardHandle;
+    try {
+      final batch = _backend.beginChannelStatsBatch();
+      final channelsPer = <int>[];
+      final bandRows = <List<int>>[]; // 切片 → 各带在批次中的行号
+      final bandPixels = <List<int>>[]; // 切片 → 各带像素数（带高×W）
+      final yielder = GpuDispatchYield(); // 录制也让出（纯调度）
+      for (var k = 0; k < 5; k++) {
+        final singles0 = h0.slices;
+        if (singles0 != null) {
+          final a = singles0[k];
+          final b = h1.slices![k];
+          channelsPer.add(a.shape[1]);
+          bandRows.add([batch.addPair(a, b)]);
+          bandPixels.add([a.shape[2] * a.shape[3]]);
+        } else {
+          final a = h0.bandedSlices![k];
+          final b = h1.bandedSlices![k];
+          channelsPer.add(a.shape[1]);
+          final rows = <int>[];
+          final px = <int>[];
+          for (var i = 0; i < a.bands.length; i++) {
+            rows.add(batch.addPair(a.bands[i], b.bands[i]));
+            px.add(a.bands[i].shape[2] * a.bands[i].shape[3]);
+          }
+          bandRows.add(rows);
+          bandPixels.add(px);
+        }
+        await yielder.tick();
+      }
+      final rows = await batch.download();
+      // 带序 fp64 合并：行内布局 ((gi*5)+stat)*4+ci。
+      final out = <VggSliceStats>[];
+      for (var k = 0; k < 5; k++) {
+        final c = channelsPer[k];
+        final sums = Float64List(c * 5);
+        var pixels = 0;
+        for (var b = 0; b < bandRows[k].length; b++) {
+          final row = rows[bandRows[k][b]];
+          pixels += bandPixels[k][b];
+          for (var ch = 0; ch < c; ch++) {
+            final base = (ch >> 2) * 20 + (ch & 3);
+            for (var s = 0; s < 5; s++) {
+              sums[ch * 5 + s] += row[base + s * 4];
+            }
+          }
+        }
+        out.add(VggSliceStats(sums, pixels, c));
+      }
+      return out;
+    } finally {
+      h0.dispose();
+      h1.dispose();
+    }
+  }
+
+  @override
+  bool get supportsLpipsStats => true;
+
+  /// LPIPS 归约快路径（优化 16）：每个切片带先算逐像素范数图
+  ///（[GpuNnBackend.pixelNormGpu]），再录 LPIPS 归约行（3 项统计），
+  /// 整批一次回读；带序 fp64 合并（行内布局 ((gi*3)+stat)*4+ci）。
+  /// 无论成败都释放两个句柄的驻留纹理与范数中间纹理。
+  @override
+  Future<List<VggSliceStats>> lpipsStatsPair(
+      Vgg16ForwardHandle handle0, Vgg16ForwardHandle handle1) async {
+    final h0 = handle0 as Vgg16GpuForwardHandle;
+    final h1 = handle1 as Vgg16GpuForwardHandle;
+    final norms = <GpuNnTensor>[];
+    try {
+      final batch = _backend.beginChannelStatsBatch();
+      final channelsPer = <int>[];
+      final bandRows = <List<int>>[];
+      final bandPixels = <List<int>>[];
+      final yielder = GpuDispatchYield();
+      for (var k = 0; k < 5; k++) {
+        List<GpuNnTensor> bandsA, bandsB;
+        if (h0.slices != null) {
+          bandsA = [h0.slices![k]];
+          bandsB = [h1.slices![k]];
+        } else {
+          bandsA = h0.bandedSlices![k].bands;
+          bandsB = h1.bandedSlices![k].bands;
+        }
+        channelsPer.add(bandsA[0].shape[1]);
+        final rows = <int>[];
+        final px = <int>[];
+        for (var i = 0; i < bandsA.length; i++) {
+          final norm = _backend.pixelNormGpu(bandsA[i], bandsB[i]);
+          norms.add(norm);
+          rows.add(batch.addLpipsPair(bandsA[i], bandsB[i], norm));
+          px.add(bandsA[i].shape[2] * bandsA[i].shape[3]);
+        }
+        bandRows.add(rows);
+        bandPixels.add(px);
+        await yielder.tick();
+      }
+      final rows = await batch.download();
+      final out = <VggSliceStats>[];
+      for (var k = 0; k < 5; k++) {
+        final c = channelsPer[k];
+        final sums = Float64List(c * 3);
+        var pixels = 0;
+        for (var b = 0; b < bandRows[k].length; b++) {
+          final row = rows[bandRows[k][b]];
+          pixels += bandPixels[k][b];
+          for (var ch = 0; ch < c; ch++) {
+            final base = (ch >> 2) * 12 + (ch & 3);
+            for (var s = 0; s < 3; s++) {
+              sums[ch * 3 + s] += row[base + s * 4];
+            }
+          }
+        }
+        out.add(VggSliceStats(sums, pixels, c));
+      }
+      return out;
+    } finally {
+      for (final t in norms) {
+        t.dispose();
+      }
+      h0.dispose();
+      h1.dispose();
+    }
+  }
+
   /// 分块路径提交（大图：折叠布局总纹素数超单纹理上限时由
   /// [forwardSubmit] 选择）：语义与单纹理路径完全一致，各 op 换用
   /// banded 变体。

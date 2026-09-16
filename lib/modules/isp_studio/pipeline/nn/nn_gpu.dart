@@ -85,12 +85,123 @@ class GpuNnBandedTensor {
   int get height => shape[2];
   int get width => shape[3];
 
-  /// 各带高度。
+/// 各带高度。
   List<int> get bandHeights => [for (final b in bands) b.shape[2]];
 
   void dispose() {
     for (final b in bands) {
       b.dispose();
+    }
+  }
+}
+
+/// 双图逐通道统计归约的批量录制器（优化 15，DISTS 打分头用）：
+/// 多次 [addPair] 把各带/切片的归约 pass 作为一行录进同一 Picture，
+/// [download] 一次物化+回读全部行——把百余次小同步回读（实测每次
+/// ~50-90ms 固定开销）合并为一次。行内布局（每组 20 个 fp32 纹素，
+/// idx=((gi*5)+stat)*4+ci，stat：0=Σa 1=Σa² 2=Σb 3=Σb² 4=Σab）见
+/// shaders/nn/nn_chstats_f16.frag。
+class GpuChannelStatsBatch {
+  GpuChannelStatsBatch._(this._backend);
+
+  final GpuNnBackend _backend;
+  final ui.PictureRecorder _recorder = ui.PictureRecorder();
+  ui.Canvas? _canvas;
+  var _rows = 0;
+  var _rowStride = 0;
+  final _rowFloats = <int>[];
+  var _finished = false;
+
+  /// 录一行归约 pass（[a]/[b] 为同形状同布局的带/整图纹理），返回
+  /// 行号（与 [download] 返回列表的下标一致）。
+  int addPair(GpuNnTensor a, GpuNnTensor b) {
+    if (_finished) throw StateError('GpuChannelStatsBatch 已结束');
+    if (a.texW != b.texW ||
+        a.texH != b.texH ||
+        a.channelsPadded != b.channelsPadded ||
+        a.shape[2] != b.shape[2] ||
+        a.shape[3] != b.shape[3]) {
+      throw ArgumentError('channelStats 需要同形状同布局输入: '
+          '${a.shape}@${a.texW}x${a.texH} vs ${b.shape}@${b.texW}x${b.texH}');
+    }
+    final groups = a.channelsPadded ~/ 4;
+    final w = groups * 20;
+    if (w > GpuNnBackend.maxTextureDim) {
+      throw UnsupportedError('channelStats: 通道组过多（$groups）');
+    }
+    final shader = _backend._chstats.fragmentShader();
+    shader.setFloat(0, a.texW.toDouble());
+    shader.setFloat(1, a.texH.toDouble());
+    shader.setFloat(2, a.shape[3].toDouble()); // 逻辑 W
+    shader.setFloat(3, a.shape[2].toDouble()); // 逻辑 H（带高）
+    shader.setImageSampler(0, a.tex);
+    shader.setImageSampler(1, b.tex);
+    (_canvas ??= ui.Canvas(_recorder)).drawRect(
+        ui.Rect.fromLTWH(0, _rows.toDouble(), w.toDouble(), 1),
+        ui.Paint()..shader = shader);
+    if (w > _rowStride) _rowStride = w;
+    _rowFloats.add(w);
+    return _rows++;
+  }
+
+  /// 录一行 LPIPS 归约 pass（优化 16）：[a]/[b] 为同形状同布局的
+  /// 带/整图特征纹理，[norm] 为 [GpuNnBackend.pixelNormGpu] 的产物。
+  /// 行内布局每组 12 个 fp32 纹素（idx=((gi*3)+stat)*4+ci，stat：
+  /// 0=A=Σ(a/na)² 1=B=Σ(b/nb)² 2=X=Σ(a/na)(b/nb)），返回行号。
+  int addLpipsPair(GpuNnTensor a, GpuNnTensor b, GpuNnTensor norm) {
+    if (_finished) throw StateError('GpuChannelStatsBatch 已结束');
+    if (a.texW != b.texW ||
+        a.texH != b.texH ||
+        a.channelsPadded != b.channelsPadded ||
+        a.shape[2] != b.shape[2] ||
+        a.shape[3] != b.shape[3]) {
+      throw ArgumentError('lpipsStats 需要同形状同布局输入: '
+          '${a.shape}@${a.texW}x${a.texH} vs ${b.shape}@${b.texW}x${b.texH}');
+    }
+    final groups = a.channelsPadded ~/ 4;
+    final w = groups * 12;
+    if (w > GpuNnBackend.maxTextureDim) {
+      throw UnsupportedError('lpipsStats: 通道组过多（$groups）');
+    }
+    final shader = _backend._lpipsStats.fragmentShader();
+    shader.setFloat(0, a.texW.toDouble());
+    shader.setFloat(1, a.texH.toDouble());
+    shader.setFloat(2, a.shape[3].toDouble()); // 逻辑 W
+    shader.setFloat(3, a.shape[2].toDouble()); // 逻辑 H（带高）
+    shader.setFloat(4, norm.texW.toDouble());
+    shader.setFloat(5, norm.texH.toDouble());
+    shader.setImageSampler(0, a.tex);
+    shader.setImageSampler(1, b.tex);
+    shader.setImageSampler(2, norm.tex);
+    (_canvas ??= ui.Canvas(_recorder)).drawRect(
+        ui.Rect.fromLTWH(0, _rows.toDouble(), w.toDouble(), 1),
+        ui.Paint()..shader = shader);
+    if (w > _rowStride) _rowStride = w;
+    _rowFloats.add(w);
+    return _rows++;
+  }
+
+  /// 结束录制：一次物化 + 一次 toByteData 回读全部行，按行号返回
+  /// fp32 视图（共享同一缓冲，调用方只读）。
+  Future<List<Float32List>> download() async {
+    if (_finished) throw StateError('GpuChannelStatsBatch 已结束');
+    _finished = true;
+    if (_rows == 0) {
+      _recorder.endRecording().dispose();
+      return const [];
+    }
+    final picture = _recorder.endRecording();
+    final img = await picture.toImage(_rowStride, _rows);
+    picture.dispose();
+    try {
+      final bd = await img.toByteData();
+      final buf = bd!.buffer;
+      return [
+        for (var i = 0; i < _rows; i++)
+          buf.asFloat32List(i * _rowStride * 4, _rowFloats[i]),
+      ];
+    } finally {
+      img.dispose();
     }
   }
 }
@@ -144,7 +255,8 @@ class GpuDispatchYield {
 class GpuNnBackend implements NnBackend {
   GpuNnBackend._(this._conv3x3, this._relu, this._maxpool2x2, this._l2pool,
       this._stitch, this._avgpool2x2, this._addrelu, this._pool3x3,
-      this._concat4, this._dummy);
+      this._concat4, this._chstats, this._pixnorm, this._lpipsStats,
+      this._dummy);
 
   final ui.FragmentProgram _conv3x3;
 
@@ -171,6 +283,15 @@ class GpuNnBackend implements NnBackend {
 
   /// ≤4 路通道拼接（[concatChannelsGpu]，Inception 分支合并）。
   final ui.FragmentProgram _concat4;
+
+  /// 双图逐通道 5 项统计归约（[channelStatsGpu]，DISTS 打分头用）。
+  final ui.FragmentProgram _chstats;
+
+  /// 逐像素通道 L2 范数图（[pixelNormGpu]，LPIPS 打分头用）。
+  final ui.FragmentProgram _pixnorm;
+
+  /// LPIPS 打分头逐通道 3 项统计归约（GpuChannelStatsBatch.addLpipsPair）。
+  final ui.FragmentProgram _lpipsStats;
 
   /// 1x1 哑纹理：未使用的 sampler（uAccum/uBias/uSrcB/uSrcC 等）绑定它。
   final ui.Image _dummy;
@@ -201,6 +322,9 @@ class GpuNnBackend implements NnBackend {
   static const _addreluShaderAsset = 'shaders/nn/nn_addrelu_f16.frag';
   static const _pool3x3ShaderAsset = 'shaders/nn/nn_pool3x3_f16.frag';
   static const _concat4ShaderAsset = 'shaders/nn/nn_concat4_f16.frag';
+  static const _chstatsShaderAsset = 'shaders/nn/nn_chstats_f16.frag';
+  static const _pixnormShaderAsset = 'shaders/nn/nn_pixnorm_f16.frag';
+  static const _lpipsStatsShaderAsset = 'shaders/nn/nn_lpips_stats_f16.frag';
 
   static Future<GpuNnBackend?> tryCreate() async {
     try {
@@ -213,9 +337,13 @@ class GpuNnBackend implements NnBackend {
       final addrelu = await ui.FragmentProgram.fromAsset(_addreluShaderAsset);
       final pool3x3 = await ui.FragmentProgram.fromAsset(_pool3x3ShaderAsset);
       final concat4 = await ui.FragmentProgram.fromAsset(_concat4ShaderAsset);
+      final chstats = await ui.FragmentProgram.fromAsset(_chstatsShaderAsset);
+      final pixnorm = await ui.FragmentProgram.fromAsset(_pixnormShaderAsset);
+      final lpipsStats =
+          await ui.FragmentProgram.fromAsset(_lpipsStatsShaderAsset);
       final dummy = await _upload(Uint16List(2), 1, 1);
       return GpuNnBackend._(prog, relu, maxpool, l2pool, stitch, avgpool,
-          addrelu, pool3x3, concat4, dummy);
+          addrelu, pool3x3, concat4, chstats, pixnorm, lpipsStats, dummy);
     } catch (e) {
       // ignore: avoid_print
       print('[GpuNnBackend] 初始化失败: $e');
@@ -694,6 +822,47 @@ class GpuNnBackend implements NnBackend {
     shader.setImageSampler(0, x.tex);
     final out = _renderPass(shader, x.texW, x.texH);
     return GpuNnTensor(out, x.shape, x.texW, x.texH, x.channelsPadded);
+  }
+
+  /// 开始一批双图逐通道统计归约（优化 15，DISTS 打分头用）：
+  /// 返回的 [GpuChannelStatsBatch] 把多次归约 pass 作为行录进同一
+  /// Picture，最后一次物化+回读，把百余次小同步合并为一次。
+  GpuChannelStatsBatch beginChannelStatsBatch() => GpuChannelStatsBatch._(this);
+
+  /// 逐像素通道 L2 范数图（优化 16，LPIPS 打分头用）：对同布局特征
+  /// 图 [a]/[b] 计算每空间位置的 norm = sqrt(Σ_c x²)+1e-10（与 nn
+  /// ops.l2NormalizeChannels 同口径），输出每像素 2 个 fp32 位打包
+  /// 纹素（偶数纹素=A 范数、奇数=B），供 [GpuChannelStatsBatch]
+  /// .addLpipsPair 采样。返回值由调用方管理（用后 dispose）。
+  GpuNnTensor pixelNormGpu(GpuNnTensor a, GpuNnTensor b) {
+    if (a.texW != b.texW ||
+        a.texH != b.texH ||
+        a.channelsPadded != b.channelsPadded ||
+        a.shape[2] != b.shape[2] ||
+        a.shape[3] != b.shape[3]) {
+      throw ArgumentError('pixelNormGpu 需要同形状同布局输入: '
+          '${a.shape}@${a.texW}x${a.texH} vs ${b.shape}@${b.texW}x${b.texH}');
+    }
+    final h = a.shape[2], w = a.shape[3];
+    final outTexels = 2 * h * w;
+    if (outTexels >= GpuNnBackend.maxTexels) {
+      throw UnsupportedError('pixelNormGpu: ${w}x$h 超出单纹理上限');
+    }
+    final outTW = math.min(GpuNnBackend.maxTextureDim, outTexels);
+    final outTH = (outTexels + outTW - 1) ~/ outTW;
+    final shader = _pixnorm.fragmentShader();
+    shader.setFloat(0, a.texW.toDouble());
+    shader.setFloat(1, a.texH.toDouble());
+    shader.setFloat(2, w.toDouble());
+    shader.setFloat(3, h.toDouble());
+    shader.setFloat(4, outTW.toDouble());
+    shader.setFloat(5, outTH.toDouble());
+    shader.setFloat(6, (a.channelsPadded ~/ 4).toDouble());
+    shader.setImageSampler(0, a.tex);
+    shader.setImageSampler(1, b.tex);
+    final out = _renderPass(shader, outTW, outTH);
+    return GpuNnTensor(
+        out, [1, 1, outTH, outTW], outTW, outTH, 4);
   }
 
   /// 池化 pass 的公共部分（输出物理纹理尺寸按折叠布局摊平）。

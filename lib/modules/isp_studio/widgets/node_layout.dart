@@ -33,7 +33,7 @@ const Map<String, List<int>> kPortGroupGapRows = {
 const double kPortRadius = 5;
 
 /// 节点总高度：标题 + 端口行 + 类型附加区 + 底部留白。
-/// [previewExtraHeight] 对 preview、调节器（HSL/RGB/YUV、色饱和度/亮度、
+/// [previewExtraHeight] 对 preview、调节器（HSL/RGB/YUV、色彩控制器、色饱和度/亮度、
 /// 亮度/对比度、色彩平衡、色温）、高频边缘提取、曲线调节器与仪器节点
 /// 生效（可拖动调整的附加区高度）。
 double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
@@ -43,6 +43,7 @@ double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
   h += (kPortGroupGapRows[type.typeId]?.length ?? 0) * kPortRowHeight;
   if (type.typeId == 'preview' ||
       type.typeId == 'hsl_debugger' ||
+      type.typeId == 'color_controller' ||
       type.typeId == 'rgb_debugger' ||
       type.typeId == 'yuv_debugger' ||
       type.typeId == 'sat_bright_adjuster' ||

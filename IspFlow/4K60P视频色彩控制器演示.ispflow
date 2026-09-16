@@ -1,0 +1,109 @@
+{
+  "name": "4K60P视频色彩控制器演示",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "color_controller",
+      "x": 850.0,
+      "y": -500.0,
+      "width": 1280.0,
+      "extraHeight": 764.0,
+      "name": "色彩控制器#1",
+      "params": {
+        "bypass": false,
+        "h_center": 10.0,
+        "q": 4.0,
+        "h_shift": 17.0,
+        "s_gain": 1.0,
+        "l_gain": 1.0
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "preview",
+      "x": 710.0,
+      "y": 370.0,
+      "width": 800.0,
+      "extraHeight": 481.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 30,
+        "frameCount": 27000
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "preview",
+      "x": 1580.0,
+      "y": 370.0,
+      "width": 800.0,
+      "extraHeight": 481.0,
+      "name": "预览#2",
+      "params": {
+        "fps": 30,
+        "frameCount": 27000
+      }
+    },
+    {
+      "id": "n8",
+      "typeId": "video_source",
+      "x": 450.0,
+      "y": -490.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\4k30RecV1.mp4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n13",
+      "typeId": "bright_contrast_adjuster",
+      "x": 2220.0,
+      "y": -500.0,
+      "width": 1220.0,
+      "extraHeight": 704.0,
+      "name": "亮度/对比度调节器#1",
+      "params": {
+        "bypass": false,
+        "bright": 114.54239239660453,
+        "baseline": 46.4634325285804,
+        "gain": 113.42382138569374
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c9",
+      "from": "n8",
+      "fromPort": "out_hsl",
+      "to": "n1",
+      "toPort": "in"
+    },
+    {
+      "id": "c12",
+      "from": "n8",
+      "fromPort": "out_hsl",
+      "to": "n4",
+      "toPort": "in_hsl"
+    },
+    {
+      "id": "c14",
+      "from": "n1",
+      "fromPort": "out",
+      "to": "n13",
+      "toPort": "in_hsl"
+    },
+    {
+      "id": "c15",
+      "from": "n13",
+      "fromPort": "out_hsl",
+      "to": "n6",
+      "toPort": "in_hsl"
+    }
+  ],
+  "groups": [],
+  "nextId": 16
+}

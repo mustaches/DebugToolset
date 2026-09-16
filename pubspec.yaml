@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 0.1.0+1
 
 environment:
   sdk: ^3.12.2
@@ -46,6 +46,8 @@ dependencies:
   archive: ^3.6.1
   image: ^4.2.0
   ffi: ^2.2.0
+  dartssh2: ^2.22.3
+  package_info_plus: ^9.0.0
 
 dev_dependencies:
   flutter_test:
@@ -84,6 +86,10 @@ flutter:
     - shaders/isp/isp_apply_gains.frag
     - shaders/isp/isp_rgb2hsl.frag
     - shaders/isp/isp_hsl_adjust.frag
+    - shaders/isp/isp_hsl_band.frag
+    - shaders/isp/isp_rgba8_to_rgb16.frag
+    - shaders/isp/isp_yuv420p_to_rgb16.frag
+    - shaders/isp/isp_yuv420p_to_hsl16.frag
     - shaders/isp/isp_hsl2yuv.frag
     - shaders/isp/isp_extract_channel.frag
     - shaders/isp/isp_clahe_apply.frag
@@ -126,6 +132,9 @@ flutter:
     - shaders/nn/nn_addrelu_f16.frag
     - shaders/nn/nn_pool3x3_f16.frag
     - shaders/nn/nn_concat4_f16.frag
+    - shaders/nn/nn_chstats_f16.frag
+    - shaders/nn/nn_pixnorm_f16.frag
+    - shaders/nn/nn_lpips_stats_f16.frag
 
   # To add assets to your application, add an assets section, like this:
   # assets:

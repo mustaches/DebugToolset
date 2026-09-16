@@ -15,63 +15,27 @@ class ConnectionConfigPanel extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          // Mode Selector
-          ToggleButtons(
-            isSelected: [
-              terminalState.connectionMode == ConnectionMode.serial,
-              terminalState.connectionMode == ConnectionMode.network,
-            ],
-            onPressed: (index) {
-              if (terminalState.isConnected) return; // Cannot change mode while connected
-              terminalState.setConnectionMode(
-                index == 0 ? ConnectionMode.serial : ConnectionMode.network,
-              );
-            },
-            borderRadius: BorderRadius.circular(4),
-            constraints: const BoxConstraints(minHeight: 32, minWidth: 60),
-            children: const [
-              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('串口')),
-              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('网口')),
-            ],
+          // Serial Config Fields
+          Flexible(
+            child: _buildSerialConfig(context, terminalState),
           ),
-          const SizedBox(width: 16),
-          
-          // Config Fields based on mode
-          Expanded(
-            child: terminalState.connectionMode == ConnectionMode.serial
-                ? _buildSerialConfig(context, terminalState)
-                : _buildNetworkConfig(context, terminalState),
-          ),
-          
+
           const SizedBox(width: 8),
-          
-          // Timestamp Checkbox
-          Row(
-            children: [
-              Checkbox(
-                value: terminalState.showTimestamp,
-                onChanged: (val) {
-                  if (val != null) terminalState.toggleShowTimestamp(val);
-                },
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              const Text('显示时间戳', style: TextStyle(fontSize: 12)),
-            ],
-          ),
-          
-          const SizedBox(width: 16),
-          
-          // Connect Button
+
+          // Connect Button（与配置输入框同高，紧贴其右侧）
           IconButton.filled(
             onPressed: () {
               terminalState.toggleConnection();
             },
-            icon: Icon(terminalState.isConnected ? Icons.link_off : Icons.link, size: 20),
+            icon: Icon(terminalState.isConnected ? Icons.link_off : Icons.link, size: 16),
             tooltip: terminalState.isConnected ? '断开' : '连接',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             style: IconButton.styleFrom(
               backgroundColor: terminalState.isConnected ? Colors.red.shade700 : Colors.green.shade700,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
             ),
           ),
         ],
@@ -90,8 +54,11 @@ class ConnectionConfigPanel extends StatelessWidget {
           border: Border.all(color: Colors.grey.shade600),
           borderRadius: BorderRadius.circular(4),
         ),
-        alignment: Alignment.center,
-        child: child,
+        // stretch 让内容（输入框/下拉框）撑满盒高，配合各自的垂直居中使文字与框垂直中对齐
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [Expanded(child: child)],
+        ),
       );
     }
 
@@ -251,39 +218,6 @@ class ConnectionConfigPanel extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildNetworkConfig(BuildContext context, TerminalState state) {
-    return Row(
-      children: [
-        const Text('IP: ', style: TextStyle(fontSize: 12)),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 140,
-          child: TextField(
-            enabled: !state.isConnected,
-            decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.all(8), border: OutlineInputBorder()),
-            controller: TextEditingController(text: state.networkIp),
-            onChanged: (val) => state.updateNetworkConfig(val, state.networkPort),
-          ),
-        ),
-        const SizedBox(width: 16),
-        const Text('Port: ', style: TextStyle(fontSize: 12)),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 80,
-          child: TextField(
-            enabled: !state.isConnected,
-            decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.all(8), border: OutlineInputBorder()),
-            controller: TextEditingController(text: state.networkPort.toString()),
-            onChanged: (val) {
-              int? p = int.tryParse(val);
-              if (p != null) state.updateNetworkConfig(state.networkIp, p);
-            },
-          ),
-        ),
-      ],
     );
   }
 }

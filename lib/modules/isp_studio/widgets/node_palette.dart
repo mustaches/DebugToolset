@@ -40,6 +40,7 @@ const _processTypeIds = [
   'gamma',
   'ahe',
   'hsl_debugger',
+  'color_controller',
   'rgb_debugger',
   'yuv_debugger',
   'sat_bright_adjuster',

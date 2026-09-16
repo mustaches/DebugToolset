@@ -7,6 +7,20 @@ import 'package:debug_tool_set/modules/isp_studio/pipeline/audio_player.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/video_source.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
+/// Windows 上进程退出后文件句柄释放/杀软扫描有几十到几百毫秒延迟，
+/// 播放停止后立即删临时文件可能撞 ERROR_SHARING_VIOLATION，短暂重试。
+Future<void> deleteWithRetry(File f) async {
+  for (var i = 0; i < 50; i++) {
+    try {
+      await f.delete();
+      return;
+    } on PathAccessException {
+      if (i == 49) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+}
+
 void main() {
   /// 8bit unpacked RAW：每像素一个 16 位小端字（LSB 对齐，与位深无关）。
   List<int> raw8Le(Iterable<int> px) => [
@@ -47,7 +61,7 @@ void main() {
         expect(state.statusMessage, contains('已暂停'));
         expect(state.previewImage, isNotNull);
       } finally {
-        await raw.delete();
+        await deleteWithRetry(raw);
       }
     });
 
@@ -82,7 +96,7 @@ void main() {
         state.stopPlayback();
         await playing;
       } finally {
-        await raw.delete();
+        await deleteWithRetry(raw);
       }
     });
 
@@ -127,7 +141,7 @@ void main() {
         expect(sigs.length, greaterThan(1),
             reason: '播放中直方图应随帧变化（$sigs）');
       } finally {
-        await raw.delete();
+        await deleteWithRetry(raw);
       }
     });
 
@@ -165,7 +179,7 @@ void main() {
         expect(seen, containsAll(<int>[0, 1]));
         expect(seen.every((f) => f < 2), isTrue, reason: '不应播放第 3 帧');
       } finally {
-        await raw.delete();
+        await deleteWithRetry(raw);
       }
     });
 
@@ -189,7 +203,7 @@ void main() {
         expect(state.statusMessage, contains('预览就绪'));
         expect(state.previewImage, isNotNull);
       } finally {
-        await raw.delete();
+        await deleteWithRetry(raw);
       }
     });
 
@@ -222,7 +236,7 @@ void main() {
         expect(prev.paramValues['fps'], 2); // 视频原生帧率
         expect(prev.paramValues['frameCount'], 4); // 总帧数
       } finally {
-        await tmp.delete();
+        await deleteWithRetry(tmp);
       }
     });
 
@@ -265,7 +279,7 @@ void main() {
         expect(state.playbackDropped,
             lessThan((state.playbackProduced * 0.2).ceil()));
       } finally {
-        await tmp.delete();
+        await deleteWithRetry(tmp);
       }
     });
 
@@ -318,7 +332,7 @@ void main() {
         expect(state.playbackDisplayed,
             greaterThan(state.playbackProduced * 0.6));
       } finally {
-        await tmp.delete();
+        await deleteWithRetry(tmp);
       }
     });
 
@@ -360,7 +374,7 @@ void main() {
         expect(state.previewWidth, 64);
         expect(state.previewHeight, 64);
       } finally {
-        await tmp.delete();
+        await deleteWithRetry(tmp);
       }
     });
 
@@ -411,7 +425,7 @@ void main() {
         }
         expect(best, inInclusiveRange(12, 14)); // 440Hz 所在段
       } finally {
-        await tmp.delete();
+        await deleteWithRetry(tmp);
       }
     });
 
@@ -453,7 +467,7 @@ void main() {
         await cleanupAudioWavCache();
         expect(await File(wav).exists(), isFalse); // 缓存已清理
       } finally {
-        await tmp.delete();
+        await deleteWithRetry(tmp);
       }
     });
 
@@ -472,7 +486,7 @@ void main() {
         expect(info.hasAudio, isFalse);
         expect(await ensureAudioWav(tmp.path), isNull);
       } finally {
-        await tmp.delete();
+        await deleteWithRetry(tmp);
       }
     });
   });

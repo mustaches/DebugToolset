@@ -1637,6 +1637,29 @@ Uint16List adjustHsl(Uint16List hsl,
 }
 ''';
 
+/// 色彩控制器（isp_kernels.dart）：高斯色相带选择性调整。
+const String _colorControllerCode = r'''
+/// 色彩控制器：只调整色相落在以 hCenterDeg 为中心的高斯带内的像素。
+/// 带内权重 w(Δ°) = exp(-(Δ/σ)²/2)，Δ 为色环最短角距（0..180°），
+/// σ = 45°/q —— Q 越高带宽越窄，左右边带按正态分布衰减。
+/// 三个调整量均为恒等值时直接返回原数据（不拷贝）。
+/// 执行侧（adjustHslBandParallel）：宽×高 ≥ 1M 像素时按行带多核并行，
+/// 按带序确定性拼接，与串行逐位一致；小图自动回串行。
+Uint16List adjustHslBand(Uint16List hsl,
+    {required int maxValue,
+    double hCenterDeg = 0,
+    double q = 2.0,
+    double hShiftDeg = 0,
+    double sGain = 1.0,
+    double lGain = 1.0}) {
+  // 预计算 0..180° 的高斯权重 LUT（线性插值采样）。
+  // 逐像素：Δ = min(|H-hCenter|, 360-|H-hCenter|)；w = lut(Δ)；
+  // H' = (H + round(hShiftDeg·w/360·maxValue)) mod (maxValue+1)；
+  // S' = clamp(S · (1 + (sGain-1)·w))；L' = clamp(L · (1 + (lGain-1)·w))，
+  // 即带中心（w=1）满调整、带外（w→0）渐回恒等。
+}
+''';
+
 /// RGB 调节器（isp_kernels.dart）：RGB 域通道增益调参。
 const String _rgbDebuggerCode = r'''/// RGB 调节器：R/G/B 三通道分别乘增益后钳位到 0..maxValue。
 /// 三个增益均为恒等 1 时直接返回原数据（不拷贝）。
@@ -1996,6 +2019,7 @@ const Map<String, String> nodeSourceCode = {
   'csc_hsl2rgb': _cscHsl2RgbCode,
   'csc_hsl2yuv': _cscHsl2YuvCode,
   'hsl_debugger': _hslDebuggerCode,
+  'color_controller': _colorControllerCode,
   'rgb_debugger': _rgbDebuggerCode,
   'yuv_debugger': _yuvDebuggerCode,
   'sat_bright_adjuster': _satBrightCode,
@@ -2218,6 +2242,20 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
     CodeVariable(
         name: 'hShiftDeg', type: 'double', value: '色相偏移角度（节点参数 h_shift）'),
+    CodeVariable(
+        name: 'sGain', type: 'double', value: '饱和度增益（节点参数 s_gain）'),
+    CodeVariable(
+        name: 'lGain', type: 'double', value: '亮度增益（节点参数 l_gain）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
+  'color_controller': [
+    CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
+    CodeVariable(
+        name: 'hCenterDeg', type: 'double', value: '色相中心（节点参数 h_center）'),
+    CodeVariable(
+        name: 'q', type: 'double', value: 'Q 值（带宽，节点参数 q）'),
+    CodeVariable(
+        name: 'hShiftDeg', type: 'double', value: '色相调整角度 ±180°（节点参数 h_shift）'),
     CodeVariable(
         name: 'sGain', type: 'double', value: '饱和度增益（节点参数 s_gain）'),
     CodeVariable(
@@ -2626,6 +2664,10 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'hsl_debugger': [
     CodeVariable(
         name: 'out', type: 'Uint16List', value: '调整后交织 HSL（w*h*3）'),
+  ],
+  'color_controller': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '带内调整后交织 HSL（w*h*3）'),
   ],
   'rgb_debugger': [
     CodeVariable(

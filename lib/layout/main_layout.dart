@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../providers/terminal_state.dart';
+import '../providers/network_terminal_state.dart';
 import '../modules/terminal/terminal_view.dart';
+import '../modules/network_terminal/network_terminal_view.dart';
 import '../modules/oscilloscope/oscilloscope_view.dart';
 import '../modules/hex_editor/hex_editor_view.dart';
 import '../modules/text_editor/text_editor_view.dart';
@@ -44,46 +46,52 @@ class MainLayout extends StatelessWidget {
         children: [
           const SizedBox(height: 10),
           _SidebarIcon(
-            icon: Icons.show_chart,
-            tooltip: '示波器',
+            icon: Icons.terminal,
+            tooltip: '串口终端',
             isSelected: appState.selectedModuleIndex == 0,
             onTap: () => appState.setModuleIndex(0),
           ),
           _SidebarIcon(
-            icon: Icons.terminal,
-            tooltip: '终端',
+            icon: Icons.lan,
+            tooltip: '网络终端',
             isSelected: appState.selectedModuleIndex == 1,
             onTap: () => appState.setModuleIndex(1),
           ),
           _SidebarIcon(
-            icon: Icons.memory,
-            tooltip: 'Hex 编辑器',
+            iconBuilder: (color) => _OscilloscopeIcon(color: color),
+            tooltip: '示波器',
             isSelected: appState.selectedModuleIndex == 2,
             onTap: () => appState.setModuleIndex(2),
           ),
           _SidebarIcon(
-            icon: Icons.text_snippet,
-            tooltip: '文本对比 / 补丁',
+            icon: Icons.memory,
+            tooltip: 'Hex 编辑器',
             isSelected: appState.selectedModuleIndex == 3,
             onTap: () => appState.setModuleIndex(3),
           ),
           _SidebarIcon(
-            icon: Icons.text_fields,
-            tooltip: '字库提取',
+            icon: Icons.text_snippet,
+            tooltip: '文本对比 / 补丁',
             isSelected: appState.selectedModuleIndex == 4,
             onTap: () => appState.setModuleIndex(4),
           ),
           _SidebarIcon(
-            icon: Icons.dashboard_customize,
-            tooltip: 'UI 设计器',
+            icon: Icons.text_fields,
+            tooltip: '字库提取',
             isSelected: appState.selectedModuleIndex == 5,
             onTap: () => appState.setModuleIndex(5),
           ),
           _SidebarIcon(
-            icon: Icons.hub,
-            tooltip: 'ISP Studio',
+            icon: Icons.dashboard_customize,
+            tooltip: 'UI 设计器',
             isSelected: appState.selectedModuleIndex == 6,
             onTap: () => appState.setModuleIndex(6),
+          ),
+          _SidebarIcon(
+            icon: Icons.hub,
+            tooltip: 'ISP Studio',
+            isSelected: appState.selectedModuleIndex == 7,
+            onTap: () => appState.setModuleIndex(7),
           ),
           const Spacer(),
           const SizedBox(height: 10),
@@ -99,24 +107,27 @@ class MainLayout extends StatelessWidget {
     Widget activeModule;
     switch (selectedIndex) {
       case 0:
-        activeModule = const OscilloscopeView();
-        break;
-      case 1:
         activeModule = const TerminalView();
         break;
+      case 1:
+        activeModule = const NetworkTerminalView();
+        break;
       case 2:
-        activeModule = const HexEditorView();
+        activeModule = const OscilloscopeView();
         break;
       case 3:
-        activeModule = const TextEditorView();
+        activeModule = const HexEditorView();
         break;
       case 4:
-        activeModule = const FontExtractorView();
+        activeModule = const TextEditorView();
         break;
       case 5:
-        activeModule = const UiDesignerView();
+        activeModule = const FontExtractorView();
         break;
       case 6:
+        activeModule = const UiDesignerView();
+        break;
+      case 7:
         activeModule = const IspStudioView();
         break;
       default:
@@ -134,12 +145,15 @@ class MainLayout extends StatelessWidget {
   Widget _buildStatusBar(BuildContext context) {
     final selectedIndex = context.watch<AppState>().selectedModuleIndex;
     final terminalState = context.watch<TerminalState>();
+    final networkState = context.watch<NetworkTerminalState>();
 
-    String statusRight = terminalState.isConnected
-        ? '${terminalState.serialPort} - ${terminalState.baudRate}'
-        : '未连接';
+    final statusParts = <String>[
+      if (terminalState.isConnected) '${terminalState.serialPort} - ${terminalState.baudRate}',
+      if (networkState.isConnected) '${networkState.host}:${networkState.port}',
+    ];
+    String statusRight = statusParts.isEmpty ? '未连接' : statusParts.join(' | ');
 
-    if (selectedIndex == 6) {
+    if (selectedIndex == 7) {
       final ispState = context.watch<IspStudioState>();
       return Container(
         height: 28,
@@ -215,7 +229,7 @@ class MainLayout extends StatelessWidget {
       );
     }
 
-    String statusLeft = terminalState.isConnected ? '正在运行' : '准备就绪';
+    String statusLeft = (terminalState.isConnected || networkState.isConnected) ? '正在运行' : '准备就绪';
 
     return Container(
       height: 28,
@@ -233,17 +247,19 @@ class MainLayout extends StatelessWidget {
 }
 
 class _SidebarIcon extends StatefulWidget {
-  final IconData icon;
+  final IconData? icon;
+  final Widget Function(Color color)? iconBuilder;
   final String tooltip;
   final bool isSelected;
   final VoidCallback onTap;
 
   const _SidebarIcon({
-    required this.icon,
+    this.icon,
+    this.iconBuilder,
     required this.tooltip,
     required this.isSelected,
     required this.onTap,
-  });
+  }) : assert(icon != null || iconBuilder != null);
 
   @override
   State<_SidebarIcon> createState() => _SidebarIconState();
@@ -323,14 +339,86 @@ class _SidebarIconState extends State<_SidebarIcon> {
                 ? Border(left: BorderSide(color: colorScheme.primary, width: 3))
                 : const Border(left: BorderSide(color: Colors.transparent, width: 3)),
           ),
-          child: Icon(
-            widget.icon,
-            color: widget.isSelected ? colorScheme.primary : Colors.grey,
-            size: 22,
-          ),
+          child: widget.iconBuilder != null
+              ? Center(child: widget.iconBuilder!(widget.isSelected ? colorScheme.primary : Colors.grey))
+              : Icon(
+                  widget.icon,
+                  color: widget.isSelected ? colorScheme.primary : Colors.grey,
+                  size: 22,
+                ),
         ),
       ),
     );
   }
 }
 
+
+/// 示波器侧边栏图标：屏幕 + 底座 + 方波波形
+class _OscilloscopeIcon extends StatelessWidget {
+  final Color color;
+
+  const _OscilloscopeIcon({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: const Size.square(22),
+      painter: _OscilloscopePainter(color),
+    );
+  }
+}
+
+class _OscilloscopePainter extends CustomPainter {
+  final Color color;
+
+  _OscilloscopePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 22.0; // 以 22x22 为设计基准等比缩放
+    final stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // 屏幕（圆角矩形）
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTRB(1.6 * s, 2.4 * s, 20.4 * s, 16.4 * s),
+        Radius.circular(2.6 * s),
+      ),
+      stroke,
+    );
+
+    // 底座
+    canvas.drawLine(Offset(11 * s, 16.4 * s), Offset(11 * s, 19 * s), stroke);
+    canvas.drawLine(Offset(7.6 * s, 19.4 * s), Offset(14.4 * s, 19.4 * s), stroke);
+
+    // 方波波形
+    final wave = Path()
+      ..moveTo(3.6 * s, 9.4 * s)
+      ..lineTo(5.8 * s, 9.4 * s)
+      ..lineTo(5.8 * s, 6.0 * s)
+      ..lineTo(9.6 * s, 6.0 * s)
+      ..lineTo(9.6 * s, 12.8 * s)
+      ..lineTo(13.4 * s, 12.8 * s)
+      ..lineTo(13.4 * s, 6.0 * s)
+      ..lineTo(17.2 * s, 6.0 * s)
+      ..lineTo(17.2 * s, 9.4 * s)
+      ..lineTo(18.6 * s, 9.4 * s);
+    canvas.drawPath(
+      wave,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4 * s
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_OscilloscopePainter oldDelegate) => oldDelegate.color != color;
+}

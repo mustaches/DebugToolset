@@ -155,6 +155,30 @@ double lpipsSliceScoreInIsolate(
   return layerSum / s;
 }
 
+/// 优化 16 归约快路径的打分：由 GPU 归约的逐通道 3 项统计
+///（A=Σ(a/na)²、B=Σ(b/nb)²、X=Σ(a/na)(b/nb)）计算 LPIPS 分值——
+/// (a/na−b/nb)² = A+B−2X 展开；空间平均与线性头加权、跨切片求和
+/// 顺序同 [_lpipsFromFeats]（差异为展开式舍入与求和顺序）。
+double _lpipsFromSliceStats(
+    List<VggSliceStats> stats, List<Float32List> linW) {
+  var score = 0.0;
+  for (var k = 0; k < 5; k++) {
+    final st = stats[k];
+    final c = st.channels;
+    final s = st.pixels.toDouble();
+    final w = linW[k];
+    var layerSum = 0.0;
+    for (var ch = 0; ch < c; ch++) {
+      final sa = st.sums[ch * 3];
+      final sb = st.sums[ch * 3 + 1];
+      final sx = st.sums[ch * 3 + 2];
+      layerSum += w[ch] * (sa + sb - 2 * sx);
+    }
+    score += layerSum / s; // spatial_average：mean over H×W
+  }
+  return score;
+}
+
 /// 打分头（优化 9）：5 个切片各自 Isolate.run 后台并行（特征经
 /// TransferableTypedData 零拷贝进出，调用后 feats/linW 的底层缓冲被
 /// 转移、不可再用——两条调用路径的打分头均只调用一次，无复用），
@@ -239,16 +263,27 @@ Future<double> lpipsScoreParallel(
         await vf.discardForward(h0); // 防切片纹理泄漏
         rethrow;
       }
+      // 优化 16：GPU 归约快路径——逐像素范数图 + 逐通道 3 项统计
+      //（A=Σ(a/na)²、B=Σ(b/nb)²、X=Σ(a/na)(b/nb)）在 GPU 上按带归约，
+      // 只回读微小统计缓冲，跳过 5 切片全量特征的 GB 级回读与 CPU
+      // 归一化大循环。与下载+CPU 打分头的差异为展开式舍入与求和
+      // 顺序（验收口径见 DEEP_IQA_PROGRESS.md 优化 16）。
+      // lpipsStatsPair 无论成败都接管（释放）两个句柄。
+      if (vf.supportsLpipsStats) {
+        final stats = await vf.lpipsStatsPair(h0, h1);
+        onBackend?.call(true);
+        return _lpipsFromSliceStats(stats, linW);
+      }
       List<NnTensor> feats0;
       try {
         feats0 = await vf.forwardDownload(h0);
       } catch (_) {
-        await vf.discardForward(h1);
+        await vf.discardForward(h1); // 防切片纹理泄漏
         rethrow;
       }
       final feats1 = await vf.forwardDownload(h1);
       onBackend?.call(true);
-      return _lpipsHeadParallel(feats0, feats1, linW);
+      return await _lpipsHeadParallel(feats0, feats1, linW);
     } catch (e) {
       // ignore: avoid_print
       print('[lpipsScoreParallel] GPU 前向失败，整链回退 CPU 池: $e');
@@ -263,7 +298,7 @@ Future<double> lpipsScoreParallel(
         await vgg.forwardParallel(_lpipsInput(rgbaA, width, height), p);
     final feats1 =
         await vgg.forwardParallel(_lpipsInput(rgbaB, width, height), p);
-    return _lpipsHeadParallel(feats0, feats1, linW);
+    return await _lpipsHeadParallel(feats0, feats1, linW);
   } finally {
     if (ownPool) p.dispose();
   }

@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/macro_state.dart';
-import '../../providers/terminal_state.dart';
+import '../../providers/terminal_session.dart';
 import 'macro_editor_dialog.dart';
 
 class MacroToolbar extends StatefulWidget {
+  final TerminalSession session;
   final Function(String command, bool isHex, String eolMode) onPlayCommand;
-  
-  const MacroToolbar({super.key, required this.onPlayCommand});
+  final VoidCallback? onHide;
+
+  const MacroToolbar({
+    super.key,
+    required this.session,
+    required this.onPlayCommand,
+    this.onHide,
+  });
 
   @override
   State<MacroToolbar> createState() => _MacroToolbarState();
@@ -139,7 +146,7 @@ class _MacroToolbarState extends State<MacroToolbar> {
   @override
   Widget build(BuildContext context) {
     final macroState = context.watch<MacroState>();
-    final terminalState = context.read<TerminalState>();
+    final session = widget.session;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -158,62 +165,63 @@ class _MacroToolbarState extends State<MacroToolbar> {
                 ),
                 const SizedBox(width: 8),
                 
-                // 组合下拉框与操作按钮
-                Container(
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
-                  ),
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 130,
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _selectedFile,
-                            isExpanded: true,
-                            isDense: true,
-                            iconSize: 18,
-                            hint: const Text('请选择宏文件...', style: TextStyle(fontSize: 12)),
-                            items: _files.map((file) => DropdownMenuItem(
-                              value: file,
-                              child: Text(file, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
-                            )).toList(),
-                            onChanged: macroState.isPlaying || macroState.isRecording ? null : (val) {
-                              setState(() => _selectedFile = val);
-                            },
+                // 组合下拉框与操作按钮（宽度撑满左侧区域，靠近右侧控制按钮）
+                Expanded(
+                  child: Container(
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              value: _selectedFile,
+                              isExpanded: true,
+                              isDense: true,
+                              iconSize: 18,
+                              hint: const Text('请选择宏文件...', style: TextStyle(fontSize: 12)),
+                              items: _files.map((file) => DropdownMenuItem(
+                                value: file,
+                                child: Text(file, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                              )).toList(),
+                              onChanged: macroState.isPlaying || macroState.isRecording ? null : (val) {
+                                setState(() => _selectedFile = val);
+                              },
+                            ),
                           ),
                         ),
-                      ),
-                      Container(width: 1, height: 20, color: Theme.of(context).dividerColor, margin: const EdgeInsets.symmetric(horizontal: 4)),
-                      IconButton(
-                        icon: const Icon(Icons.refresh, size: 14),
-                        tooltip: '刷新列表',
-                        splashRadius: 16,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                        onPressed: macroState.isPlaying || macroState.isRecording ? null : _refreshFiles,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.edit, size: 14, color: Colors.blueAccent),
-                        tooltip: '编辑脚本',
-                        splashRadius: 16,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                        onPressed: macroState.isPlaying || macroState.isRecording || _selectedFile == null ? null : _editMacro,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, size: 14, color: Colors.redAccent),
-                        tooltip: '删除脚本',
-                        splashRadius: 16,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                        onPressed: macroState.isPlaying || macroState.isRecording || _selectedFile == null ? null : _deleteMacro,
-                      ),
-                    ],
+                        Container(width: 1, height: 20, color: Theme.of(context).dividerColor, margin: const EdgeInsets.symmetric(horizontal: 4)),
+                        IconButton(
+                          icon: const Icon(Icons.refresh, size: 14),
+                          tooltip: '刷新列表',
+                          splashRadius: 16,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                          onPressed: macroState.isPlaying || macroState.isRecording ? null : _refreshFiles,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.edit, size: 14, color: Colors.blueAccent),
+                          tooltip: '编辑脚本',
+                          splashRadius: 16,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                          onPressed: macroState.isPlaying || macroState.isRecording || _selectedFile == null ? null : _editMacro,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, size: 14, color: Colors.redAccent),
+                          tooltip: '删除脚本',
+                          splashRadius: 16,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                          onPressed: macroState.isPlaying || macroState.isRecording || _selectedFile == null ? null : _deleteMacro,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -309,7 +317,7 @@ class _MacroToolbarState extends State<MacroToolbar> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                   ),
                   onPressed: macroState.isRecording || _selectedFile == null ? null : () {
-                    macroState.playMacro(_selectedFile!, widget.onPlayCommand, terminalState.addSystemLog, () => terminalState.isConnected);
+                    macroState.playMacro(_selectedFile!, widget.onPlayCommand, session.addSystemLog, () => session.isConnected);
                   },
                 )
               else
@@ -349,6 +357,19 @@ class _MacroToolbarState extends State<MacroToolbar> {
                   ),
                   onPressed: () => _showSaveDialog(context, macroState),
                 ),
+
+              // 隐藏宏工具栏按钮（恢复入口在视图层的统一恢复条右侧）
+              if (widget.onHide != null) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.keyboard_arrow_down, size: 14, color: Colors.blueAccent),
+                  tooltip: '隐藏宏工具栏',
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                  onPressed: widget.onHide,
+                ),
+              ],
             ],
           ),
         ],
