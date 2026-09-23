@@ -3,7 +3,7 @@
 ; Non-commercial use only
 
 #define MyAppName "DebugToolset"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "FZDL.CG"
 #define MyAppURL "https://github.com/mustaches/DebugToolset"
 #define MyAppExeName "debug_tool_set.exe"
