@@ -75,6 +75,13 @@ flutter:
   assets:
     - LXI_Logo/LXI_Logo.svg
     - LXI_Logo/LXI_Logo_2.png
+    # ISP Studio 编译工具栏「编译」按钮图标（自绘锤子+砖墙，VS Build 风格）。
+    - icons/build_project.svg
+    # ISP Studio「查看代码」：pipeline 真实源码打包为资产，运行时按符号提取。
+    - lib/modules/isp_studio/pipeline/
+    - lib/modules/isp_studio/pipeline/metrics/
+    # 嵌入式相关节点的 ANSI C99 参考实现（C 代码视图按文件加载）。
+    - lib/modules/isp_studio/c_ref/
 
   shaders:
     - shaders/yuv_planes.frag

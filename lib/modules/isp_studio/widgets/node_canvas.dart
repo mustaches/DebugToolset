@@ -13,6 +13,7 @@ import '../../../providers/isp_studio_state.dart';
 import '../models/isp_graph.dart';
 import '../models/isp_node.dart';
 import 'connection_painter.dart';
+import 'group_code_page.dart';
 import 'node_layout.dart';
 import 'node_widget.dart';
 
@@ -45,8 +46,29 @@ Rect? ispGroupBounds(IspGraph graph, IspNodeGroup group) {
 
 /// 编组命名对话框：预填默认名「编组#N」，确定后以该名编组当前多选
 /// 节点（空名回退默认名）。工具栏编组按钮与节点右键菜单「编组」共用。
+/// 多选混合了可/不可导出 C 两类节点时：弹出说明并放弃本次编组。
 Future<void> showIspGroupNamingDialog(
     BuildContext context, IspStudioState state) async {
+  if (state.selectionMixesCExportNodes) {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2E2E2E),
+        title: const Text('无法编组',
+            style: TextStyle(color: Colors.white, fontSize: 14)),
+        content: const Text(
+          '所选节点中混合了可导出 C 代码的节点与不可导出 C 代码的节点（仪器、评价、导入导出等 PC 侧节点），两类节点不能编为一组。\n\n请调整为同一类节点后再编组。',
+          style: TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('知道了')),
+        ],
+      ),
+    );
+    return;
+  }
   final controller =
       TextEditingController(text: state.graph.uniqueGroupName());
   final name = await showDialog<String>(
@@ -275,13 +297,14 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
     return KeyEventResult.ignored;
   }
 
-  /// 节点标题栏右键菜单：多选时点中选中节点提供「编组」；点中已编组
-  /// 节点提供「取消编组」。其余情况不弹菜单（保留右键拖动平移画布）。
+  /// 编组右键菜单：多选时点中选中节点提供「编组」；点中已编组节点
+  /// 或编组框内任意位置提供「查看C代码」「取消编组」。其余情况不弹
+  /// 菜单（保留右键拖动平移画布）。
   void _showNodeGroupMenu(
       IspStudioState state, String nodeId, Offset globalPos) {
     final groupId = state.groupIdOf(nodeId);
     final canGroup = groupId == null &&
-        state.selectedNodeIds.length >= 2 &&
+        state.canGroupSelectedNodes &&
         state.selectedNodeIds.contains(nodeId);
     if (groupId == null && !canGroup) return;
     showMenu<String>(
@@ -292,6 +315,8 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
         if (canGroup)
           const PopupMenuItem(value: 'group', child: Text('编组')),
         if (groupId != null)
+          const PopupMenuItem(value: 'viewCode', child: Text('查看C代码')),
+        if (groupId != null)
           const PopupMenuItem(value: 'ungroup', child: Text('取消编组')),
       ],
     ).then((v) {
@@ -299,10 +324,19 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
       if (v == 'group') {
         // 弹命名对话框（默认「编组#N」）后编组。
         showIspGroupNamingDialog(context, state);
+      } else if (v == 'viewCode' && groupId != null) {
+        _viewGroupCode(state, groupId);
       } else if (v == 'ungroup' && groupId != null) {
         state.ungroup(groupId);
       }
     });
+  }
+
+  /// 编组「查看代码」：校验不过弹错误对话框；通过则打开编组代码标签页。
+  Future<void> _viewGroupCode(IspStudioState state, String groupId) async {
+    final group = state.graph.groups.firstWhere((g) => g.id == groupId);
+    if (!await ensureGroupCExportable(context, state.graph, group)) return;
+    state.openGroupCodeTab(groupId);
   }
 
   @override
@@ -363,9 +397,23 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
             _boxSelectStartCanvasPos = null;
             if (event.buttons & kSecondaryButton != 0) {
               // 标题栏右键：编组/取消编组菜单。
-              final titleNodeId = _nodeAt(state, globalToCanvas(event.position));
+              final canvasPos = globalToCanvas(event.position);
+              final titleNodeId = _nodeAt(state, canvasPos);
               if (titleNodeId != null) {
                 _showNodeGroupMenu(state, titleNodeId, event.position);
+              } else {
+                // 编组框内任意位置（节点卡片主体/框内空白/组名带）右键：
+                // 定位所属编组，同样弹编组菜单。
+                final cardNodeId = _nodeCardAt(state, canvasPos);
+                if (cardNodeId != null) {
+                  _showNodeGroupMenu(state, cardNodeId, event.position);
+                } else {
+                  final group = _groupAt(state, canvasPos);
+                  if (group != null) {
+                    _showNodeGroupMenu(
+                        state, group.nodeIds.first, event.position);
+                  }
+                }
               }
             }
           }

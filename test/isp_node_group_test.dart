@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +9,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 import 'package:debug_tool_set/modules/isp_studio/isp_studio_view.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_canvas.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_layout.dart';
+import 'package:debug_tool_set/modules/isp_studio/widgets/node_property_panel.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_widget.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
@@ -77,21 +80,28 @@ void main() {
       expect(state.selectedNodeIds, [ids[1]]);
     });
 
-    test('重新编组会把成员从旧组摘除，旧组不足 2 人解散', () {
+    test('选择中包含已编组节点时不允许再编组', () {
       final ids = addThree();
-      // 第一组：n1+n2。
       state.selectNode(ids[0]);
       state.selectNode(ids[1], multiSelect: true);
       state.groupSelectedNodes();
       expect(state.graph.groups.single.nodeIds, {ids[0], ids[1]});
+      // 编组联动使选择即整组成员 → 不允许再编组。
+      expect(state.canGroupSelectedNodes, isFalse);
 
-      // 框选 n2、n3（框选不做编组联动，可取出组内子集）后重新编组：
-      // n2 从旧组摘除，旧组只剩 n1 解散；新组为 {n2, n3}。
+      // 框选 n2（已编组）+ n3（未编组）：不允许编组，旧组保持原样。
       state.updateBoxSelection(const Offset(350, 50), const Offset(850, 250));
       state.endBoxSelection();
       expect(state.selectedNodeIds, containsAll([ids[1], ids[2]]));
+      expect(state.canGroupSelectedNodes, isFalse);
       state.groupSelectedNodes();
       expect(state.graph.groups.length, 1);
+      expect(state.graph.groups.single.nodeIds, {ids[0], ids[1]});
+
+      // 先取消编组后，n2+n3 才允许编为新组。
+      state.ungroup(state.graph.groups.single.id);
+      expect(state.canGroupSelectedNodes, isTrue);
+      state.groupSelectedNodes();
       expect(state.graph.groups.single.nodeIds, {ids[1], ids[2]});
     });
 
@@ -148,6 +158,71 @@ void main() {
       // 指定名与重命名。
       state.renameGroup(state.graph.groups.last.id, '自定义组');
       expect(state.graph.groups.last.name, '自定义组');
+    });
+
+    test('可导出 C 与不可导出 C 的节点混合时不允许编组', () {
+      state.addNodeAt('gamma', const Offset(100, 100)); // 可导出 C
+      final n1 = state.graph.nodes.keys.last;
+      state.addNodeAt('histogram', const Offset(400, 100)); // PC 侧节点
+      final n2 = state.graph.nodes.keys.last;
+      state.addNodeAt('ccm', const Offset(700, 100)); // 可导出 C
+      final n3 = state.graph.nodes.keys.last;
+
+      // 混合选择：判定为混合，编组为空操作。
+      state.selectNode(n1);
+      state.selectNode(n2, multiSelect: true);
+      expect(state.selectionMixesCExportNodes, isTrue);
+      state.groupSelectedNodes();
+      expect(state.graph.groups, isEmpty);
+
+      // 纯可导出 C 选择：允许编组。
+      state.selectNode(n1);
+      state.selectNode(n3, multiSelect: true);
+      expect(state.selectionMixesCExportNodes, isFalse);
+      state.groupSelectedNodes();
+      expect(state.graph.groups.single.nodeIds, {n1, n3});
+    });
+
+    test('编组随保存/打开 .ispflow 文件往返保留', () async {
+      final dir = await Directory.systemTemp.createTemp('isp_flow_group_');
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}/t.ispflow';
+
+      final ids = addThree();
+      state.selectNode(ids[0]);
+      state.selectNode(ids[1], multiSelect: true);
+      state.groupSelectedNodes(name: '核心组');
+      await state.saveGraphToFile(path);
+
+      // 保存的文件本身应包含 groups 字段。
+      expect(await File(path).readAsString(), contains('"groups"'));
+
+      // 取消编组后再打开该文件：编组应从文件恢复。
+      state.ungroup(state.graph.groups.single.id);
+      expect(state.graph.groups, isEmpty);
+      await state.importGraphFromFile(path);
+      expect(state.graph.groups.single.nodeIds, {ids[0], ids[1]});
+      expect(state.graph.groups.single.name, '核心组');
+    });
+
+    test('未选中状态下 beginNodeDrag 组内节点，整组进入拖动组', () {
+      final ids = addThree();
+      state.selectNode(ids[0]);
+      state.selectNode(ids[1], multiSelect: true);
+      state.groupSelectedNodes();
+      // 清空选择：模拟直接按住标题栏拖动（拖动前未点选）。
+      state.selectNode(null);
+
+      state.beginNodeDrag(ids[0]);
+      state.moveNode(ids[0], const Offset(50, 30));
+      state.endNodeDrag();
+
+      // 组内两个成员同步位移，组外节点不动。
+      expect(state.graph.nodes[ids[0]]!.x - 100, closeTo(50, 1.1));
+      expect(state.graph.nodes[ids[0]]!.y - 100, closeTo(30, 1.1));
+      expect(state.graph.nodes[ids[1]]!.x - 400, closeTo(50, 1.1));
+      expect(state.graph.nodes[ids[1]]!.y - 100, closeTo(30, 1.1));
+      expect(state.graph.nodes[ids[2]]!.x, 800);
     });
 
     test('编组包围框顶部延伸组名净空带（组名不被节点遮挡）', () {
@@ -225,6 +300,85 @@ void main() {
       expect(state.graph.groups, isEmpty);
     });
 
+    testWidgets('编组框内任意位置右键弹出编组菜单', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final state = IspStudioState.empty();
+      state.addNodeAt('image_source', const Offset(100, 100));
+      final n1 = state.graph.nodes.keys.first;
+      state.addNodeAt('preview', const Offset(400, 100));
+      final n2 = state.graph.nodes.keys.last;
+      state.selectNode(n1);
+      state.selectNode(n2, multiSelect: true);
+      state.groupSelectedNodes();
+      state.selectNode(null);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: state,
+          child: const MaterialApp(home: Scaffold(body: IspStudioView())),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      Offset globalOf(Offset canvasPos) =>
+          tester.getTopLeft(find.byType(IspNodeCanvas)) +
+          state.canvasOffset +
+          canvasPos * state.canvasZoom;
+
+      // 1) 编组框内两节点卡片之间的空隙右键 → 出现「取消编组」。
+      await rightClick(tester, globalOf(const Offset(340, 110)));
+      expect(find.text('取消编组'), findsOneWidget);
+      await tester.tap(find.text('取消编组'));
+      await tester.pumpAndSettle();
+      expect(state.graph.groups, isEmpty);
+
+      // 2) 重新编组后右键节点卡片主体（标题栏下方）→ 同样弹出菜单。
+      state.selectNode(n1);
+      state.selectNode(n2, multiSelect: true);
+      state.groupSelectedNodes();
+      state.selectNode(null);
+      await tester.pump();
+      await rightClick(tester,
+          globalOf(Offset(150, 100 + kNodeTitleHeight + 20)));
+      expect(find.text('取消编组'), findsOneWidget);
+      await tester.tap(find.text('取消编组'));
+      await tester.pumpAndSettle();
+      expect(state.graph.groups, isEmpty);
+    });
+
+    testWidgets('混合可/不可导出 C 节点编组时弹出说明并取消', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final state = IspStudioState.empty();
+      state.addNodeAt('gamma', const Offset(100, 100)); // 可导出 C
+      final n1 = state.graph.nodes.keys.first;
+      state.addNodeAt('histogram', const Offset(400, 100)); // PC 侧节点
+      final n2 = state.graph.nodes.keys.last;
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: state,
+          child: const MaterialApp(home: Scaffold(body: IspStudioView())),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 混合选择后点工具栏编组按钮 → 弹说明对话框，不产生编组。
+      state.selectNode(n1);
+      state.selectNode(n2, multiSelect: true);
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.group_add));
+      await tester.pumpAndSettle();
+      expect(find.text('无法编组'), findsOneWidget);
+      expect(find.text('编组命名'), findsNothing);
+      await tester.tap(find.text('知道了'));
+      await tester.pumpAndSettle();
+      expect(state.graph.groups, isEmpty);
+    });
+
     testWidgets('编组框内左键拖动整个编组', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -268,6 +422,81 @@ void main() {
       expect(state.graph.nodes[n1]!.y - y1, closeTo(30, 1.1));
       expect(state.graph.nodes[n2]!.x - x2, closeTo(50, 1.1));
       expect(state.graph.nodes[n2]!.y - y2, closeTo(30, 1.1));
+    });
+
+    testWidgets('编组内节点标题栏左键拖动整个编组', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final state = IspStudioState.empty();
+      state.addNodeAt('image_source', const Offset(100, 100));
+      final n1 = state.graph.nodes.keys.first;
+      state.addNodeAt('preview', const Offset(400, 100));
+      final n2 = state.graph.nodes.keys.last;
+      state.selectNode(n1);
+      state.selectNode(n2, multiSelect: true);
+      state.groupSelectedNodes();
+      state.selectNode(null);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: state,
+          child: const MaterialApp(home: Scaffold(body: IspStudioView())),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final x1 = state.graph.nodes[n1]!.x, y1 = state.graph.nodes[n1]!.y;
+      final x2 = state.graph.nodes[n2]!.x, y2 = state.graph.nodes[n2]!.y;
+
+      // 直接按住 n2 标题栏拖动（此前未点选，选中集为空）。
+      final gesture = await tester.startGesture(
+          await titleCenterOf(tester, '预览'), buttons: kPrimaryButton);
+      await gesture.moveBy(const Offset(50, 30));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // 两个成员同步位移（网格吸附 10px，容差 1.1）。
+      expect(state.graph.nodes[n1]!.x - x1, closeTo(50, 1.1));
+      expect(state.graph.nodes[n1]!.y - y1, closeTo(30, 1.1));
+      expect(state.graph.nodes[n2]!.x - x2, closeTo(50, 1.1));
+      expect(state.graph.nodes[n2]!.y - y2, closeTo(30, 1.1));
+    });
+  });
+
+  group('节点编组（属性面板）', () {
+    testWidgets('选中编组时右侧面板从上到下显示全部成员节点参数', (tester) async {
+      final state = IspStudioState.empty();
+      // n1 在下方（y=400），n2 在上方（y=100）：验证面板按画布纵向
+      // 位置排序，而非插入/选择顺序。
+      state.addNodeAt('image_source', const Offset(100, 400));
+      final n1 = state.graph.nodes.keys.first;
+      state.addNodeAt('preview', const Offset(100, 100));
+      final n2 = state.graph.nodes.keys.last;
+      state.selectNode(n1);
+      state.selectNode(n2, multiSelect: true);
+      state.groupSelectedNodes();
+      // 点选组内任一成员 → 编组联动全选整组。
+      state.selectNode(n1);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: state,
+          child: const MaterialApp(home: Scaffold(body: NodePropertyPanel())),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 两个成员的参数区都出现。
+      expect(find.text('Image#1'), findsOneWidget);
+      expect(find.text('预览#1'), findsOneWidget);
+      expect(find.text('图片文件'), findsOneWidget);
+      expect(find.text('播放帧率'), findsOneWidget);
+
+      // 从上到下：画布上方的「预览」排在「Image」之前。
+      final topPreview = tester.getTopLeft(find.text('预览#1')).dy;
+      final topImage = tester.getTopLeft(find.text('Image#1')).dy;
+      expect(topPreview, lessThan(topImage));
     });
   });
 }

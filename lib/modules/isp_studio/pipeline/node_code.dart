@@ -1,2078 +1,385 @@
-/// ISP Studio 各节点类型的只读源码片段。
+/// ISP Studio 各节点类型的「查看代码」内容与变量描述。
 ///
-/// 内容摘录自 pipeline/ 下的实现文件（isp_kernels.dart、image_source.dart、
-/// exporters.dart、pipeline_runner.dart），供节点上的「查看代码」按钮展示。
-/// 修改实现文件时请同步更新这里的片段。
+/// 代码内容不再手工维护摘录：pipeline/ 下的真实 .dart 源码作为 Flutter
+/// 资产打包（见 pubspec.yaml 的 assets），运行时由 [loadNodeCode] 经
+/// rootBundle 加载，按 [nodeCodeSpec] 中登记的入口符号从真实源码提取
+/// 真实函数体，并自动补齐调用闭包内的全部子函数（提取器与声明索引见
+/// source_extract.dart）。修改实现文件里被引用的符号名时，防漂移测试
+/// test/isp_node_code_test.dart 会报错提示。
 library;
 
+import 'package:flutter/services.dart' show rootBundle;
+
 import 'code_variables.dart';
+import 'source_extract.dart';
 
-/// Bayer 图案枚举（isp_kernels.dart）。
-const String _bayerPatternCode = r'''
-/// Bayer color filter array pattern (2x2 tiling).
-enum BayerPattern {
-  /// (0,0)=R (1,0)=G / (0,1)=G (1,1)=B
-  rggb,
+/// 一个代码段：从 [file]（lib/modules/isp_studio/pipeline/ 下相对路径）
+/// 提取 [symbols] 中每个符号（'case:xxx' 前缀表示 switch case 分支）。
+class NodeCodeSeg {
+  final String file;
+  final List<String> symbols;
 
-  /// (0,0)=B (1,0)=G / (0,1)=G (1,1)=R
-  bggr,
-
-  /// (0,0)=G (1,0)=R / (0,1)=B (1,1)=G
-  grbg,
-
-  /// (0,0)=G (1,0)=B / (0,1)=R (1,1)=G
-  gbrg;
-
-  /// Channel index at pixel (x, y): 0 = R, 1 = G, 2 = B.
-  int colorAt(int x, int y) {
-    final phase = ((y & 1) << 1) | (x & 1);
-    switch (this) {
-      case BayerPattern.rggb:
-        return const [0, 1, 1, 2][phase];
-      case BayerPattern.bggr:
-        return const [2, 1, 1, 0][phase];
-      case BayerPattern.grbg:
-        return const [1, 0, 2, 1][phase];
-      case BayerPattern.gbrg:
-        return const [1, 2, 0, 1][phase];
-    }
-  }
-}
-''';
-
-/// RAW 解包核心：帧字节数 + unpackBayer（isp_kernels.dart），所有 RAW 源共用。
-const String _rawUnpackCode = r'''
-/// Maximum sample value for a given bit depth.
-int bayerMaxValue(int bitDepth) => (1 << bitDepth) - 1;
-
-/// Number of bytes one frame occupies for the given format.
-/// Used for slicing multi-frame files.
-int frameByteSize({
-  required int width,
-  required int height,
-  required int bitDepth,
-  required BayerPacking packing,
-}) {
-  final pixels = width * height;
-  switch (packing) {
-    case BayerPacking.unpackedLsb:
-    case BayerPacking.unpackedMsb:
-      // 固定每像素 2 字节（16 位字），与位深无关。
-      return pixels * 2;
-    case BayerPacking.mipi:
-      if (bitDepth == 10) return (pixels * 5 + 3) ~/ 4;
-      if (bitDepth == 12) return (pixels * 3 + 1) ~/ 2;
-      throw ArgumentError.value(
-          bitDepth, 'bitDepth', 'MIPI packing supports only 10 or 12 bits');
-  }
+  const NodeCodeSeg(this.file, this.symbols);
 }
 
-/// Decodes one Bayer frame from [bytes] into a `Uint16List` of
-/// length `width * height`.
-Uint16List unpackBayer(
-  Uint8List bytes, {
-  required int width,
-  required int height,
-  required int bitDepth,
-  required BayerPacking packing,
-  bool littleEndian = true,
-  int byteOffset = 0,
-}) {
-  if (bitDepth < 1 || bitDepth > 16) {
-    throw ArgumentError.value(bitDepth, 'bitDepth', 'Must be in 1..16');
-  }
-  final pixels = width * height;
-  final needed = frameByteSize(
-      width: width, height: height, bitDepth: bitDepth, packing: packing);
-  if (byteOffset < 0 || bytes.length - byteOffset < needed) {
-    throw ArgumentError.value(
-      bytes.length - byteOffset,
-      'bytes',
-      'Buffer too small: need $needed bytes from offset $byteOffset '
-          'for a ${width}x$height ${bitDepth}bit $packing frame',
-    );
-  }
+/// 节点类型 id → 入口代码段列表。注册表中的每种类型都必须有对应条目。
+/// 这里只登记入口符号（'case:xxx' 前缀表示 switch case 分支）；被入口
+/// 调用的子函数由 [loadNodeCode] 按调用闭包自动补齐，无需手工列出。
+const Map<String, List<NodeCodeSeg>> nodeCodeSpec = {
+  // ---- RAW / 图像 / 视频源 ----
+  'bayer_source': [
+    NodeCodeSeg('isp_kernels.dart',
+        ['BayerPattern', 'bayerMaxValue', 'frameByteSize', 'unpackBayer']),
+  ],
+  'cis_bayer_rggb': [
+    NodeCodeSeg('isp_kernels.dart',
+        ['BayerPattern', 'bayerMaxValue', 'frameByteSize', 'unpackBayer']),
+  ],
+  'cis_rccb_rccg': [
+    NodeCodeSeg('isp_kernels.dart', ['_rccbAt', '_rccgAt', 'unpackBayer']),
+  ],
+  'cis_rccc': [
+    NodeCodeSeg('isp_kernels.dart', ['_rcccAt', 'unpackBayer']),
+  ],
+  'cis_ryycy': [
+    NodeCodeSeg('isp_kernels.dart', ['_ryycyAt', 'unpackBayer']),
+  ],
+  'cis_rgb_ir': [
+    NodeCodeSeg('isp_kernels.dart', ['_rgbIrAt', 'unpackBayer']),
+  ],
+  'cis_mono': [
+    NodeCodeSeg('isp_kernels.dart', ['unpackBayer']),
+    // MONO 无 CFA 的入链分支在 _decodeRawSource 内部（无独立 case）。
+    NodeCodeSeg('pipeline_runner.dart', ['_decodeRawSource']),
+  ],
+  'image_source': [
+    NodeCodeSeg('image_source.dart', ['decodeImageFileToRgb16']),
+  ],
+  'video_source': [
+    NodeCodeSeg('video_source.dart', ['decodeVideoFrameToRgb16']),
+  ],
+  // ---- RAW 域算子 ----
+  'black_level': [NodeCodeSeg('isp_kernels.dart', ['applyBlackLevel'])],
+  'dpc': [NodeCodeSeg('isp_kernels.dart', ['applyDpc'])],
+  'fpn': [NodeCodeSeg('isp_kernels.dart', ['applyFpn'])],
+  'lsc': [NodeCodeSeg('isp_kernels.dart', ['applyLsc'])],
+  'grgb_balance': [NodeCodeSeg('isp_kernels.dart', ['applyGrGbBalance'])],
+  'bayer_dnr': [NodeCodeSeg('isp_kernels.dart', ['applyBayerDenoise'])],
+  'highlight': [NodeCodeSeg('isp_kernels.dart', ['applyHighlightRecovery'])],
+  // ---- RGB/YUV/HSL 域算子 ----
+  'rgb_dnr': [NodeCodeSeg('isp_kernels.dart', ['applyRgbDenoise'])],
+  'sharpen': [NodeCodeSeg('isp_kernels.dart', ['applySharpen'])],
+  'gaussian_blur': [NodeCodeSeg('isp_kernels.dart', ['applyGaussianBlur'])],
+  'morphology': [NodeCodeSeg('isp_kernels.dart', ['applyMorphology'])],
+  'edge_extract': [NodeCodeSeg('isp_kernels.dart', ['extractHighFreq'])],
+  // ---- 色彩空间转换 ----
+  'csc_rgb2yuv': [NodeCodeSeg('isp_kernels.dart', ['convertRgbToYuvCsc'])],
+  'csc_rgb2hsl': [NodeCodeSeg('isp_kernels.dart', ['rgbToHsl'])],
+  'csc_yuv2rgb': [NodeCodeSeg('isp_kernels.dart', ['yuvToRgb'])],
+  'csc_yuv2hsl': [NodeCodeSeg('isp_kernels.dart', ['yuvToHsl'])],
+  'csc_hsl2rgb': [NodeCodeSeg('isp_kernels.dart', ['hslToRgb'])],
+  'csc_hsl2yuv': [NodeCodeSeg('isp_kernels.dart', ['hslToYuv'])],
+  // ---- 调节器 ----
+  'hsl_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustHsl'])],
+  'color_controller': [NodeCodeSeg('isp_kernels.dart', ['adjustHslBand'])],
+  'rgb_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustRgb'])],
+  'yuv_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustYuv'])],
+  'sat_bright_adjuster': [NodeCodeSeg('isp_kernels.dart', ['adjustSatBright'])],
+  'bright_contrast_adjuster': [NodeCodeSeg('isp_kernels.dart', ['adjustBrightContrast'])],
+  'levels_curves': [
+    NodeCodeSeg('levels_curve.dart', ['levelsCurveLut']),
+    NodeCodeSeg('isp_kernels.dart', ['applyLevelsCurve']),
+  ],
+  'color_balance': [NodeCodeSeg('isp_kernels.dart', ['applyColorBalance'])],
+  'color_temp_adjuster': [
+    NodeCodeSeg('color_temp.dart', ['colorTempGains']),
+    NodeCodeSeg('isp_kernels.dart', ['adjustRgb']),
+  ],
+  // ---- 荧光 mono 域 ----
+  'fluoro_leak': [NodeCodeSeg('isp_kernels.dart', ['applyFluoroLeak'])],
+  'fluoro_background': [NodeCodeSeg('isp_kernels.dart', ['applyFluoroBackground'])],
+  'fluoro_normalize': [NodeCodeSeg('isp_kernels.dart', ['applyFluoroNormalize'])],
+  'fluoro_temporal': [NodeCodeSeg('isp_kernels.dart', ['applyTemporalIir'])],
+  'pseudo_color': [NodeCodeSeg('isp_kernels.dart', ['monoPseudoColor'])],
+  'fluoro_fusion': [NodeCodeSeg('isp_kernels.dart', ['fuseFluorescence'])],
+  'multiplier': [NodeCodeSeg('isp_kernels.dart', ['multiplyMono'])],
+  'adder': [NodeCodeSeg('isp_kernels.dart', ['blendMono'])],
+  'blender': [NodeCodeSeg('isp_kernels.dart', ['blendMaskMono'])],
+  // ---- 通路 ----
+  'mux4': [NodeCodeSeg('pipeline_runner.dart', ['case:mux4'])],
+  'demosaic': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:demosaic']),
+    NodeCodeSeg('isp_kernels.dart', [
+      'demosaicBilinear',
+      'demosaicRccb',
+      'demosaicRccc',
+      'demosaicRyycy',
+      'demosaicRgbIr',
+    ]),
+    NodeCodeSeg('demosaic_advanced.dart', [
+      'demosaicMhc',
+      'demosaicAahd',
+      'demosaicAmaze',
+      'demosaicLmmse',
+      'demosaicIgv',
+    ]),
+  ],
+  'white_balance': [NodeCodeSeg('isp_kernels.dart', ['autoWhiteBalanceGains', 'applyWhiteBalance'])],
+  'ccm': [NodeCodeSeg('isp_kernels.dart', ['applyCcm'])],
+  'gamma': [NodeCodeSeg('isp_kernels.dart', ['tonemapToRgba'])],
+  'ahe': [NodeCodeSeg('isp_kernels.dart', ['applyClahe', 'applyClaheMono'])],
+  'preview': [NodeCodeSeg('pipeline_runner.dart', ['case:preview'])],
+  // ---- 仪器 ----
+  'histogram': [NodeCodeSeg('instruments.dart', ['histogramRgb'])],
+  'waveform': [NodeCodeSeg('instruments.dart', ['waveformRgb'])],
+  'vectorscope': [NodeCodeSeg('instruments.dart', ['vectorscope'])],
+  'psnr': [NodeCodeSeg('instruments.dart', ['psnrRgba'])],
+  'ssim': [NodeCodeSeg('instruments.dart', ['ssimRgba'])],
+  'msssim': [NodeCodeSeg('instruments.dart', ['msssimRgba'])],
+  'fsim': [NodeCodeSeg('instruments.dart', ['fsimRgba'])],
+  'minmax': [NodeCodeSeg('instruments.dart', ['minmaxMono'])],
+  // ---- 无参考评价 ----
+  'niqe': [NodeCodeSeg('niqe.dart', ['niqeScore'])],
+  'brisque': [NodeCodeSeg('brisque.dart', ['brisqueScore'])],
+  'ilniqe': [NodeCodeSeg('ilniqe.dart', ['ilniqeScore'])],
+  'piqe': [NodeCodeSeg('piqe.dart', ['piqeScore'])],
+  // ---- 深度评价（进程内 Dart 实现）----
+  'lpips': [NodeCodeSeg('metrics/lpips_dart.dart', ['lpipsScore'])],
+  'dists': [NodeCodeSeg('metrics/dists_dart.dart', ['distsScore'])],
+  'fid': [
+    NodeCodeSeg('metrics/fid_kid_dart.dart', ['fidScoreFromFeatures']),
+  ],
+  'kid': [
+    // KidGramAccum 是视频逐帧评分的增量核矩阵路径，与 kidCompute 并列入口。
+    NodeCodeSeg('metrics/fid_kid_dart.dart', ['kidCompute', 'KidGramAccum']),
+  ],
+  'musiq': [NodeCodeSeg('metrics/musiq_dart.dart', ['musiqScore'])],
+  'clipiqa': [
+    NodeCodeSeg('metrics/clipiqa_dart.dart', ['clipiqaScore', 'clipiqaScoreFromFeat']),
+  ],
+  // ---- 输出 ----
+  'image_output': [
+    // 不含 encodeFrameInIsolate：它是后台导出时在 isolate 里重跑整条链
+    // 的包装，若作为入口，闭包会把整个流水线（runChainFrame 全分发）
+    // 拉进本节点页。
+    NodeCodeSeg('exporters.dart',
+        ['encodePngRgba', 'encodeJpgRgba', 'encodeJpgFfmpeg']),
+  ],
+  'video_output': [NodeCodeSeg('exporters.dart', ['exportMp4'])],
+  // ---- 音频 ----
+  'audio_level': [NodeCodeSeg('audio_analysis.dart', ['audioLevels'])],
+  'audio_waveform': [NodeCodeSeg('audio_analysis.dart', ['audioWaveform'])],
+  'audio_eq': [
+    // audioEqBandCenterHz 是界面标注频段中心频率的 API，与 audioEqBands 并列入口。
+    NodeCodeSeg('audio_analysis.dart', ['audioEqBandCenterHz', 'audioEqBands']),
+  ],
+  // ---- 分路 / 合路 ----
+  'rgb_splitter': [NodeCodeSeg('pipeline_runner.dart', ['case:rgb_splitter'])],
+  'yuv_splitter': [NodeCodeSeg('pipeline_runner.dart', ['case:yuv_splitter'])],
+  'hsl_splitter': [NodeCodeSeg('pipeline_runner.dart', ['case:hsl_splitter'])],
+  'rgb_combiner': [NodeCodeSeg('pipeline_runner.dart', ['case:rgb_combiner'])],
+  'yuv_combiner': [NodeCodeSeg('pipeline_runner.dart', ['case:yuv_combiner'])],
+  'hsl_combiner': [NodeCodeSeg('pipeline_runner.dart', ['case:hsl_combiner'])],
+};
 
-  final out = Uint16List(pixels);
-  switch (packing) {
-    case BayerPacking.unpackedLsb:
-    case BayerPacking.unpackedMsb:
-      // 固定每像素 2 字节（16 位字）：8/10/12/14/16 位深同样按字读取。
-      final isLsb = packing == BayerPacking.unpackedLsb;
-      final mask = bayerMaxValue(bitDepth);
-      final shift = 16 - bitDepth;
-      var p = byteOffset;
-      for (var i = 0; i < pixels; i++, p += 2) {
-        final raw = littleEndian
-            ? bytes[p] | (bytes[p + 1] << 8)
-            : (bytes[p] << 8) | bytes[p + 1];
-        out[i] = isLsb ? raw & mask : raw >> shift;
-      }
-    case BayerPacking.mipi:
-      if (bitDepth == 10) {
-        // 4 pixels per 5 bytes: 4 MSB bytes, then 1 byte holding
-        // the 2 LSBs of each pixel (pixel i in bits [2i, 2i+1]).
-        final groups = pixels ~/ 4;
-        var p = byteOffset;
-        var o = 0;
-        for (var g = 0; g < groups; g++, p += 5) {
-          final lsb = bytes[p + 4];
-          for (var i = 0; i < 4; i++) {
-            out[o++] = (bytes[p + i] << 2) | ((lsb >> (2 * i)) & 0x3);
-          }
-        }
-        if (pixels % 4 != 0) {
-          throw ArgumentError.value(
-              width, 'width', 'MIPI 10-bit requires width*height % 4 == 0');
-        }
-      } else if (bitDepth == 12) {
-        // 2 pixels per 3 bytes: p0 = b0:b2[3:0], p1 = b1:b2[7:4].
-        final groups = pixels ~/ 2;
-        var p = byteOffset;
-        var o = 0;
-        for (var g = 0; g < groups; g++, p += 3) {
-          out[o++] = (bytes[p] << 4) | (bytes[p + 2] & 0xF);
-          out[o++] = (bytes[p + 1] << 4) | (bytes[p + 2] >> 4);
-        }
-        if (pixels % 2 != 0) {
-          throw ArgumentError.value(
-              width, 'width', 'MIPI 12-bit requires width*height % 2 == 0');
-        }
-      } else {
-        throw ArgumentError.value(
-            bitDepth, 'bitDepth', 'MIPI packing supports only 10 or 12 bits');
-      }
-  }
-  return out;
-}
-''';
+/// pipeline/ 下源文件内容缓存（资产打包后内容只读，无需失效）。
+/// 仅默认的 rootBundle 读取走缓存；自定义 [readFile]（测试读真实文件）
+/// 每次现读。
+final Map<String, Future<String>> _assetCache = {};
 
-/// RCCB/RCCG 相位表（isp_kernels.dart）。
-const String _rccbTablesCode = r'''
-/// RCCB 2x2 平铺：R C / C B。
-int _rccbAt(int x, int y) => const [0, 3, 3, 2][((y & 1) << 1) | (x & 1)];
-
-/// RCCG 2x2 平铺：R C / C G。
-int _rccgAt(int x, int y) => const [0, 3, 3, 1][((y & 1) << 1) | (x & 1)];
-
-// 通道 id：0=R 1=G 2=B 3=C(clear 全色)。
-// 解包后由「去马赛克」节点调用 demosaicRccb() 完成插值。
-''';
-
-/// RCCC 相位表（isp_kernels.dart）。
-const String _rcccTableCode = r'''
-/// RCCC 2x2 平铺：R C / C C。
-int _rcccAt(int x, int y) => (x & 1) == 0 && (y & 1) == 0 ? 0 : 3;
-
-// 通道 id：0=R 3=C(clear 全色)。
-// 解包后由「去马赛克」节点调用 demosaicRccc() 完成插值。
-''';
-
-/// RYYCy 相位表（isp_kernels.dart）。
-const String _ryycyTableCode = r'''
-/// RYYCy 2x2 平铺：R Y / Y Cy。
-int _ryycyAt(int x, int y) => const [0, 4, 4, 5][((y & 1) << 1) | (x & 1)];
-
-// 通道 id：0=R 4=Y(黄) 5=Cy(青)。
-// 解包后由「去马赛克」节点调用 demosaicRyycy() 完成插值。
-''';
-
-/// RGB-IR 相位表（isp_kernels.dart）。
-const String _rgbIrTableCode = r'''
-/// RGB-IR 4x4 平铺（常见布局之一）：
-/// ```
-/// R  G  IR G
-/// G  B  G  IR
-/// IR G  R  G
-/// G  IR G  B
-/// ```
-int _rgbIrAt(int x, int y) {
-  const t = [
-    0, 1, 6, 1, //
-    1, 2, 1, 6, //
-    6, 1, 0, 1, //
-    1, 6, 1, 2, //
-  ];
-  return t[(y & 3) * 4 + (x & 3)];
-}
-
-// 通道 id：0=R 1=G 2=B 6=IR。
-// 解包后由「去马赛克」节点调用 demosaicRgbIr() 完成插值。
-''';
-
-/// MONO 源出帧（pipeline_runner.dart）：16 位 mono 中间格式直接入链。
-const String _monoCode = r'''
-// pipeline_runner.dart — MONO 无 CFA：解包后的单通道帧（w*h，16 位
-// 量级）直接以 'mono' 格式进入流水线，不再复制展开为 RGB 三通道：
-if (cfa == 'mono') {
-  return _Frame(
-      data: mosaic,
-      format: 'mono',
-      width: width,
-      height: height,
-      maxValue: maxValue);
-}
-
-// 链末端 / 汇点按 monoToRgba 一趟 LUT 出图（isp_kernels.dart）：
-// 16 位单通道每像素一次查表，免去灰度扩展 + 三通道查表。
-''';
-
-/// 图片源解码（image_source.dart）。
-const String _imageSourceCode = r'''
-/// 解码图片文件为 16 位量级的交织 RGB（长度 w*h*3），返回 (数据, 宽, 高)。
-///
-/// 8 位样本按比例放大到 [maxValue]；高位深图片（如 16 位 PNG）
-/// 先降为 8 位再放大。文件不存在或无法解码时抛 [StateError]。
-Future<(Uint16List, int, int)> decodeImageFileToRgb16(
-  String path, {
-  required int maxValue,
-}) async {
-  final file = File(path);
-  if (!await file.exists()) throw StateError('图片文件不存在: $path');
-  final bytes = await file.readAsBytes();
-  var image = img.decodeImage(bytes);
-  if (image == null) {
-    throw StateError('无法解码图片文件（支持 BMP/JPG/PNG/GIF）: $path');
-  }
-  if (image.format != img.Format.uint8) {
-    image = image.convert(format: img.Format.uint8);
-  }
-  final w = image.width;
-  final h = image.height;
-  final out = Uint16List(w * h * 3);
-  final scale = maxValue / 255;
-  var i = 0;
-  for (final px in image) {
-    out[i++] = (px.r * scale).round();
-    out[i++] = (px.g * scale).round();
-    out[i++] = (px.b * scale).round();
-  }
-  return (out, w, h);
-}
-
-// 出边端口决定链格式：out_rgb 直接用上面的 RGB；
-// out_yuv / out_hsl 再经 rgbToYuv() / rgbToHsl()（isp_kernels.dart）转换。
-''';
-
-/// 视频源解码（video_source.dart）：经 ffmpeg 逐帧抽取。
-const String _videoSourceCode = r'''
-/// 解码第 [frameIndex] 帧为 16 位量级的交织 RGB（长度 w*h*3），
-/// 返回 (数据, 宽, 高)。8 位样本按比例放大到 [maxValue]。
-Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
-  String path,
-  int frameIndex, {
-  required int maxValue,
-  String ffmpegPath = '',
-}) async {
-  // 元信息（尺寸/帧率/帧数）由 `ffmpeg -i` 的 stderr 解析并缓存。
-  final info = await videoFileInfo(path, ffmpegPath: ffmpegPath);
-  final ffmpeg = (await findFfmpeg(overridePath: ffmpegPath))!;
-  final t = frameIndex / info.fps;
-  // -ss 在 -i 前：跳到最近关键帧再精确解码到目标时刻
-  // （accurate_seek），开销与关键帧间距成正比而非全片。
-  final process = await Process.start(ffmpeg, [
-    '-hide_banner', '-loglevel', 'error',
-    '-ss', t.toStringAsFixed(6),
-    '-i', path,
-    '-frames:v', '1',
-    '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1',
-  ]);
-  // stdout 收帧字节（stderr 排空防管道阻塞），再 RGBA → 16 位 RGB。
-  ...
-}
-
-// 出边端口决定链格式：out_rgb 直接用上面的 RGB；
-// out_yuv / out_hsl 再经 rgbToYuv() / rgbToHsl()（isp_kernels.dart）转换。
-''';
-
-/// 黑电平校正（isp_kernels.dart）。
-const String _blackLevelCode = r'''
-/// Subtracts per-phase black level offsets in place, clamping at 0.
-///
-/// [r], [gr], [gb], [b] are the offsets for the four 2x2 phases:
-/// R, green-on-red-row, green-on-blue-row, B.
-void applyBlackLevel(
-  Uint16List bayer, {
-  required int width,
-  required int height,
-  required BayerPattern pattern,
-  required double r,
-  required double gr,
-  required double gb,
-  required double b,
-}) {
-  // Resolve the offset for each of the 4 phases of the 2x2 tile.
-  final offsets = List<double>.filled(4, 0);
-  for (var py = 0; py < 2; py++) {
-    for (var px = 0; px < 2; px++) {
-      final phase = (py << 1) | px;
-      final color = pattern.colorAt(px, py);
-      if (color == 0) {
-        offsets[phase] = r;
-      } else if (color == 2) {
-        offsets[phase] = b;
-      } else {
-        // Green: gr shares its row with R, gb shares its row with B.
-        offsets[phase] = pattern.colorAt(px ^ 1, py) == 0 ? gr : gb;
-      }
-    }
-  }
-  var i = 0;
-  for (var y = 0; y < height; y++) {
-    final rowPhase = (y & 1) << 1;
-    for (var x = 0; x < width; x++, i++) {
-      final v = bayer[i] - offsets[rowPhase | (x & 1)];
-      bayer[i] = v <= 0 ? 0 : v.round();
-    }
-  }
-}
-''';
-
-/// 去马赛克：流水线分发（pipeline_runner.dart）。
-const String _demosaicDispatchCode = r'''
-// pipeline_runner.dart — 按源节点的 CFA 种类分发：
-case 'demosaic':
-  frame.requireMosaic('去马赛克');
-  final w = frame.width;
-  final h = frame.height;
-  final max = frame.maxValue;
-  final data = frame.data;
-  frame = _Frame(
-    data: switch (frame.cfa) {
-      // Bayer：按 algorithm 参数分发（demosaic_advanced.dart），
-      // 空（默认）/ bilinear 走双线性；未知算法值抛 StateError。
-      'bayer' => switch (_str(p, 'algorithm')) {
-          '' || 'bilinear' => demosaicBilinear(data,
-              width: w, height: h, pattern: frame.bayerPattern!),
-          'mhc' => demosaicMhc(data,
-              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
-          'aahd' => demosaicAahd(data,
-              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
-          'amaze' => demosaicAmaze(data,
-              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
-          'lmmse' => demosaicLmmse(data,
-              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
-          'igv' => demosaicIgv(data,
-              width: w, height: h, pattern: frame.bayerPattern!, maxValue: max),
-          _ => throw StateError('未知去马赛克算法: ${_str(p, 'algorithm')}'),
-        },
-      'rccb' => demosaicRccb(data, width: w, height: h, maxValue: max),
-      'rccg' => demosaicRccb(data,
-          width: w, height: h, rccg: true, maxValue: max),
-      'rccc' => demosaicRccc(data, width: w, height: h, maxValue: max),
-      'ryycy' =>
-        demosaicRyycy(data, width: w, height: h, maxValue: max),
-      'rgb_ir' => demosaicRgbIr(data,
-          width: w,
-          height: h,
-          maxValue: max,
-          irSubtraction: frame.irSubtraction),
-      _ => throw StateError('未知 CFA 种类: ${frame.cfa}'),
-    },
-    format: 'rgb',
-    width: w,
-    height: h,
-    maxValue: max,
-  );
-''';
-
-/// 双线性去马赛克（isp_kernels.dart）。
-const String _demosaicBilinearCode = r'''
-/// Averages the values of neighbors of pixel (x, y) that carry channel
-/// [color], considering only the given [offsets] (dx, dy pairs).
-/// Falls back to the pixel's own value if no valid neighbor exists.
-int _avgNeighbors(Uint16List bayer, int width, int height, int x, int y,
-    BayerPattern pattern, int color, List<List<int>> offsets) {
-  var sum = 0;
-  var count = 0;
-  for (final o in offsets) {
-    final nx = x + o[0];
-    final ny = y + o[1];
-    if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-    if (pattern.colorAt(nx, ny) != color) continue;
-    sum += bayer[ny * width + nx];
-    count++;
-  }
-  if (count == 0) return bayer[y * width + x];
-  return (sum + count ~/ 2) ~/ count;
-}
-
-const _axial = [
-  [-1, 0],
-  [1, 0],
-  [0, -1],
-  [0, 1],
-];
-const _diagonal = [
-  [-1, -1],
-  [1, -1],
-  [-1, 1],
-  [1, 1],
+/// 打包为资产的 pipeline 源文件清单（pipeline/ 与 pipeline/metrics/
+/// 下的全部 .dart，相对 pipeline/ 的路径）。闭包解析跨文件引用时按
+/// 此顺序查找；防漂移测试断言它与目录实际内容一致，新增/删除源文件
+/// 时需同步更新。
+const List<String> pipelineSourceFiles = [
+  'audio_analysis.dart',
+  'audio_player.dart',
+  'brisque.dart',
+  'brisque_model.dart',
+  'code_variables.dart',
+  'color_temp.dart',
+  'demosaic_advanced.dart',
+  'dng_source.dart',
+  'exporters.dart',
+  'ffmpeg_pipe_win.dart',
+  'frame3d.dart',
+  'hsl_band_pool.dart',
+  'ilniqe.dart',
+  'ilniqe_model.dart',
+  'image_source.dart',
+  'instrument_worker.dart',
+  'instruments.dart',
+  'isp_kernels.dart',
+  'levels_curve.dart',
+  'niqe.dart',
+  'niqe_model.dart',
+  'node_c_code.dart',
+  'node_code.dart',
+  'pipeline_runner.dart',
+  'pipeline_worker.dart',
+  'piqe.dart',
+  'pyiqa_worker.dart',
+  'raw_sidecar.dart',
+  'source_extract.dart',
+  'video_source.dart',
+  'metrics/clip_rn50_dart.dart',
+  'metrics/clip_rn50_gpu.dart',
+  'metrics/clipiqa_dart.dart',
+  'metrics/dists_dart.dart',
+  'metrics/fid_kid_dart.dart',
+  'metrics/inception_dart.dart',
+  'metrics/inception_v3_gpu.dart',
+  'metrics/kid_score_worker.dart',
+  'metrics/lpips_dart.dart',
+  'metrics/musiq_dart.dart',
+  'metrics/vgg16_dart.dart',
+  'metrics/vgg16_gpu.dart',
 ];
 
-/// Bilinear demosaicing of a Bayer frame into an interleaved RGB buffer
-/// of length `width * height * 3`.
+/// 各源文件的顶层声明索引缓存（文件名 → 符号名 → 声明文本）。
+/// 资产打包后内容只读，测试读取的也是稳定的仓库文件，无需失效。
+final Map<String, Map<String, String>> _declIndexCache = {};
+
+/// 加载 [typeId] 节点的展示代码：按 [nodeCodeSpec] 提取入口符号后，
+/// 自动补齐调用闭包内的全部子函数（见 [loadCodeWithClosure]）；
+/// 整个 typeId 无规格时返回 `'// 该节点类型暂无可展示的代码'`。
 ///
-/// Each output pixel keeps the true value of its own channel; G at R/B
-/// sites is the average of axial neighbors; R/B at G sites is the average
-/// of the axial neighbors carrying that color; R/B at opposite (R<->B)
-/// sites is the average of diagonal neighbors. Edge pixels use whatever
-/// neighbors exist.
-Uint16List demosaicBilinear(
-  Uint16List bayer, {
-  required int width,
-  required int height,
-  required BayerPattern pattern,
+/// [readFile] 默认用 rootBundle 加载资产（pubspec.yaml 已声明
+/// pipeline/ 与 pipeline/metrics/ 目录资产）；测试可注入文件读取。
+/// [keysOut] 非空时回填展示文本包含的全部符号键（'file:name'，入口
+/// case 分支为 'file:case:label'），供测试验证闭包收敛。
+Future<String> loadNodeCode(
+  String typeId, {
+  Future<String> Function(String path)? readFile,
+  Set<String>? keysOut,
 }) {
-  final rgb = Uint16List(width * height * 3);
-  var i = 0;
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++, i += 3) {
-      final own = pattern.colorAt(x, y);
-      final self = bayer[y * width + x];
-      for (var c = 0; c < 3; c++) {
-        if (c == own) {
-          rgb[i + c] = self;
-        } else if (c == 1) {
-          // Green at an R/B site: axial neighbors.
-          rgb[i + c] =
-              _avgNeighbors(bayer, width, height, x, y, pattern, c, _axial);
-        } else if (own == 1) {
-          // R or B at a G site: the two axial neighbors of that color.
-          rgb[i + c] =
-              _avgNeighbors(bayer, width, height, x, y, pattern, c, _axial);
-        } else {
-          // R at a B site or B at an R site: diagonal neighbors.
-          rgb[i + c] =
-              _avgNeighbors(bayer, width, height, x, y, pattern, c, _diagonal);
-        }
-      }
-    }
+  final segs = nodeCodeSpec[typeId];
+  if (segs == null) {
+    return Future.value('// 该节点类型暂无可展示的代码');
   }
-  return rgb;
+  return loadCodeWithClosure(segs, readFile: readFile, keysOut: keysOut);
 }
 
-// 非 Bayer CFA（RCCB/RCCG、RCCC、RYYCy、RGB-IR）的插值实现：
-// demosaicRccb / demosaicRccc / demosaicRyycy / demosaicRgbIr，
-// 见 lib/modules/isp_studio/pipeline/isp_kernels.dart。
-''';
-
-/// 高级去马赛克算法（demosaic_advanced.dart，均为简化实现）。
-const String _demosaicAdvancedCode = r'''
-// demosaic_advanced.dart — 5 种高级 Bayer 去马赛克，统一约定：
-// 输入 16 位 w*h 马赛克，输出交织 RGB（w*h*3）；边界 2~3 像素环与
-// 小图回退 demosaicBilinear；输出钳位 0..maxValue。
-
-/// MHC（Malvar, He, Cutler, ICASSP 2004）：梯度校正线性插值。
-/// G 用 5x5 FIR（含亮度梯度校正项），R/B 在 G 相位/对方相位各有固定核：
-Uint16List demosaicMhc(...) {
-  // g@R/B站点: (4·ΣG轴向 + 8C − 2·ΣC±2)/16；
-  // R/B@G站点与 R@B/B@R 各有 5x5 核（核系数见实现，和均为 16）。
-}
-
-/// AAHD（Hirakawa & Parks, IEEE TIP 2005）：同质性定向（简化实现）。
-Uint16List demosaicAahd(...) {
-  // 1. H/V 两方向各生成候选图：G 沿方向梯度校正插值，R/B 色差平滑；
-  // 2. 两候选图转 CIELab（简化 sRGB 流程）；
-  // 3. 逐像素 3x3 邻域同质性（Lab 距离 < 阈值的邻居数）投票选方向。
-}
-
-/// AMaZE（Zhang & Wu, IEEE TIP 2005）：方向滤波融合（简化实现）。
-Uint16List demosaicAmaze(...) {
-  // 1. G 按 H/V 两方向（原论文四方向，简化为两方向）反梯度加权融合：
-  //    w = 1/(1+|一阶差|+|二阶差|)；
-  // 2. R/B 色差平滑；3. 对 R−G/B−G 色差平面做 3x3 中值滤波去拉链。
-}
-
-/// LMMSE（Zhang & Wu, IEEE TIP 2005）：方向 LMMSE 估计（简化实现）。
-Uint16List demosaicLmmse(...) {
-  // 1. G 沿 H/V 梯度校正估计，按 3x3 窗口亮度二阶差分能量逆加权融合
-  //    （替代原论文方向梯度分类 + 维纳权重）；
-  // 2. R/B 色差平滑（省略二阶 Laplacian 迭代校正）。
-}
-
-/// IGV（Pekkucuksen & Altunbasak, ICIP 2010）：无阈值方向插值
-/// （等价思想实现，参考 darktable/RawTherapee 的 IGV 思路）。
-Uint16List demosaicIgv(...) {
-  // 1. G 初值用 MHC 式 5x5 核；2. R/B 站点按 H/V 5 样本窗口方差
-  //    （无阈值）逆加权融合修正 G：w = 1/(var+eps)；
-  // 3. R/B 色差平滑。
-}
-''';
-
-/// 白平衡（isp_kernels.dart）。
-const String _whiteBalanceCode = r'''
-/// Gray-world auto white balance. Samples every [sampleStride] pixels and
-/// returns (rGain, bGain) such that scaling R and B by those gains makes
-/// their means equal the green mean.
-(double, double) autoWhiteBalanceGains(Uint16List rgb, {int sampleStride = 16}) {
-  final pixels = rgb.length ~/ 3;
-  if (pixels == 0) return (1.0, 1.0);
-  final stride = sampleStride < 1 ? 1 : sampleStride;
-  var sumR = 0, sumG = 0, sumB = 0, count = 0;
-  for (var p = 0; p < pixels; p += stride) {
-    final i = p * 3;
-    sumR += rgb[i];
-    sumG += rgb[i + 1];
-    sumB += rgb[i + 2];
-    count++;
-  }
-  if (count == 0) return (1.0, 1.0);
-  final meanR = sumR / count;
-  final meanG = sumG / count;
-  final meanB = sumB / count;
-  final rGain = meanR > 0 ? meanG / meanR : 1.0;
-  final bGain = meanB > 0 ? meanG / meanB : 1.0;
-  return (rGain, bGain);
-}
-
-/// Applies white balance gains in place, clamping to [maxValue].
-void applyWhiteBalance(
-  Uint16List rgb, {
-  required double rGain,
-  required double bGain,
-  required int maxValue,
-}) {
-  for (var i = 0; i < rgb.length; i += 3) {
-    var r = (rgb[i] * rGain).round();
-    var b = (rgb[i + 2] * bGain).round();
-    if (r < 0) r = 0;
-    if (r > maxValue) r = maxValue;
-    if (b < 0) b = 0;
-    if (b > maxValue) b = maxValue;
-    rgb[i] = r;
-    rgb[i + 2] = b;
-  }
-}
-''';
-
-/// CCM（isp_kernels.dart）。
-const String _ccmCode = r'''
-/// Applies a 3x3 row-major color correction matrix in place,
-/// clamping results to 0..[maxValue]. [matrix] must have 9 elements.
-void applyCcm(
-  Uint16List rgb, {
-  required List<double> matrix,
-  required int maxValue,
-}) {
-  if (matrix.length != 9) {
-    throw ArgumentError.value(matrix.length, 'matrix', 'CCM must have 9 elements');
-  }
-  final m = matrix;
-  for (var i = 0; i < rgb.length; i += 3) {
-    final r = rgb[i].toDouble();
-    final g = rgb[i + 1].toDouble();
-    final b = rgb[i + 2].toDouble();
-    rgb[i] = (m[0] * r + m[1] * g + m[2] * b).round().clamp(0, maxValue).toInt();
-    rgb[i + 1] =
-        (m[3] * r + m[4] * g + m[5] * b).round().clamp(0, maxValue).toInt();
-    rgb[i + 2] =
-        (m[6] * r + m[7] * g + m[8] * b).round().clamp(0, maxValue).toInt();
-  }
-}
-''';
-
-/// Gamma / 色调映射（isp_kernels.dart）。
-const String _gammaCode = r'''
-/// Converts a 16-bit interleaved RGB buffer to 8-bit RGBA (alpha 255).
+/// 通用闭包加载：从 [entries]（按顺序的入口代码段）提取入口符号文本
+/// （含 `case:` 分支），然后扫描其中的标识符，凡在源文件声明索引中
+/// 存在的名字即视为内部引用，递归提取并入展示，直到闭包收敛。
 ///
-/// Per channel: normalize by [maxValue], add [brightness], apply
-/// [contrast] around 0.5, gamma-encode with `pow(c, 1 / gamma)`,
-/// clamp, scale to 0..255. Uses a lookup table of size [maxValue] + 1.
-Uint8List tonemapToRgba(
-  Uint16List rgb, {
-  required int maxValue,
-  required double gamma,
-  double brightness = 0.0,
-  double contrast = 1.0,
-}) {
-  if (maxValue < 1) {
-    throw ArgumentError.value(maxValue, 'maxValue', 'Must be >= 1');
-  }
-  if (gamma <= 0) {
-    throw ArgumentError.value(gamma, 'gamma', 'Must be > 0');
-  }
-  final lut = Uint8List(maxValue + 1);
-  final invGamma = 1.0 / gamma;
-  for (var v = 0; v <= maxValue; v++) {
-    var c = v / maxValue;
-    c += brightness;
-    c = (c - 0.5) * contrast + 0.5;
-    if (c < 0) c = 0;
-    if (c > 1) c = 1;
-    c = math.pow(c, invGamma).toDouble();
-    if (c < 0) c = 0;
-    if (c > 1) c = 1;
-    lut[v] = (c * 255).round();
-  }
-  final pixels = rgb.length ~/ 3;
-  final out = Uint8List(pixels * 4);
-  var j = 0;
-  for (var i = 0; i < rgb.length; i += 3, j += 4) {
-    var r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
-    if (r > maxValue) r = maxValue;
-    if (g > maxValue) g = maxValue;
-    if (b > maxValue) b = maxValue;
-    out[j] = lut[r];
-    out[j + 1] = lut[g];
-    out[j + 2] = lut[b];
-    out[j + 3] = 255;
-  }
-  return out;
-}
-''';
-
-/// 自适应直方图均衡 CLAHE（isp_kernels.dart，RGB / Mono 双通路）。
-const String _aheCode = r'''
-/// 自适应直方图均衡（CLAHE，对比度受限）：对亮度做分块直方图均衡，
-/// 三通道按亮度缩放比例等比缩放（保持 hue/sat 不变），原地修改。
-void applyClahe(
-  Uint16List rgb, {
-  required int width,
-  required int height,
-  int blockSize = 32,
-  double clipLimit = 2.0,
-  double strength = 1.0,
-  int maxValue = 65535,
-}) {
-  // 1. 逐像素求亮度 Y（BT.601 定点加权和）；
-  // 2. 分成 blockSize×blockSize 的 tile，逐 tile 统计 256 bin 直方图；
-  // 3. 直方图按 clipLimit（平均计数的倍数）裁剪，超出量均匀再分配，
-  //    累积分布得该 tile 的 LUT；
-  // 4. 每像素由周围 4 个 tile 中心的 LUT 双线性插值得均衡亮度（避免块效应）；
-  // 5. 三通道按 Y'/Y 等比缩放；strength 为均衡亮度与原亮度的混合比，
-  //    0 = 原图直通。
-}
-
-/// Mono 单通道 CLAHE（applyClahe 的单通道版，荧光 Mono 链用）：
-/// 16 位 w*h 单通道帧直接作为亮度平面，无需亮度提取与色度缩放，
-/// 其余步骤（分 tile / 裁剪再分配 / 双线性插值 / strength 混合）相同。
-void applyClaheMono(
-  Uint16List mono, {
-  required int width,
-  required int height,
-  int blockSize = 32,
-  double clipLimit = 2.0,
-  double strength = 1.0,
-  int maxValue = 65535,
-}) {
-  // mono[p] = clamp(v + (le - v) * strength)；le 为插值后的均衡亮度。
-}
-
-// pipeline_runner.dart — case 'ahe' 按帧格式分发：'rgb' 走 applyClahe，
-// 'mono' 走 applyClaheMono，其余格式抛 StateError；
-// 节点的 in(RGB) 与 in_mono(Mono) 属视频输入互斥组，只能接入一路。
-''';
-const String _previewCode = r'''
-// pipeline_runner.dart — 预览是汇点，不改变数据：
-case 'preview':
-case 'image_output':
-case 'video_output':
-  // 透传 / 汇点，不改变数据。
-  break;
-
-// 链末端把最终帧色调映射为 RGBA8888（若链中没有 Gamma 节点，
-// 按 gamma 2.2 做默认色调映射；YUV/HSL 链先转回 RGB）：
-if (rgba != null) return rgba;
-final max = frame.maxValue;
-return switch (frame.format) {
-  'rgb' => tonemapToRgba(frame.data, maxValue: max, gamma: 2.2),
-  'yuv' =>
-    tonemapToRgba(yuvToRgb(frame.data, maxValue: max), maxValue: max, gamma: 2.2),
-  'hsl' =>
-    tonemapToRgba(hslToRgb(frame.data, maxValue: max), maxValue: max, gamma: 2.2),
-  // RAW 马赛克直显（预览节点 in_raw 接入）：不去马赛克，像素值即亮度。
-  'mosaic' => monoToRgba(frame.data, maxValue: max, gamma: 2.2),
-  _ => throw StateError('流水线末端不是图像数据（缺少去马赛克）'),
-};
-
-// isp_studio_state.dart — runPreview() 拿到 RGBA 后解码为 ui.Image 显示：
-ui.decodeImageFromPixels(
-    rgba, w, h, ui.PixelFormat.rgba8888, completer.complete);
-''';
-
-/// 图片输出（exporters.dart）。
-const String _imageOutputCode = r'''
-/// Encode an RGBA8888 buffer to PNG (lossless).
-Uint8List encodePngRgba(Uint8List rgba, int width, int height) {
-  final image = img.Image.fromBytes(
-    width: width,
-    height: height,
-    bytes: rgba.buffer,
-    numChannels: 4,
-    order: img.ChannelOrder.rgba,
-  );
-  return img.encodePng(image);
-}
-
-/// Encode an RGBA8888 buffer to JPEG. [quality] 1-100 (100 = best).
-Uint8List encodeJpgRgba(Uint8List rgba, int width, int height, int quality) {
-  final image = img.Image.fromBytes(
-    width: width,
-    height: height,
-    bytes: rgba.buffer,
-    numChannels: 4,
-    order: img.ChannelOrder.rgba,
-  );
-  return img.encodeJpg(image,
-      quality: quality.clamp(1, 100), chroma: img.JpegChroma.yuv444);
-}
-
-/// compute() 入口：在后台 isolate 中执行一帧并编码为 JPG/PNG。
-Future<Uint8List> encodeFrameInIsolate(Map<String, Object?> msg) async {
-  final chain = (msg['chain'] as List).cast<Map<String, Object?>>();
-  final frameIndex = msg['frameIndex'] as int;
-  final format = msg['format'] as String? ?? 'jpg';
-  final quality = msg['quality'] as int? ?? 100;
-  final rgba = await runChainFrame(chain, frameIndex);
-  final srcParams = chain.first['params'] as Map<String, Object?>;
-  final (w, h) =
-      await sourceDimensions(chain.first['typeId'] as String, srcParams);
-  return format == 'png'
-      ? encodePngRgba(rgba, w, h)
-      : encodeJpgRgba(rgba, w, h, quality);
-}
-''';
-
-/// 视频输出（exporters.dart）。
-const String _videoOutputCode = r'''
-/// Export a frame sequence to an H.264 MP4 by piping raw RGBA frames to
-/// ffmpeg's stdin.
-///
-/// [frameProvider] is called with each frame index (0..frameCount-1) and must
-/// return that frame as RGBA8888 bytes (width*height*4). Frames are pulled
-/// one at a time so multi-frame 4K exports never reside in memory at once.
-Future<void> exportMp4({
-  required String ffmpegPath,
-  required String outputPath,
-  required int width,
-  required int height,
-  required int fps,
-  required int crf,
-  required int frameCount,
-  required Future<Uint8List> Function(int frameIndex) frameProvider,
-  void Function(int framesDone, int totalFrames)? onProgress,
+/// - 去重 + 环路保护：符号键 'file:name' 只输出一次；
+/// - 名字跨文件冲突时优先取引用者所在文件的同名符号，其次按
+///   [sourceFiles]（默认 [pipelineSourceFiles]）顺序取首个含该名的文件；
+/// - Dart SDK 类型/函数不在索引中，自然被忽略；
+/// - 展示顺序：入口符号在前（按 [entries] 顺序），子函数按发现顺序
+///   （BFS）附后；每段前加 `// ── 来自 pipeline/xxx.dart ──` 分隔注释，
+///   自动补齐的段标题带符号名与 `(被引用)` 标记；
+/// - 某符号提取失败时插入占位注释而不是静默丢弃。
+Future<String> loadCodeWithClosure(
+  List<NodeCodeSeg> entries, {
+  Future<String> Function(String path)? readFile,
+  List<String>? sourceFiles,
+  Set<String>? keysOut,
 }) async {
-  final process = await Process.start(ffmpegPath, [
-    '-y',
-    '-f', 'rawvideo',
-    '-pix_fmt', 'rgba',
-    '-s', '${width}x$height',
-    '-r', '$fps',
-    '-i', '-',
-    '-c:v', 'libx264',
-    '-pix_fmt', 'yuv420p',
-    '-crf', '${crf.clamp(0, 51)}',
-    outputPath,
-  ]);
+  final universe = sourceFiles ?? pipelineSourceFiles;
+  final sources = <String, String>{}; // file → 源码（已加载）
+  final indexes = <String, Map<String, String>>{}; // file → 声明索引
+  final missing = <String>{}; // 读取失败的文件
 
-  final stderrBuf = StringBuffer();
-  final stderrDone = process.stderr
-      .transform(const SystemEncoding().decoder)
-      .listen(stderrBuf.write)
-      .asFuture<void>();
-
-  try {
-    for (var i = 0; i < frameCount; i++) {
-      final frame = await frameProvider(i);
-      process.stdin.add(frame);
-      await process.stdin.flush();
-      onProgress?.call(i + 1, frameCount);
+  Future<String?> sourceOf(String file) async {
+    if (missing.contains(file)) return null;
+    final cached = sources[file];
+    if (cached != null) return cached;
+    final path = 'lib/modules/isp_studio/pipeline/$file';
+    try {
+      final s = await (readFile != null
+          ? readFile(path)
+          : (_assetCache[path] ??= rootBundle.loadString(path)));
+      sources[file] = s;
+      return s;
+    } catch (_) {
+      missing.add(file);
+      return null;
     }
-    await process.stdin.close();
-  } catch (e) {
-    process.kill();
-    rethrow;
   }
 
-  final exitCode = await process.exitCode;
-  await stderrDone;
-  if (exitCode != 0) {
-    throw StateError('ffmpeg 编码失败 (exit $exitCode):\n$stderrBuf');
+  Future<Map<String, String>?> indexOf(String file) async {
+    final cached = indexes[file] ?? _declIndexCache[file];
+    if (cached != null) return indexes[file] ??= cached;
+    final s = await sourceOf(file);
+    if (s == null) return null;
+    final idx = indexDeclarations(s);
+    _declIndexCache[file] = idx;
+    return indexes[file] = idx;
   }
-}
-''';
 
-/// PSNR 数字表（instruments.dart）。
-const String _psnrCode = r'''
-/// PSNR（峰值信噪比）：两幅 RGBA8888 图（同尺寸）RGB 三通道的均方
-/// 误差 MSE 与 PSNR(dB) = 10·log10(255²/MSE)；完全相同返回 ∞。
-/// 参考图（in*）与测试图（in_test*）各取链末端色调映射 RGBA
-/// （与直方图同一数据口径），评估图像噪声/处理保真度。
-(double mse, double psnr) psnrRgba(Uint8List a, Uint8List b) {
-  // MSE = mean((a-b)²)（RGB 三通道）；psnr = 10·log10(255²/MSE)。
-}
-''';
-
-/// 最值保持器（instruments.dart）。
-const String _minmaxCode = r'''
-/// 最值保持器：Mono 单通道链末端色调映射灰度帧（R=G=B，扫 R 通道）
-/// 的当前帧最大/最小值（0..255）；UI 侧跨帧保持历史极值
-/// （holdMax/holdMin），节点上的复位按钮清零后从当帧重新累计。
-(int, int) minmaxMono(Uint8List rgba) {
-  // 逐像素扫 R 通道取最小/最大；空帧返回 (0, 0)。
-}
-''';
-
-/// SSIM 数字表（instruments.dart）。
-const String _ssimCode = r'''
-/// SSIM（结构相似度，Wang 04）：参考图（in*）与测试图（in_test*）
-/// 各取链末端色调映射 RGBA（与直方图同一数据口径），按 R/G/B 三
-/// 通道在不重叠 8×8 块上计算块 SSIM 并取均值；完全相同为 1.0。
-(double, double, double, double) ssimRgba(
-    Uint8List a, Uint8List b, int width, int height) {
-  // 块 SSIM = (2μaμb+C1)(2σab+C2) / (μa²+μb²+C1)(σa²+σb²+C2)；
-  // C1=(0.01·255)²，C2=(0.03·255)²，返回 (总体, R, G, B) 均值。
-}
-''';
-
-/// MS-SSIM 数字表（instruments.dart）。
-const String _msssimCode = r'''
-/// MS-SSIM（多尺度结构相似度，Wang 03）：参考图（in*）与测试图
-/// （in_test*）各取链末端色调映射 RGBA（与直方图同一数据口径），
-/// 逐级 2× 降采样（最多 5 尺度，权重截断归一化）：每尺度的
-/// 对比度-结构项 cs 按权重累乘，亮度项 l 只取最粗尺度
-/// （MS-SSIM = Π cs_j^wj · l_M^wM）；完全相同为 1.0。
-(double, double, double, double) msssimRgba(
-    Uint8List a, Uint8List b, int width, int height) {
-  // 块统计同 ssimRgba（8×8 非重叠块）；cs 与 l 逐尺度计算，
-  // 返回 (总体, R, G, B) 三通道均值。
-}
-''';
-
-/// FSIM 数字表（instruments.dart）。
-const String _fsimCode = r'''
-/// FSIM（特征相似度，Zhang 11 结构的实用简化版）：参考图（in*）与
-/// 测试图（in_test*）各取链末端色调映射 RGBA（与直方图同一数据
-/// 口径），按 R/G/B 三通道计算特征相似度并取均值；完全相同为 1.0。
-/// S_PC = (2·PC1·PC2+T1)/(PC1²+PC2²+T1)，S_G = (2·G1·G2+T2)/(G1²+G2²+T2)，
-/// FSIM = Σ(S_PC·S_G·PCm)/ΣPCm，PCm = max(PC1, PC2)。
-/// PC 为双尺度空间域简化（Scharr 梯度 + |Laplacian| 的局部能量/幅度比），
-/// GM 为 /16 归一化 Scharr 梯度幅度；T1=0.85，T2=160。
-(double, double, double, double) fsimRgba(
-    Uint8List a, Uint8List b, int width, int height) {
-  // 返回 (总体, R, G, B)；两图均无特征（平坦）时为 1.0。
-}
-''';
-
-/// NIQE 数字表（niqe.dart + niqe_model.dart）。
-const String _niqeCode = r'''
-/// NIQE（自然图像质量评价器，Mittal 13，无参考）：链末端色调映射
-/// RGBA → BT.601 亮度 → 2 尺度 MSCN 系数的 NSS 特征（36 维：GGD
-/// 形状/方差 + 4 方向邻积 AGGD），与官方 pristine 语料预训练
-/// 多元高斯模型（niqe_model.dart）的马氏距离；越大越差。
-double niqeScore(Uint8List rgba, int width, int height) {
-  // 分块 96×96（不足时整幅单块兜底）；score =
-  // sqrt((μp-μd)' · inv((Σp+Σd)/2) · (μp-μd))；图太小返回 NaN。
-}
-''';
-
-/// BRISQUE 数字表（brisque.dart + brisque_model.dart）。
-const String _brisqueCode = r'''
-/// BRISQUE（空间域盲质量评价器，Mittal 12，无参考）：链末端色调映射
-/// RGBA → 灰度（0..1）→ 2 尺度 MSCN 的 NSS 特征（36 维：AGGD 形状/
-/// 方差 + 4 方向邻积 AGGD）→ [-1,1] 归一化 → 官方预训练
-/// epsilon-SVR（RBF 核，γ=0.05，brisque_model.dart）回归；
-/// 0..100，越小越好。AGGD 右侧含零值（z>=0）。
-double brisqueScore(Uint8List rgba, int width, int height) {
-  // score = Σ coef·exp(-γ‖x-sv‖²) - ρ；特征退化返回 NaN。
-}
-''';
-
-/// ILNIQE 数字表（ilniqe.dart + ilniqe_model.dart）。
-const String _ilniqeCode = r'''
-/// ILNIQE（特征增强型盲质量评价器，Zhang 15，无参考）：RGB → MATLAB
-/// 风格抗锯齿双三次缩放归一化到 524×524 → 2 尺度 109 通道复合特征
-/// （O3 亮度 MSCN / 对立色高斯导数梯度 / 对数通道强度·BY·RG /
-/// 3 尺度 × 4 方向 log-Gabor 频域滤波响应及导数与梯度）→ 84×84
-/// 分块 234 维特征（AGGD/Weibull/均值方差）→ 拼接 468 维 → 官方
-/// 预训练 PCA（→430 维）→ 与 pristine 语料 MVG 模型的逐块马氏
-/// 距离均值；越大越差。
-double ilniqeScore(Uint8List rgba, int width, int height) {
-  // 计算量大（FFT 滤波器组 + MVG 评分），在独立 isolate 运行
-  // （ilniqeScoreInIsolate），不走 5s 超时的仪器 worker。
-}
-''';
-
-/// PIQE 数字表（piqe.dart）。
-const String _piqeCode = r'''
-/// PIQE（感知质量评价器，Venkatanath 15，无参考、无需模型）：灰度 →
-/// 按图最大值归一化 → 对称填充到 16 的整数倍 → 7×7 高斯窗 MSCN →
-/// 16×16 分块：方差超阈值的活跃块按「块效应（边缘段标准差）」与
-/// 「高斯噪声（中心-surround 标准差比）」两条判据分类失真，按块
-/// 方差加权汇总；Score = (distorted + 1) / (NHSA + 1) × 100，
-/// 0..100 越小越好；平坦图按定义得 100。
-double piqeScore(Uint8List rgba, int width, int height) {
-  // 纯空间域计算，无模型参数；失真块判据见论文式 (1)(2)。
-}
-''';
-
-/// LPIPS 数字表（Python 桥接：pyiqa_worker.dart + tools/iqa/iqa_bridge.py）。
-const String _lpipsCode = r'''
-/// LPIPS（学习感知图像块相似度，Zhang 18）：参考图（in*）与测试图
-/// （in_test*）各取链末端色调映射 RGBA（与直方图同一数据口径，大帧
-/// 2x 降采样），VGG 各层特征的归一化 L2 距离加权和（0..~1，越小
-/// 越好）；与 PSNR/SSIM 相比同人眼感知的相关性更高。
-/// torch 模型无法在 Dart 内计算：帧写临时 PNG，经 stdin/stdout
-/// JSON 行协议发给常驻 Python 桥接进程（lpips 包，net='vgg'）出分。
-Future<double> lpipsScore(String refPng, String testPng) {
-  // 见 tools/iqa/iqa_bridge.py（_LpipsPair.pair）。
-}
-''';
-
-/// DISTS 数字表（Python 桥接，同 LPIPS 路径）。
-const String _distsCode = r'''
-/// DISTS（深度图像结构与纹理相似度，Ding 20）：参考图（in*）与测试
-/// 图（in_test*）各取链末端色调映射 RGBA（与直方图同一数据口径，
-/// 大帧 2x 降采样），VGG 特征图的全局均值（结构）与通道协方差
-/// （纹理）两级相似度加权和（0..~1，越小越好）；对纹理替换/
-/// 重采样稳健。计算经 Python 桥接进程（pyiqa 'dists'）。
-Future<double> distsScore(String refPng, String testPng) {
-  // 见 tools/iqa/iqa_bridge.py（_PyiqaPair('dists')）。
-}
-''';
-
-/// FID 数字表（Python 桥接，分布级：逐块累计）。
-const String _fidCode = r'''
-/// FID（Fréchet Inception 距离，Heusel 17）：参考路（in*）与测试路
-/// （in_test*）图像在 InceptionV3 pool3（2048 维）特征空间的两个
-/// 高斯（μ,Σ）之间的 Fréchet 距离（≥0，越小越好）。分布级指标，
-/// 样本单位为图像块：每帧按 ≤299×299（Inception 输入尺寸）50% 重叠
-/// 切块累计（patch-FID 口径），静态图片对单次运行即可出分；视频源
-/// 播放时逐帧（逐块）累计，样本越多越准。新一轮运行先复位。
-/// 计算经 Python 桥接进程（pyiqa InceptionV3 + torchmetrics FID）。
-Future<double> fidScore(List<String> refPngs, List<String> testPngs) {
-  // 见 tools/iqa/iqa_bridge.py（_DistMetric('fid')）。
-}
-''';
-
-/// KID 数字表（Python 桥接，分布级：逐块累计）。
-const String _kidCode = r'''
-/// KID（Kernel Inception 距离，Bińkowski 18）：参考路（in*）与测试路
-/// （in_test*）图像的 InceptionV3 pool3 特征间多项式核
-/// ((x·y/d+1)³) MMD 无偏估计（≥0，越小越好）；与 FID 同为分布级
-/// 指标，但小样本集偏差更小。样本单位为图像块（≤299²、50% 重叠，
-/// 同 FID）；静态图片对单次运行即可出分，视频源播放逐帧累计；
-/// 新一轮运行先复位，subset_size 随样本量自适应。
-/// 计算经 Python 桥接进程（pyiqa InceptionV3 + torchmetrics KID）。
-Future<double> kidScore(List<String> refPngs, List<String> testPngs) {
-  // 见 tools/iqa/iqa_bridge.py（_DistMetric('kid')）。
-}
-''';
-
-/// MUSIQ 数字表（Python 桥接）。
-const String _musiqCode = r'''
-/// MUSIQ（多尺度图像质量 Transformer，Ke 21，无参考）：链末端色调映射 RGBA（与直方图
-/// 同一数据口径，大帧 2x 降采样）→ 多尺度 patch Transformer（koniq10k 预训练）
-/// 的质量分（~0..100，越大越好）。torch 模型无法在 Dart 内计算，经 Python 桥接
-/// 进程（pyiqa 'musiq'，koniq10k 预训练）出分。
-Future<double> musiqScore(String rgbaPng) {
-  // 见 tools/iqa/iqa_bridge.py（_PyiqaSingle('musiq')。
-}
-''';
-
-/// CLIPIQA 数字表（Python 桥接）。
-const String _clipiqaCode = r'''
-/// CLIPIQA（CLIP 无参考质量评价，Wang 22）：链末端色调映射 RGBA → CLIP RN50
-/// 图像特征与「好/差照片」提示对的文本特征的相似度（0..1，越大
-/// 越好）。torch 模型无法在 Dart 内计算，经 Python 桥接进程
-/// （pyiqa 'clipiqa'）出分。
-Future<double> clipiqaScore(String rgbaPng) {
-  // 见 tools/iqa/iqa_bridge.py（_PyiqaSingle('clipiqa')）。
-}
-''';
-
-/// 仪器节点共用的输入：链末端色调映射后的 RGBA8888 显示帧。
-const String _instrumentCode = r'''
-/// RGB+Y 直方图：返回 (R, G, B, Y) 四个 256 桶计数（Y 为 BT.601 亮度，
-/// 与波形监视器同一定义）。
-(Uint32List, Uint32List, Uint32List, Uint32List) histogramRgb(
-    Uint8List rgba) {
-  final r = Uint32List(256);
-  final g = Uint32List(256);
-  final b = Uint32List(256);
-  final y = Uint32List(256);
-  for (var i = 0; i + 2 < rgba.length; i += 4) {
-    r[rgba[i]]++;
-    g[rgba[i + 1]]++;
-    b[rgba[i + 2]]++;
-    y[(77 * rgba[i] + 150 * rgba[i + 1] + 29 * rgba[i + 2] + 128) >> 8]++;
+  /// 解析标识符 [name] 的声明所在文件：优先 [fromFile]，其次按
+  /// [universe] 顺序首个含该名的文件；索引中不存在返回 null。
+  Future<String?> resolve(String name, String fromFile) async {
+    final local = await indexOf(fromFile);
+    if (local != null && local.containsKey(name)) return fromFile;
+    for (final f in universe) {
+      if (f == fromFile) continue;
+      final idx = await indexOf(f);
+      if (idx != null && idx.containsKey(name)) return f;
+    }
+    return null;
   }
-  return (r, g, b, y);
-}
 
-/// 波形竖向扫迹的权重刻度：驻留点每像素 +kSweepScale，电子束在
-/// 相邻像素间连续移动扫出的中间电平每级 +1。竖向迹线的亮度因此
-/// 正比于电子束实际扫过该列该电平的频次——每行都扫过的硬边
-/// （彩条）竖线约为主迹线一半亮度，只有少数行扫过的区域（白色
-/// 字幕边缘）则显著更暗，不再是无差别的包络灰片。
-const int kSweepScale = 256;
+  final buf = StringBuffer();
+  final emitted = <String>{}; // 已输出的符号键
+  final queued = <String>{}; // 已入队的符号键（环路保护）
+  final queue = <({String file, String name})>[];
 
-/// 把 (col, from) → (col, to) 之间的中间电平各 +1（竖向扫迹，
-/// 不含端点——端点已有驻留计数）。
-void sweepSpan(Uint32List counts, int cols, int col, int from, int to) {
-  final lo = from < to ? from : to;
-  final hi = from < to ? to : from;
-  for (var lvl = lo + 1; lvl < hi; lvl++) {
-    counts[lvl * cols + col]++;
+  /// 扫描 [text] 中的标识符，把索引内存在的引用入队。
+  Future<void> scanRefs(String text, String fromFile) async {
+    for (final id in scanIdentifiers(text)) {
+      final f = await resolve(id, fromFile);
+      if (f == null) continue;
+      if (queued.add('$f:$id')) queue.add((file: f, name: id));
+    }
   }
-}
 
-/// RGB+Y 波形监视器：横轴为图像列（降采样到 maxCols），纵轴为各通道
-/// 级（Y 为 BT.601 亮度，0 在底）。返回 (R, G, B, Y, 列数)，
-/// 计数表按 级*列数+列 排列。逐行电子束扫迹见 kSweepScale。
-(Uint32List, Uint32List, Uint32List, Uint32List, int) waveformRgb(
-    Uint8List rgba, int width, int height, {int maxCols = 512}) {
-  final cols = width < maxCols ? width : maxCols;
-  final r = Uint32List(cols * 256);
-  final g = Uint32List(cols * 256);
-  final b = Uint32List(cols * 256);
-  final y = Uint32List(cols * 256);
-  for (var yy = 0; yy < height; yy++) {
-    var i = yy * width * 4;
-    var prevR = -1, prevG = -1, prevB = -1, prevY = -1;
-    for (var x = 0; x < width; x++, i += 4) {
-      final col = x * cols ~/ width;
-      final rr = rgba[i], gg = rgba[i + 1], bb = rgba[i + 2];
-      final luma = (77 * rr + 150 * gg + 29 * bb + 128) >> 8;
-      r[rr * cols + col] += kSweepScale;
-      g[gg * cols + col] += kSweepScale;
-      b[bb * cols + col] += kSweepScale;
-      y[luma * cols + col] += kSweepScale;
-      if (prevR >= 0) {
-        sweepSpan(r, cols, col, prevR, rr); // 扫迹段归入新列
-        sweepSpan(g, cols, col, prevG, gg);
-        sweepSpan(b, cols, col, prevB, bb);
-        sweepSpan(y, cols, col, prevY, luma);
+  // 1. 入口符号：按 entries 顺序输出。
+  for (final seg in entries) {
+    final source = await sourceOf(seg.file);
+    if (source == null) {
+      buf.writeln('// 无法读取 lib/modules/isp_studio/pipeline/${seg.file}');
+      continue;
+    }
+    buf.writeln('// ── 来自 pipeline/${seg.file} ──');
+    for (final sym in seg.symbols) {
+      final text = sym.startsWith('case:')
+          ? extractSwitchCase(source, sym.substring(5))
+          : extractSymbol(source, sym);
+      if (text == null) {
+        buf.writeln('// 未能在 ${seg.file} 中定位符号 $sym');
+        buf.writeln();
+        continue;
       }
-      prevR = rr; prevG = gg; prevB = bb; prevY = luma;
+      buf.writeln(text);
+      buf.writeln();
+      final key = '${seg.file}:$sym';
+      emitted.add(key);
+      queued.add(key);
+      keysOut?.add(key);
+      await scanRefs(text, seg.file);
     }
   }
-  return (r, g, b, y, cols);
-}
 
-/// 矢量示波器：BT.601 Cb/Cr 在 512x512 网格上的计数（Cb/Cr 各 256
-/// 的 2 倍超采样；中心 (256,256) 为无色），按 Cr*512+Cb 排列。
-/// 按像素扫描顺序把相邻像素的色度点连成线（模拟示波器电子束的
-/// 连续扫描轨迹）；连线做抗锯齿，按覆盖率把亮度分摊到相邻两格。
-/// rowWidth 非空表示缓冲是按行拼接的隔行条带（多核并行用）：
-/// 每行开头重置电子束起点（拼入的行在原图不相邻，跨行不连线）。
-Uint32List vectorscope(Uint8List rgba, {int? rowWidth}) {
-  final counts = Uint32List(512 * 512);
-  var prevCb = -1;
-  var prevCr = -1;
-  var xInRow = 0;
-  for (var i = 0; i + 2 < rgba.length; i += 4) {
-    if (rowWidth != null) {
-      if (xInRow == 0) {
-        prevCb = -1;
-        prevCr = -1;
-        xInRow = rowWidth;
-      }
-      xInRow--;
-    }
-    final r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
-    // BT.601 全范围：Cb/Cr 以 128 为中心；2 倍超采样（0..511，
-    // 中心 256），右移 7 位保留半格精度（+64 为半格四舍五入）。
-    // 分支钳制而非 clamp()：后者返回 num，逐像素隐式拆箱是热点。
-    var cb = 256 + ((-43 * r - 85 * g + 128 * b + 64) >> 7);
-    var cr = 256 + ((128 * r - 107 * g - 21 * b + 64) >> 7);
-    if (cb < 0) {
-      cb = 0;
-    } else if (cb > 511) {
-      cb = 511;
-    }
-    if (cr < 0) {
-      cr = 0;
-    } else if (cr > 511) {
-      cr = 511;
-    }
-    aaSegment(counts, prevCb, prevCr, cb, cr);
-    prevCb = cb;
-    prevCr = cr;
+  // 2. BFS 闭包：子函数按发现顺序附后。
+  while (queue.isNotEmpty) {
+    final item = queue.removeAt(0);
+    final key = '${item.file}:${item.name}';
+    if (!emitted.add(key)) continue; // 入口已含
+    final text = (await indexOf(item.file))?[item.name];
+    if (text == null) continue;
+    buf.writeln(
+        '// ── 来自 pipeline/${item.file}：${item.name} (被引用) ──');
+    buf.writeln(text);
+    buf.writeln();
+    keysOut?.add(key);
+    await scanRefs(text, item.file);
   }
-  return counts;
+  return buf.toString().trimRight();
 }
-
-/// 单格满权重（抗锯齿覆盖率的定点刻度）。
-const int kAaFullWeight = 256;
-
-/// 把 (x0,y0)→(x1,y1) 的线段按覆盖率累加进计数表（不含起点，
-/// 起点已由上一段计入）。Xiaolin Wu 思路：沿主轴逐格推进，副轴
-/// 位置的小数部分决定分摊到相邻两格的权重。
-void aaSegment(Uint32List counts, int x0, int y0, int x1, int y1) {
-  if (x0 < 0 || (x0 == x1 && y0 == y1)) {
-    counts[y1 * 512 + x1] += kAaFullWeight;
-    return;
-  }
-  final dx = x1 - x0;
-  final dy = y1 - y0;
-  // 快路径：8 连通相邻点（steps <= 1）只落终点一格，无覆盖率分摊。
-  if (dx.abs() <= 1 && dy.abs() <= 1) {
-    counts[y1 * 512 + x1] += kAaFullWeight;
-    return;
-  }
-  final horizontal = dx.abs() >= dy.abs();
-  final steps = horizontal ? dx.abs() : dy.abs();
-  final sign = horizontal ? dx.sign : dy.sign;
-  final major0 = horizontal ? x0 : y0;
-  final minor0 = horizontal ? y0 : x0;
-  final dMinor = horizontal ? dy : dx;
-  // 副轴位置用 16.16 定点累加（增量一次除法并四舍五入），循环内
-  // 全整数运算；>>/& 对负数即向下取整 + 正余数，负斜率同样适用。
-  final absInc = ((dMinor.abs() << 16) + (steps >> 1)) ~/ steps;
-  final inc = dMinor < 0 ? -absInc : absInc;
-  var acc = minor0 << 16;
-  for (var s = 1; s < steps; s++) {
-    final major = major0 + s * sign;
-    acc += inc;
-    final base = acc >> 16;
-    final w1 = (acc & 0xFFFF) >> 8; // 0..255：副轴下一格分到的权重
-    final w0 = kAaFullWeight - w1;
-    final (x, y) = horizontal ? (major, base) : (base, major);
-    counts[y * 512 + x] += w0;
-    if (w1 > 0) {
-      final (xb, yb) = horizontal ? (major, base + 1) : (base + 1, major);
-      counts[yb * 512 + xb] += w1;
-    }
-  }
-  // 终点恒满权重（定点累加的舍入误差不留到端点）。
-  counts[y1 * 512 + x1] += kAaFullWeight;
-}
-''';
-
-/// 音频仪器共用说明：输入为视频音轨 PCM（audio_analysis.dart 的
-/// [WavPcm]），分析取当前位置之前的一小段因果窗。
-const String _audioLevelCode = r'''
-// audio_analysis.dart — 立体声电平：当前位置前 50ms 窗的各声道峰值：
-for (var f = start; f < end; f++) {
-  peakL = max(peakL, samples[f * channels].abs());      // 左声道
-  peakR = max(peakR, samples[f * channels + 1].abs());  // 右声道
-}
-// 峰值 → dBFS（-60dB 起步）→ 0..1 显示值：
-final db = 20 * log10(peak / 32768);
-final value = ((db + 60) / 60).clamp(0.0, 1.0);
-''';
-
-/// 音频波形（audio_analysis.dart）。
-const String _audioWaveformCode = r'''
-// audio_analysis.dart — 当前位置前 ~92ms 窗，等距抽取 512 个采样点
-//（每段取中点样本），控件把采样点光滑连线成示波器式迹线：
-for (var i = 0; i < n; i++) {
-  final f = start + ((i + 0.5) * span / n).floor();
-  l[i] = samples[f * channels] / 32768;      // 左声道
-  r[i] = samples[f * channels + 1] / 32768;  // 右声道
-}
-''';
-
-/// 音频 EQ 频谱（audio_analysis.dart）。
-const String _audioEqCode = r'''
-// audio_analysis.dart — 当前位置前 2048 样本，左右声道各自加 Hann 窗：
-re[i] = s * (0.5 - 0.5 * cos(2 * pi * i / (N - 1))); // s = 该声道样本
-// 迭代基-2 FFT 取幅度谱，20Hz–20kHz 按 1/3 倍频程等距分 31 段取段内峰值，
-// L/R 两通道独立计算：
-final ratio = pow(20000 / 20, 1 / 30); // 段中心等比（×10^0.1，含端点）
-for (var b = 0; b < 31; b++) {
-  bands[b] = maxMagnitude(binRange(b)); // dB 刻度映射到 0..1
-}
-''';
-
-/// RGB 分路器：把交织 RGB 帧拆成 R/G/B 三个单通道平面。
-/// 输入若为 YUV/HSL 先转为 RGB（pipeline_runner.dart）。
-const String _rgbSplitterCode = r'''
-final pixels = w * h;
-final rData = Uint16List(pixels);
-final gData = Uint16List(pixels);
-final bData = Uint16List(pixels);
-for (var i = 0; i < pixels; i++) {
-  rData[i] = frame.data[3 * i];
-  gData[i] = frame.data[3 * i + 1];
-  bData[i] = frame.data[3 * i + 2];
-}
-portOutputs[nodeId] = {
-  'out_r': rData,
-  'out_g': gData,
-  'out_b': bData,
-};
-''';
-
-/// YUV 分路器：把交织 YUV 帧拆成 Y/U/V 三个单通道平面。
-/// 平面轨道（yuvPlanes8）直接引用三个平面，零拷贝。
-const String _yuvSplitterCode = r'''
-final pixels = w * h;
-final planes8 = frame.yuvPlanes8;
-if (planes8 != null) {
-  // 平面轨道：分路 = 三个平面的零拷贝视图。
-  portOutputs[nodeId] = {
-    'out_y': planes8[0],
-    'out_u': planes8[1],
-    'out_v': planes8[2],
-  };
-} else {
-  final yData = Uint16List(pixels);
-  final uData = Uint16List(pixels);
-  final vData = Uint16List(pixels);
-  var srcIdx = 0;
-  for (var i = 0; i < pixels; i++, srcIdx += 3) {
-    yData[i] = frame.data[srcIdx];
-    uData[i] = frame.data[srcIdx + 1];
-    vData[i] = frame.data[srcIdx + 2];
-  }
-  portOutputs[nodeId] = {
-    'out_y': yData,
-    'out_u': uData,
-    'out_v': vData,
-  };
-}
-''';
-
-/// HSL 分路器：把交织 HSL 帧拆成 H/S/L 三个单通道平面。
-const String _hslSplitterCode = r'''
-final pixels = w * h;
-final hData = Uint16List(pixels);
-final sData = Uint16List(pixels);
-final lData = Uint16List(pixels);
-var srcIdx = 0;
-for (var i = 0; i < pixels; i++, srcIdx += 3) {
-  hData[i] = frame.data[srcIdx];
-  sData[i] = frame.data[srcIdx + 1];
-  lData[i] = frame.data[srcIdx + 2];
-}
-portOutputs[nodeId] = {
-  'out_h': hData,
-  'out_s': sData,
-  'out_l': lData,
-};
-''';
-
-/// RGB 合路器：把 R/G/B 三个单通道平面合并为交织 RGB 帧。
-/// 未连接的通道按 0 填充。
-const String _rgbCombinerCode = r'''
-final pixels = w * h;
-final rData = getPortData(op, 'in_r');
-final gData = getPortData(op, 'in_g');
-final bData = getPortData(op, 'in_b');
-final combined = Uint16List(pixels * 3);
-var dstIdx = 0;
-for (var i = 0; i < pixels; i++, dstIdx += 3) {
-  combined[dstIdx] = rData != null && i < rData.length ? rData[i] : 0;
-  combined[dstIdx + 1] = gData != null && i < gData.length ? gData[i] : 0;
-  combined[dstIdx + 2] = bData != null && i < bData.length ? bData[i] : 0;
-}
-frame = _Frame(data: combined, format: 'rgb', width: w, height: h, maxValue: max);
-portOutputs[nodeId] = {'out': combined};
-''';
-
-/// YUV 合路器：把 Y/U/V 三个单通道平面合并为交织 YUV 帧。
-/// 平面轨道下三路输入为整帧 8 位平面时直接引用（零拷贝），
-/// 未连接的 U/V 通道按中值（max >> 1）填充。
-const String _yuvCombinerCode = r'''
-final pixels = w * h;
-final yData = getPortData(op, 'in_y');
-final uData = getPortData(op, 'in_u');
-final vData = getPortData(op, 'in_v');
-if (yData is Uint8List && uData is Uint8List && vData is Uint8List &&
-    yData.length == pixels &&
-    uData.length == pixels &&
-    vData.length == pixels) {
-  // 平面轨道：零拷贝引用，数据与分路器输出同源时是透传合路。
-  frame = _Frame(data: Uint16List(0), format: 'yuv', width: w, height: h,
-      maxValue: max, yuvPlanes8: [yData, uData, vData]);
-} else {
-  final combined = Uint16List(pixels * 3);
-  final mid = max >> 1;
-  var dstIdx = 0;
-  for (var i = 0; i < pixels; i++, dstIdx += 3) {
-    combined[dstIdx] = yData != null && i < yData.length ? yData[i] : 0;
-    combined[dstIdx + 1] = uData != null && i < uData.length ? uData[i] : mid;
-    combined[dstIdx + 2] = vData != null && i < vData.length ? vData[i] : mid;
-  }
-  frame = _Frame(data: combined, format: 'yuv', width: w, height: h,
-      maxValue: max);
-}
-portOutputs[nodeId] = {'out': combined};
-''';
-
-/// HSL 合路器：把 H/S/L 三个单通道平面合并为交织 HSL 帧。
-/// 未连接的通道按 0 填充。
-const String _hslCombinerCode = r'''
-final pixels = w * h;
-final hData = getPortData(op, 'in_h');
-final sData = getPortData(op, 'in_s');
-final lData = getPortData(op, 'in_l');
-final combined = Uint16List(pixels * 3);
-for (var i = 0; i < pixels; i++) {
-  combined[3 * i] = hData != null && i < hData.length ? hData[i] : 0;
-  combined[3 * i + 1] = sData != null && i < sData.length ? sData[i] : 0;
-  combined[3 * i + 2] = lData != null && i < lData.length ? lData[i] : 0;
-}
-frame = _Frame(data: combined, format: 'hsl', width: w, height: h, maxValue: max);
-portOutputs[nodeId] = {'out': combined};
-''';
-
-/// 坏点校正（isp_kernels.dart，W06/W07、N06–N09）。
-const String _dpcCode = r'''
-/// 坏点校正：与同相位（mono 为全像素）3x3 邻域中位数比较，离群超过
-/// threshold（满量程百分比）即判定为坏点。mode 为 'median' 时用邻域
-/// 中位数替换；为 'directional' 时沿梯度最小的方向取两点平均替换。
-void applyDpc(
-  Uint16List buf, {
-  required int width,
-  required int height,
-  BayerPattern? pattern, // null = mono（全像素 3x3）
-  double threshold = 5.0,
-  String mode = 'median',
-  int maxValue = 65535,
-}) {
-  final thr = threshold / 100 * maxValue;
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      final i = y * width + x;
-      final neigh = _phaseNeighbors(width, height, x, y, pattern);
-      if (neigh.isEmpty) continue;
-      final med = 中位数(neigh);
-      if ((buf[i] - med).abs() <= thr) continue;
-      buf[i] = mode == 'directional' ? 最小梯度方向两点平均 : med;
-    }
-  }
-}
-''';
-
-/// FPN 校正（isp_kernels.dart，W08–W11、N10–N13）。
-const String _fpnCode = r'''
-/// FPN 校正：低通分离内容 + 边缘掩膜的稳健行/列偏移估计，
-/// 校正量限幅 ±maxCorr。
-void applyFpn(
-  Uint16List buf, {
-  required int width,
-  required int height,
-  BayerPattern? pattern, // null = mono
-  bool row = true,
-  bool col = true,
-  double maxCorr = 64,
-  int radius = 8,
-}) {
-  if (row) {
-    final low = 垂直滑窗盒式均值(buf, radius); // 内容留在低频，残差含行 FPN
-    for (var y = 0; y < height; y++) {
-      // 中位数抑制稀疏边缘离群；垂直梯度 > maxCorr 的像素掩膜
-      final corr = clamp(残差行中位数(y, low, 掩膜), -maxCorr, maxCorr);
-      行内逐像素: buf[i] = max(0, buf[i] - corr);
-    }
-  }
-  if (col) { /* 列同理：水平低通 + 水平梯度掩膜 */ }
-}
-''';
-
-/// 镜头阴影校正（isp_kernels.dart，W12–W14、N14–N16）。
-const String _lscCode = r'''
-/// 镜头阴影/平场校正：以 (centerX, centerY)（归一化 0..1）为中心的
-/// 径向二次增益曲面，增益 = 1 + strength*(r/rmax)^2，边缘亮中心暗，
-/// 饱和截位到 maxValue。增益与相位无关，Bayer/mono 通用。
-void applyLsc(
-  Uint16List buf, {
-  required int width,
-  required int height,
-  BayerPattern? pattern, // null = mono
-  double strength = 0.5,
-  double centerX = 0.5,
-  double centerY = 0.5,
-  int maxValue = 65535,
-}) {
-  final cx = centerX * (width - 1);
-  final cy = centerY * (height - 1);
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      final gain = 1 + strength * ((x-cx)*(x-cx) + (y-cy)*(y-cy)) / rMax2;
-      buf[y * width + x] = clamp(buf[y * width + x] * gain, 0, maxValue);
-    }
-  }
-}
-''';
-
-/// Gr/Gb 均衡（isp_kernels.dart，W15）。
-const String _grGbBalanceCode = r'''
-/// Gr/Gb 均衡：统计两个绿色通道相位（Gr 与 R 同行、Gb 与 B 同行）的
-/// 全局均值，向两者中点按 strength 比例收敛，消除迷宫伪影。
-void applyGrGbBalance(
-  Uint16List buf, {
-  required int width,
-  required int height,
-  required BayerPattern pattern,
-  double strength = 1.0,
-}) {
-  // meanGr / meanGb：两个 G 相位的全局均值。
-  final target = (meanGr + meanGb) / 2;
-  final gainGr = 1 + (target / meanGr - 1) * strength;
-  final gainGb = 1 + (target / meanGb - 1) * strength;
-  // 逐 G 像素按相位施加对应增益。
-}
-''';
-
-/// Bayer 降噪（isp_kernels.dart，W16/W17、N24/N25）。
-const String _bayerDnrCode = r'''
-/// Bayer 降噪：同相位 3x3 保边加权平均，权重 1/(1+(Δ/σ)^2)，
-/// σ 来自 σ^2=aI+b 噪声模型（取 a=1、b=64，σ=√(I+64)），
-/// strength 为 σ 的倍率（0 = 关闭）。mono（pattern 为 null）时全像素。
-void applyBayerDenoise(
-  Uint16List buf, {
-  required int width,
-  required int height,
-  BayerPattern? pattern, // null = mono
-  double strength = 1.0,
-}) {
-  final src = Uint16List.fromList(buf);
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      final v = src[y * width + x];
-      final sigma = strength * sqrt(v + 64);
-      var sum = v.toDouble();
-      var wsum = 1.0;
-      for (final n in _phaseNeighbors(width, height, x, y, pattern)) {
-        final d = src[n] - v;
-        final w = 1 / (1 + (d / sigma) * (d / sigma));
-        sum += w * src[n];
-        wsum += w;
-      }
-      buf[y * width + x] = (sum / wsum).round();
-    }
-  }
-}
-''';
-
-/// 高光恢复（isp_kernels.dart，W18/W19）。
-const String _highlightCode = r'''
-/// 高光恢复：
-/// - 'recover'：达到膝点（knee×maxValue）的饱和像素用同相位未饱和
-///   邻域均值重建（无可用邻域则保持原值）；
-/// - 'clip'：膝点以上做软压缩，平滑收敛到 maxValue，避免硬切色块。
-void applyHighlightRecovery(
-  Uint16List buf, {
-  required int width,
-  required int height,
-  BayerPattern? pattern, // null = mono
-  int maxValue = 65535,
-  String mode = 'recover',
-  double knee = 0.9,
-}) {
-  final kneePt = knee * maxValue;
-  if (mode == 'clip') {
-    // v' = kneePt + d*range/(range+d)，d = v - kneePt。
-  } else {
-    // 饱和像素 ← 同相位未饱和邻域均值。
-  }
-}
-''';
-
-/// RGB 降噪（isp_kernels.dart，W29–W31）。
-const String _rgbDnrCode = r'''
-/// RGB 降噪：转 YUV 后亮度做 3x3 保边加权平均（权重同 Bayer 降噪的
-/// σ 模型，luma 为倍率），色度做 3x3 盒式低通并按 chroma（0..1）
-/// 混合，再转回 RGB 写回原缓冲。
-void applyRgbDenoise(
-  Uint16List rgb, {
-  required int width,
-  required int height,
-  double luma = 1.0,
-  double chroma = 0.5,
-  int maxValue = 65535,
-}) {
-  final yuv = rgbToYuv(rgb, maxValue: maxValue);
-  // Y：保边加权平均；U/V：盒式低通按 chroma 混合。
-  rgb.setAll(0, yuvToRgb(yuv, maxValue: maxValue));
-}
-''';
-
-/// 锐化（isp_kernels.dart，W32–W34）。
-const String _sharpenCode = r'''
-/// 锐化：亮度 unsharp mask——detail = Y − 3x3 盒式模糊，
-/// |detail| < threshold 视为噪声置零，Y' = Y + amount×detail，
-/// 三通道按 Y'/Y 等比缩放并截位到 maxValue。
-void applySharpen(
-  Uint16List rgb, {
-  required int width,
-  required int height,
-  double amount = 0.5,
-  double threshold = 4.0,
-  int maxValue = 65535,
-}) {
-  // 逐像素：Y = BT.601 亮度；detail 过小时置零（噪声限幅）。
-  final y2 = (v + amount * detail).clamp(0.0, maxValue.toDouble());
-  final scale = y2 / v; // 等比缩放到 R/G/B
-}
-''';
-
-/// 高斯模糊（isp_kernels.dart）。
-const String _gaussianBlurCode = r'''
-/// 高斯模糊：可分离两趟高斯卷积（水平 + 垂直），核半径 ⌈3σ⌉、
-/// 归一化权重，边界复制；RGB/YUV/HSL 三通道交织逐通道独立，
-/// Mono 单通道（channels=1）。
-/// out = in×(1−strength) + blurred×strength（强度混合）。
-void applyGaussianBlur(
-  Uint16List data, {
-  required int width,
-  required int height,
-  int channels = 3,
-  double sigma = 1.0,
-  double strength = 1.0,
-}) {
-  // 水平趟 data→tmp，垂直趟 tmp→data（含强度混合，原地写回）。
-}
-''';
-
-/// 腐蚀/膨胀（isp_kernels.dart）。
-const String _morphologyCode = r'''
-/// 形态学腐蚀/膨胀：方形结构元 (2×radius+1)² 的逐通道极小（erode）/
-/// 极大（dilate）滤波，交织多通道数据逐通道独立处理（RGB 三通道独立；
-/// Mono 单通道即灰度形态学）。可分离两趟实现（水平 + 垂直），结果与
-/// 直接二维窗口完全一致；边界按可用邻域取极值。
-void applyMorphology(
-  Uint16List data, {
-  required int width,
-  required int height,
-  int channels = 1,
-  bool erode = true,
-  int radius = 1,
-}) {
-  // 水平趟：每行按 [x-radius, x+radius]（裁剪到图内）取极值入 tmp；
-  // 垂直趟：对 tmp 按列取极值写回 data。极值取自原数据，无需钳位。
-}
-''';
-
-/// RGB→YUV 转换（isp_kernels.dart，W36）。
-const String _cscCode = r'''
-/// RGB → YUV 色彩空间转换：standard 为 'bt601'/'bt709' 定点矩阵，
-/// range 为 'full'（全范围）/'limited'（tv 范围：Y 16..235、C 16..240
-/// 按 255 标度折算到 maxValue 量级）。
-Uint16List convertRgbToYuvCsc(
-  Uint16List rgb, {
-  required int width,
-  required int height,
-  String standard = 'bt601',
-  String range = 'full',
-  int maxValue = 65535,
-}) {
-  // BT.709 定点系数：Y = 0.2126R + 0.7152G + 0.0722B。
-  // limited：Y' = 16/255*max + Y*219/255；C' = half + (C-half)*224/255。
-}
-''';
-
-/// RGB→HSL 转换（isp_kernels.dart）。
-const String _cscRgb2HslCode = r'''
-/// RGB → HSL 色彩空间转换：H 按 0..360° 映射到 0..maxValue，
-/// S/L 映射到 0..maxValue。
-Uint16List rgbToHsl(Uint16List rgb, {required int maxValue}) {
-  // 逐像素：l = (max+min)/2；d = max-min；
-  // s = l > 0.5 ? d/(2-max-min) : d/(max+min)；
-  // h 按最大分量所在扇区计算（R：(g-b)/d；G：(b-r)/d+2；B：(r-g)/d+4），
-  // 归一化到 0..1 后乘 maxValue。
-}
-''';
-
-/// YUV→RGB 转换（isp_kernels.dart）。
-const String _cscYuv2RgbCode = r'''
-/// YUV → RGB 色彩空间转换：BT.601 全范围逆变换，16 位定点整数移位加速，
-/// U/V 以 maxValue/2 为零点。
-Uint16List yuvToRgb(Uint16List yuv, {required int maxValue}) {
-  // 逐像素：u = U - half；v = V - half；
-  // R = Y + 1.402*v；G = Y - 0.344136*u - 0.714136*v；B = Y + 1.772*u
-  // （系数 ×65536 定点，右移 16 位，结果钳位到 0..maxValue）。
-}
-''';
-
-/// YUV→HSL 转换（isp_kernels.dart，单遍融合实现）。
-const String _cscYuv2HslCode = r'''
-/// YUV → HSL 色彩空间转换：单遍融合实现，循环内先按 yuvToRgb 的
-/// 定点公式算出 RGB 中间值（不分配中间缓冲），再直接求 H/S/L。
-/// 数学上等价于 YUV→RGB→HSL，数值与两段中转逐点一致。
-Uint16List yuvToHsl(Uint16List yuv, {required int maxValue}) {
-  // 逐像素：u = U - half；v = V - half；
-  // R = Y + 1.402*v；G = Y - 0.344136*u - 0.714136*v；B = Y + 1.772*u
-  // （系数 ×65536 定点，右移 16 位，钳位到 0..maxValue，仅作中间值）；
-  // 随后 l = (max+min)/2；s 按 l 分档；h 按最大分量扇区计算，
-  // H 0..360°、S/L 均映射到 0..maxValue。
-}
-''';
-
-/// HSL→RGB 转换（isp_kernels.dart）。
-const String _cscHsl2RgbCode = r'''
-/// HSL → RGB 色彩空间转换：rgbToHsl 的逆变换，
-/// H/S/L 均按 0..maxValue 归一化后还原 RGB。
-Uint16List hslToRgb(Uint16List hsl, {required int maxValue}) {
-  // 逐像素：s == 0 时 r = g = b = l（灰度）；
-  // 否则 q = l < 0.5 ? l*(1+s) : l+s-l*s，p = 2*l - q，
-  // 三个通道按 hueToRgb(p, q, h±1/3) 求值并钳位到 0..maxValue。
-}
-''';
-
-/// HSL→YUV 转换（isp_kernels.dart，单遍融合实现）。
-const String _cscHsl2YuvCode = r'''
-/// HSL → YUV 色彩空间转换：单遍融合实现，循环内先按 hslToRgb 的
-/// 逻辑算出 RGB 中间值（不分配中间缓冲），再直接求 Y/U/V。
-/// 数学上等价于 HSL→RGB→YUV，数值与两段中转逐点一致。
-Uint16List hslToYuv(Uint16List hsl, {required int maxValue}) {
-  // 逐像素：s == 0 时 r = g = b = l（灰度）；否则 q/p 分档，
-  // 三个通道按 hueToRgb(p, q, h±1/3) 求值并钳位到 0..maxValue
-  // （仅作中间值）；随后按 BT.601 全范围定点矩阵：
-  // Y = 0.299R + 0.587G + 0.114B；
-  // U = -0.168736R - 0.331264G + 0.5B + half；
-  // V = 0.5R - 0.418688G - 0.081312B + half（half = maxValue/2）。
-}
-''';
-
-/// HSL 调节器（isp_kernels.dart）：HSL 域交互调参。
-const String _hslDebuggerCode = r'''
-/// HSL 调整：H 在 0..360° 色环上循环偏移 hShiftDeg 度，
-/// S/L 分别乘增益 sGain/lGain 后钳位到 0..maxValue。
-/// 三个参数均为恒等值时直接返回原数据（不拷贝）。
-Uint16List adjustHsl(Uint16List hsl,
-    {required int maxValue,
-    double hShiftDeg = 0,
-    double sGain = 1.0,
-    double lGain = 1.0}) {
-  // 逐像素：shift = round(hShiftDeg / 360 * maxValue)；
-  // H' = (H + shift) mod (maxValue + 1)（Dart % 对负数返回负值，
-  // 用 ((x % m) + m) % m 修正环绕）；
-  // S' = clamp(S * sGain, 0..maxValue)；L' = clamp(L * lGain, 0..maxValue)。
-}
-''';
-
-/// 色彩控制器（isp_kernels.dart）：高斯色相带选择性调整。
-const String _colorControllerCode = r'''
-/// 色彩控制器：只调整色相落在以 hCenterDeg 为中心的高斯带内的像素。
-/// 带内权重 w(Δ°) = exp(-(Δ/σ)²/2)，Δ 为色环最短角距（0..180°），
-/// σ = 45°/q —— Q 越高带宽越窄，左右边带按正态分布衰减。
-/// 三个调整量均为恒等值时直接返回原数据（不拷贝）。
-/// 执行侧（adjustHslBandParallel）：宽×高 ≥ 1M 像素时按行带多核并行，
-/// 按带序确定性拼接，与串行逐位一致；小图自动回串行。
-Uint16List adjustHslBand(Uint16List hsl,
-    {required int maxValue,
-    double hCenterDeg = 0,
-    double q = 2.0,
-    double hShiftDeg = 0,
-    double sGain = 1.0,
-    double lGain = 1.0}) {
-  // 预计算 0..180° 的高斯权重 LUT（线性插值采样）。
-  // 逐像素：Δ = min(|H-hCenter|, 360-|H-hCenter|)；w = lut(Δ)；
-  // H' = (H + round(hShiftDeg·w/360·maxValue)) mod (maxValue+1)；
-  // S' = clamp(S · (1 + (sGain-1)·w))；L' = clamp(L · (1 + (lGain-1)·w))，
-  // 即带中心（w=1）满调整、带外（w→0）渐回恒等。
-}
-''';
-
-/// RGB 调节器（isp_kernels.dart）：RGB 域通道增益调参。
-const String _rgbDebuggerCode = r'''/// RGB 调节器：R/G/B 三通道分别乘增益后钳位到 0..maxValue。
-/// 三个增益均为恒等 1 时直接返回原数据（不拷贝）。
-Uint16List adjustRgb(Uint16List rgb,
-    {required int maxValue,
-    double rGain = 1.0,
-    double gGain = 1.0,
-    double bGain = 1.0}) {
-  // 逐像素：R' = clamp(R * rGain)；G' = clamp(G * gGain)；
-  // B' = clamp(B * bGain)（均四舍五入后钳位到 0..maxValue）。
-}
-''';
-
-/// YUV 调节器（isp_kernels.dart）：YUV 域增益调参。
-const String _yuvDebuggerCode = r'''
-/// YUV 调节器：Y 乘增益；U/V 围绕中点（maxValue>>1）缩放（色度增益
-/// 不改变中性色点），钳位到 0..maxValue。三个增益均为恒等 1 时直通。
-Uint16List adjustYuv(Uint16List yuv,
-    {required int maxValue,
-    double yGain = 1.0,
-    double uGain = 1.0,
-    double vGain = 1.0}) {
-  // 逐像素：Y' = clamp(Y * yGain)；
-  // U' = clamp(half + (U - half) * uGain)；
-  // V' = clamp(half + (V - half) * vGain)。
-}
-''';
-
-/// 色饱和度/亮度调节器（isp_kernels.dart）：RGB/YUV/HSL 三域通用调参。
-const String _satBrightCode = r'''
-/// 色饱和度/亮度调节器：按输入帧所在色彩域施加色饱和度增益 satGain
-/// 与亮度增益 brightGain，输出保持原格式（不跨域转换）。
-/// 两个增益均为恒等 1 时直接返回原数据（不拷贝）。
-Uint16List adjustSatBright(Uint16List data,
-    {required String format,
-    required int maxValue,
-    double satGain = 1.0,
-    double brightGain = 1.0}) {
-  // RGB 域：Y = 0.299R + 0.587G + 0.114B（BT.601 全范围亮度）；
-  //   逐通道 c' = clamp((Y + (c - Y) * satGain) * brightGain)。
-  // YUV 域：Y' = clamp(Y * brightGain)；
-  //   U/V' = clamp(half + (U/V - half) * satGain)（half = maxValue>>1）。
-  // HSL 域：H 不变；S' = clamp(S * satGain)；L' = clamp(L * brightGain)。
-}
-''';
-
-/// 亮度/对比度调节器（isp_kernels.dart）：RGB/YUV/HSL 三域亮度/对比度调参。
-const String _brightContrastCode = r'''
-/// 亮度/对比度调节：base = baselinePct/100 × maxValue；
-/// Y' = clamp(((Y × brightPct/100) − base) × gainPct/100 + base, 0..maxValue)。
-/// brightPct=100 且 gainPct=100 时为恒等（与基线无关），直通不拷贝。
-Uint16List adjustBrightContrast(Uint16List data,
-    {required String format,
-    required int maxValue,
-    double brightPct = 100,
-    double baselinePct = 50,
-    double gainPct = 100}) {
-  // YUV 域：直接作用于 Y 通道（U/V 不变）。
-  // HSL 域：作用于 L 通道（H/S 不变）。
-  // Mono 域：直接作用于单通道亮度（数据长度 w*h）。
-  // RGB 域：逐像素求 BT.601 亮度 Y = 0.299R + 0.587G + 0.114B，
-  //   算 Y' 后按 Y'/Y 等比缩放 R/G/B（Y=0 纯黑像素保持 0）。
-}
-''';
-
-/// 曲线调节器（levels_curve.dart + isp_kernels.dart）：RGB 域传递函数。
-const String _levelsCurvesCode = r'''
-/// 曲线调节器：控制点 A1(0,0) / Bn / C1(4095,4095) 按 curveMode 参数
-/// 选择的生成公式连成传递函数 y = f(x)，生成 4096 级 LUT；RGB 帧逐
-/// 通道查表（帧值按 maxValue 线性缩放到 0..4095 域，查表后再缩放回
-/// 0..maxValue）。恒等曲线（所有控制点在对角线上）直通不拷贝。
-///
-/// curveMode 四种生成公式：
-/// - spline（默认）：Fritsch–Carlson 单调三次 Hermite 插值，单调
-///   控制点产生单调曲线，段内无过冲；
-/// - bezier：控制点整体作为贝塞尔控制多边形，De Casteljau 求值，
-///   对给定 x 二分反解参数 t 后取 y(t)；曲线过首尾端点，中间控制
-///   点牵引形状但不一定经过；
-/// - linear：线段法，控制点间直线连接，不做平滑处理；
-/// - gamma：y = max·(x/max)^(1/γ)（γ 取节点参数 'gamma'，=1 恒等，
-///   >1 提亮中间调，<1 压暗）；编辑器内只允许一个控制点，拖动它
-///   即反解并写入 γ。
-Uint16List applyLevelsCurve(Uint16List rgb, Uint16List lut,
-    {required int maxValue}) {
-  // lut 由 levelsCurveLut(points, mode: mode, gamma: gamma) 生成；points
-  // 为节点参数 'points'（[[x,y],…]，0..4095 域），mode 为 'curveMode'
-  // 参数，gamma 为 'gamma' 参数（仅 gamma 模式使用）。
-}
-''';
-
-/// 色彩平衡（isp_kernels.dart）：RGB/YUV/HSL 三域中间调加性偏移。
-const String _colorBalanceCode = r'''
-/// 色彩平衡：三个滑杆值 [-100,100] 分别对应 青↔红、洋红↔绿、黄↔蓝；
-/// 按 BT.601 亮度的中间调权重 w = 1 − |2Y−1| 加权（中间调最强，纯黑/
-/// 纯白不受影响），结果钳位到 0..maxValue。三值全 0 时直通不拷贝。
-/// RGB 域：偏移量 = 值/100 × maxValue，直接加到 R/G/B 通道。
-/// YUV 域：青↔红 → V 轴、黄↔蓝 → U 轴、洋红↔绿 → U/V 对角
-///   （绿 = −U−V）；色度偏移量 = 值/100 × maxValue/2，Y 不变。
-/// HSL 域：经 hslToRgb/rgbToHsl 往返转换施加 RGB 域偏移。
-Uint16List applyColorBalance(Uint16List data,
-    {required String format,
-    required int maxValue,
-    double cyanRed = 0,
-    double magentaGreen = 0,
-    double yellowBlue = 0}) {
-  // rgb: out[i..i+2] = clamp([r,g,b] + [dr,dg,db] × w)，dX = 值/100 × maxValue。
-  // yuv: out[i+1] = clamp(u + (du−dg) × w)；out[i+2] = clamp(v + (dv−dg) × w)。
-}
-''';
-
-/// 色温调节器（color_temp.dart + isp_kernels.dart adjustRgb）：RGB 域
-/// von Kries 对角增益。
-const String _colorTempCode = r'''
-/// 色温调节：目标色温 temperature（1800~12000K）相对参考色温
-/// measured_cct（隐式参数，运行时由输入帧 McCamy 估计自动写入，缺省
-/// 6500K）计算 RGB 通道增益：
-///   white(T) = Tanner Helland 黑体近似白点（归一化 G=1）
-///   gain[c]  = white(temperature)[c] / white(measured_cct)[c]
-/// 逐像素 R/G/B 乘增益（复用 adjustRgb），增益全 1（目标==参考）时直通
-/// 不拷贝。节点附加区显示的 CCM 为 diag(gR, gG, gB) 对角阵。
-List<double> colorTempGains(double targetCct, int referenceCct) {
-  // wt = cctToWhitePoint(target)；wr = cctToWhitePoint(reference)；
-  // return [wt.r/wr.r, 1, wt.b/wr.b]。
-}
-''';
-
-/// 高频边缘提取（isp_kernels.dart）：亮度高通灰度边缘图。
-const String _edgeExtractCode = r'''
-/// 高频边缘提取：亮度高通输出黑底白线边缘图，
-/// RGB/YUV/HSL 三域通用（format = 'rgb'/'yuv'/'hsl'）。
-/// detail = Y − 3x3 盒式模糊（与 applySharpen 同一 detail 定义），
-/// 归一化为相对对比度 rel = |detail|/邻域均值（均值下限
-/// maxValue/128 防近黑除零爆增益）；rel < threshold/maxValue 视为
-/// 噪声置零（相对门限，threshold 为满量程码值量纲）；输出 =
-/// gain×√rel×maxValue，截位到 0..maxValue——√rel 显示压缩让弱
-/// 边缘提亮、强边缘饱和，平坦区为黑、边缘（无论亮边暗边、暗区
-/// 亮区）均为亮线。
-/// 亮度来源：RGB 求 BT.601 定点亮度，YUV 取 Y 通道，HSL 取 L 通道；
-/// 输出保持输入格式的黑底白线图（RGB 三通道同值 / YUV 的 U=V=中灰 /
-/// HSL 的 H=0、S=0）。
-Uint16List extractHighFreq(Uint16List data,
-    {required int width,
-    required int height,
-    String format = 'rgb',
-    double gain = 1.0,
-    double threshold = 4.0,
-    int maxValue = 65535}) {
-  // ys = 亮度平面；rel = |ys[p] − 邻域均值| / 邻域均值；v = gain×√rel×max。
-}
-''';
-
-/// 激发泄漏扣除（isp_kernels.dart，N17/N18）。
-const String _fluoroLeakCode = r'''
-/// 激发泄漏扣除：统一扣除泄漏电平 level，扣除量限幅 maxSub，
-/// 结果钳位到 0。
-void applyFluoroLeak(Uint16List mono, {double level = 0, double maxSub = 65535}) {
-  final sub = level < maxSub ? level : maxSub;
-  if (sub <= 0) return;
-  for (var i = 0; i < mono.length; i++) {
-    final v = mono[i] - sub;
-    mono[i] = v <= 0 ? 0 : v.round();
-  }
-}
-''';
-
-/// 背景扣除（isp_kernels.dart，N19/N20）。
-const String _fluoroBackgroundCode = r'''
-/// 自发荧光背景扣除：按 blockSize×blockSize 块均值估计低频背景，
-/// 按 strength（0..1）比例扣除，结果钳位到 0。
-void applyFluoroBackground(
-  Uint16List mono, {
-  required int width,
-  required int height,
-  int blockSize = 16,
-  double strength = 1.0,
-}) {
-  // means[byi*bx+bxi] = 块内均值（背景估计）。
-  // v' = max(0, v - strength * bg)。
-}
-''';
-
-/// 激发归一化（isp_kernels.dart，N21–N23）。
-const String _fluoroNormalizeCode = r'''
-/// 激发参考归一化：以全帧均值作为激发强度估计，把画面增益拉到
-/// 参考电平 reference：v' = v × reference / max(mean, epsilon)。
-void applyFluoroNormalize(
-  Uint16List mono, {
-  double reference = 0,
-  double epsilon = 1,
-  int maxValue = 65535,
-}) {
-  final gain = reference / max(mean, epsilon);
-  // v' = clamp(v * gain, 0, maxValue)。
-}
-''';
-
-/// 时域 IIR 降噪（isp_kernels.dart + pipeline_runner.dart，N26–N28）。
-const String _fluoroTemporalCode = r'''
-/// 时域 IIR 降噪：Y = αF + (1−α)Yprev。
-/// history 为上一帧输出（无历史或尺寸不符时直通并把当前帧作为历史）。
-/// motionAdapt 为 true 时帧差超过 maxValue/16 的像素判为运动，
-/// 强制 α=1（用当前帧，避免拖影）。
-(Uint16List, Uint16List) applyTemporalIir(
-  Uint16List mono, {
-  Uint16List? history,
-  required double alpha,
-  bool motionAdapt = false,
-  int maxValue = 65535,
-}) {
-  // out[i] = (aa*f + (1-aa)*prev).round()；返回 (输出帧, 新历史帧)。
-}
-
-// pipeline_runner.dart — 历史帧按 nodeId 缓存在 runner 顶层：
-// frameIndex 不连续或尺寸/参数变化时重置；compute() 单次 isolate
-// 路径无历史则直通。
-''';
-
-/// 伪彩映射（isp_kernels.dart，N33/N40）。
-const String _pseudoColorCode = r'''
-/// 伪彩映射：mono 灰度按 gain 增益归一化后映射为伪彩 RGB
-/// （green / magenta / hot 三种色表），输出 16 位量级交织 RGB。
-Uint16List monoPseudoColor(
-  Uint16List mono, {
-  required int width,
-  required int height,
-  String colormap = 'green',
-  double gain = 1.0,
-  int maxValue = 65535,
-}) {
-  final t = clamp(v * gain / maxValue, 0, 1);
-  // green: (0,t,0)；magenta: (t,0,t)；hot: 黑→红→黄→白。
-}
-''';
-
-/// 荧光融合（isp_kernels.dart，R09–R11、N38/N39）。
-const String _fluoroFusionCode = r'''
-/// 荧光融合：白光 RGB 与荧光 mono 的融合出图。
-/// 荧光图先按 (offsetX, offsetY) 手动配准偏移做双线性重采样
-/// （几何配准 R01–R07 的简化）；α 由荧光强度经 threshold 门限映射到
-/// 0..alphaMax（SBR/SNR/置信度 N29/N30/N38 的简化折叠）。
-Uint16List fuseFluorescence(
-  Uint16List rgbWl,
-  Uint16List monoFl, {
-  required int width,
-  required int height,
-  String mode = 'alpha',   // 'alpha' / 'contour'
-  double threshold = 0,
-  double alphaMax = 0.8,
-  String colormap = 'green',
-  double offsetX = 0,
-  double offsetY = 0,
-  int maxValue = 65535,
-}) {
-  // alpha：RGB_f = (1−α)·WL + α·pseudo(FL)。
-  // contour：荧光 mask 的 3x3 轮廓以伪彩全强度叠加，其余保持白光。
-}
-
-// pipeline_runner.dart — 双源链：融合节点的 'in' 接白光 RGB 支路，
-// 'in_fluoro'（不在视频互斥组）接荧光 mono 支路；两路各自由独立
-// 源节点驱动（compileChain 对含 fluoro_fusion 的链放行 2 个源节点）。
-''';
-
-/// 乘法器（isp_kernels.dart）。
-const String _multiplierCode = r'''
-/// 乘法器：两路 Mono 帧逐像素归一化相乘，两路分辨率必须一致。
-/// out = (a+offset1)×(b+offset2)/maxValue（归一化使输出仍在原量程
-/// 内；offset 用于黑电平抬升/符号偏移，避免零值像素把另一路整体
-/// 清零），截位到 0..maxValue。输出 Mono，预览链末端按亮度灰度
-/// 出图。
-Uint16List multiplyMono(List<int> a, List<int> b,
-    {double offset1 = 0, double offset2 = 0, int maxValue = 65535}) {
-  // out[i] = clamp((a[i]+offset1) * (b[i]+offset2) / maxValue, 0, maxValue)。
-}
-
-// pipeline_runner.dart — 双源链：'in_mono' 接输入源1 支路（主帧），
-// 'in_mono2'（不在视频互斥组）接输入源2 支路；两路各自由独立源
-// 节点驱动（compileChain 对含 multiplier 的链放行 2 个源节点）。
-''';
-
-/// 加法器（isp_kernels.dart）。
-const String _adderCode = r'''
-/// 加法器：两路 Mono 帧逐像素平衡加权混合，两路分辨率必须一致。
-/// out = a×balance + b×(1−balance)（balance 为源1 平衡增益，源2 增益
-/// = 1−balance，两路增益总和恒为 1），截位到 0..maxValue。输出 Mono，
-/// 预览链末端按亮度灰度出图。
-Uint16List blendMono(List<int> a, List<int> b,
-    {double balance = 0.5, int maxValue = 65535}) {
-  // out[i] = clamp(a[i]*balance + b[i]*(1-balance), 0, maxValue)。
-}
-
-// pipeline_runner.dart — 双源链：'in_mono' 接输入源1 支路（主帧），
-// 'in_mono2'（不在视频互斥组）接输入源2 支路；两路各自由独立源
-// 节点驱动（compileChain 对含 adder 的链放行 2 个源节点）。
-''';
-
-/// 混叠器（isp_kernels.dart）。
-const String _blenderCode = r'''
-/// 混叠器（正常模式）：out = 基图 + 混叠图×蒙版/maxValue×混叠强度。
-/// 混叠图与蒙版归一化相乘（蒙版取满量程时混叠图全量通过），乘混叠
-/// 强度后逐像素叠加到基图，截位到 0..maxValue。混叠图为 mono 时按
-/// 基图格式选目标通道：YUV 只加 Y（U/V 不变，锐化不产生色偏）、
-/// HSL 只加 L、RGB 三通道同加（等效亮度叠加）、Mono 单通道；
-/// 混叠图为三通道交织（RGB/YUV/HSL）时逐通道对应叠加（Y 加到 Y、
-/// U 加到 U……）。基图支持 RGB/YUV/HSL（w*h*3 交织）/Mono（w*h），
-/// 输出保持基图格式；蒙版为单通道（w*h），分辨率必须与基图一致。
-Uint16List blendMaskMono(List<int> base, List<int> blend, List<int> mask,
-    {String format = 'rgb', int blendChannels = 1,
-     double strength = 1.0, int maxValue = 65535}) {
-  // mono：delta[p] = blend[p] * mask[p] / maxValue * strength（目标
-  // 通道见上）；三通道：delta 按通道各自计算后叠加到对应通道。
-}
-
-// pipeline_runner.dart — 三路输入：基图走视频互斥组（in/in_yuv/in_hsl/
-// in_mono），蒙版（in_mask）与混叠图（in_blend/in_blend_yuv/
-// in_blend_hsl/in_blend_mono 四域选一）为侧向端口，可跨支路接入
-// （compileChain 对含 blender 的链放行 2 个源节点）。
-''';
-
-/// 多路选择器（pipeline_runner.dart mux4 分支）。
-const String _mux4Code = r'''
-/// 多路选择器（4选1）：把 select（1~4，默认 1=源1）选中的那路源输入
-/// 透传到输出，不改数据，输出格式 = 所选输入格式。四路源各为
-/// RGB/YUV/HSL/Mono 四域互斥输入组（in1*/in2*/in3*/in4*），组间可
-/// 同时接入；节点内嵌 源1~源4 单选开关。
-// pipeline_runner.dart — mux4 分支：按 select 找到该组已连接端口，
-// 取上游帧透传；端口数据与上游主帧不同（如分路器 out_y）时构造
-// mono 帧。compileChain 对含 mux4 的链放行最多 4 个源节点。
-''';
-
-/// 节点类型 id → 只读源码片段。注册表中的每种类型都必须有对应条目。
-const Map<String, String> nodeSourceCode = {
-  'bayer_source': _bayerPatternCode + _rawUnpackCode,
-  'cis_bayer_rggb': _bayerPatternCode + _rawUnpackCode,
-  'cis_rccb_rccg': _rccbTablesCode + _rawUnpackCode,
-  'cis_rccc': _rcccTableCode + _rawUnpackCode,
-  'cis_ryycy': _ryycyTableCode + _rawUnpackCode,
-  'cis_rgb_ir': _rgbIrTableCode + _rawUnpackCode,
-  'cis_mono': _monoCode + _rawUnpackCode,
-  'image_source': _imageSourceCode,
-  'video_source': _videoSourceCode,
-  'black_level': _blackLevelCode,
-  'dpc': _dpcCode,
-  'fpn': _fpnCode,
-  'lsc': _lscCode,
-  'grgb_balance': _grGbBalanceCode,
-  'bayer_dnr': _bayerDnrCode,
-  'highlight': _highlightCode,
-  'rgb_dnr': _rgbDnrCode,
-  'sharpen': _sharpenCode,
-  'gaussian_blur': _gaussianBlurCode,
-  'morphology': _morphologyCode,
-  'edge_extract': _edgeExtractCode,
-  'csc_rgb2yuv': _cscCode,
-  'csc_rgb2hsl': _cscRgb2HslCode,
-  'csc_yuv2rgb': _cscYuv2RgbCode,
-  'csc_yuv2hsl': _cscYuv2HslCode,
-  'csc_hsl2rgb': _cscHsl2RgbCode,
-  'csc_hsl2yuv': _cscHsl2YuvCode,
-  'hsl_debugger': _hslDebuggerCode,
-  'color_controller': _colorControllerCode,
-  'rgb_debugger': _rgbDebuggerCode,
-  'yuv_debugger': _yuvDebuggerCode,
-  'sat_bright_adjuster': _satBrightCode,
-  'bright_contrast_adjuster': _brightContrastCode,
-  'levels_curves': _levelsCurvesCode,
-  'color_balance': _colorBalanceCode,
-  'color_temp_adjuster': _colorTempCode,
-  'fluoro_leak': _fluoroLeakCode,
-  'fluoro_background': _fluoroBackgroundCode,
-  'fluoro_normalize': _fluoroNormalizeCode,
-  'fluoro_temporal': _fluoroTemporalCode,
-  'pseudo_color': _pseudoColorCode,
-  'fluoro_fusion': _fluoroFusionCode,
-  'multiplier': _multiplierCode,
-  'adder': _adderCode,
-  'blender': _blenderCode,
-  'mux4': _mux4Code,
-  'demosaic': _demosaicDispatchCode + _demosaicBilinearCode + _demosaicAdvancedCode,
-  'white_balance': _whiteBalanceCode,
-  'ccm': _ccmCode,
-  'gamma': _gammaCode,
-  'ahe': _aheCode,
-  'preview': _previewCode,
-  'histogram': _instrumentCode,
-  'waveform': _instrumentCode,
-  'vectorscope': _instrumentCode,
-  'psnr': _psnrCode,
-  'ssim': _ssimCode,
-  'msssim': _msssimCode,
-  'fsim': _fsimCode,
-  'niqe': _niqeCode,
-  'brisque': _brisqueCode,
-  'ilniqe': _ilniqeCode,
-  'piqe': _piqeCode,
-  'lpips': _lpipsCode,
-  'dists': _distsCode,
-  'fid': _fidCode,
-  'kid': _kidCode,
-  'musiq': _musiqCode,
-  'clipiqa': _clipiqaCode,
-  'minmax': _minmaxCode,
-  'image_output': _imageOutputCode,
-  'video_output': _videoOutputCode,
-  'audio_level': _audioLevelCode,
-  'audio_waveform': _audioWaveformCode,
-  'audio_eq': _audioEqCode,
-  'rgb_splitter': _rgbSplitterCode,
-  'yuv_splitter': _yuvSplitterCode,
-  'hsl_splitter': _hslSplitterCode,
-  'rgb_combiner': _rgbCombinerCode,
-  'yuv_combiner': _yuvCombinerCode,
-  'hsl_combiner': _hslCombinerCode,
-};
 
 /// ---------------------------------------------------------------------------
 /// 节点输入/输出变量描述（调试器视角：传入节点的变量 = Input，

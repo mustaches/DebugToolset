@@ -9,6 +9,7 @@ import '../../providers/isp_studio_state.dart';
 import 'models/isp_align_mode.dart';
 import 'models/isp_node.dart';
 import 'widgets/editor_tab_bar.dart';
+import 'widgets/group_code_page.dart';
 import 'widgets/node_canvas.dart';
 import 'widgets/node_code_page.dart';
 import 'widgets/node_layout.dart';
@@ -122,8 +123,11 @@ class IspStudioView extends StatelessWidget {
                   const NodePropertyPanel(),
                 ],
               ),
-              for (final nodeId in state.openCodeTabs)
-                NodeCodePage(key: ValueKey(nodeId), nodeId: nodeId),
+              for (final tab in state.openCodeTabs)
+                tab.startsWith('group:')
+                    ? GroupCodePage(
+                        key: ValueKey(tab), groupId: tab.substring(6))
+                    : NodeCodePage(key: ValueKey(tab), nodeId: tab),
             ],
           ),
         ),
@@ -184,8 +188,9 @@ class IspStudioView extends StatelessWidget {
             icon: const Icon(Icons.group_add, size: 18),
             tooltip: '编组所选节点',
             color: Colors.white,
-            // 多选 ≥2 时可用：弹命名对话框（默认「编组#N」）后编组。
-            onPressed: state.selectedNodeIds.length >= 2
+            // 多选 ≥2 且无已编组成员时可用：弹命名对话框
+            //（默认「编组#N」）后编组。
+            onPressed: state.canGroupSelectedNodes
                 ? () => showIspGroupNamingDialog(context, state)
                 : null,
           ),

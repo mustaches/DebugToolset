@@ -765,13 +765,23 @@ Future<Uint8List> runChainFrame(
             strength: _double(p, 'strength'));
       case 'highlight':
         frame.requireMosaicOrMono('高光恢复');
+        final hlMode = _str(p, 'mode').isEmpty ? 'recover' : _str(p, 'mode');
+        final knee = _double(p, 'knee');
+        // LUT 模式（codegenMode=lut，仅 clip 分支）：建表+查表路径，与 C
+        // 导出的烘焙膝点压缩表查表逐位一致；recover 分支邻域均值不可
+        // 表化，仍走原实现。
+        if (hlMode == 'clip' && _str(p, 'codegenMode') == 'lut') {
+          applyHighlightClipLut(
+              frame.data, highlightClipLut(knee, frame.maxValue));
+          break;
+        }
         applyHighlightRecovery(frame.data,
             width: frame.width,
             height: frame.height,
             pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
             maxValue: frame.maxValue,
-            mode: _str(p, 'mode').isEmpty ? 'recover' : _str(p, 'mode'),
-            knee: _double(p, 'knee'));
+            mode: hlMode,
+            knee: knee);
       // ---- RGB 域算子 ----
       case 'rgb_dnr':
         frame.requireRgb('RGB 降噪');
@@ -1023,18 +1033,43 @@ Future<Uint8List> runChainFrame(
         final w = frame.width;
         final h = frame.height;
         final max = frame.maxValue;
+        final ccParams = (
+          hCenterDeg: _double(p, 'h_center'),
+          q: (p['q'] as num?)?.toDouble() ?? 2.0,
+          hShiftDeg: _double(p, 'h_shift'),
+          // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+          sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,
+          lGain: (p['l_gain'] as num?)?.toDouble() ?? 1.0,
+        );
+        // LUT 模式（codegenMode=lut）：显式建表+查表（与 C 导出的烘焙
+        // 表查表逐位一致）；函数方式串行核内部本就建同三张表。
+        final ccData = _str(p, 'codegenMode') == 'lut'
+            ? () {
+                final (shift, sMul, lMul) = hslBandLuts(
+                    maxValue: max,
+                    hCenterDeg: ccParams.hCenterDeg,
+                    q: ccParams.q,
+                    hShiftDeg: ccParams.hShiftDeg,
+                    sGain: ccParams.sGain,
+                    lGain: ccParams.lGain);
+                return applyHslBandLuts(frame.data, 0, frame.data.length ~/ 3,
+                    maxValue: max,
+                    shiftLut: shift,
+                    sMulLut: sMul,
+                    lMulLut: lMul);
+              }()
+            : await adjustHslBandParallel(frame.data,
+                width: w,
+                height: h,
+                maxValue: max,
+                hCenterDeg: ccParams.hCenterDeg,
+                q: ccParams.q,
+                hShiftDeg: ccParams.hShiftDeg,
+                sGain: ccParams.sGain,
+                lGain: ccParams.lGain);
         frame = _Frame(
           // ≥1M 像素按行带多核并行（与串行逐位一致），小图核内自动回串行。
-          data: await adjustHslBandParallel(frame.data,
-              width: w,
-              height: h,
-              maxValue: max,
-              hCenterDeg: _double(p, 'h_center'),
-              q: (p['q'] as num?)?.toDouble() ?? 2.0,
-              hShiftDeg: _double(p, 'h_shift'),
-              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
-              sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,
-              lGain: (p['l_gain'] as num?)?.toDouble() ?? 1.0),
+          data: ccData,
           format: 'hsl',
           width: w,
           height: h,
@@ -1119,14 +1154,31 @@ Future<Uint8List> runChainFrame(
             : frame.mono8 != null
                 ? Uint16List.fromList(frame.mono8!)
                 : frame.data;
+        // LUT 模式（codegenMode=lut）：建表+查表路径，与 C 导出的烘焙
+        // 映射/比例表查表逐位一致；函数方式直算内部本就建同表（见
+        // adjustBrightContrast 实现）。
+        final brightPct = (p['bright'] as num?)?.toDouble() ?? 100.0;
+        final baselinePct = (p['baseline'] as num?)?.toDouble() ?? 50.0;
+        final gainPct = (p['gain'] as num?)?.toDouble() ?? 100.0;
+        final bcData = _str(p, 'codegenMode') == 'lut'
+            ? () {
+                final adjLut = brightContrastAdjustLut(
+                    maxValue: max,
+                    brightPct: brightPct,
+                    baselinePct: baselinePct,
+                    gainPct: gainPct);
+                return applyBrightContrastLut(data,
+                    format: fmt, maxValue: max, adjustLut: adjLut);
+              }()
+            : adjustBrightContrast(data,
+                format: fmt,
+                maxValue: max,
+                // 缺省按恒等（100/50/100）处理。
+                brightPct: brightPct,
+                baselinePct: baselinePct,
+                gainPct: gainPct);
         frame = _Frame(
-          data: adjustBrightContrast(data,
-              format: fmt,
-              maxValue: max,
-              // 缺省按恒等（100/50/100）处理。
-              brightPct: (p['bright'] as num?)?.toDouble() ?? 100.0,
-              baselinePct: (p['baseline'] as num?)?.toDouble() ?? 50.0,
-              gainPct: (p['gain'] as num?)?.toDouble() ?? 100.0),
+          data: bcData,
           format: fmt,
           width: w,
           height: h,
@@ -1219,12 +1271,21 @@ Future<Uint8List> runChainFrame(
         final gains = colorTempGains(
             (p['temperature'] as num?)?.toDouble() ?? kColorTempDefault,
             _int(p, 'measured_cct'));
+        // LUT 模式（codegenMode=lut）：建表+查表路径，与 C 导出的烘焙
+        // 增益表查表逐位一致；函数方式直算内部等价（见 adjustRgb 实现）。
+        final data = _str(p, 'codegenMode') == 'lut'
+            ? applyAdjustLut3(
+                frame.data,
+                adjustGainLut(gains[0], max),
+                adjustGainLut(gains[1], max),
+                adjustGainLut(gains[2], max))
+            : adjustRgb(frame.data,
+                maxValue: max,
+                rGain: gains[0],
+                gGain: gains[1],
+                bGain: gains[2]);
         frame = _Frame(
-          data: adjustRgb(frame.data,
-              maxValue: max,
-              rGain: gains[0],
-              gGain: gains[1],
-              bGain: gains[2]),
+          data: data,
           format: 'rgb',
           width: w,
           height: h,
@@ -1284,13 +1345,23 @@ Future<Uint8List> runChainFrame(
         final w = frame.width;
         final h = frame.height;
         final max = frame.maxValue;
+        final colormap = _str(p, 'colormap').isEmpty ? 'green' : _str(p, 'colormap');
+        final gain = _double(p, 'gain');
+        // LUT 模式（codegenMode=lut）：建表+查表路径，与 C 导出的烘焙
+        // 色表查表逐位一致；函数方式直算内部本就建同三张表。
+        final lutData = _str(p, 'codegenMode') == 'lut'
+            ? () {
+                final (lr, lg, lb) = pseudoColorLuts(colormap, gain, max);
+                return applyPseudoColorLut(frame.data, lr, lg, lb);
+              }()
+            : monoPseudoColor(frame.data,
+                width: w,
+                height: h,
+                colormap: colormap,
+                gain: gain,
+                maxValue: max);
         frame = _Frame(
-          data: monoPseudoColor(frame.data,
-              width: w,
-              height: h,
-              colormap: _str(p, 'colormap').isEmpty ? 'green' : _str(p, 'colormap'),
-              gain: _double(p, 'gain'),
-              maxValue: max),
+          data: lutData,
           format: 'rgb',
           width: w,
           height: h,
@@ -1570,10 +1641,18 @@ Future<Uint8List> runChainFrame(
           rGain = g.$1;
           bGain = g.$2;
         }
+        rGain = rGain <= 0 ? 1.0 : rGain;
+        bGain = bGain <= 0 ? 1.0 : bGain;
+        // LUT 模式（codegenMode=lut）：显式走建表+查表路径，与 C 导出
+        // 的烘焙表查表逐位一致；函数方式直算内部本就建同一张表。
+        if (_str(p, 'codegenMode') == 'lut') {
+          applyWhiteBalanceLut(frame.data,
+              whiteBalanceGainLut(rGain, frame.maxValue),
+              whiteBalanceGainLut(bGain, frame.maxValue));
+          break;
+        }
         applyWhiteBalance(frame.data,
-            rGain: rGain <= 0 ? 1.0 : rGain,
-            bGain: bGain <= 0 ? 1.0 : bGain,
-            maxValue: frame.maxValue);
+            rGain: rGain, bGain: bGain, maxValue: frame.maxValue);
       case 'ccm':
         frame.requireRgb('CCM');
         final m = (p['matrix'] as List?)?.cast<double>() ??

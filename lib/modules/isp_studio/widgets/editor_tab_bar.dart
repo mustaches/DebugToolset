@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import '../../../providers/isp_studio_state.dart';
 
 /// 多标签栏：首标签为节点流程图（标题用工程名，默认图显示「缺省流程」），
-/// 其后为已打开的节点代码标签（标题为节点名，可关闭）。
+/// 其后为已打开的节点/编组代码标签（标题为节点名/编组名，可关闭）。
 class IspEditorTabBar extends StatelessWidget {
   const IspEditorTabBar({super.key});
 
@@ -29,24 +29,34 @@ class IspEditorTabBar extends StatelessWidget {
             active: state.activeTab == 0,
             onTap: () => state.setActiveTab(0),
           ),
-          for (final (i, nodeId) in state.openCodeTabs.indexed)
+          for (final (i, tab) in state.openCodeTabs.indexed)
             _EditorTab(
-              icon: Icons.code,
-              title: _nodeTitle(state, nodeId),
-              tooltip: '$nodeId — 只读代码',
+              icon: tab.startsWith('group:')
+                  ? Icons.account_tree
+                  : Icons.code,
+              title: _tabTitle(state, tab),
+              tooltip: '$tab — 只读代码',
               active: state.activeTab == i + 1,
               onTap: () => state.setActiveTab(i + 1),
-              onClose: () => state.closeCodeTab(nodeId),
+              onClose: () => state.closeCodeTab(tab),
             ),
         ],
       ),
     );
   }
 
-  /// 代码标签标题：节点实例名；节点已删除时退化为 id。
-  static String _nodeTitle(IspStudioState state, String nodeId) {
-    final node = state.graph.nodes[nodeId];
-    if (node == null) return nodeId;
+  /// 代码标签标题：节点标签为节点实例名（节点已删除时退化为 id）；
+  /// 编组标签（`'group:<id>'` 前缀）为编组名（编组已解散时退化为通用名）。
+  static String _tabTitle(IspStudioState state, String tab) {
+    if (tab.startsWith('group:')) {
+      final groupId = tab.substring(6);
+      for (final g in state.graph.groups) {
+        if (g.id == groupId) return g.name;
+      }
+      return '编组代码';
+    }
+    final node = state.graph.nodes[tab];
+    if (node == null) return tab;
     return node.name;
   }
 }

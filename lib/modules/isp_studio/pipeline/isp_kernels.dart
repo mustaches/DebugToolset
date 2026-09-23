@@ -417,6 +417,27 @@ void _demosaicPixel(Uint16List bayer, Uint16List rgb, int width, int height,
   return (rGain, bGain);
 }
 
+/// 白平衡增益映射表：lut[v] = clamp((v * gain).round(), 0, maxValue)。
+/// LUT 模式预览与 C 导出生成期烘焙共用同一函数，保证两侧表逐位一致。
+Uint16List whiteBalanceGainLut(double gain, int maxValue) {
+  final lut = Uint16List(maxValue + 1);
+  for (var v = 0; v <= maxValue; v++) {
+    final x = (v * gain).round();
+    lut[v] = x < 0 ? 0 : (x > maxValue ? maxValue : x);
+  }
+  return lut;
+}
+
+/// 白平衡 LUT 查表施加（只调 R、B 两通道；与 [applyWhiteBalance]
+/// 直算逐位一致——直算内部本就是建表查表）。
+void applyWhiteBalanceLut(
+    Uint16List rgb, Uint16List lutR, Uint16List lutB) {
+  for (var i = 0; i < rgb.length; i += 3) {
+    rgb[i] = lutR[rgb[i]];
+    rgb[i + 2] = lutB[rgb[i + 2]];
+  }
+}
+
 /// Applies white balance gains in place, clamping to [maxValue].
 /// 实现为每通道一张 LUT（大小 maxValue+1），增益为 1 时直接跳过。
 void applyWhiteBalance(
@@ -426,21 +447,8 @@ void applyWhiteBalance(
   required int maxValue,
 }) {
   if (rGain == 1.0 && bGain == 1.0) return;
-  Uint16List buildLut(double gain) {
-    final lut = Uint16List(maxValue + 1);
-    for (var v = 0; v <= maxValue; v++) {
-      final x = (v * gain).round();
-      lut[v] = x < 0 ? 0 : (x > maxValue ? maxValue : x);
-    }
-    return lut;
-  }
-
-  final lutR = buildLut(rGain);
-  final lutB = buildLut(bGain);
-  for (var i = 0; i < rgb.length; i += 3) {
-    rgb[i] = lutR[rgb[i]];
-    rgb[i + 2] = lutB[rgb[i + 2]];
-  }
+  applyWhiteBalanceLut(rgb, whiteBalanceGainLut(rGain, maxValue),
+      whiteBalanceGainLut(bGain, maxValue));
 }
 
 /// Applies a 3x3 row-major color correction matrix in place,
@@ -1235,7 +1243,10 @@ Uint16List adjustHslBand(Uint16List hsl,
 /// 实现按 H 取值（0..maxValue）预计算三张 LUT：H 偏移量（含高斯权重与
 /// 取整）、S 乘子、L 乘子（权重为该 H 值上的精确 exp，无角度插值），
 /// 逐像素只剩 3 次查表 + 2 次乘法 + 1 次取模。
-Uint16List adjustHslBandRows(Uint16List hsl, int startPx, int endPx,
+/// 色彩控制器（高斯色相带）的三张 H 域 LUT：H 偏移量（含高斯权重与
+/// 取整）、S 乘子、L 乘子（权重为该 H 值上的精确 exp，无角度插值）。
+/// LUT 模式预览与 C 导出生成期烘焙共用同一函数。
+(Int32List, Float64List, Float64List) hslBandLuts(
     {required int maxValue,
     required double hCenterDeg,
     required double q,
@@ -1257,7 +1268,17 @@ Uint16List adjustHslBandRows(Uint16List hsl, int startPx, int endPx,
     sMulLut[hv] = 1 + (sGain - 1) * w;
     lMulLut[hv] = 1 + (lGain - 1) * w;
   }
+  return (shiftLut, sMulLut, lMulLut);
+}
 
+/// 色彩控制器 LUT 查表施加：逐像素 3 次查表 + 2 次乘法 + 1 次取模
+/// （与 adjustHslBandRows 的表内实现逐位一致）。
+Uint16List applyHslBandLuts(Uint16List hsl, int startPx, int endPx,
+    {required int maxValue,
+    required Int32List shiftLut,
+    required Float64List sMulLut,
+    required Float64List lMulLut}) {
+  final m = maxValue + 1;
   final out = Uint16List((endPx - startPx) * 3);
   var o = 0;
   for (var i = startPx * 3; i < endPx * 3; i += 3) {
@@ -1269,6 +1290,27 @@ Uint16List adjustHslBandRows(Uint16List hsl, int startPx, int endPx,
     o += 3;
   }
   return out;
+}
+
+Uint16List adjustHslBandRows(Uint16List hsl, int startPx, int endPx,
+    {required int maxValue,
+    required double hCenterDeg,
+    required double q,
+    required double hShiftDeg,
+    required double sGain,
+    required double lGain}) {
+  final (shiftLut, sMulLut, lMulLut) = hslBandLuts(
+      maxValue: maxValue,
+      hCenterDeg: hCenterDeg,
+      q: q,
+      hShiftDeg: hShiftDeg,
+      sGain: sGain,
+      lGain: lGain);
+  return applyHslBandLuts(hsl, startPx, endPx,
+      maxValue: maxValue,
+      shiftLut: shiftLut,
+      sMulLut: sMulLut,
+      lMulLut: lMulLut);
 }
 
 /// 条带并行 CPU 池大小：全部处理器核心数 − 2（留 2 核给系统/调用侧），
@@ -1284,11 +1326,28 @@ Uint16List adjustRgb(Uint16List rgb,
     double gGain = 1.0,
     double bGain = 1.0}) {
   if (rGain == 1.0 && gGain == 1.0 && bGain == 1.0) return rgb;
+  return applyAdjustLut3(rgb, adjustGainLut(rGain, maxValue),
+      adjustGainLut(gGain, maxValue), adjustGainLut(bGain, maxValue));
+}
+
+/// 通道增益映射表：lut[v] = clampTo(v * gain, maxValue)（先比界再 round
+/// 的 _clampTo 顺序）。LUT 模式预览与 C 导出生成期烘焙共用同一函数。
+Uint16List adjustGainLut(double gain, int maxValue) {
+  final lut = Uint16List(maxValue + 1);
+  for (var v = 0; v <= maxValue; v++) {
+    lut[v] = _clampTo(v * gain, maxValue);
+  }
+  return lut;
+}
+
+/// 三通道增益 LUT 查表施加（与 [adjustRgb] 直算逐位一致）。
+Uint16List applyAdjustLut3(
+    Uint16List rgb, Uint16List lutR, Uint16List lutG, Uint16List lutB) {
   final out = Uint16List(rgb.length);
   for (var i = 0; i < rgb.length; i += 3) {
-    out[i] = _clampTo(rgb[i] * rGain, maxValue);
-    out[i + 1] = _clampTo(rgb[i + 1] * gGain, maxValue);
-    out[i + 2] = _clampTo(rgb[i + 2] * bGain, maxValue);
+    out[i] = lutR[rgb[i]];
+    out[i + 1] = lutG[rgb[i + 1]];
+    out[i + 2] = lutB[rgb[i + 2]];
   }
   return out;
 }
@@ -1469,6 +1528,67 @@ Uint16List adjustSatBright(Uint16List data,
 /// - Mono 域：直接作用于单通道亮度（数据长度 w*h）。
 /// brightPct=100 且 gainPct=100 时为恒等（与基线无关），直接返回原数据
 /// （不拷贝）。
+/// 亮度/对比度映射表（adjust 一维映射）：adjLut[y] =
+/// clampTo(((y*bs) - base) * gs + base, maxValue)。LUT 模式预览与 C 导出
+/// 生成期烘焙共用同一函数。
+Uint16List brightContrastAdjustLut(
+    {required int maxValue,
+    double brightPct = 100,
+    double baselinePct = 50,
+    double gainPct = 100}) {
+  final base = baselinePct / 100 * maxValue;
+  final bs = brightPct / 100;
+  final gs = gainPct / 100;
+  final lut = Uint16List(maxValue + 1);
+  for (var y = 0; y <= maxValue; y++) {
+    lut[y] = _clampTo(((y * bs) - base) * gs + base, maxValue);
+  }
+  return lut;
+}
+
+/// 亮度/对比度 LUT 查表施加（与 [adjustBrightContrast] 直算逐位一致）：
+/// mono/yuv(Y)/hsl(L) 域查 adjLut 一维映射表；RGB 域 adjust 映射改查表
+///（除法保留——ratio = adjust(y.round()) / y 的分母是完整 double 亮度，
+/// 不是整数键，无法表化；LUT 化只消灭 adjust 映射的求值）。
+Uint16List applyBrightContrastLut(Uint16List data,
+    {required String format,
+    required int maxValue,
+    required Uint16List adjustLut}) {
+  final out = Uint16List(data.length);
+  switch (format) {
+    case 'rgb':
+      for (var i = 0; i < data.length; i += 3) {
+        final r = data[i], g = data[i + 1], b = data[i + 2];
+        // BT.601 全范围亮度（与 rgbToYuv 的 Y 一致）。
+        final y = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (y <= 0) continue; // 纯黑像素保持 0
+        final ratio = adjustLut[y.round()] / y;
+        out[i] = _clampTo(r * ratio, maxValue);
+        out[i + 1] = _clampTo(g * ratio, maxValue);
+        out[i + 2] = _clampTo(b * ratio, maxValue);
+      }
+    case 'yuv':
+      for (var i = 0; i < data.length; i += 3) {
+        out[i] = adjustLut[data[i]];
+        out[i + 1] = data[i + 1];
+        out[i + 2] = data[i + 2];
+      }
+    case 'hsl':
+      for (var i = 0; i < data.length; i += 3) {
+        out[i] = data[i];
+        out[i + 1] = data[i + 1];
+        out[i + 2] = adjustLut[data[i + 2]];
+      }
+    case 'mono':
+      for (var i = 0; i < data.length; i++) {
+        out[i] = adjustLut[data[i]];
+      }
+    default:
+      throw ArgumentError('亮度/对比度调节器需要 RGB/YUV/HSL/Mono 输入，实际: $format');
+  }
+  return out;
+}
+
 Uint16List adjustBrightContrast(Uint16List data,
     {required String format,
     required int maxValue,
@@ -1480,43 +1600,13 @@ Uint16List adjustBrightContrast(Uint16List data,
           format == 'mono')) {
     return data;
   }
-  final base = baselinePct / 100 * maxValue;
-  final bs = brightPct / 100;
-  final gs = gainPct / 100;
-  int adjust(int y) => _clampTo(((y * bs) - base) * gs + base, maxValue);
-  final out = Uint16List(data.length);
-  switch (format) {
-    case 'rgb':
-      for (var i = 0; i < data.length; i += 3) {
-        final r = data[i], g = data[i + 1], b = data[i + 2];
-        // BT.601 全范围亮度（与 rgbToYuv 的 Y 一致）。
-        final y = 0.299 * r + 0.587 * g + 0.114 * b;
-        if (y <= 0) continue; // 纯黑像素保持 0
-        final ratio = adjust(y.round()) / y;
-        out[i] = _clampTo(r * ratio, maxValue);
-        out[i + 1] = _clampTo(g * ratio, maxValue);
-        out[i + 2] = _clampTo(b * ratio, maxValue);
-      }
-    case 'yuv':
-      for (var i = 0; i < data.length; i += 3) {
-        out[i] = adjust(data[i]);
-        out[i + 1] = data[i + 1];
-        out[i + 2] = data[i + 2];
-      }
-    case 'hsl':
-      for (var i = 0; i < data.length; i += 3) {
-        out[i] = data[i];
-        out[i + 1] = data[i + 1];
-        out[i + 2] = adjust(data[i + 2]);
-      }
-    case 'mono':
-      for (var i = 0; i < data.length; i++) {
-        out[i] = adjust(data[i]);
-      }
-    default:
-      throw ArgumentError('亮度/对比度调节器需要 RGB/YUV/HSL/Mono 输入，实际: $format');
-  }
-  return out;
+  final adjustLut = brightContrastAdjustLut(
+      maxValue: maxValue,
+      brightPct: brightPct,
+      baselinePct: baselinePct,
+      gainPct: gainPct);
+  return applyBrightContrastLut(data,
+      format: format, maxValue: maxValue, adjustLut: adjustLut);
 }
 
 /// YUV → HSL：单遍融合实现——循环内先按 [yuvToRgb] 的定点公式算出 RGB
@@ -2076,6 +2166,32 @@ void applyBayerDenoise(
   }
 }
 
+/// 高光 clip 映射表（膝点软压缩）：v <= 膝点恒等，以上
+/// round(kneePt + d*range/(range+d))。LUT 模式预览与 C 导出生成期烘焙
+/// 共用同一函数。
+Uint16List highlightClipLut(double knee, int maxValue) {
+  final kneePt = knee.clamp(0.0, 1.0) * maxValue;
+  final lut = Uint16List(maxValue + 1);
+  final range = maxValue - kneePt;
+  for (var v = 0; v <= maxValue; v++) {
+    if (v <= kneePt || range <= 0) {
+      lut[v] = v;
+      continue;
+    }
+    final d = v - kneePt;
+    lut[v] = (kneePt + d * range / (range + d)).round();
+  }
+  return lut;
+}
+
+/// 高光 clip LUT 查表施加（原地；与 applyHighlightRecovery 的 clip 分支
+/// 直算逐位一致）。
+void applyHighlightClipLut(Uint16List buf, Uint16List lut) {
+  for (var i = 0; i < buf.length; i++) {
+    buf[i] = lut[buf[i]];
+  }
+}
+
 /// 高光恢复（W18/W19）：
 /// - 'recover'：达到膝点（[knee]×[maxValue]）的饱和像素用同相位未饱和
 ///   邻域均值重建（无可用邻域则保持原值）；
@@ -2091,14 +2207,7 @@ void applyHighlightRecovery(
 }) {
   final kneePt = knee.clamp(0.0, 1.0) * maxValue;
   if (mode == 'clip') {
-    final range = maxValue - kneePt;
-    if (range <= 0) return;
-    for (var i = 0; i < buf.length; i++) {
-      final v = buf[i];
-      if (v <= kneePt) continue;
-      final d = v - kneePt;
-      buf[i] = (kneePt + d * range / (range + d)).round();
-    }
+    applyHighlightClipLut(buf, highlightClipLut(knee, maxValue));
     return;
   }
   final src = Uint16List.fromList(buf);
@@ -2763,19 +2872,17 @@ void applyFluoroNormalize(
 
 /// 伪彩映射（N33/N40）：mono 灰度按 [gain] 增益归一化后映射为伪彩
 /// RGB（green / magenta / hot 三种色表），输出 16 位量级交织 RGB。
-Uint16List monoPseudoColor(
-  Uint16List mono, {
-  required int width,
-  required int height,
-  String colormap = 'green',
-  double gain = 1.0,
-  int maxValue = 65535,
-}) {
-  final out = Uint16List(mono.length * 3);
+/// 伪彩色表：每个输入值 v 经 t=clamp(v*gain/maxValue,0,1) 查色表后按
+/// _clampTo(c*maxValue) 截位，三通道各一张。LUT 模式预览与 C 导出
+/// 生成期烘焙共用同一函数。
+(Uint16List, Uint16List, Uint16List) pseudoColorLuts(
+    String colormap, double gain, int maxValue) {
+  final lutR = Uint16List(maxValue + 1);
+  final lutG = Uint16List(maxValue + 1);
+  final lutB = Uint16List(maxValue + 1);
   final inv = 1.0 / maxValue;
-  var j = 0;
-  for (var i = 0; i < mono.length; i++, j += 3) {
-    var t = mono[i] * gain * inv;
+  for (var v = 0; v <= maxValue; v++) {
+    var t = v * gain * inv;
     if (t < 0) t = 0;
     if (t > 1) t = 1;
     double r, g, b;
@@ -2794,11 +2901,39 @@ Uint16List monoPseudoColor(
         g = t;
         b = 0;
     }
-    out[j] = _clampTo(r * maxValue, maxValue);
-    out[j + 1] = _clampTo(g * maxValue, maxValue);
-    out[j + 2] = _clampTo(b * maxValue, maxValue);
+    lutR[v] = _clampTo(r * maxValue, maxValue);
+    lutG[v] = _clampTo(g * maxValue, maxValue);
+    lutB[v] = _clampTo(b * maxValue, maxValue);
+  }
+  return (lutR, lutG, lutB);
+}
+
+/// 伪彩 LUT 查表施加（mono → 交织 RGB；与 [monoPseudoColor] 直算逐位一致）。
+Uint16List applyPseudoColorLut(
+    Uint16List mono, Uint16List lutR, Uint16List lutG, Uint16List lutB) {
+  final out = Uint16List(mono.length * 3);
+  var j = 0;
+  for (var i = 0; i < mono.length; i++, j += 3) {
+    final v = mono[i];
+    out[j] = lutR[v];
+    out[j + 1] = lutG[v];
+    out[j + 2] = lutB[v];
   }
   return out;
+}
+
+/// mono 伪彩映射：t = mono*gain/maxValue 钳位 [0,1] 后查色表输出交织
+/// RGB（green / magenta / hot 三种色表），输出 16 位量级交织 RGB。
+Uint16List monoPseudoColor(
+  Uint16List mono, {
+  required int width,
+  required int height,
+  String colormap = 'green',
+  double gain = 1.0,
+  int maxValue = 65535,
+}) {
+  final (lutR, lutG, lutB) = pseudoColorLuts(colormap, gain, maxValue);
+  return applyPseudoColorLut(mono, lutR, lutG, lutB);
 }
 
 /// 荧光融合（R09–R11、N38/N39）：白光 RGB 与荧光 mono 的融合出图。

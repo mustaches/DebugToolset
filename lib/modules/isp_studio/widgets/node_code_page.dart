@@ -1,5 +1,11 @@
-/// ISP Studio 节点代码标签页：左侧 2/3 为带行号的语法高亮代码区（只读），
-/// 右侧 1/3 为变量表（变量名 / 数据类型 / 变量内容，数组以表格展开）。
+/// ISP Studio 节点代码标签页。
+///
+/// 嵌入式相关节点（nodeCCodeFiles 中有 C 映射）展示 C 代码视图：左侧为
+/// c_ref/ 文件层次列表（共享层 / 本节点文件，底部附「导出代码」按钮，
+/// 可把列表全部文件导出到指定文件夹），右侧为带行号的语法高亮
+/// 代码区（只读，C 高亮）；PC 侧节点（pcSideNodeTypes）与其余类型展示
+/// 原 Dart 视图：左侧 2/3 代码区，右侧 1/3 变量表（变量名 / 数据类型 /
+/// 变量内容，数组以表格展开），PC 侧节点页头下另附说明横幅。
 library;
 
 import 'package:flutter/material.dart';
@@ -7,41 +13,216 @@ import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
 import '../../text_editor/utils/syntax_highlighter.dart';
+import '../codegen/c_compile.dart';
 import '../models/isp_node.dart';
 import '../pipeline/code_variables.dart';
 import '../pipeline/frame3d.dart';
+import '../pipeline/node_c_code.dart';
 import '../pipeline/node_code.dart';
+import 'code_browser.dart';
 
 /// 单个节点的只读代码页面（作为编辑器标签页嵌入主视图）。
-class NodeCodePage extends StatelessWidget {
+/// 嵌入式节点（C 视图）页头下有编译工具栏：点「编译」在代码区下方
+/// 切出 1/4 高度的终端面板，流式打印编译过程（与编组代码页共用
+/// CodeCompileArea）。
+class NodeCodePage extends StatefulWidget {
   final String nodeId;
 
-  const NodeCodePage({super.key, required this.nodeId});
+  /// 编译执行器注入点（测试替换为假实现；缺省为 compileGroupCFiles）。
+  final GroupCompileRunner? compileRunner;
 
-  static const _codeStyle = TextStyle(
-    fontFamily: 'Consolas',
-    fontFamilyFallback: ['Courier New', 'monospace'],
-    fontSize: 12,
-    height: 1.45,
-    color: kVscodePlain,
-  );
+  /// 编译文件加载注入点（测试替换为立即返回的假实现，绕开 rootBundle
+  /// 真实资产 IO；缺省为 loadCRefFile 逐个读入）。
+  final Future<Map<String, String>> Function(List<String> files)? filesLoader;
+
+  const NodeCodePage(
+      {super.key, required this.nodeId, this.compileRunner, this.filesLoader});
+
+  @override
+  State<NodeCodePage> createState() => _NodeCodePageState();
+}
+
+class _NodeCodePageState extends State<NodeCodePage> {
+  /// 代码加载 future 缓存：按节点类型 id 缓存，typeId 变化时重建。
+  String? _codeTypeId;
+  Future<String>? _codeFuture;
+
+  /// C 视图当前选中的文件（null 时默认选第一个 .c，无 .c 则第一个文件）。
+  String? _selectedCFile;
+
+  /// C 文件加载 future 缓存：按选中文件名缓存，切换文件时重建。
+  String? _cFileKey;
+  Future<String>? _cFileFuture;
+
+  Future<String> _codeFor(String typeId) {
+    if (_codeFuture == null || _codeTypeId != typeId) {
+      _codeTypeId = typeId;
+      _codeFuture = loadNodeCode(typeId);
+    }
+    return _codeFuture!;
+  }
+
+  Future<String> _cCodeFor(String fileName) {
+    // 编译 stub main.c（「临时main调用（不导出）」分组）不是 c_ref 资产，直接生成：
+    // 无 top 层入口的空 main 通用形态（不带 ARM syscall 桩）。
+    if (fileName == 'main.c') {
+      if (_cFileFuture == null || _cFileKey != fileName) {
+        _cFileKey = fileName;
+        _cFileFuture =
+            Future.value(stubMainCSource(target: CCompileTarget.x86));
+      }
+      return _cFileFuture!;
+    }
+    if (_cFileFuture == null || _cFileKey != fileName) {
+      _cFileKey = fileName;
+      _cFileFuture = loadCRefFile(fileName);
+    }
+    return _cFileFuture!;
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<IspStudioState>();
-    final node = state.graph.nodes[nodeId];
+    final node = state.graph.nodes[widget.nodeId];
     if (node == null) {
       return const Center(
         child: Text('节点已被删除', style: TextStyle(color: Colors.grey)),
       );
     }
+    // 嵌入式相关节点 → C 代码视图；其余 → Dart 视图。
+    final cFiles = nodeCCodeFileList(node.typeId);
+    if (cFiles.isNotEmpty) return _buildCView(node, cFiles);
+    return FutureBuilder<String>(
+      future: _codeFor(node.typeId),
+      builder: (context, snapshot) {
+        // 加载中显示占位；资产读取失败时降级为占位注释，
+        // Input/Output 变量（静态表）不受影响仍正常显示。
+        final code = snapshot.data ??
+            (snapshot.hasError
+                ? '// 加载源码失败：${snapshot.error}'
+                : '// 加载中…');
+        return _buildWithCode(context, state, node, code);
+      },
+    );
+  }
+
+  /// 页头：节点名 + 类型 id + 只读标识（C / Dart 视图共用）。
+  Widget _buildHeader(IspNode node) {
+    return Container(
+      height: 28,
+      color: const Color(0xFF252525),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      alignment: Alignment.centerLeft,
+      child: Row(
+        children: [
+          Text(
+            '${node.name} (${widget.nodeId})',
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            node.typeId,
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const Spacer(),
+          const Icon(Icons.lock_outline, size: 12, color: Colors.grey),
+          const SizedBox(width: 4),
+          const Text('只读', style: TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  /// C 代码视图：编译工具栏（页头之下，横跨内容区）+ 左侧文件层次
+  /// 列表（共享层 / 本节点文件 / 临时main调用（不导出））+ 右侧代码区（编译时下方
+  /// 切出终端）。编译内容为本节点文件列表的全部 c_ref 文件（无 top
+  /// 层入口，stub main 为空实现；只验证这些文件可编译链接）。
+  /// main.c 仅展示：不进「导出代码」产物，也不进编译 filesLoader
+  ///（编译时由 compileGroupCFiles 自行生成 stub）。
+  Widget _buildCView(IspNode node, List<String> files) {
+    // 展示清单：c_ref 文件 + 编译 stub main.c（空 main 通用形态）。
+    final displayFiles = [...files, 'main.c'];
+    // 默认选中列表中第一个 .c 文件，无 .c 则第一个文件。
+    final selected =
+        _selectedCFile != null && displayFiles.contains(_selectedCFile)
+            ? _selectedCFile!
+            : displayFiles.firstWhere((f) => f.endsWith('.c'),
+                orElse: () => displayFiles.first);
+    return FutureBuilder<String>(
+      future: _cCodeFor(selected),
+      builder: (context, snapshot) {
+        final code = snapshot.data ??
+            (snapshot.hasError
+                ? '// 加载源码失败：${snapshot.error}'
+                : '// 加载中…');
+        // 与文本对比/补丁视图同一套 VSCode Dark+ 语法高亮（C family 规则）。
+        final spans = SyntaxHighlighter.highlightText(
+          code.trim(),
+          'c',
+          baseStyle: kCodeBrowserStyle,
+        );
+        return Container(
+          color: const Color(0xFF1E1E1E),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildHeader(node),
+              Expanded(
+                child: CodeCompileArea(
+                  buttonKey: const ValueKey('nodeCompileButton'),
+                  terminalKey: const ValueKey('nodeCompileTerminal'),
+                  leftPane: CFileList(
+                    // files 传原始清单（「导出代码」产物不变，不含 main.c）；
+                    // main.c 只经 groups 进入展示分组。
+                    files: files,
+                    selected: selected,
+                    onSelect: (f) => setState(() => _selectedCFile = f),
+                    groups: [
+                      CodeFileGroup('共享层', [
+                        for (final f in files)
+                          if (f.startsWith('isp_common.')) f,
+                      ]),
+                      CodeFileGroup('本节点文件', [
+                        for (final f in files)
+                          if (!f.startsWith('isp_common.')) f,
+                      ]),
+                      // 「临时main调用（不导出）」分组标题用红色底标识（VS 系红）。
+                      const CodeFileGroup('临时main调用（不导出）', ['main.c'],
+                          titleColor: Color(0xFFC42B1C)),
+                    ],
+                  ),
+                  codeArea: CodeArea(spans: spans),
+                  filesLoader: widget.filesLoader != null
+                      ? () => widget.filesLoader!(files)
+                      : () => _cRefFileMap(files),
+                  compileRunner: widget.compileRunner,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// 编译用：把列表全部 c_ref 文件读入「文件名 → 内容」map。
+  Future<Map<String, String>> _cRefFileMap(List<String> files) async {
+    final map = <String, String>{};
+    for (final f in files) {
+      map[f] = await loadCRefFile(f);
+    }
+    return map;
+  }
+
+  Widget _buildWithCode(BuildContext context, IspStudioState state,
+      IspNode node, String code) {
+    final nodeId = widget.nodeId;
     final type = IspNodeRegistry.byId(node.typeId);
-    final code = nodeSourceCode[node.typeId] ?? '// 该节点类型暂无可展示的代码';
     // 与文本对比/补丁视图同一套 VSCode Dark+ 语法高亮（Dart 走 C family 规则）。
     final spans = SyntaxHighlighter.highlightText(
       code.trim(),
       'dart',
-      baseStyle: _codeStyle,
+      baseStyle: kCodeBrowserStyle,
     );
     final variables = groupNodeVariables(node.typeId, code);
     // 预览运行后，用采样到的真实数据替换契约说明：
@@ -63,36 +244,25 @@ class NodeCodePage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 页头：节点名 + 类型 id + 只读标识。
-          Container(
-            height: 28,
-            color: const Color(0xFF252525),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            alignment: Alignment.centerLeft,
-            child: Row(
-              children: [
-                Text(
-                  '${node.name} ($nodeId)',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  node.typeId,
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-                const Spacer(),
-                const Icon(Icons.lock_outline, size: 12, color: Colors.grey),
-                const SizedBox(width: 4),
-                const Text('只读',
-                    style: TextStyle(fontSize: 11, color: Colors.grey)),
-              ],
+          _buildHeader(node),
+          // PC 侧节点：无嵌入式 C 参考实现，说明以下为 Dart 源码。
+          if (pcSideNodeTypes.contains(node.typeId))
+            Container(
+              height: 24,
+              color: const Color(0xFF2A2A24),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.centerLeft,
+              child: const Text(
+                '该节点为 PC 侧功能（仪器/评价/导入导出等），无嵌入式 C 参考实现，以下为 Dart 实现源码',
+                style: TextStyle(fontSize: 11, color: Color(0xFFD7BA7D)),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
           Expanded(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(flex: 2, child: _CodeArea(spans: spans)),
+                Expanded(flex: 2, child: CodeArea(spans: spans)),
                 Container(width: 1, color: const Color(0xFF3A3A3A)),
                 Expanded(
                   flex: 1,
@@ -241,74 +411,6 @@ class NodeCodePage extends StatelessWidget {
     'hsl': ['H', 'S', 'L'],
     'rgba': ['R', 'G', 'B', 'A'],
   };
-}
-
-/// 左侧代码区：行号列 + 语法高亮代码，双向滚动。
-class _CodeArea extends StatefulWidget {
-  final List<TextSpan> spans;
-
-  const _CodeArea({required this.spans});
-
-  @override
-  State<_CodeArea> createState() => _CodeAreaState();
-}
-
-class _CodeAreaState extends State<_CodeArea> {
-  /// 显式垂直滚动控制器（Scrollbar 在桌面/测试环境无 primary 控制器时需要）。
-  final _vController = ScrollController();
-
-  @override
-  void dispose() {
-    _vController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // 行数从 span 文本里数（高亮按行产出，'\n' 分隔）。
-    final lineCount = widget.spans
-            .fold<int>(0, (n, s) => n + '\n'.allMatches(s.text ?? '').length) +
-        1;
-    final gutterWidth = lineCount.toString().length * 7.5 + 14;
-    const lineNoStyle = TextStyle(
-      fontFamily: 'Consolas',
-      fontFamilyFallback: ['Courier New', 'monospace'],
-      fontSize: 12,
-      height: 1.45,
-      color: Color(0xFF858585),
-    );
-    return Scrollbar(
-      controller: _vController,
-      thumbVisibility: true,
-      child: SingleChildScrollView(
-        controller: _vController,
-        padding: const EdgeInsets.all(12),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: gutterWidth,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    for (var i = 1; i <= lineCount; i++)
-                      Text('$i', style: lineNoStyle),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              SelectableText.rich(
-                TextSpan(children: widget.spans),
-                style: NodeCodePage._codeStyle,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// 右侧变量表（调试器视角）：Input（传入节点）→ Output（节点产出）→

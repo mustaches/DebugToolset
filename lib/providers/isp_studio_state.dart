@@ -15,6 +15,8 @@ import '../modules/isp_studio/models/isp_graph.dart';
 import '../modules/isp_studio/models/isp_node.dart';
 import '../modules/isp_studio/pipeline/audio_analysis.dart';
 import '../modules/isp_studio/pipeline/audio_player.dart';
+import '../modules/isp_studio/pipeline/export_progress.dart';
+import '../modules/isp_studio/pipeline/export_segments.dart';
 import '../modules/isp_studio/pipeline/exporters.dart';
 import '../modules/isp_studio/pipeline/image_source.dart';
 import '../modules/isp_studio/pipeline/ilniqe.dart';
@@ -30,6 +32,7 @@ import '../modules/isp_studio/pipeline/metrics/musiq_dart.dart';
 import '../modules/isp_studio/pipeline/metrics/vgg16_gpu.dart';
 import '../modules/isp_studio/pipeline/metrics/clip_rn50_gpu.dart';
 import '../modules/isp_studio/pipeline/metrics/inception_v3_gpu.dart';
+import '../modules/isp_studio/pipeline/node_c_code.dart';
 import '../modules/isp_studio/pipeline/nn/nn_gpu.dart';
 import '../modules/isp_studio/pipeline/nn/nn_pool.dart';
 import '../modules/isp_studio/pipeline/pipeline_runner.dart';
@@ -208,7 +211,8 @@ class IspStudioState extends ChangeNotifier {
 
   // ---- 编辑器标签页 ----
 
-  /// 已打开代码标签页的节点 id（按打开顺序）。
+  /// 已打开代码标签页（按打开顺序）：节点标签存节点 id，编组标签存
+  /// 'group:<编组id>' 前缀串。
   final List<String> openCodeTabs = [];
 
   /// 当前活动标签：0 = 流程图，i >= 1 对应 openCodeTabs[i - 1]。
@@ -227,7 +231,21 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 关闭某节点的代码标签页，活动标签落到相邻标签上。
+  /// 打开（或激活）某编组的代码标签页。
+  void openGroupCodeTab(String groupId) {
+    if (!graph.groups.any((g) => g.id == groupId)) return;
+    final key = 'group:$groupId';
+    final i = openCodeTabs.indexOf(key);
+    if (i >= 0) {
+      activeTab = i + 1;
+    } else {
+      openCodeTabs.add(key);
+      activeTab = openCodeTabs.length;
+    }
+    notifyListeners();
+  }
+
+  /// 关闭某节点/编组的代码标签页，活动标签落到相邻标签上。
   void closeCodeTab(String nodeId) {
     final i = openCodeTabs.indexOf(nodeId);
     if (i < 0) return;
@@ -747,13 +765,20 @@ class IspStudioState extends ChangeNotifier {
   // Accumulated sub-pixel drag delta per node (cleared on endNodeDrag).
   final Map<String, Offset> _nodeDragAccum = {};
 
-  /// 当前拖动组：拖动开始时若被拖节点在多选集合内，整组同步移动。
+  /// 当前拖动组：被拖节点属于编组时整组同步移动；若被拖节点还在
+  /// 更大的多选集合内，则整个多选集合同步移动。
   final Set<String> _dragGroupIds = {};
 
   void beginNodeDrag(String nodeId) {
     _dragGroupIds
       ..clear()
       ..add(nodeId);
+    // 编组联动：拖动编组内任一节点等同于拖动整个编组。
+    final gid = groupIdOf(nodeId);
+    if (gid != null) {
+      _dragGroupIds.addAll(
+          graph.groups.firstWhere((g) => g.id == gid).nodeIds);
+    }
     if (selectedNodeIds.length > 1 && selectedNodeIds.contains(nodeId)) {
       _dragGroupIds.addAll(selectedNodeIds);
     }
@@ -1317,17 +1342,44 @@ class IspStudioState extends ChangeNotifier {
     return null;
   }
 
-  /// 把当前多选节点编为一组。一个节点至多属于一个组：成员先从
-  /// 旧组摘除，旧组剩余不足 2 个节点时自动解散。
+  /// 当前多选是否可以编组：至少 2 个节点，且没有任何成员已在编组中
+  ///（已编组节点须先取消编组，才允许参与新的编组）。
+  bool get canGroupSelectedNodes {
+    if (selectedNodeIds.length < 2) return false;
+    for (final id in selectedNodeIds) {
+      if (groupIdOf(id) != null) return false;
+    }
+    return true;
+  }
+
+  /// 当前多选是否混合了「可导出 C」（嵌入式相关，nodeCCodeFiles 中有
+  /// 映射）与「不可导出 C」两类节点。混合时不允许编组：编组框用于
+  /// 圈定一个可整体导出/查看的嵌入式单元，两类混合没有对应形态。
+  bool get selectionMixesCExportNodes {
+    var hasC = false, hasNonC = false;
+    for (final id in selectedNodeIds) {
+      final typeId = graph.nodes[id]?.typeId;
+      if (typeId == null) continue;
+      if (nodeCCodeFiles.containsKey(typeId)) {
+        hasC = true;
+      } else {
+        hasNonC = true;
+      }
+      if (hasC && hasNonC) return true;
+    }
+    return false;
+  }
+
+  /// 把当前多选节点编为一组。选择中已含编组成员、或混合了可/不可
+  /// 导出 C 两类节点时不做任何改动（见 [canGroupSelectedNodes]、
+  /// [selectionMixesCExportNodes]）。一个节点至多属于一个组。
   /// [name] 缺省时自动生成「编组#N」。
   void groupSelectedNodes({String? name}) {
     final members =
         selectedNodeIds.where((id) => graph.nodes.containsKey(id)).toSet();
     if (members.length < 2) return;
-    for (final g in graph.groups) {
-      g.nodeIds.removeAll(members);
-    }
-    graph.groups.removeWhere((g) => g.nodeIds.length < 2);
+    if (members.any((id) => groupIdOf(id) != null)) return;
+    if (selectionMixesCExportNodes) return;
     graph.groups.add(IspNodeGroup('g${graph.nextId++}', members,
         name: name ?? graph.uniqueGroupName()));
     notifyListeners();
@@ -1344,11 +1396,14 @@ class IspStudioState extends ChangeNotifier {
     }
   }
 
-  /// 解散指定编组。
+  /// 解散指定编组（同时关闭其代码标签页）。
   void ungroup(String groupId) {
     final before = graph.groups.length;
     graph.groups.removeWhere((g) => g.id == groupId);
-    if (graph.groups.length != before) notifyListeners();
+    if (graph.groups.length != before) {
+      closeCodeTab('group:$groupId');
+      notifyListeners();
+    }
   }
 
   void updateBoxSelection(Offset start, Offset end, {bool multiSelect = false}) {
@@ -1661,7 +1716,38 @@ class IspStudioState extends ChangeNotifier {
     }
   }
 
-  /// 读取 RAW 源节点文件路径对应的同名 .txt（`[common]` 节）：
+  /// 运行预览后：把各视频输出节点的「帧率」参数自动对齐其上游视频源的
+  /// 原生帧率（ffmpeg 解析，经 videoFileInfo 缓存，重复运行无额外进程
+  /// 开销）。无上游视频源或解析失败时保持参数原值。
+  Future<void> _autoFillVideoOutputFps() async {
+    var changed = false;
+    for (final node in graph.nodes.values) {
+      if (node.typeId != 'video_output') continue;
+      String? srcId;
+      for (final upId in graph.upstreamOf(node.id)) {
+        if (graph.nodes[upId]?.typeId == 'video_source') {
+          srcId = upId;
+          break;
+        }
+      }
+      if (srcId == null) continue;
+      final src = graph.nodes[srcId]!;
+      final path = src.paramValues['filePath']?.toString() ?? '';
+      if (path.isEmpty) continue;
+      try {
+        final info = await videoFileInfo(path,
+            ffmpegPath: src.paramValues['ffmpegPath']?.toString() ?? '');
+        final fps = info.fps.round().clamp(1, 120);
+        if (node.paramValues['fps'] != fps) {
+          node.paramValues['fps'] = fps;
+          changed = true;
+        }
+      } catch (_) {
+        // ffmpeg 不可用或解析失败：静默，保持参数原值。
+      }
+    }
+    if (changed) notifyListeners();
+  }
   /// 有 Width/Height 则更新源节点的宽/高参数；有 BlackLevel_*（16 倍
   /// 刻度 ÷ 16）则填入该源下游的所有黑电平校正节点。
   /// txt 缺失或字段不全时对应部分不做任何事。
@@ -2669,6 +2755,10 @@ class IspStudioState extends ChangeNotifier {
           progressScale: instrumentShare);
       if (token != _runToken) return;
 
+      // 视频输出节点的「帧率」自动对齐上游视频源的原生帧率。
+      await _autoFillVideoOutputFps();
+      if (token != _runToken) return;
+
       progress = 1.0;
       progressTick.value = 1.0;
       statusMessage = '预览就绪 第 ${frame + 1}/$totalFrames 帧  ${w}x$h';
@@ -3653,6 +3743,15 @@ class IspStudioState extends ChangeNotifier {
   /// （否则缩小画布后十几个节点卡片每帧全量重建，UI isolate 被堵死，
   /// 走帧循环被饿死而连续停滞）。
   final ValueNotifier<int> frameTick = ValueNotifier<int>(0);
+
+  /// 视频导出进度（非空表示正在导出）：输出分辨率/帧率/总帧数 +
+  /// 已完成帧数 + 实时压缩帧率与 ETA（见 export_progress.dart）。
+  ExportProgressInfo? exportVideoInfo;
+
+  /// 导出信息刷新信号（节流 250ms；状态栏左侧导出状态行只监听它，
+  /// 不走 notifyListeners 引发全树重建）。
+  final ValueNotifier<int> exportInfoTick = ValueNotifier<int>(0);
+  int _exportInfoLastNotifyMs = 0;
 
   /// 仪器结果刷新信号（波形/矢量/直方图/音频仪器附加区重建用，
   /// 播放中限频触发，暂停/单次运行由结构性 notifyListeners 覆盖）。
@@ -4815,6 +4914,9 @@ class IspStudioState extends ChangeNotifier {
     statusMessage = '正在导出视频…';
     notifyListeners();
     final token = ++_runToken;
+    final frameRunners = <PipelineFrameRunner>[];
+    final rangeRunners = <ExportRangeRunner>[];
+    Process? gpuDecodeProc;
     try {
       final node = graph.nodes[nodeId]!;
       final p = node.paramValues;
@@ -4823,8 +4925,8 @@ class IspStudioState extends ChangeNotifier {
       // ffmpeg 不会自建目录：确保输出目录存在。
       await File(outPath).parent.create(recursive: true);
       final fps = (p['fps'] as num?)?.toInt() ?? 30;
-      final crf = (p['crf'] as num?)?.toInt() ?? 18;
-      final encoder = p['encoder']?.toString() ?? 'x264';
+      final crf = (p['crf'] as num?)?.toInt() ?? 25;
+      final encoder = p['encoder']?.toString() ?? 'auto';
       final ffmpeg =
           await findFfmpeg(overridePath: p['ffmpegPath']?.toString() ?? '');
       if (ffmpeg == null) {
@@ -4838,32 +4940,229 @@ class IspStudioState extends ChangeNotifier {
       final total = await sourceFrameCount(srcTypeId, srcParams);
       final (w, h) = await sourceDimensions(srcTypeId, srcParams);
 
-      // 帧级并行 + 按序交付：最多 [workers] 帧在后台 isolate 中并行计算，
-      // frameProvider 始终按 0,1,2… 顺序把帧喂给 ffmpeg stdin。
-      final workers = (Platform.numberOfProcessors - 1).clamp(1, 8);
+      // 导出进度状态（状态栏实时显示：分辨率/帧率/时长/ETA/实时帧率）。
+      exportVideoInfo =
+          ExportProgressInfo(width: w, height: h, fps: fps, totalFrames: total);
+      exportInfoTick.value++;
+      _exportInfoLastNotifyMs = 0;
+
+      // 帧生产优化（2026-09 性能排查结论）：
+      // - 旧实现每帧 compute() 新起 isolate（spawn 开销每帧摊一次），且
+      //   视频源每帧 seek 起一次 ffmpeg（~1.2s/帧 4K）；编码侧（NVENC）
+      //   实测只占 <1% GPU，瓶颈全在帧生产。
+      // - 优先级：video_source 且全链 GPU 支持时走 GPU 链（流式解码
+      //   yuv420p 直传上传 → GpuPipeline 离屏逐帧渲染 → 回读喂编码，
+      //   CPU 只做搬运）；否则视频源走「范围任务制」CPU 池、其余源走
+      //   常驻 runner 按帧并行。
+      final isVideoSource = srcTypeId == 'video_source';
+      final srcPath = srcParams['filePath']?.toString() ?? '';
+
+      // ---- GPU 链判定（仅 video_source）----
+      // 汇点 video_output 以视频组 in 接入时截掉汇点节点在 GPU 上执行
+      //（CPU 语义同样以链尾默认色调映射收尾）；汇点接 mono 轨、链过短、
+      // 含 supportedOps 外节点或 shader 不可用时回退 CPU 池并注明原因。
+      var gpuChain = chain;
+      String? gpuBlockReason;
+      if (isVideoSource) {
+        final last = chain.last;
+        final lastType = last['typeId'] as String;
+        final lastInputs = (last['inputs'] as Map?)?.cast<String, Object?>();
+        if (lastType == 'video_output' && lastInputs?['in_mono'] == null) {
+          gpuChain = chain.sublist(0, chain.length - 1);
+        } else if (lastType == 'video_output') {
+          gpuBlockReason = '汇点 mono 轨';
+        }
+        if (gpuBlockReason == null && gpuChain.length < 2) {
+          gpuBlockReason = '链过短';
+        }
+        if (gpuBlockReason == null &&
+            !GpuPipeline.isSupportedChain(gpuChain)) {
+          final bad = <String>[
+            for (final op in gpuChain.skip(1))
+              if (!GpuPipeline.supportedOps.contains(op['typeId'] as String))
+                op['typeId'] as String,
+          ];
+          gpuBlockReason = bad.isEmpty ? '连接形态' : bad.take(3).join('、');
+        }
+      }
+      final gpu = gpuBlockReason == null ? await _gpuPipeline() : null;
+      final useGpuChain = gpu != null && isVideoSource;
+      // 420 直传需偶数高且宽为 4 的倍数，否则退化 rgba 直传（仍走 GPU 链）。
+      final gpuStreamFormat =
+          (w.isEven && h.isEven && w % 4 == 0) ? 'yuv420p' : 'rgba';
+      // 硬解探测（按实际片源/尺寸/输出格式）；失败回退软解。
+      final hwaccel = useGpuChain
+          ? await probeHwDecode(ffmpeg, srcPath,
+              width: w, height: h, pixelFormat: gpuStreamFormat)
+          : '';
+      var pathNote = useGpuChain
+          ? 'GPU 链'
+          : (gpuBlockReason != null
+              ? 'CPU 池（链含 GPU 不支持节点：$gpuBlockReason）'
+              : 'CPU 池');
+
+      if (!useGpuChain) {
+        frameRunners.addAll(List.generate(
+            (Platform.numberOfProcessors - 2).clamp(2, 16),
+            (_) => PipelineFrameRunner()));
+        if (isVideoSource) {
+          // 每个 range worker 同时跑一路 HEVC 软解 + 完整 ISP 链，按
+          // 核数/4 封顶 16（实测 52 并发软解会严重争抢降速）。
+          rangeRunners.addAll(List.generate(
+              (Platform.numberOfProcessors ~/ 4).clamp(2, 16),
+              (_) => ExportRangeRunner()));
+        }
+      }
+      // 并发预热（spawn 开销与导出初始化重叠，长导出趋近零摊销）。
+      unawaited(Future.wait([
+        for (final r in frameRunners) r.warmup(),
+        for (final r in rangeRunners) r.warmup(),
+      ]));
+      final workers = frameRunners.length;
       var next = 0;
       final pending = <int, Future<Uint8List>>{};
+
+      // 范围任务制状态（仅 video_source）。
+      final srcFps = isVideoSource
+          ? (await videoFileInfo(srcParams['filePath']?.toString() ?? '',
+                  ffmpegPath: srcParams['ffmpegPath']?.toString() ?? ''))
+              .fps
+          : 30.0;
+      // GPU 不可用回退 CPU 池时若 runner 为空（shader 加载失败等），
+      // 退化为小区间而非除零。
+      final rangeSize = isVideoSource && rangeRunners.isNotEmpty
+          ? (total / (rangeRunners.length * 8)).ceil().clamp(4, 64)
+          : 4;
+      var nextRange = 0;
+      final pendingRanges = <int, Future<(int, List<Uint8List>)>>{};
+      final rangeFrames = <int, List<Uint8List>>{};
+      void scheduleRange() {
+        while (pendingRanges.length < rangeRunners.length &&
+            nextRange * rangeSize < total) {
+          final k = nextRange++;
+          final start = k * rangeSize;
+          if (start >= total) break;
+          final count = (total - start).clamp(0, rangeSize);
+          pendingRanges[k] = rangeRunners[k % rangeRunners.length].run(
+              chain,
+              srcParams['filePath']?.toString() ?? '',
+              ffmpeg,
+              w,
+              h,
+              start,
+              count,
+              srcFps);
+        }
+      }
+
       void schedule() {
         while (pending.length < workers && next < total) {
           final i = next++;
-          pending[i] = compute(
-              runChainFrameInIsolate, {'chain': chain, 'frameIndex': i});
+          pending[i] = frameRunners[i % workers]
+              .run(chain, i)
+              .then((r) => r.$1);
         }
       }
 
       // JIT（debug 运行）冷启动时并行帧会挤在共享编译队列上，慢一个量级；
       // 先串行算第 0 帧热身，后续并行帧复用优化后的代码。AOT 无此问题。
-      if (kDebugMode && total > 1) {
+      if (kDebugMode && total > 1 && !useGpuChain) {
         statusMessage = '正在导出视频（热身帧）…';
         notifyListeners();
-        pending[0] = compute(
-            runChainFrameInIsolate, {'chain': chain, 'frameIndex': 0});
+        pending[0] = frameRunners[0].run(chain, 0).then((r) => r.$1);
         next = 1;
         await pending[0]; // 等热身完成（结果留在队列按序交付）
       }
-      schedule();
+      if (useGpuChain) {
+        statusMessage = '正在导出视频（GPU 链处理）…';
+        notifyListeners();
+      } else if (isVideoSource) {
+        scheduleRange();
+      } else {
+        schedule();
+      }
 
-      await exportMp4(
+      // GPU 链的解码流（流式直传 yuv420p/rgba → 上传纹理，CPU 零转换）。
+      // 句柄留存：导出结束/失败时 kill，避免解码进程悬挂占住源文件。
+      final gpuFrames = useGpuChain
+          ? StreamIterator(decodeVideoStreamRgba(srcPath,
+              width: w,
+              height: h,
+              ffmpegPath: ffmpeg,
+              pixelFormat: gpuStreamFormat,
+              hwaccel: hwaccel,
+              onProcess: (proc) => gpuDecodeProc = proc))
+          : null;
+
+      // 分段并行导出（GPU 链 + 帧数够切）：源按包拆为关键帧对齐分段，
+      // 各段独立解码流（worker isolate + FfmpegRawPipeWin 整帧快读 +
+      // 硬解）与编码进程（双 NVENC 引擎），渲染经异步锁串行
+      // （GpuPipeline 有时域历史等实例状态），完成后 concat 无损拼接
+      // 并校验帧数/时长；除取消外的任何失败回退下方单段路径。
+      String? segEncoder;
+      if (useGpuChain && total >= _kExportSegMinFrames) {
+        statusMessage =
+            '正在导出视频（GPU 链 ×$_kExportGpuSegments 段并行）…';
+        notifyListeners();
+        try {
+          final (segEnc, segParts) = await _exportVideoGpuSegmented(
+            gpuChain: gpuChain,
+            gpu: gpu,
+            srcPath: srcPath,
+            ffmpeg: ffmpeg,
+            outPath: outPath,
+            w: w,
+            h: h,
+            fps: fps,
+            crf: crf,
+            encoder: encoder,
+            hwaccel: hwaccel,
+            gpuStreamFormat: gpuStreamFormat,
+            total: total,
+            srcFps: srcFps,
+            token: token,
+          );
+          segEncoder = segEnc;
+          pathNote = 'GPU 链 ×$segParts 段';
+        } catch (e) {
+          if (token != _runToken) rethrow; // 取消：外抛走统一收尾
+          segEncoder = null;
+          pathNote = 'GPU 链（分段失败回退单段：'
+              '${e.toString().replaceFirst('Bad state: ', '')}）';
+        }
+      }
+
+      // GPU 出图改 yuv420p：链尾 RGB→YUV420P pass（BT.601 limited，与
+      // ffmpeg rgba→yuv420p 转换同口径，色度 2x2 均值有 ±1 LSB 差异），
+      // 回读 12.4MB/帧（4K）替代 33MB/帧 RGBA，ffmpeg 原生吃 yuv420p。
+      // 流水重叠：写第 N 帧期间预渲染第 N+1 帧（深度 1 前瞻）。
+      Future<Uint8List> renderGpuFrame(int i) async {
+        final it = gpuFrames!;
+        if (!await it.moveNext()) {
+          throw StateError('视频帧流提前结束于第 $i 帧（共 $total 帧）');
+        }
+        final r = await gpu!.run(gpuChain, i,
+            imageSources: {
+              gpuChain.first['nodeId'] as String: (it.current, w, h),
+            },
+            streamFormat: gpuStreamFormat,
+            captureSamples: false);
+        ui.Image? yuvImg;
+        try {
+          yuvImg = await gpu.rgba8ToYuv420p(r.image, w, h);
+        } finally {
+          r.image.dispose();
+        }
+        try {
+          return await GpuPipeline.readbackBytes(yuvImg);
+        } finally {
+          yuvImg.dispose();
+        }
+      }
+
+      Future<Uint8List>? nextGpuFrame;
+
+      final usedEncoder = segEncoder ?? await exportMp4(
         ffmpegPath: ffmpeg,
         outputPath: outPath,
         width: w,
@@ -4872,8 +5171,35 @@ class IspStudioState extends ChangeNotifier {
         crf: crf,
         frameCount: total,
         encoder: encoder,
+        inputPixelFormat: useGpuChain ? 'yuv420p' : 'rgba',
         frameProvider: (i) async {
           if (token != _runToken) throw StateError('导出已取消');
+          if (useGpuChain) {
+            nextGpuFrame ??= renderGpuFrame(i);
+            final bytes = await nextGpuFrame!;
+            nextGpuFrame = i + 1 < total ? renderGpuFrame(i + 1) : null;
+            return bytes;
+          }
+          if (isVideoSource) {
+            final k = i ~/ rangeSize;
+            if (!rangeFrames.containsKey(k)) {
+              final start = k * rangeSize;
+              final future = pendingRanges.remove(k);
+              if (future == null) throw StateError('帧区间 $k 未在调度队列中');
+              final (gotStart, frames) = await future;
+              if (gotStart != start) {
+                throw StateError('帧区间序号错位：期望 $start 实到 $gotStart');
+              }
+              rangeFrames[k] = frames;
+              scheduleRange();
+            }
+            final frames = rangeFrames[k]!;
+            final offset = i - k * rangeSize;
+            if (offset >= frames.length) {
+              throw StateError('帧 $i 超出已交付区间（区间长度 ${frames.length}）');
+            }
+            return frames[offset];
+          }
           final f = pending.remove(i);
           if (f == null) throw StateError('帧 $i 未在调度队列中');
           final Uint8List bytes;
@@ -4890,19 +5216,298 @@ class IspStudioState extends ChangeNotifier {
           return bytes;
         },
         onProgress: (done, totalFrames) {
-          progress = done / totalFrames;
-          statusMessage = '正在编码视频 $done/$totalFrames';
-          notifyListeners();
+          _advanceProgress(done / totalFrames);
+          // 导出状态行（分辨率/帧率/时长/ETA/实时帧率）节流刷新：左侧
+          // 信息由 exportVideoInfo + exportInfoTick 承载，不再逐帧
+          // statusMessage + notifyListeners（全树重建）。
+          exportVideoInfo
+              ?.addFrame(DateTime.now().millisecondsSinceEpoch);
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          if (nowMs - _exportInfoLastNotifyMs >= 250) {
+            _exportInfoLastNotifyMs = nowMs;
+            exportInfoTick.value++;
+          }
         },
       );
-      statusMessage = '视频导出完成 → $outPath';
+      gpuDecodeProc?.kill();
+      for (final r in frameRunners) {
+        r.dispose();
+      }
+      for (final r in rangeRunners) {
+        r.dispose();
+      }
+      statusMessage = '视频导出完成 → $outPath'
+          '（${usedEncoder == 'nvenc' ? 'h264_nvenc 硬件编码' : 'libx264 软件编码'}，$pathNote）';
     } catch (e) {
       statusMessage = e.toString().replaceFirst('Bad state: ', '');
     } finally {
+      gpuDecodeProc?.kill();
+      for (final r in frameRunners) {
+        r.dispose();
+      }
+      for (final r in rangeRunners) {
+        r.dispose();
+      }
+      // 导出结束/失败/取消统一清掉状态栏导出信息。
+      exportVideoInfo = null;
+      exportInfoTick.value++;
       if (token == _runToken) {
         isProcessing = false;
         notifyListeners();
       }
+    }
+  }
+
+  /// 分段并行导出：段数 / 段内渲染前瞻深度 / 启用分段的最小帧数。
+  /// GeForce 消费卡 NVENC 并发会话通常限 3 路，默认 2 段留有余量；
+  /// 帧数太少时分段的进程启动/拼接开销得不偿失。
+  static const int _kExportGpuSegments = 2;
+  static const int _kExportGpuSegDepth = 1;
+  static const int _kExportSegMinFrames = 16;
+
+  /// GPU 链分段并行导出：源先经 ffmpeg 按包拆为关键帧对齐的分段
+  /// （不解码，~500x 速度；每包恰好落入一段，对 VFR/时间戳异常片源
+  /// 同样精确——-ss 时间寻址切分在这类片源上会落错帧），各段独立
+  /// VideoFrameStream 解码（worker isolate + FfmpegRawPipeWin 快路径）
+  /// 与 ffmpeg 编码进程，渲染经异步锁串行（GpuPipeline 的
+  /// _temporalHistory 等实例状态不可并发），完成后
+  /// `ffmpeg -f concat -c copy` 无损拼接并校验帧数/时长。
+  /// 返回（实际使用的编码器 id, 分段数）。任何失败抛 [StateError]
+  /// （调用方回退单段路径；取消经 token 判定直接外抛）。
+  Future<(String, int)> _exportVideoGpuSegmented({
+    required List<Map<String, Object?>> gpuChain,
+    required GpuPipeline gpu,
+    required String srcPath,
+    required String ffmpeg,
+    required String outPath,
+    required int w,
+    required int h,
+    required int fps,
+    required int crf,
+    required String encoder,
+    required String hwaccel,
+    required String gpuStreamFormat,
+    required int total,
+    required double srcFps,
+    required int token,
+  }) async {
+    final ff = File(ffmpeg).absolute.path;
+    final segEncoder =
+        await resolveMp4Encoder(ff, encoder, width: w, height: h);
+    final srcId = gpuChain.first['nodeId'] as String;
+    final workDir = await Directory.systemTemp.createTemp('isp_export_seg_');
+    final streams = <VideoFrameStream>[];
+    final encoders = <Process>[];
+
+    /// 尽力清理：任何一步失败都不外抛（解码进程若成孤儿持有分段
+    /// 临时文件，删除失败不应把已成功的导出判为失败；孤儿进程随
+    /// 应用退出回收，临时目录留给系统 temp 清理）。
+    Future<void> cleanup() async {
+      for (final enc in encoders) {
+        enc.kill();
+      }
+      for (final stream in streams) {
+        try {
+          await stream
+              .dispose()
+              .timeout(const Duration(seconds: 5), onTimeout: () {});
+        } catch (_) {}
+      }
+      try {
+        if (workDir.existsSync()) await workDir.delete(recursive: true);
+      } catch (_) {}
+    }
+
+    try {
+      // 分包预处理（不解码）+ 各段帧数统计（免解码数包）。
+      final parts = await splitVideoByPackets(
+          ff, srcPath, total / srcFps, _kExportGpuSegments, workDir.path);
+      if (parts.length < 2) {
+        throw StateError('片源关键帧过稀，无法分段');
+      }
+      final counts = <int>[];
+      for (final part in parts) {
+        final c = await countVideoFramesFast(ff, part);
+        if (c == null || c <= 0) throw StateError('分段帧数统计失败');
+        counts.add(c);
+      }
+      final offsets = <int>[];
+      var grandTotal = 0;
+      for (final c in counts) {
+        offsets.add(grandTotal);
+        grandTotal += c;
+      }
+      if (grandTotal != total) {
+        // VFR 片源：时长×帧率的估算总帧数与实际不符，以实际为准刷新
+        // 状态栏总量（单段路径在同样场景会按估算值截断/报错，分段
+        // 路径按包拆分天然导出全部实际帧）。
+        exportVideoInfo = ExportProgressInfo(
+            width: w, height: h, fps: fps, totalFrames: grandTotal);
+        exportInfoTick.value++;
+      }
+      final segPaths = [
+        for (var s = 0; s < parts.length; s++)
+          '${workDir.path}${Platform.pathSeparator}seg_$s.mp4'
+      ];
+
+      // 渲染锁：gpu.run 串行（实例状态保护），yuv 转换/回读在锁外
+      // （无状态），GPU 队列保持有活。
+      Future<void> lockTail = Future.value();
+      Future<T> locked<T>(Future<T> Function() fn) {
+        final c = Completer<T>();
+        lockTail = lockTail.then((_) async {
+          try {
+            c.complete(await fn());
+          } catch (e, st) {
+            c.completeError(e, st);
+          }
+        });
+        return c.future;
+      }
+
+      // 进度：各段完成帧数累加（与单段路径同一套状态栏/百分比口径）。
+      var segDone = 0;
+      void noteFrame() {
+        segDone++;
+        _advanceProgress(segDone / grandTotal);
+        exportVideoInfo?.addFrame(DateTime.now().millisecondsSinceEpoch);
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        if (nowMs - _exportInfoLastNotifyMs >= 250) {
+          _exportInfoLastNotifyMs = nowMs;
+          exportInfoTick.value++;
+        }
+      }
+
+      Future<void> runSeg(
+          int s, String partPath, int offset, int count) async {
+        // 段 s>0 的输入为 parts[0..s] 的 concat 列表 + 跳过前 offset
+        // 帧：open-GOP 片源在切割点的引导 B 帧引用前一段的 GOP，单段
+        // 文件独立解码会被丢弃（边界出空洞）；带上全部前缀后解码
+        // 序列与源逐帧一致，passthrough 保证每包一帧。跳帧在 worker
+        // 内完成（解码速度，不占渲染管线），代价远小于段并行收益。
+        String concatList = '';
+        if (s > 0) {
+          concatList = '${workDir.path}${Platform.pathSeparator}ext_$s.txt';
+          await File(concatList)
+              .writeAsString(concatListContent(parts.sublist(0, s + 1)));
+        }
+        final stream = await VideoFrameStream.start(partPath, 0,
+            ffmpegPath: ff,
+            pixelFormat: gpuStreamFormat,
+            hwaccel: hwaccel,
+            maxFrames: count, // 送满即 EOF 收尾，段尾无背压竞赛
+            skipFrames: offset,
+            passthrough: true,
+            concatListPath: concatList);
+        streams.add(stream);
+        final enc = await startMp4Encoder(
+            ffmpegPath: ff,
+            outputPath: segPaths[s],
+            width: w,
+            height: h,
+            fps: fps,
+            crf: crf,
+            encoder: segEncoder,
+            inputPixelFormat: gpuStreamFormat);
+        encoders.add(enc);
+        final errBuf = StringBuffer();
+        final errDone = enc.stderr
+            .transform(const SystemEncoding().decoder)
+            .listen(errBuf.write)
+            .asFuture<void>();
+
+        final inFlight = <Future<Uint8List>>[];
+
+        // 渲染 + yuv420p 出图 + 回读（取帧在主循环串行——
+        // VideoFrameStream.next 不支持并发调用）。
+        Future<Uint8List> render(Uint8List f, int i) async {
+          ui.Image? img;
+          await locked(() async {
+            final r = await gpu.run(gpuChain, i,
+                imageSources: {srcId: (f, w, h)},
+                streamFormat: gpuStreamFormat,
+                captureSamples: false);
+            img = r.image;
+          });
+          stream.recycle(f);
+          final img0 = img!;
+          ui.Image? yuv;
+          try {
+            yuv = await gpu.rgba8ToYuv420p(img0, w, h);
+          } finally {
+            img0.dispose();
+          }
+          try {
+            return await GpuPipeline.readbackBytes(yuv);
+          } finally {
+            yuv.dispose();
+          }
+        }
+
+        Future<void> writeOldest() async {
+          final bytes = await inFlight.removeAt(0);
+          enc.stdin.add(bytes);
+          await enc.stdin.flush();
+          noteFrame();
+        }
+
+        for (var i = 0; i < count; i++) {
+          if (token != _runToken) throw StateError('导出已取消');
+          final f = await stream.next();
+          if (f == null) {
+            throw StateError('段 $s 帧流提前结束于第 $i 帧（共 $count 帧）');
+          }
+          inFlight.add(render(f, offset + i));
+          if (inFlight.length > _kExportGpuSegDepth) {
+            await writeOldest();
+          }
+        }
+        while (inFlight.isNotEmpty) {
+          await writeOldest();
+        }
+        await enc.stdin.close();
+        final code = await enc.exitCode;
+        await errDone;
+        if (code != 0) {
+          throw StateError('段 $s 编码失败 (exit $code):\n$errBuf');
+        }
+      }
+
+      await Future.wait([
+        for (var s = 0; s < parts.length; s++)
+          runSeg(s, parts[s], offsets[s], counts[s]),
+      ]);
+      for (final stream in streams) {
+        try {
+          await stream
+              .dispose()
+              .timeout(const Duration(seconds: 5), onTimeout: () {});
+        } catch (_) {}
+      }
+
+      // concat demuxer 无损拼接（各段编码器/参数一致，h264 裸流可直拼）。
+      final listFile =
+          File('${workDir.path}${Platform.pathSeparator}concat.txt');
+      await listFile.writeAsString(concatListContent(segPaths));
+      final r = await Process.run(ff, [
+        '-y', '-f', 'concat', '-safe', '0', '-i', listFile.path,
+        '-c', 'copy', outPath,
+      ]);
+      if (r.exitCode != 0) {
+        throw StateError('分段拼接失败: ${r.stderr}');
+      }
+
+      // 产物校验：帧数（免解码数包）与时长远不符则判失败（调用方回退）。
+      if (!await validateConcatOutput(ff, outPath, grandTotal, fps)) {
+        final f = File(outPath);
+        if (f.existsSync()) await f.delete();
+        throw StateError('分段拼接产物校验失败（帧数/时长不符）');
+      }
+      await cleanup();
+      return (segEncoder, parts.length);
+    } catch (_) {
+      await cleanup();
+      rethrow;
     }
   }
 
@@ -4971,6 +5576,9 @@ class IspStudioState extends ChangeNotifier {
     graph.connections
       ..clear()
       ..addAll(imported.connections);
+    graph.groups
+      ..clear()
+      ..addAll(imported.groups);
     graph.nextId = imported.nextId;
     graphName = name;
     _runToken++; // 使进行中的运行结果失效

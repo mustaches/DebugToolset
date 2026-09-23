@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/code_variables.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/node_code.dart';
@@ -8,6 +10,12 @@ CodeVariable? _find(List<CodeVariable> vars, String name) {
   }
   return null;
 }
+
+/// 从真实源码加载节点展示代码（flutter test 的工作目录是工程根）。
+Future<String> _codeOf(String typeId) => loadNodeCode(
+      typeId,
+      readFile: (path) => File(path).readAsString(),
+    );
 
 void main() {
   group('extractVariables', () {
@@ -79,33 +87,33 @@ for (var i = 0; i < 5; i++) {}
       expect(_find(vars, 'max')!.type, 'final');
     });
 
-    test('每个内置节点片段都能解析出变量（或确认无变量）', () {
-      // 冒烟测试：所有片段解析不抛异常；关键片段应含已知变量。
-      for (final entry in nodeSourceCode.entries) {
-        expect(() => extractVariables(entry.value), returnsNormally,
-            reason: entry.key);
+    test('每种节点的真实代码都能解析出变量（或确认无变量）', () async {
+      // 冒烟测试：所有节点代码解析不抛异常；关键节点应含已知变量。
+      for (final typeId in nodeCodeSpec.keys) {
+        final code = await _codeOf(typeId);
+        expect(() => extractVariables(code), returnsNormally,
+            reason: typeId);
       }
-      final bl = extractVariables(nodeSourceCode['black_level']!);
+      final bl = extractVariables(await _codeOf('black_level'));
       expect(_find(bl, 'offsets'), isNotNull);
-      final gamma = extractVariables(nodeSourceCode['gamma']!);
-      expect(_find(gamma, 'lut')!.type, 'Uint8List');
-      final demosaic = extractVariables(nodeSourceCode['demosaic']!);
+      final gamma = extractVariables(await _codeOf('gamma'));
+      expect(_find(gamma, 'lut'), isNotNull);
+      final demosaic = extractVariables(await _codeOf('demosaic'));
       expect(_find(demosaic, '_axial')!.items, hasLength(4));
     });
   });
 
   group('groupNodeVariables（Input / Output / Inside）', () {
-    test('每种节点类型都有 Input 与 Output 描述', () {
-      for (final typeId in nodeSourceCode.keys) {
-        final groups = groupNodeVariables(typeId, nodeSourceCode[typeId]!);
+    test('每种节点类型都有 Input 与 Output 描述', () async {
+      for (final typeId in nodeCodeSpec.keys) {
+        final groups = groupNodeVariables(typeId, await _codeOf(typeId));
         expect(groups.inputs, isNotEmpty, reason: '$typeId 缺少 Input');
         expect(groups.outputs, isNotEmpty, reason: '$typeId 缺少 Output');
       }
     });
 
-    test('Inside 不包含 Input/Output 同名变量', () {
-      final groups =
-          groupNodeVariables('demosaic', nodeSourceCode['demosaic']!);
+    test('Inside 不包含 Input/Output 同名变量', () async {
+      final groups = groupNodeVariables('demosaic', await _codeOf('demosaic'));
       final ioNames = {
         ...groups.inputs.map((v) => v.name),
         ...groups.outputs.map((v) => v.name),
@@ -119,9 +127,9 @@ for (var i = 0; i < 5; i++) {}
       expect(_find(groups.inside, '_axial'), isNotNull);
     });
 
-    test('黑电平的输入输出符合节点契约', () {
+    test('黑电平的输入输出符合节点契约', () async {
       final groups =
-          groupNodeVariables('black_level', nodeSourceCode['black_level']!);
+          groupNodeVariables('black_level', await _codeOf('black_level'));
       expect(groups.inputs.map((v) => v.name),
           containsAll(['bayer', 'r', 'gr', 'gb', 'b', 'pattern']));
       expect(groups.outputs.single.name, 'bayer');

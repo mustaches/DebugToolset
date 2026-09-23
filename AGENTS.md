@@ -15,7 +15,7 @@
 | 4 | 文本对比 / 补丁 | `lib/modules/text_editor/` | 文本编辑、语法高亮、文件/文件夹 diff、补丁生成与套用 |
 | 5 | 字库提取 | `lib/modules/font_extractor/` | 从 TTF/OTF 提取点阵字库（EBDT 解析、字符集管理、字形预览），导出 C 数组/bin |
 | 6 | UI 设计器 | `lib/modules/ui_designer/` | 嵌入式 UI 拖拽设计器：控件箱 → 画布编辑 → 预览交互 → 导出 C99 代码（无动态分配、弱符号回调）。详见 `docs/UI_Designer.md` |
-| 7 | ISP Studio | `lib/modules/isp_studio/` | 图像信号处理流水线节点图编辑器：节点画布 + 每节点代码页，支持 RAW 图像/视频源、ISP 算法核、仪器仪表（矢量示波器、音频分析等）、Worker 池并行计算、ffmpeg 视频导出；单帧预览可走 GPU 快路径（`pipeline/gpu/`：16 位打包纹理 + FragmentShader，仅 UI isolate，失败自动回退 CPU isolate 路径；源纹理跨 run 缓存支持增量重跑）；视频播放时若全部预览链都有 GPU shader 实现（`GpuPipeline.isSupportedChain`）则走 **GPU 链播放**（流帧 RGBA 直传 + `isp_rgba8_to_rgb16.frag` 重排 + 全 pass 驻留 + 免回读上屏，平面直出/直连形态优先，不支持回退 CPU worker 池）；色彩控制器（`color_controller`，高斯色相带选择调参）CPU 侧经 `hsl_band_pool.dart` 常驻条带池（核数-2 worker）并行；深度评价节点（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）经 `pipeline/pyiqa_worker.dart` 调 Python 桥接进程计算 |
+| 7 | ISP Studio | `lib/modules/isp_studio/` | 图像信号处理流水线节点图编辑器：节点画布 + 每节点代码页（嵌入式相关节点展示 `lib/modules/isp_studio/c_ref/` 下的 ANSI C99 参考实现，.h/.c 文件树，与 Dart 实现数值语义对应；PC 侧节点仍展示 Dart 源码），支持 RAW 图像/视频源、ISP 算法核、仪器仪表（矢量示波器、音频分析等）、Worker 池并行计算、ffmpeg 视频导出（GPU 链导出走**分段并行**：源先经 `-c copy -f segment` 按包拆为关键帧对齐分段（不解码，对 VFR/时间戳异常片源也精确），各段独立 `VideoFrameStream` 解码流（`-fps_mode passthrough` 每包一帧 + `maxFrames` 确切收尾；段 s>0 输入为 parts[0..s] 的 concat 列表 + `skipFrames` 跳过重叠区，解决 open-GOP 切割点引导帧引用缺失）+ 各自 NVENC 编码进程，渲染经异步锁串行，完成后 `ffmpeg -f concat -c copy` 无损拼接并校验帧数/时长，失败回退单段；分段逻辑在 `pipeline/export_segments.dart`）；单帧预览可走 GPU 快路径（`pipeline/gpu/`：16 位打包纹理 + FragmentShader，仅 UI isolate，失败自动回退 CPU isolate 路径；源纹理跨 run 缓存支持增量重跑）；视频播放时若全部预览链都有 GPU shader 实现（`GpuPipeline.isSupportedChain`）则走 **GPU 链播放**（流帧 RGBA 直传 + `isp_rgba8_to_rgb16.frag` 重排 + 全 pass 驻留 + 免回读上屏，平面直出/直连形态优先，不支持回退 CPU worker 池）；色彩控制器（`color_controller`，高斯色相带选择调参）CPU 侧经 `hsl_band_pool.dart` 常驻条带池（核数-2 worker）并行；深度评价节点（LPIPS/DISTS/FID/KID/MUSIQ/CLIPIQA）经 `pipeline/pyiqa_worker.dart` 调 Python 桥接进程计算 |
 
 应用强制暗色主题（`lib/main.dart` 中 `themeMode: ThemeMode.dark`），默认窗口 1658×869。
 
@@ -45,7 +45,7 @@ flutter analyze                 # 静态分析
 - `lib/main.dart` — 入口：`window_manager` 初始化 + `MultiProvider` 注册全部状态。
 - `lib/layout/main_layout.dart` — 主框架：左侧栏（模块切换）+ 工作区 + 底部状态栏。
 - `lib/providers/` — 每个模块对应一个 `ChangeNotifier` 状态类（`AppState`、`TerminalState`（串口终端）、`NetworkTerminalState`（网络终端）、`OscilloscopeState`、`MacroState`、`HexEditorState`、`TextEditorState`、`FontExtractorState`、`UiDesignerState`、`IspStudioState`）。**状态管理统一用 Provider**，`OscilloscopeState` 通过 `ChangeNotifierProxyProvider` 依赖 `TerminalState`；两个终端状态类均实现 `terminal_session.dart` 的 `TerminalSession` 接口，供终端 UI 组件复用；`MacroState` 由两个终端共享。
-- `lib/modules/<模块名>/` — 每个模块内含 `<模块名>_view.dart` 根视图，及 `models/`（纯数据/逻辑，尽量无 Flutter 依赖）、`widgets/`（UI 组件）等子目录；`ui_designer` 另有 `codegen/`（C 代码生成），`isp_studio` 另有 `pipeline/`（流水线执行、ISP 核、仪器、Worker）。
+- `lib/modules/<模块名>/` — 每个模块内含 `<模块名>_view.dart` 根视图，及 `models/`（纯数据/逻辑，尽量无 Flutter 依赖）、`widgets/`（UI 组件）等子目录；`ui_designer` 另有 `codegen/`（C 代码生成），`isp_studio` 另有 `pipeline/`（流水线执行、ISP 核、仪器、Worker）与 `codegen/`（编组导出嵌入式 C：每节点实例封装 + top 层 pipeline 生成，覆盖 Process 含 ColorTrans/Fluorescence + Datapath 共 48 个类型，拓扑序调用 + 调用方 scratch 竞技场，MSVC 语法编译测试在 `test/isp_group_c_export_test.dart`）。
 - `lib/utils/` — 跨模块工具（ANSI 解析、波形存储 `waveform_storage.dart` 等）。
 - `lib/theme/app_theme.dart` — 暗色主题定义。
 
@@ -76,6 +76,8 @@ flutter analyze                 # 静态分析
 flutter test                    # 全部测试
 flutter test test/isp_kernels_test.dart   # 单个文件
 ```
+
+- ISP C 参考实现对拍测试为 `test/isp_c_ref_compare_*_test.dart`（C harness 在 `test/c_ref/`，经 `scripts/c_build_harness.bat` 用 MSVC 构建为 `scratch/c_ref_check/c_ref_harness.exe`，无 MSVC 环境自动 skip）。
 
 - `scripts/` 与 `scratch/` 是一次性/辅助脚本目录（mock 数据生成、批量代码修改、性能基准等），**不参与静态分析**，不要当作正式代码维护；工程根目录的 `patch_*.py`、`fix_*.py`、`test_*.dart` 同样是临时脚本。
 - 项目已有测试覆盖的习惯：修改某模块逻辑时，优先在 `test/` 下补充或更新对应前缀的测试。

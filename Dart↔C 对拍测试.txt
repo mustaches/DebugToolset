@@ -1,0 +1,12 @@
+对拍架构
+C 侧 harness（test/c_ref/）：harness.c 把 c_ref 的 64 个 op 包成命令行程序 c_harness.exe <op> <case_dir>——读 params.txt（double 走最短往返表示，strtod 精确还原）+ inN.bin 小端 uint16 帧，跑 C kernel，写回 outN.bin / scalars.txt。scratch 缓冲由 harness 层 malloc（内核零 malloc 约定不受影响）。
+构建：scripts/c_build_harness.bat（手工 MSVC 环境，支持分组 tag 输出避免并行竞争）；测试中 exe 缺失时自动构建，无 MSVC 环境自动 skip。
+Dart 侧（test/c_ref/compare_helper.dart）：确定性 LCG/渐变/常量帧生成、二进制 IO、runCOp 调用、expectFramesEqual 逐位比对（失败打印差异坐标与 maxDiff）。基准直接调 pipeline/isp_kernels.dart 等的真实；语义在 pipeline_runner 的（mono 分支、分合路器、mux4）在测试里逐行复刻 runner 逻辑并注明出处。
+覆盖范围（13 组 64 个 op 全实现RAW 解包（含 MIPI 10/12 手工打包双向用例）、黑电平/DPC/FPN/LSC/GrGb/Bayer 降噪/高光恢复、双线性 + 4 种非 Bayer CFA + 5 种高级去马赛克（MHC/AAHD/AMaZE/LMMSE/IGV）、白平衡/CCM/Gamma 色调映射、CLAHE（RGB+Mono）、 降噪/锐化/边缘提取/高斯模糊/形态学、6 种色彩空间转换、7 种调节器（含色彩控制器）、曲线 LUT 四模式 + 色温、荧光 6 算子（含时 IIR 双输出比对）、乘法/加法/混叠/mux4/分合路器（含缺路默认值语义）。
+对拍抓到并修复的真实缺陷（1 处）
+isp_color_controller.c：原实现用 181 项整数度高斯权重 LUT + 线性插值（编写时的"有意近似"），对拍发现窄带（q=8）时约 2% 像素差 ±1~2——量化色相落在小数度上，插值误差在 round 临界处成片显现。已改为与 相同的逐像素 exp(-0.5·(d/σ)²) 直接计算，修后逐位一致，且不再需要 LUT 缓冲。
+其余 63 个 op 首次对拍即逐位一致，包括此前担心的点重路径（pow/exp/sqrt 跨 libm）在本批用例值域上均无 ulp 分叉。每组用例都覆盖了主尺寸、小图边界、全 0/全 max 极值帧和参数变体。
+
+备注
+对拍测试纳入 AGENTS.md 测试节说明；exe 产物在 scratch/c_ref_check/（不入库）。
+跨平台提醒：若未来换编译器/目标平台跑，个别 pow/exp 路径可能出现孤立 ±1（AAHD 的 sRGB→Lab 最敏感），届时按测试里的容差约定单独评估即可。

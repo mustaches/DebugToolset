@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 自绘「生成解决方案」图标（锤子 + 砖墙），布局对齐 Visual Studio 2022
+     深色菜单「生成 → 生成解决方案」16px 图标：锤子在左上（锤头朝左上、
+     柄斜向右下压向砖墙），砖墙在右下（错缝蓝砖）。为免版权问题的原创
+     绘制，非提取素材。16×16 viewBox，13px 显示。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- 砖墙（右下）：下行两块浅蓝，上行一块错缝深蓝，砖缝透暗底 -->
+  <rect x="9.6" y="8.2" width="5.4" height="3.3" rx="0.4" fill="#0E70C0"/>
+  <rect x="8" y="12.1" width="3.4" height="3.4" rx="0.4" fill="#1BA1E2"/>
+  <rect x="11.9" y="12.1" width="3.6" height="3.4" rx="0.4" fill="#1BA1E2"/>
+  <!-- 锤子（左上）：橙棕柄斜向右下敲在砖墙上，浅灰锤头朝左上 -->
+  <line x1="9.2" y1="9" x2="4.4" y2="3.2" stroke="#D08B3E" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="2" y1="5.2" x2="6.6" y2="0.9" stroke="#C8C8C8" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

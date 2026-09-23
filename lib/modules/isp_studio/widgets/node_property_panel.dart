@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
+import '../models/explorer_reveal.dart';
 import '../models/isp_node.dart';
 import '../pipeline/levels_curve.dart';
 import '../pipeline/pipeline_runner.dart';
@@ -58,7 +59,34 @@ class NodePropertyPanel extends StatelessWidget {
     final state = context.watch<IspStudioState>();
     final selectedId = state.selectedNodeId;
     final node = selectedId == null ? null : state.graph.nodes[selectedId];
-    final type = node == null ? null : IspNodeRegistry.byId(node.typeId);
+
+    Widget content;
+    if (state.selectedNodeIds.length > 1) {
+      // 多选（含编组联动全选）：按节点在画布上的纵向位置（同行按横向）
+      // 从上到下依次显示所有选中节点的参数。
+      final nodes = [
+        for (final id in state.selectedNodeIds) ?state.graph.nodes[id],
+      ]..sort((a, b) {
+          final dy = a.y.compareTo(b.y);
+          return dy != 0 ? dy : a.x.compareTo(b.x);
+        });
+      content = ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          for (var i = 0; i < nodes.length; i++) ...[
+            if (i > 0) Divider(height: 32, color: Colors.grey.shade700),
+            ..._nodeParamChildren(context, state, nodes[i]),
+          ],
+        ],
+      );
+    } else if (node != null) {
+      content = ListView(
+        padding: const EdgeInsets.all(12),
+        children: _nodeParamChildren(context, state, node),
+      );
+    } else {
+      content = _FlowSummaryPanel(state: state);
+    }
 
     return Container(
       width: 260,
@@ -66,33 +94,41 @@ class NodePropertyPanel extends StatelessWidget {
         color: const Color(0xFF252525),
         border: Border(left: BorderSide(color: Colors.grey.shade800)),
       ),
-      child: node == null || type == null
-          ? _FlowSummaryPanel(state: state)
-          : ListView(
-              padding: const EdgeInsets.all(12),
-              children: [
-                Text(node.name,
-                    style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-                Text(type.typeId,
-                    style:
-                        const TextStyle(fontSize: 11, color: Colors.grey)),
-                Divider(height: 24, color: Colors.grey.shade800),
-                for (final spec in type.params)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _editorFor(context, state, node, spec),
-                  ),
-                if (node.typeId == 'bayer_source' &&
-                    state.totalFrames != null)
-                  Text('帧数: ${state.totalFrames}',
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.grey)),
-              ],
-            ),
+      child: content,
     );
+  }
+
+  /// 单个节点的参数区：名称 + 类型 + 各参数编辑器。
+  List<Widget> _nodeParamChildren(
+      BuildContext context, IspStudioState state, IspNode node) {
+    final type = IspNodeRegistry.byId(node.typeId);
+    if (type == null) {
+      return [
+        Text(node.name,
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
+      ];
+    }
+    return [
+      Text(node.name,
+          style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.white)),
+      Text(type.typeId,
+          style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      Divider(height: 24, color: Colors.grey.shade800),
+      for (final spec in type.params)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _editorFor(context, state, node, spec),
+        ),
+      if (node.typeId == 'bayer_source' && state.totalFrames != null)
+        Text('帧数: ${state.totalFrames}',
+            style: const TextStyle(fontSize: 12, color: Colors.grey)),
+    ];
   }
 
   Widget _editorFor(BuildContext context, IspStudioState state, IspNode node,
@@ -202,9 +238,29 @@ class NodePropertyPanel extends StatelessWidget {
                 ),
               ),
               TextButton(
+                style: _compactTextButtonStyle,
                 onPressed: () => _browsePath(state, node, spec),
                 child:
                     const Text('浏览…', style: TextStyle(fontSize: 12)),
+              ),
+              // 在资源管理器中定位：文件存在则选中，否则打开所在目录。
+              TextButton.icon(
+                style: _compactTextButtonStyle,
+                onPressed: value.toString().trim().isEmpty
+                    ? null
+                    : () async {
+                        final err =
+                            await revealInExplorer(value.toString());
+                        if (err != null && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                  content: Text(err),
+                                  duration: const Duration(seconds: 2)));
+                        }
+                      },
+                icon: const Icon(Icons.folder_open, size: 14),
+                label:
+                    const Text('打开目录', style: TextStyle(fontSize: 12)),
               ),
             ],
           ),
@@ -215,6 +271,13 @@ class NodePropertyPanel extends StatelessWidget {
   }
 
   static const _labelStyle = TextStyle(fontSize: 12, color: Colors.white70);
+
+  /// 260px 窄面板里行内按钮的紧凑样式（浏览…/打开目录并排不溢出）。
+  static final _compactTextButtonStyle = TextButton.styleFrom(
+    padding: const EdgeInsets.symmetric(horizontal: 6),
+    minimumSize: Size.zero,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  );
 
   Widget _labeled(String label, Widget field) {
     return Column(
@@ -238,6 +301,24 @@ class NodePropertyPanel extends StatelessWidget {
         '${Directory.current.path}${sep}IspFlow${sep}BayerRGGB');
     if (!dir.existsSync()) await dir.create(recursive: true);
     return dir.path;
+  }
+
+  /// 视频源节点上次浏览选中的文件所在目录（进程内记忆，连续添加多个
+  /// 视频源时不必每次从默认目录重新导航）。
+  static String? _lastVideoDir;
+
+  /// 视频源节点浏览文件对话框的初始目录：优先当前已选文件所在目录，
+  /// 其次上次浏览的目录，最后回退工作目录（缺省时系统对话框会落到
+  /// 文档目录，与素材实际位置无关）。
+  String _videoInitialDir(IspNode node) {
+    final cur = node.paramValues['filePath']?.toString() ?? '';
+    if (cur.isNotEmpty) {
+      final parent = File(cur).parent.path;
+      if (Directory(parent).existsSync()) return parent;
+    }
+    final last = _lastVideoDir;
+    if (last != null && Directory(last).existsSync()) return last;
+    return Directory.current.path;
   }
 
   /// 按 (节点类型, 参数 key) 选择文件/目录/保存位置对话框。
@@ -264,12 +345,16 @@ class NodePropertyPanel extends StatelessWidget {
       ]);
       path = file?.path;
     } else if (node.typeId == 'video_source' && spec.key == 'filePath') {
-      final file = await openFile(acceptedTypeGroups: [
-        const XTypeGroup(
-            label: '视频',
-            extensions: ['mp4', 'mkv', 'avi', 'mov', 'ts', 'flv', 'wmv']),
-      ]);
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(
+              label: '视频',
+              extensions: ['mp4', 'mkv', 'avi', 'mov', 'ts', 'flv', 'wmv']),
+        ],
+        initialDirectory: _videoInitialDir(node),
+      );
       path = file?.path;
+      if (path != null) _lastVideoDir = File(path).parent.path;
     } else {
       final file = await openFile();
       path = file?.path;
