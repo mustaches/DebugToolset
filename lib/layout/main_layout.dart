@@ -167,19 +167,35 @@ class MainLayout extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Flexible(
+                    // 导出中优先显示导出状态行（分辨率/帧率/时长/ETA/实时
+                    // 帧率），监听 exportInfoTick（250ms 节流）；其余时候
                     // 播放中的逐帧状态（帧号/FPS/停滞）只监听 frameTick，
                     // 不依赖全树 notifyListeners。
                     child: ValueListenableBuilder<int>(
-                      valueListenable: ispState.frameTick,
+                      valueListenable: ispState.exportInfoTick,
                       builder: (context, tick, child) {
-                        final msg = ispState.statusMessage.isNotEmpty
-                            ? ispState.statusMessage
-                            : 'ISP Studio 准备就绪';
-                        return Text(
-                          msg,
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.white),
-                          overflow: TextOverflow.ellipsis,
+                        final info = ispState.exportVideoInfo;
+                        if (info != null) {
+                          return Text(
+                            info.statusLine(),
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.white),
+                            overflow: TextOverflow.ellipsis,
+                          );
+                        }
+                        return ValueListenableBuilder<int>(
+                          valueListenable: ispState.frameTick,
+                          builder: (context, tick, child) {
+                            final msg = ispState.statusMessage.isNotEmpty
+                                ? ispState.statusMessage
+                                : 'ISP Studio 准备就绪';
+                            return Text(
+                              msg,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.white),
+                              overflow: TextOverflow.ellipsis,
+                            );
+                          },
                         );
                       },
                     ),
