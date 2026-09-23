@@ -133,6 +133,123 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
       info.width, info.height);
 }
 
+/// 流式解码命令参数（纯函数，便于单测）。
+/// [pixelFormat]：'rgba'（w*h*4/帧）或 'yuv420p'（w*h*3/2/帧，4K 下
+/// 流量为 37%，供 GPU 420 直传）；[hwaccel] 为空不加硬件加速参数。
+List<String> videoDecodeArgs({
+  required String pixelFormat,
+  String hwaccel = '',
+  double startSec = 0,
+}) {
+  return [
+    '-hide_banner', '-loglevel', 'error',
+    if (hwaccel.isNotEmpty) ...['-hwaccel', hwaccel],
+    if (startSec > 0) ...['-ss', startSec.toStringAsFixed(6)],
+    '-i', '__PATH__',
+    '-f', 'rawvideo', '-pix_fmt', pixelFormat, 'pipe:1',
+  ];
+}
+
+/// 顺序流式解码：单条 ffmpeg 进程连续吐帧流（rawvideo pipe），替代
+/// 逐帧 seek 起进程。仅适用于顺序消费场景（视频导出/播放即此形态）。
+///
+/// [pixelFormat]：'rgba'（RGBA8888，w*h*4/帧）或 'yuv420p'（I420 三
+/// 平面，w*h*3/2/帧——4K 下流量为 37%，供 GPU 420 直传
+/// （isp_yuv420p_to_rgb16 在 GPU 上做 CSC，CPU 零逐像素工作）；
+/// [hwaccel]：硬件解码器（Windows 实测 d3d11va 对 10bit 4:2:2 HEVC 与
+/// h264 8bit 均可用；cuvid 不支持 4:2:2 色度格式）。探测/回退由调用方
+/// 决定（见 probeHwDecode），本函数不自动回退。
+/// 产出为异步生成器：每次 yield 一帧；中途解码失败抛 [StateError]
+/// （进程非零退出）。
+Stream<Uint8List> decodeVideoStreamRgba(
+  String path, {
+  required int width,
+  required int height,
+  String ffmpegPath = '',
+
+  /// 起始秒（精确寻址：先关键帧寻址再解码丢弃到该时刻；0 = 从头）。
+  double startSec = 0,
+  String pixelFormat = 'rgba',
+  String hwaccel = '',
+
+  /// true = 加 `-fps_mode passthrough`（每包恰好一帧，禁掉默认 CFR
+  /// 补/丢帧；校验/分段等要求解码序列与包一一对应的场景用）。
+  bool passthrough = false,
+
+  /// 解码进程句柄回调：调用方持有后可在消费中止时 kill（流自然消费完
+  /// 时进程自行退出，无需处理）。
+  void Function(Process process)? onProcess,
+}) async* {
+  final ffmpeg = (await findFfmpeg(overridePath: ffmpegPath))!;
+  final frameBytes = pixelFormat == 'yuv420p'
+      ? width * height * 3 ~/ 2
+      : width * height * 4;
+  final args = videoDecodeArgs(
+      pixelFormat: pixelFormat, hwaccel: hwaccel, startSec: startSec);
+  args[args.indexOf('__PATH__')] = path;
+  if (passthrough) {
+    args.insert(args.indexOf('-f'), '-fps_mode');
+    args.insert(args.indexOf('-f'), 'passthrough');
+  }
+  final process = await Process.start(ffmpeg, args);
+  onProcess?.call(process);
+  // stderr 必须排空，否则管道缓冲打满会互相等待。
+  final errBuf = StringBuffer();
+  final errDone = process.stderr
+      .transform(const SystemEncoding().decoder)
+      .listen(errBuf.write)
+      .asFuture<void>();
+  final pending = BytesBuilder(copy: false);
+  await for (final chunk in process.stdout) {
+    pending.add(chunk);
+    while (pending.length >= frameBytes) {
+      final all = pending.takeBytes();
+      yield Uint8List.fromList(all.sublist(0, frameBytes));
+      if (all.length > frameBytes) pending.add(all.sublist(frameBytes));
+    }
+  }
+  await errDone;
+  final code = await process.exitCode;
+  if (code != 0) {
+    throw StateError('ffmpeg 流式解码失败 (exit $code): $path\n$errBuf');
+  }
+}
+
+/// 硬件解码可用性探测：按实际片源/尺寸/输出格式各解码 2 帧，能出帧
+/// 即返回 [hwaccel]（可用），否则返回空串（调用方回退软解）。
+/// Windows 上 d3d11va 对 10bit 4:2:2 HEVC 与 h264 8bit 均实测可用
+/// （cuvid 不支持 4:2:2 色度格式，故统一用 d3d11va）。
+Future<String> probeHwDecode(
+  String ffmpegPath,
+  String videoPath, {
+  required int width,
+  required int height,
+  String pixelFormat = 'rgba',
+  String hwaccel = 'd3d11va',
+  double startSec = 0,
+}) async {
+  Process? proc;
+  try {
+    var got = 0;
+    await for (final _ in decodeVideoStreamRgba(videoPath,
+        width: width,
+        height: height,
+        ffmpegPath: ffmpegPath,
+        startSec: startSec,
+        pixelFormat: pixelFormat,
+        hwaccel: hwaccel,
+        onProcess: (p) => proc = p)) {
+      if (++got >= 2) break;
+    }
+    return got >= 1 ? hwaccel : '';
+  } catch (_) {
+    return '';
+  } finally {
+    // 取够帧数即中断丢弃，解码进程可能仍在运行——主动 kill 释放源文件。
+    proc?.kill();
+  }
+}
+
 /// RGBA8888 → 16 位量级交织 RGB（丢弃 alpha），返回 (数据, 宽, 高)。
 /// 8 位样本按比例放大到 [maxValue]。
 (Uint16List, int, int) rgba8ToRgb16(
@@ -152,9 +269,12 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
 /// 顺序视频帧流：ffmpeg 进程与帧切片运行在专用 isolate（[_streamWorker]），
 /// UI isolate 不接触管道。
 ///
-/// 解码优先走 GPU 硬解（`-hwaccel auto`，ffmpeg 自动选取
-/// d3d11va/qsv/cuvid 等可用设备）；硬解初始化失败（无可用 GPU/驱动）
-/// 时自动回退软件解码（ffmpeg 软解本身按帧多线程，吃满多核）。
+/// 解码优先走 GPU 硬解（`-hwaccel cuda`，显式指定 NVIDIA NVDEC；
+/// 比 `-hwaccel auto` 更确定——auto 可能选中 d3d11va/qsv；cuvid 作为
+/// hwaccel 名已在新版 ffmpeg 废弃；可用 [VideoFrameStream.start] 的
+/// hwaccel 参数覆盖，如 4:2:2 片源传 d3d11va）；硬解初始化失败
+/// （无 N 卡/驱动）时自动回退软件解码（ffmpeg 软解本身按帧多线程，
+/// 吃满多核）。
 ///
 /// [pixelFormat] 为 'yuv444p' 时直接输出平面 YUV444（全范围），
 /// 供 YUV 流程免去 RGBA→RGB16→YUV 两道逐像素转换。
@@ -215,10 +335,30 @@ class VideoFrameStream {
   /// 目标时刻，之后连续解码不回退）。[pixelFormat] 见同名字段。
   /// [maxWorkingHeight] > 0 时由解码 worker 把出帧步长降采样到该高度
   /// 以内（因子取 2 的幂），高速预览免 UI 侧全帧搬运与降采样。
+  /// [hwaccel]：首趟解码的 -hwaccel 值（默认 'cuda'，即 NVDEC；播放
+  /// 路径历史行为）。4:2:2 色度的片源 cuda 不支持（会静默退为软解），
+  /// 导出等场景应先经 probeHwDecode 探测（d3d11va 对 4:2:2 10bit
+  /// 可用）后把探测结果传入；空串 = 直接软解。首趟一帧未出即失败时
+  /// 仍自动回退软解重试。
+  /// [maxFrames] > 0 时 worker 送满该帧数即按 EOF 收尾（分段导出每段
+  /// 已知确切帧数：worker 送完最后一帧后等 UI 归还完在途缓冲再退出，
+  /// 避免 worker 超前解码把信用额度耗尽、段尾卡死在背压等待）。
+  /// [skipFrames] > 0 时 worker 丢弃解码出的前 N 帧（不计入
+  /// [maxFrames]；分段导出的段重叠区跳过用，worker 内完成不占信用
+  /// 额度）。[passthrough] 为 true 时加 `-fps_mode passthrough`
+  /// （每包恰好出一帧，禁掉 ffmpeg 默认的 CFR 补/丢帧——VFR 片源
+  /// 分段导出要求各段解码序列与包一一对应）。[concatListPath] 非空
+  /// 时输入改用 concat demuxer 列表文件（`-f concat -safe 0`；
+  /// [path] 仍用于探测尺寸/帧率，startFrame 须为 0）。
   static Future<VideoFrameStream> start(String path, int startFrame,
       {String ffmpegPath = '',
       String pixelFormat = 'rgba',
-      int maxWorkingHeight = 0}) async {
+      int maxWorkingHeight = 0,
+      String hwaccel = 'cuda',
+      int maxFrames = 0,
+      int skipFrames = 0,
+      bool passthrough = false,
+      String concatListPath = ''}) async {
     final info = await videoFileInfo(path, ffmpegPath: ffmpegPath);
     if (startFrame < 0 || startFrame >= info.frameCount) {
       throw StateError('帧 $startFrame 超出视频范围（共 ${info.frameCount} 帧）');
@@ -246,7 +386,8 @@ class VideoFrameStream {
     stream._isolate = await Isolate.spawn(
         _streamWorker,
         _StreamWorkerConfig(port.sendPort, ffmpeg, path, startFrame,
-            info.width, info.height, info.fps, pixelFormat, factor));
+            info.width, info.height, info.fps, pixelFormat, factor, hwaccel,
+            maxFrames, skipFrames, passthrough, concatListPath));
     await ready.future;
     return stream;
   }
@@ -342,9 +483,25 @@ class _StreamWorkerConfig {
   /// 出帧降采样因子（2 的幂；1 = 不降采样）。
   final int downsampleFactor;
 
+  /// 首趟解码的 -hwaccel 值（空串 = 直接软解；见 [VideoFrameStream.start]）。
+  final String hwaccel;
+
+  /// 送满该帧数即按 EOF 收尾（0 = 不限；见 [VideoFrameStream.start]）。
+  final int maxFrames;
+
+  /// 解码后先丢弃的帧数（不占信用额度；见 [VideoFrameStream.start]）。
+  final int skipFrames;
+
+  /// true = 输出加 `-fps_mode passthrough`（每包一帧，禁 CFR 补/丢帧）。
+  final bool passthrough;
+
+  /// 非空时输入改用 concat demuxer 列表（startFrame 须为 0）。
+  final String concatListPath;
+
   const _StreamWorkerConfig(this.uiPort, this.ffmpeg, this.path,
       this.startFrame, this.width, this.height, this.fps, this.pixelFormat,
-      this.downsampleFactor);
+      this.downsampleFactor, this.hwaccel, this.maxFrames, this.skipFrames,
+      this.passthrough, this.concatListPath);
 }
 
 /// worker 同时最多持有的帧缓冲数（信用额度；1080p ≈ 130MB）。
@@ -353,7 +510,8 @@ const int _kStreamPoolSize = 16;
 /// 帧流 worker（独立 isolate）：起 ffmpeg 进程，drain stdout 切片整帧，
 /// 经 TransferableTypedData 发给 UI；缓冲用完后等 UI 归还（背压）。
 /// 收到 'stop' 或进程结束：发 null 收尾。异常发 ['error', 消息] 后收尾。
-/// 首趟用 GPU 硬解（-hwaccel auto）；一帧未出即失败时回退软件解码重试。
+/// 首趟按 [VideoFrameStream.start] 的 hwaccel 参数硬解（默认 cuda）；
+/// 一帧未出即失败时回退软件解码重试。
 ///
 /// Windows 走 [FfmpegRawPipeWin] 快路径：CreatePipe 大缓冲 + CreateProcessW
 /// + ReadFile 整帧阻塞读——dart:io 的 Process.stdout 按 ~64KB 块经事件
@@ -404,16 +562,24 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
     final chunks = <List<int>>[];
     var chunksLen = 0;
     var framesSent = 0;
+    var framesSeen = 0; // 含被 skipFrames 丢弃的（重试时随 pass 重置）
     Process? process;
     try {
       process = await Process.start(cfg.ffmpeg, [
         '-hide_banner', '-loglevel', 'error',
         // GPU 硬解：ffmpeg 自动选取可用设备并在输出系统内存帧时
         // 自动插入 hwdownload + 格式转换。
-        if (useHwaccel) ...['-hwaccel', 'auto'],
-        if (cfg.startFrame > 0)
-          ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
-        '-i', cfg.path,
+        if (useHwaccel && cfg.hwaccel.isNotEmpty)
+          ...['-hwaccel', cfg.hwaccel],
+        if (cfg.concatListPath.isNotEmpty)
+          ...['-f', 'concat', '-safe', '0', '-i', cfg.concatListPath]
+        else ...[
+          if (cfg.startFrame > 0)
+            ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
+          '-i', cfg.path,
+        ],
+        // 分段导出：每包一帧，禁掉默认 CFR 补/丢帧（VFR 精确分段前提）。
+        if (cfg.passthrough) ...['-fps_mode', 'passthrough'],
         // YUV444 直出时把视频的 limited range 扩展为全范围（与 RGBA
         // 路径 ffmpeg 自动做的 mpeg→pc 扩展一致），供下游按
         // 全范围 BT.601 处理；降采样时顺带缩放到工作分辨率。
@@ -454,8 +620,17 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
               chunks[0] = head.sublist(take);
             }
           }
+          if (framesSeen < cfg.skipFrames) {
+            // 重叠区跳帧：直接还池复用，不占信用额度。
+            framesSeen++;
+            pool.add(frame);
+            continue;
+          }
           cfg.uiPort.send(TransferableTypedData.fromList([frame]));
           framesSent++;
+          if (cfg.maxFrames > 0 && framesSent >= cfg.maxFrames) {
+            return (framesSent, null);
+          }
         }
         if (stopped) break;
       }
@@ -484,13 +659,20 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   Future<(int, String?)> runPassWin(bool useHwaccel) async {
     final pipe = FfmpegRawPipeWin();
     var framesSent = 0;
+    var framesSeen = 0; // 含被 skipFrames 丢弃的（重试时随 pass 重置）
     try {
       pipe.start(cfg.ffmpeg, [
         '-hide_banner', '-loglevel', 'error', '-nostdin',
-        if (useHwaccel) ...['-hwaccel', 'auto'],
-        if (cfg.startFrame > 0)
-          ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
-        '-i', cfg.path,
+        if (useHwaccel && cfg.hwaccel.isNotEmpty)
+          ...['-hwaccel', cfg.hwaccel],
+        if (cfg.concatListPath.isNotEmpty)
+          ...['-f', 'concat', '-safe', '0', '-i', cfg.concatListPath]
+        else ...[
+          if (cfg.startFrame > 0)
+            ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
+          '-i', cfg.path,
+        ],
+        if (cfg.passthrough) ...['-fps_mode', 'passthrough'],
         if (vf != null) ...['-vf', vf],
         '-f', 'rawvideo',
         '-pix_fmt', is444 ? 'yuv444p' : (is420 ? 'yuv420p' : 'rgba'),
@@ -521,8 +703,17 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
           pkgffi.calloc.free(buf); // 短读/EOF：回收未用缓冲
           break;
         }
+        if (framesSeen < cfg.skipFrames) {
+          // 重叠区跳帧：地址直接还池复用，不占信用额度。
+          framesSeen++;
+          nativePool.add(buf.address);
+          continue;
+        }
         cfg.uiPort.send(buf.address); // 指针即帧，零拷贝
         framesSent++;
+        if (cfg.maxFrames > 0 && framesSent >= cfg.maxFrames) {
+          return (framesSent, null);
+        }
       }
       if (framesSent == 0 && !stopped) {
         return (0, 'ffmpeg 解码失败: ${cfg.path}');
@@ -554,6 +745,26 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   }
   if (error != null && !stopped) {
     cfg.uiPort.send(['error', error]);
+  }
+  // 等 UI 归还在途缓冲（maxFrames 收尾时 worker 先于 UI 消费完退出，
+  // 不等着 isolate 一杀了之会让在途原生缓冲泄漏，每段最多 ~200MB）；
+  // 'stop' 或超时放弃——未归还的缓冲随 isolate 退出泄漏（与既有行为
+  // 一致，不会 use-after-free：只有已归还进池的才被释放）。
+  if (!stopped) {
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (allocated > nativePool.length + pool.length &&
+        !stopped &&
+        DateTime.now().isBefore(deadline)) {
+      bufferReturned = Completer<void>();
+      await bufferReturned!.future
+          .timeout(const Duration(milliseconds: 200), onTimeout: () {});
+    }
+    // 等待期间归还进池的原生缓冲在此释放（runPassWin 的 finally 只
+    // 覆盖到它返回时点）。
+    for (final addr in nativePool) {
+      pkgffi.calloc.free(ffi.Pointer<ffi.Uint8>.fromAddress(addr));
+    }
+    nativePool.clear();
   }
   cfg.uiPort.send(null); // EOF / 停止
   control.close();

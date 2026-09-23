@@ -164,6 +164,7 @@ class GpuPipeline {
     'hsl_adjust': 'shaders/isp/isp_hsl_adjust.frag',
     'hsl_band': 'shaders/isp/isp_hsl_band.frag',
     'rgba8_to_rgb16': 'shaders/isp/isp_rgba8_to_rgb16.frag',
+    'rgba8_to_yuv420p': 'shaders/isp/isp_rgba8_to_yuv420p.frag',
     'yuv420p_to_rgb16': 'shaders/isp/isp_yuv420p_to_rgb16.frag',
     'yuv420p_to_hsl16': 'shaders/isp/isp_yuv420p_to_hsl16.frag',
     'hsl2yuv': 'shaders/isp/isp_hsl2yuv.frag',
@@ -308,6 +309,25 @@ class GpuPipeline {
     ui.decodeImageFromPixels(data.buffer.asUint8List(), texW, height,
         ui.PixelFormat.rgba8888, completer.complete);
     return completer.future;
+  }
+
+  /// 色调映射 RGBA8 显示图 → I420 打包纹理（(w/4)x(h*3/2)，字节流即
+  /// yuv420p）：导出 MP4 的 GPU 出图格式——回读 12.4MB/帧（4K）替代
+  /// 33MB/帧 RGBA，ffmpeg 输入直接吃 yuv420p（NVENC 原生格式，免其内部
+  /// rgba→yuv420p 的 CPU 转换）。BT.601 limited（与 ffmpeg swscale
+  /// rgba→yuv420p 默认转换同口径）；色度 2x2 均值下采样，与 swscale 双
+  /// 线性插值可能有 ±1 LSB 差异（可接受）。
+  /// [width] 须为 4 的倍数、[height] 为偶数（调用方已保证，见导出分支）。
+  Future<ui.Image> rgba8ToYuv420p(ui.Image src, int width, int height) async {
+    final packedW = width ~/ 4, packedH = height * 3 ~/ 2;
+    return runPass(_progs['rgba8_to_yuv420p']!, [
+      packedW.toDouble(),
+      packedH.toDouble(),
+      width.toDouble(),
+      height.toDouble(),
+    ], [
+      src,
+    ], packedW, packedH);
   }
 
   /// RGBA8 帧原样上传为 RGBA8888 纹理（播放流式路径用，CPU 零转换）。

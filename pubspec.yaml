@@ -95,6 +95,7 @@ flutter:
     - shaders/isp/isp_hsl_adjust.frag
     - shaders/isp/isp_hsl_band.frag
     - shaders/isp/isp_rgba8_to_rgb16.frag
+    - shaders/isp/isp_rgba8_to_yuv420p.frag
     - shaders/isp/isp_yuv420p_to_rgb16.frag
     - shaders/isp/isp_yuv420p_to_hsl16.frag
     - shaders/isp/isp_hsl2yuv.frag

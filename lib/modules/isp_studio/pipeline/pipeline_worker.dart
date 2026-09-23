@@ -13,6 +13,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'pipeline_runner.dart' show runChainFrame;
+import 'video_source.dart';
 
 /// 常驻 isolate 的流水线执行客户端。非线程安全：调用方自行串行化
 /// （播放循环一次只生产一帧）。
@@ -258,6 +259,100 @@ class PipelineWorkerPool {
   }
 }
 
+/// 视频导出范围 worker（常驻 isolate）：一条任务处理连续帧区间
+/// [startFrame, startFrame+frameCount)——worker 内顺序流式解码（自有
+/// ffmpeg 管道，管道块事件开销在各自 isolate 事件循环内并行摊销），逐帧
+/// 过链后一次性送回全部 RGBA 帧。帧源是按区间并发的，不再受单一解码
+/// 管道吞吐（实测 ~180ms/帧）限制；导出喂帧仍由调用方按序拼接保序。
+class ExportRangeRunner {
+  Isolate? _isolate;
+  SendPort? _worker;
+  ReceivePort? _port;
+  StreamSubscription<Object?>? _sub;
+  final Map<int, Completer<(int, List<Uint8List>)>> _pending = {};
+  var _reqId = 0;
+  Completer<void>? _startCompleter;
+
+  /// 解码并计算 [startFrame, startFrame+frameCount) 帧，返回
+  /// (startFrame, 按序的 RGBA8888 帧列表)。[chain] 见 pipeline_runner；
+  /// [videoPath]/[ffmpegPath] 为源视频与 ffmpeg（绝对路径）。
+  Future<(int, List<Uint8List>)> run(
+      List<Map<String, Object?>> chain,
+      String videoPath,
+      String ffmpegPath,
+      int width,
+      int height,
+      int startFrame,
+      int frameCount,
+      double sourceFps) async {
+    await _ensureStarted();
+    final worker = _worker;
+    if (worker == null) throw StateError('导出 worker 启动失败');
+    final id = _reqId++;
+    final c = Completer<(int, List<Uint8List>)>();
+    _pending[id] = c;
+    worker.send([
+      id, chain, videoPath, ffmpegPath, width, height, startFrame, frameCount,
+      sourceFps,
+    ]);
+    return c.future;
+  }
+
+  Future<void> _ensureStarted() async {
+    if (_worker != null) return;
+    if (_startCompleter != null) {
+      await _startCompleter!.future;
+      return;
+    }
+    final ready = Completer<void>();
+    _startCompleter = ready;
+    final port = ReceivePort();
+    _port = port;
+    _sub = port.listen((msg) {
+      if (msg is SendPort) {
+        _worker = msg;
+        ready.complete();
+      } else if (msg is List) {
+        final id = msg[0] as int;
+        final c = _pending.remove(id);
+        if (c == null) return;
+        if (msg.length > 1 && msg[1] == 'error') {
+          c.completeError(StateError(msg[2]?.toString() ?? '导出 worker 执行失败'));
+        } else {
+          final frames = [
+            for (final t in (msg[2] as List))
+              (t as TransferableTypedData).materialize().asUint8List()
+          ];
+          c.complete((msg[1] as int, frames));
+        }
+      }
+    });
+    _isolate = await Isolate.spawn(_exportRangeWorkerMain, port.sendPort);
+    await ready.future;
+  }
+
+  /// 预热：提前 spawn worker isolate（与导出初始化并行，藏掉启动开销）。
+  Future<void> warmup() => _ensureStarted();
+
+  /// 结束 worker isolate（挂起的请求以错误收尾）。
+  void dispose() {
+    _isolate?.kill();
+    _isolate = null;
+    _sub?.cancel();
+    _sub = null;
+    _port?.close();
+    _port = null;
+    _worker = null;
+    _startCompleter = null;
+    for (final c in _pending.values) {
+      if (!c.isCompleted) {
+        c.completeError(StateError('导出 worker 已终止'));
+      }
+    }
+    _pending.clear();
+  }
+}
+
 /// worker 入口：逐条处理 [id, chain, frameIndex, source, 宽, 高, 格式,
 /// 捕获汇点列表]，回 [id, TransferableTypedData(rgba)]（有捕获时追加
 /// [捕获 nodeId 列表, 捕获数据 TTD 列表]），失败回 [id, 'error', 消息]。
@@ -300,6 +395,45 @@ Future<void> _pipelineWorkerMain(SendPort ui) async {
           ],
         ]);
       }
+    } catch (e, st) {
+      ui.send([id, 'error', '$e\n$st']);
+    }
+  }
+}
+
+/// 导出范围 worker 入口：任务 [id, chain, videoPath, ffmpegPath, 宽, 高,
+/// startFrame, frameCount]；先 `-ss` 精确寻址到 startFrame 起一条流式
+/// 解码管道，逐帧过链后回 [id, startFrame, TTD 帧列表]，失败回
+/// [id, 'error', 消息]。
+@pragma('vm:entry-point')
+Future<void> _exportRangeWorkerMain(SendPort ui) async {
+  final port = ReceivePort();
+  ui.send(port.sendPort);
+  await for (final msg in port) {
+    final req = msg as List;
+    final id = req[0] as int;
+    try {
+      final chain = (req[1] as List).cast<Map<String, Object?>>();
+      final videoPath = req[2] as String;
+      final ffmpegPath = req[3] as String;
+      final w = req[4] as int;
+      final h = req[5] as int;
+      final start = req[6] as int;
+      final count = req[7] as int;
+      final fps = req[8] as double;
+      final out = <TransferableTypedData>[];
+      var produced = 0;
+      await for (final frame in decodeVideoStreamRgba(videoPath,
+          width: w,
+          height: h,
+          ffmpegPath: ffmpegPath,
+          startSec: start / fps)) {
+        final rgba = await runChainFrame(chain, start + produced,
+            sourceRgba: frame, sourceWidth: w, sourceHeight: h);
+        out.add(TransferableTypedData.fromList([rgba]));
+        if (++produced >= count) break;
+      }
+      ui.send([id, start, out]);
     } catch (e, st) {
       ui.send([id, 'error', '$e\n$st']);
     }
