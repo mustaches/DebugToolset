@@ -1,47 +1,47 @@
 {
-  "name": "4K60P视频色彩控制器演示",
+  "name": "4K60P去雾模式演示",
   "nodes": [
     {
       "id": "n1",
       "typeId": "color_controller",
-      "x": 870.0,
-      "y": -490.0,
+      "x": 810.0,
+      "y": -620.0,
       "width": 1280.0,
       "extraHeight": 764.0,
       "name": "色彩控制器#1",
       "params": {
         "bypass": false,
-        "h_center": 13.7,
-        "q": 5.0,
-        "h_shift": 16.0,
-        "s_gain": 1.1,
+        "h_center": 16.0,
+        "q": 4.0,
+        "h_shift": 15.0,
+        "s_gain": 1.0,
         "l_gain": 1.0
       }
     },
     {
       "id": "n4",
       "typeId": "preview",
-      "x": 1330.0,
-      "y": 410.0,
+      "x": 1420.0,
+      "y": 430.0,
       "width": 800.0,
       "extraHeight": 481.0,
       "name": "预览#1",
       "params": {
         "fps": 30,
-        "frameCount": 27000
+        "frameCount": 35940
       }
     },
     {
       "id": "n6",
       "typeId": "preview",
-      "x": 2130.0,
-      "y": 410.0,
+      "x": 2220.0,
+      "y": 430.0,
       "width": 800.0,
       "extraHeight": 481.0,
       "name": "预览#2",
       "params": {
         "fps": 30,
-        "frameCount": 27000
+        "frameCount": 35940
       }
     },
     {
@@ -53,7 +53,7 @@
       "extraHeight": 160.0,
       "name": "Video#1",
       "params": {
-        "filePath": "H:\\Surgery_video\\record-2024-09-26-12-03-24.mp4",
+        "filePath": "H:\\Surgery_video\\贵州毕节 手术备份2025.12.03\\第三台胆囊切除\\record-2025-12-03-11-49-45-0001.mp4",
         "bitDepth": "8",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
@@ -61,32 +61,56 @@
     {
       "id": "n13",
       "typeId": "bright_contrast_adjuster",
-      "x": 2240.0,
-      "y": -490.0,
+      "x": 2180.0,
+      "y": -620.0,
       "width": 1220.0,
       "extraHeight": 704.0,
       "name": "亮度/对比度调节器#1",
       "params": {
         "bypass": false,
-        "bright": 105.0,
-        "baseline": 46.0,
-        "gain": 120.0
+        "bright": 115.0,
+        "baseline": 62.0,
+        "gain": 110.0
       }
     },
     {
       "id": "n24",
-      "typeId": "video_output",
-      "x": 3010.0,
-      "y": 390.0,
+      "typeId": "levels_curves",
+      "x": 3450.0,
+      "y": -480.0,
+      "width": 592.0,
+      "extraHeight": 590.0,
+      "name": "曲线调节器#1",
+      "params": {
+        "bypass": false,
+        "curveMode": "spline",
+        "gamma": 1.0,
+        "points": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            986.5280582867013,
+            626.7212875461463
+          ],
+          [
+            4095.0,
+            4095.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "n25",
+      "typeId": "csc_hsl2rgb",
+      "x": 3450.0,
+      "y": -580.0,
       "width": 190.0,
       "extraHeight": 160.0,
-      "name": "视频输出#1",
+      "name": "HSL→RGB 转换#1",
       "params": {
-        "fps": 30,
-        "crf": 25,
-        "encoder": "auto",
-        "filePath": "G:\\DebugToolSet\\IspFlow\\Video_out\\20260915_130047_00_00_output.mp4",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+        "bypass": false
       }
     }
   ],
@@ -113,37 +137,46 @@
       "toPort": "in_hsl"
     },
     {
-      "id": "c19",
+      "id": "c26",
       "from": "n13",
       "fromPort": "out_hsl",
-      "to": "n6",
-      "toPort": "in_hsl"
+      "to": "n25",
+      "toPort": "in"
     },
     {
-      "id": "c25",
-      "from": "n6",
-      "fromPort": "out_hsl",
+      "id": "c27",
+      "from": "n25",
+      "fromPort": "out",
       "to": "n24",
-      "toPort": "in_hsl"
+      "toPort": "in"
+    },
+    {
+      "id": "c28",
+      "from": "n24",
+      "fromPort": "out",
+      "to": "n6",
+      "toPort": "in"
     }
   ],
   "groups": [
     {
-      "id": "g20",
-      "name": "内窥镜色彩控制",
-      "nodes": [
-        "n1",
-        "n13"
-      ]
-    },
-    {
-      "id": "g26",
-      "name": "编组#1",
+      "id": "g22",
+      "name": "输入/输出视频预览",
       "nodes": [
         "n4",
         "n6"
       ]
+    },
+    {
+      "id": "g30",
+      "name": "内镜去雾模式控制",
+      "nodes": [
+        "n1",
+        "n13",
+        "n24",
+        "n25"
+      ]
     }
   ],
-  "nextId": 27
+  "nextId": 31
 }
