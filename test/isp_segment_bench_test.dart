@@ -18,7 +18,7 @@ void main() {
     if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
     final stamp = DateTime.now().microsecondsSinceEpoch;
     final tmp = File('${Directory.systemTemp.path}/isp_bench_seg_$stamp.mp4');
-    final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+    final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
       '-y', '-hide_banner', '-loglevel', 'error',
       '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=60:duration=4',
       '-pix_fmt', 'yuv420p', tmp.path,

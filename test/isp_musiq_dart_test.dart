@@ -286,7 +286,7 @@ void main() {
     /// 提示文本，取首个以 '{' 开头的 JSON 行）。
     Future<double> pyRef(String aPath) async {
       final res = await Process.run(
-          pyIqaPythonPath,
+          File(pyIqaPythonPath).absolute.path,
           [pyIqaBridgePath, '--metric', 'musiq', '--a', aPath],
           workingDirectory: Directory.current.path);
       for (final line in const LineSplitter().convert(res.stdout as String)) {

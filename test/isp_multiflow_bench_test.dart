@@ -17,7 +17,7 @@ Future<void> runBench(
   final stamp = DateTime.now().microsecondsSinceEpoch;
   final tmp =
       File('${Directory.systemTemp.path}/isp_bench_multi_${width}x${height}_$stamp.mp4');
-  final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+  final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
     '-y', '-hide_banner', '-loglevel', 'error',
     '-f', 'lavfi',
     '-i', 'testsrc=size=${width}x$height:rate=30:duration=6',

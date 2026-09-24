@@ -352,7 +352,7 @@ void main() {
     /// test/isp_clipiqa_dart_test.dart）。
     Future<double> pyRef(String aPath) async {
       final res = await Process.run(
-          pyIqaPythonPath,
+          File(pyIqaPythonPath).absolute.path,
           [pyIqaBridgePath, '--metric', 'clipiqa', '--a', aPath],
           workingDirectory: Directory.current.path);
       for (final line in const LineSplitter().convert(res.stdout as String)) {

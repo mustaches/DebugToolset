@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   group('IspStudioState 标签页', () {
@@ -102,6 +103,9 @@ void main() {
         a.graphName = '我的流程';
         await a.saveGraphToFile(tmp.path);
         expect(a.statusMessage, contains('流程已保存'));
+        // 保存后工程名跟随文件名（文件里的 name 与文件名一致）。
+        final savedName = p.basenameWithoutExtension(tmp.path);
+        expect(a.graphName, savedName);
 
         final b = IspStudioState.withDefaultGraph();
         b.openCodeTab(b.graph.nodes.keys.first); // 打开后应被清空
@@ -109,7 +113,7 @@ void main() {
         b.canvasViewport = const Size(800, 600);
         await b.importGraphFromFile(tmp.path);
         expect(b.statusMessage, contains('已打开流程'));
-        expect(b.graphName, '我的流程');
+        expect(b.graphName, savedName);
         expect(b.graph.nodes.length, a.graph.nodes.length);
         expect(b.graph.connections.length, a.graph.connections.length);
         expect(b.graph.nodes.values.first.paramValues['filePath'], 'x.raw');

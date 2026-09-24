@@ -33,7 +33,12 @@ void main() {
   });
 
   tearDown(() {
-    if (tempRoot.existsSync()) tempRoot.deleteSync(recursive: true);
+    // Windows 上假异步区里卡住的 readAsBytes 仍占用文件句柄，删除可能失败。
+    try {
+      if (tempRoot.existsSync()) tempRoot.deleteSync(recursive: true);
+    } on FileSystemException {
+      // 忽略清理失败（残留目录很小，系统临时目录会自行清理）。
+    }
   });
 
   Future<TextEditorState> pumpView(WidgetTester tester) async {
@@ -96,18 +101,24 @@ void main() {
     await tester.tap(find.text(fileName).first);
     expect(state.selectedFolderFile, fileName);
 
-    // 打开文件走 compute isolate（3.47 起需 runAsync 等待真实异步）。
+    // 点击在假异步区内发起的打开会被真实 IO 卡住（3.47 起 fake zone 不再
+    // 完成真实异步，等它只会 10 分钟超时）；在 runAsync 的真实事件循环里
+    // 关闭后重新打开，让读取与 diff 真正完成。
     await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      while (state.isOpeningFolderFile) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await state.openFolderFile(fileName); // 关闭卡住的打开（切换语义）
+      await state.openFolderFile(fileName); // 重新打开并完成
     });
     await tester.pumpAndSettle();
 
     // Both frames show the file as a side-by-side diff pane.
     expect(find.byType(DiffView), findsNWidgets(2));
-    expect(find.text('line 0200 MODIFIED', findRichText: true), findsOneWidget);
+    // 首行在视口内，两侧都渲染；被修改的第 200 行在视口外（懒构建不生成
+    // widget），改从状态里的 diff 校验。
+    expect(find.text('line 0001', findRichText: true), findsNWidgets(2));
+    expect(
+      state.folderFileDiff.any((l) => l.isInsert && l.text == 'line 0200 MODIFIED'),
+      isTrue,
+    );
   });
 
   testWidgets('diff panes scroll in sync', (tester) async {
@@ -171,11 +182,7 @@ void main() {
     final leftScroll = scrollableOf(tester, leftTree);
     final rightScroll = scrollableOf(tester, rightTree);
 
-    // Scrolling the left tree syncs the right one.
-    leftScroll.position.jumpTo(300);
-    await tester.pump();
-    expect(rightScroll.position.pixels, moreOrLessEquals(300, epsilon: 1));
-
+    // 折叠断言先做一次：树是懒构建 ListView，滚动后 f000.txt 会移出视口。
     // Collapsing 'sub' in the left tree collapses it in the right tree too.
     expect(find.text('f000.txt'), findsNWidgets(2));
     await tester.tap(find.text('sub').first);
@@ -186,6 +193,11 @@ void main() {
     await tester.tap(find.text('sub').last);
     await tester.pumpAndSettle();
     expect(find.text('f000.txt'), findsNWidgets(2));
+
+    // Scrolling the left tree syncs the right one.
+    leftScroll.position.jumpTo(300);
+    await tester.pump();
+    expect(rightScroll.position.pixels, moreOrLessEquals(300, epsilon: 1));
   });
 
   testWidgets('compare shows a progress dialog, then the button becomes '
@@ -194,11 +206,6 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final state = TextEditorState();
-    // 3.47 起假异步区内 compute 需 runAsync 等待（同 pumpView）。
-    await tester.runAsync(() async {
-      await state.loadOriginalFolder(dirA);
-      await state.loadModifiedFolder(dirB);
-    });
 
     await tester.pumpWidget(
       ChangeNotifierProvider<TextEditorState>.value(
@@ -211,8 +218,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Switch to folder mode.
+    // Switch to folder mode first: setMode 会 clearFolder()，之后再加载
+    // 文件夹（3.47 起假异步区内 compute 需 runAsync 等待，同 pumpView）。
     await tester.tap(find.text('文件夹'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await state.loadOriginalFolder(dirA);
+      await state.loadModifiedFolder(dirB);
+    });
     await tester.pumpAndSettle();
 
     // Start the comparison: the progress dialog appears.
@@ -221,14 +234,10 @@ void main() {
     expect(find.text('正在比较文件夹差异'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
-    // When it finishes the dialog closes and the button becomes 放弃差异.
-    // 比较在 Isolate.spawn 中进行（真实 isolate，3.47 起需 runAsync）。
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      while (!state.folderCompared) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-    });
+    // 点击触发的比较同样卡在假异步区（Isolate.spawn 不完成）；在 runAsync
+    // 的真实事件循环里再跑一次比较，使其真正完成，随后对话框自动关闭、
+    // 按钮变为 放弃差异。
+    await tester.runAsync(() => state.compareFolders());
     await tester.pumpAndSettle();
     expect(find.text('正在比较文件夹差异'), findsNothing);
     expect(state.folderCompared, isTrue);

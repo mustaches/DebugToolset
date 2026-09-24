@@ -86,7 +86,7 @@ void main() {
     /// 的提示文本，取首个以 '{' 开头的 JSON 行）。
     Future<double> pyRef(String metric, String aPath, String bPath) async {
       final res = await Process.run(
-          pyIqaPythonPath,
+          File(pyIqaPythonPath).absolute.path,
           [pyIqaBridgePath, '--metric', metric, '--a', aPath, '--b', bPath],
           workingDirectory: Directory.current.path);
       for (final line in const LineSplitter().convert(res.stdout as String)) {

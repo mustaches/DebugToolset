@@ -213,7 +213,7 @@ void main() {
       // 16x16 纯红，2fps × 2s = 4 帧。
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final tmp = File('${Directory.systemTemp.path}/isp_autofill_$stamp.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'color=red:size=16x16:rate=2:duration=2',
         '-pix_fmt', 'yuv420p', tmp.path,
@@ -246,7 +246,7 @@ void main() {
       // 320x180 testsrc，60fps × 3s = 180 帧（动态内容，接近真实负载）。
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final tmp = File('${Directory.systemTemp.path}/isp_bench_$stamp.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=60:duration=3',
         '-pix_fmt', 'yuv420p', tmp.path,
@@ -289,7 +289,7 @@ void main() {
       // 1920x1080 testsrc，60fps × 3s。波形 + 矢量示波器接在预览.out。
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final tmp = File('${Directory.systemTemp.path}/isp_bench2_$stamp.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=60:duration=3',
         '-pix_fmt', 'yuv420p', tmp.path,
@@ -343,7 +343,7 @@ void main() {
       // 不再走 videoDirect 直通，而是常驻 PipelineFrameRunner。
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final tmp = File('${Directory.systemTemp.path}/isp_pipe_$stamp.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=4:duration=1',
         '-pix_fmt', 'yuv420p', tmp.path,
@@ -384,7 +384,7 @@ void main() {
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final tmp =
           File('${Directory.systemTemp.path}/isp_audio_instr_$stamp.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=4:duration=2',
         '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
@@ -434,7 +434,7 @@ void main() {
       if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final tmp = File('${Directory.systemTemp.path}/isp_audio_$stamp.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=2:duration=2',
         '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
@@ -475,7 +475,7 @@ void main() {
       if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final tmp = File('${Directory.systemTemp.path}/isp_noaudio_$stamp.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'color=red:size=16x16:rate=2:duration=1',
         '-pix_fmt', 'yuv420p', tmp.path,

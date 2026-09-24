@@ -573,7 +573,7 @@ void main() {
     /// test/isp_lpips_dists_dart_test.dart）。
     Future<double> pyRef(String metric, String aPath, String bPath) async {
       final res = await Process.run(
-          pyIqaPythonPath,
+          File(pyIqaPythonPath).absolute.path,
           [pyIqaBridgePath, '--metric', metric, '--a', aPath, '--b', bPath],
           workingDirectory: Directory.current.path);
       for (final line in const LineSplitter().convert(res.stdout as String)) {

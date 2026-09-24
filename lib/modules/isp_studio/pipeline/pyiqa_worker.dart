@@ -101,8 +101,11 @@ class PyIqaWorker {
           '（$pyIqaBridgePath）；深度评价节点需要安装 '
           'torch/torchmetrics/lpips/pyiqa 的 Python 环境');
     }
+    // Dart 3.12（Flutter 3.47）起 Windows 进程创建不再归一化正斜杠相对
+    // 路径（'scratch/eval_venv/Scripts/python.exe' 会报「系统找不到指定的
+    // 文件」），spawn 前统一转绝对路径。
     final proc = await Process.start(
-      pyIqaPythonPath,
+      File(pyIqaPythonPath).absolute.path,
       [pyIqaBridgePath, '--serve'],
       workingDirectory: Directory.current.path,
     );

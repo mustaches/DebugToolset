@@ -722,7 +722,7 @@ void main() {
       // 16x16 纯红，2fps × 2s = 4 帧。
       final tmp = File(
           '${Directory.systemTemp.path}/isp_video_src_${DateTime.now().microsecondsSinceEpoch}.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'color=red:size=16x16:rate=2:duration=2',
         '-pix_fmt', 'yuv420p', tmp.path,
@@ -777,7 +777,7 @@ void main() {
       // 16x16 纯蓝，2fps × 2s = 4 帧。
       final tmp = File(
           '${Directory.systemTemp.path}/isp_video_stream_${DateTime.now().microsecondsSinceEpoch}.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'color=blue:size=16x16:rate=2:duration=2',
         '-pix_fmt', 'yuv420p', tmp.path,
@@ -815,7 +815,7 @@ void main() {
       // 16x16 纯蓝，2fps × 2s = 4 帧。
       final tmp = File(
           '${Directory.systemTemp.path}/isp_video_yuv_${DateTime.now().microsecondsSinceEpoch}.mp4');
-      final enc = await Process.run('tools/ffmpeg/ffmpeg.exe', [
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'lavfi', '-i', 'color=blue:size=16x16:rate=2:duration=2',
         '-pix_fmt', 'yuv420p', tmp.path,

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -6,6 +7,12 @@ import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
   test('矢量示波器测试流程：预览运行后 vectorscope 应有结果与显示图像', () async {
+    // 流程引用的 RAW 素材按 .gitignore 不入库（IspFlow/BayerRGGB/，约
+    // 950MB 仅存本地），缺失时跳过。
+    if (!File('IspFlow/BayerRGGB/RAW_1920x1080_10bits_RGGB_Linear_1frame.raw')
+        .existsSync()) {
+      return;
+    }
     final state = IspStudioState();
     await state.importGraphFromFile('IspFlow/矢量示波器测试.ispflow');
     expect(state.statusMessage, contains('已打开流程'));
