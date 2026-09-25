@@ -12,6 +12,7 @@ import '../modules/font_extractor/font_extractor_view.dart';
 import '../modules/ui_designer/ui_designer_view.dart';
 import '../providers/isp_studio_state.dart';
 import '../modules/isp_studio/isp_studio_view.dart';
+import 'about_dialog.dart';
 
 class MainLayout extends StatelessWidget {
   const MainLayout({super.key});
@@ -94,6 +95,12 @@ class MainLayout extends StatelessWidget {
             onTap: () => appState.setModuleIndex(7),
           ),
           const Spacer(),
+          _SidebarIcon(
+            icon: Icons.info_outline,
+            tooltip: '版本信息',
+            isSelected: false,
+            onTap: () => showAppAboutDialog(context),
+          ),
           const SizedBox(height: 10),
         ],
       ),
