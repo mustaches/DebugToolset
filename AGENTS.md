@@ -45,7 +45,7 @@ flutter analyze                 # 静态分析
 - `lib/main.dart` — 入口：`window_manager` 初始化 + `MultiProvider` 注册全部状态。
 - `lib/layout/main_layout.dart` — 主框架：左侧栏（模块切换）+ 工作区 + 底部状态栏。
 - `lib/providers/` — 每个模块对应一个 `ChangeNotifier` 状态类（`AppState`、`TerminalState`（串口终端）、`NetworkTerminalState`（网络终端）、`OscilloscopeState`、`MacroState`、`HexEditorState`、`TextEditorState`、`FontExtractorState`、`UiDesignerState`、`IspStudioState`）。**状态管理统一用 Provider**，`OscilloscopeState` 通过 `ChangeNotifierProxyProvider` 依赖 `TerminalState`；两个终端状态类均实现 `terminal_session.dart` 的 `TerminalSession` 接口，供终端 UI 组件复用；`MacroState` 由两个终端共享。
-- `lib/modules/<模块名>/` — 每个模块内含 `<模块名>_view.dart` 根视图，及 `models/`（纯数据/逻辑，尽量无 Flutter 依赖）、`widgets/`（UI 组件）等子目录；`ui_designer` 另有 `codegen/`（C 代码生成），`isp_studio` 另有 `pipeline/`（流水线执行、ISP 核、仪器、Worker）与 `codegen/`（编组导出嵌入式 C：每节点实例封装 + top 层 pipeline 生成，覆盖 Process 含 ColorTrans/Fluorescence + Datapath 共 48 个类型，拓扑序调用 + 调用方 scratch 竞技场，MSVC 语法编译测试在 `test/isp_group_c_export_test.dart`）。
+- `lib/modules/<模块名>/` — 每个模块内含 `<模块名>_view.dart` 根视图，及 `models/`（纯数据/逻辑，尽量无 Flutter 依赖）、`widgets/`（UI 组件）等子目录；`ui_designer` 另有 `codegen/`（C 代码生成），`isp_studio` 另有 `pipeline/`（流水线执行、ISP 核、仪器、Worker）与 `codegen/`（编组导出嵌入式 C：每节点实例封装 + top 层 pipeline 生成，覆盖 Process 含 ColorTrans/Fluorescence + Datapath 共 48 个类型，拓扑序调用 + 调用方 scratch 竞技场，MSVC 语法编译测试在 `test/isp_group_c_export_test.dart`；规划层 `group_c_plan.dart` 与发射层 `group_c_export.dart` 分离。另有**黑盒行级流水变体** `group_c_export_bb.dart`：右键菜单「查看黑盒子C代码」，单文件 `isp_pipe_<组>_bb.h/.c` 只暴露编组输入/输出，点对点链最大化融合进行循环（中间结果不物化整帧），垂直窗口节点（dpc/sharpen/edge_extract/rgb_dnr/bayer_dnr/demosaic(bilinear)/highlight）与分离趟（morphology/gaussian_blur，c_ref 本即水平趟+垂直滑窗结构）经 scratch 环形行缓冲（行号取模寻址，含派生环与 gaussian double 卷积环/权重核），汇合延迟差经 FIFO 均衡，主循环后尾部冲刷补齐延迟行，`{TOP}_SCRATCH_BYTES` 宏逐项可见资源占用（无 h 因子，不存整帧）；面向嵌入式高实时场景。流式规划在 `stream_plan.dart`、行核发射在 `node_c_stream.dart`；拒绝集（校验报错并列出节点名）：ahe、fpn、fluoro_temporal/normalize/background/fusion、grgb_balance、white_balance auto、demosaic 非 bilinear/非 Bayer CFA、数据环；测试 `test/isp_group_c_blackbox_test.dart`（含整帧版 vs 黑盒版 MSVC 数值对拍，逐字节一致）。编组右键菜单另有「更改编组名」（`IspStudioState.renameGroup`）。
 - `lib/utils/` — 跨模块工具（ANSI 解析、波形存储 `waveform_storage.dart` 等）。
 - `lib/theme/app_theme.dart` — 暗色主题定义。
 
@@ -113,3 +113,14 @@ flutter test test/isp_kernels_test.dart   # 单个文件
 - 应用可访问串口与网络（LXI 连接），测试硬件交互代码时注意副作用。
 - 仓库中有大量大二进制素材（PDF、RAW、波形、固件），勿随意重编码或移动，`isp_*` 等测试可能按固定路径引用它们。
 - 开发环境为 Windows + Git Bash；脚本一律使用 Unix 语法。
+
+## 协作规则（AI 助手工作方式）
+
+以下规则在与用户的长期协作中确立，每次会话开始即生效：
+
+- **耗时任务一律后台执行**：`flutter build`、`flutter test`、`flutter analyze` 等耗时命令必须以后台任务方式运行（`run_in_background=true`），不要在前台阻塞等待；任务完成后再向用户汇报结果。前台对话优先，用户随时可以插入新需求。
+- **构建互斥**：同一时间只允许一个 flutter 构建/运行命令在执行。多个 flutter 进程同时写 `.dart_tool/flutter_build` 和 `build/` 会互锁导致连锁编译错误（app.so 无法写入等）。助手后台有构建在跑时，应提醒用户不要在自己终端同时执行 `flutter run` / `flutter build`。
+- **`flutter clean` 前先确认**运行中的 `debug_tool_set.exe` 已关闭，否则 `build/` 删不干净。
+- **Flutter 版本敏感，不主动升级**：NN fp16 GPU shader 链在 Skia 下逐位验证过，依赖 `windows/runner/main.cpp` 的 Impeller 关闭开关（见「Impeller 注意事项」）。如确需升级 Flutter：`flutter clean` → 确认 Impeller 开关仍在且编译通过 → `flutter test` → 实测 ISP Studio GPU 预览与深度评价节点。
+- **清理文件前核对运行时目录**（见「数据目录与文件格式」一节）：`tools/`、`bussetup/`、`DeviceProtocol/`、`waveform/`、`IspFlow/`、`UI_Project/` 等虽不参与编译，但删除会导致运行/打包失败。
+- **版本与构建号**：`rebuild.bat`（clean → pub get → release 构建）成功后会自动执行 `scripts/bump_build_number.dart` 递增 `pubspec.yaml` 的构建号（`version: x.y.z+N` 中的 N）；`RunDebug.bat` / `RunRelease.bat` 日常调试运行不递增。应用内版本信息对话框（侧栏底部 ⓘ 图标，实现见 `lib/utils/build_info.dart`、`lib/layout/about_dialog.dart`）展示应用版本、Flutter/Dart SDK 版本（构建时 dart-define 自动注入）与 CMake 生成器（编译环境），排查环境问题先看这里。
