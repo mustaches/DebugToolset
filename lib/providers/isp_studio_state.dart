@@ -245,6 +245,20 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 打开编组黑盒（行级流水）代码标签页（key 前缀 'gbb:'）。
+  void openGroupBlackBoxCodeTab(String groupId) {
+    if (!graph.groups.any((g) => g.id == groupId)) return;
+    final key = 'gbb:$groupId';
+    final i = openCodeTabs.indexOf(key);
+    if (i >= 0) {
+      activeTab = i + 1;
+    } else {
+      openCodeTabs.add(key);
+      activeTab = openCodeTabs.length;
+    }
+    notifyListeners();
+  }
+
   /// 关闭某节点/编组的代码标签页，活动标签落到相邻标签上。
   void closeCodeTab(String nodeId) {
     final i = openCodeTabs.indexOf(nodeId);
@@ -1402,6 +1416,7 @@ class IspStudioState extends ChangeNotifier {
     graph.groups.removeWhere((g) => g.id == groupId);
     if (graph.groups.length != before) {
       closeCodeTab('group:$groupId');
+      closeCodeTab('gbb:$groupId');
       notifyListeners();
     }
   }

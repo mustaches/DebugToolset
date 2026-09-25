@@ -31,7 +31,7 @@ class IspEditorTabBar extends StatelessWidget {
           ),
           for (final (i, tab) in state.openCodeTabs.indexed)
             _EditorTab(
-              icon: tab.startsWith('group:')
+              icon: tab.startsWith('group:') || tab.startsWith('gbb:')
                   ? Icons.account_tree
                   : Icons.code,
               title: _tabTitle(state, tab),
@@ -46,8 +46,16 @@ class IspEditorTabBar extends StatelessWidget {
   }
 
   /// 代码标签标题：节点标签为节点实例名（节点已删除时退化为 id）；
-  /// 编组标签（`'group:<id>'` 前缀）为编组名（编组已解散时退化为通用名）。
+  /// 编组标签（`'group:<id>'` 前缀）为编组名；黑盒标签（`'gbb:<id>'`
+  /// 前缀）为「编组名·黑盒」（编组已解散时均退化为通用名）。
   static String _tabTitle(IspStudioState state, String tab) {
+    if (tab.startsWith('gbb:')) {
+      final groupId = tab.substring(4);
+      for (final g in state.graph.groups) {
+        if (g.id == groupId) return '${g.name}·黑盒';
+      }
+      return '编组黑盒代码';
+    }
     if (tab.startsWith('group:')) {
       final groupId = tab.substring(6);
       for (final g in state.graph.groups) {

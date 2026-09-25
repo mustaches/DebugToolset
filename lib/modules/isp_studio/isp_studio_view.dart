@@ -127,7 +127,12 @@ class IspStudioView extends StatelessWidget {
                 tab.startsWith('group:')
                     ? GroupCodePage(
                         key: ValueKey(tab), groupId: tab.substring(6))
-                    : NodeCodePage(key: ValueKey(tab), nodeId: tab),
+                    : tab.startsWith('gbb:')
+                        ? GroupCodePage(
+                            key: ValueKey(tab),
+                            groupId: tab.substring(4),
+                            blackBox: true)
+                        : NodeCodePage(key: ValueKey(tab), nodeId: tab),
             ],
           ),
         ),

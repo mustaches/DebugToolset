@@ -19,14 +19,19 @@ import '../../../providers/isp_studio_state.dart';
 import '../../text_editor/utils/syntax_highlighter.dart';
 import '../codegen/c_compile.dart';
 import '../codegen/group_c_export.dart';
+import '../codegen/group_c_export_bb.dart';
 import '../models/isp_graph.dart';
 import '../pipeline/c_def_index.dart';
 import 'code_browser.dart';
 
 /// 校验编组能否导出 C 代码；不可导出时弹错误对话框并返回 false。
+/// [blackBox] 为 true 时按黑盒（行级流水）口径校验。
 Future<bool> ensureGroupCExportable(
-    BuildContext context, IspGraph graph, IspNodeGroup group) async {
-  final error = validateGroupCExport(graph, group);
+    BuildContext context, IspGraph graph, IspNodeGroup group,
+    {bool blackBox = false}) async {
+  final error = blackBox
+      ? validateGroupBlackBoxExport(graph, group)
+      : validateGroupCExport(graph, group);
   if (error == null) return true;
   await showDialog<void>(
     context: context,
@@ -47,13 +52,16 @@ Future<bool> ensureGroupCExportable(
 }
 
 /// 编组导出 C 代码：选择目录 → 生成写盘 → SnackBar 提示（须已校验，
-/// 见 [ensureGroupCExportable]）。
+/// 见 [ensureGroupCExportable]）。[blackBox] 为 true 时导出黑盒变体。
 Future<void> exportGroupCCodeInteractive(
-    BuildContext context, IspStudioState state, IspNodeGroup group) async {
+    BuildContext context, IspStudioState state, IspNodeGroup group,
+    {bool blackBox = false}) async {
   final dir = await getDirectoryPath();
   if (dir == null || !context.mounted) return;
   try {
-    final result = await exportGroupCCode(state.graph, group, dir);
+    final result = blackBox
+        ? await exportGroupBlackBoxCCode(state.graph, group, dir)
+        : await exportGroupCCode(state.graph, group, dir);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -75,16 +83,24 @@ Future<void> exportGroupCCodeInteractive(
 class GroupCodePage extends StatefulWidget {
   final String groupId;
 
+  /// 黑盒（行级流水）变体：校验/生成/top 名/导出全部切换到
+  /// group_c_export_bb 口径。
+  final bool blackBox;
+
   /// 编译执行器注入点（测试替换为假实现；缺省为 compileGroupCFiles）。
   final GroupCompileRunner? compileRunner;
 
   /// 文件生成器注入点（测试替换为立即返回的假实现，绕开 rootBundle
-  /// 真实资产 IO；缺省为 buildGroupCFiles）。
+  /// 真实资产 IO；缺省为 buildGroupCFiles / buildGroupBlackBoxCFiles）。
   final Future<Map<String, String>> Function(IspGraph graph, IspNodeGroup group)?
       filesBuilder;
 
   const GroupCodePage(
-      {super.key, required this.groupId, this.compileRunner, this.filesBuilder});
+      {super.key,
+      required this.groupId,
+      this.blackBox = false,
+      this.compileRunner,
+      this.filesBuilder});
 
   @override
   State<GroupCodePage> createState() => _GroupCodePageState();
@@ -99,6 +115,11 @@ class _GroupCodePageState extends State<GroupCodePage> {
 
   /// 代码区跳转控制器（「Go to REF」点击后滚动到定义行）。
   late final CodeAreaController _codeCtl = CodeAreaController();
+
+  /// top 层名（整帧版 isp_pipeline_<组>；黑盒 isp_pipe_<组>_bb）。
+  String _topName(IspNodeGroup group) => widget.blackBox
+      ? groupBlackBoxTopName(group)
+      : groupCTopName(group);
 
   @override
   void dispose() {
@@ -117,7 +138,9 @@ class _GroupCodePageState extends State<GroupCodePage> {
         child: Text('编组已被解散', style: TextStyle(color: Colors.grey)),
       );
     }
-    final error = validateGroupCExport(state.graph, group);
+    final error = widget.blackBox
+        ? validateGroupBlackBoxExport(state.graph, group)
+        : validateGroupCExport(state.graph, group);
     if (error != null) {
       return Container(
         color: const Color(0xFF1E1E1E),
@@ -143,7 +166,10 @@ class _GroupCodePageState extends State<GroupCodePage> {
     // 每次 build 按当前图重新生成（生成本身快，c_ref 内容有缓存），
     // 节点参数/连线改动后页面即随之刷新。
     return FutureBuilder<Map<String, String>>(
-      future: (widget.filesBuilder ?? buildGroupCFiles)(state.graph, group),
+      future: (widget.filesBuilder ??
+              (widget.blackBox
+                  ? buildGroupBlackBoxCFiles
+                  : buildGroupCFiles))(state.graph, group),
       initialData: _files,
       builder: (context, snapshot) {
         final files = snapshot.data;
@@ -199,9 +225,9 @@ class _GroupCodePageState extends State<GroupCodePage> {
             style: const TextStyle(fontSize: 12, color: Colors.white70),
           ),
           const SizedBox(width: 8),
-          const Text(
-            '编组',
-            style: TextStyle(fontSize: 11, color: Colors.grey),
+          Text(
+            widget.blackBox ? '编组·黑盒' : '编组',
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
           ),
           const Spacer(),
           const Icon(Icons.lock_outline, size: 12, color: Colors.grey),
@@ -212,14 +238,16 @@ class _GroupCodePageState extends State<GroupCodePage> {
     );
   }
 
-  /// 文件清单分组：顶层（isp_pipeline_*）/ 节点封装 / 算法参考（c_ref，
-  /// isp_common.* 与各算法 isp_* 文件），组内保持生成顺序。
+  /// 文件清单分组：顶层（isp_pipeline_* / 黑盒 isp_pipe_*_bb）/ 节点封装 /
+  /// 算法参考（c_ref，isp_common.* 与各算法 isp_* 文件），组内保持生成顺序。
+  /// 黑盒无节点封装组（单文件自含），分组自动为空。
   List<CodeFileGroup> _groupsOf(Map<String, String> files) {
     final top = <String>[];
     final wrappers = <String>[];
     final cRef = <String>[];
     for (final f in files.keys) {
-      if (f.startsWith('isp_pipeline_')) {
+      if (f.startsWith('isp_pipeline_') ||
+          (f.startsWith('isp_pipe_') && f.contains('_bb.'))) {
         top.add(f);
       } else if (f.startsWith('isp_')) {
         cRef.add(f);
@@ -243,14 +271,14 @@ class _GroupCodePageState extends State<GroupCodePage> {
     final displayFiles = {
       ...files,
       'main.c': stubMainCSource(
-          topName: groupCTopName(group), target: CCompileTarget.x86),
+          topName: _topName(group), target: CCompileTarget.x86),
     };
     // 默认选中 top 层 .c；无则第一个 .c，再退化为第一个文件。
     final selected =
         _selectedFile != null && displayFiles.containsKey(_selectedFile)
             ? _selectedFile!
-            : (files.containsKey('${groupCTopName(group)}.c')
-                ? '${groupCTopName(group)}.c'
+            : (files.containsKey('${_topName(group)}.c')
+                ? '${_topName(group)}.c'
                 : displayFiles.keys.firstWhere((f) => f.endsWith('.c'),
                     orElse: () => displayFiles.keys.first));
     // 与文本对比/补丁视图同一套 VSCode Dark+ 语法高亮（C family 规则）。
@@ -288,9 +316,11 @@ class _GroupCodePageState extends State<GroupCodePage> {
                 ],
                 highlightGroupTitles: true,
                 onExport: (ctx) async {
-                  if (await ensureGroupCExportable(ctx, state.graph, group)) {
+                  if (await ensureGroupCExportable(ctx, state.graph, group,
+                      blackBox: widget.blackBox)) {
                     if (!ctx.mounted) return;
-                    await exportGroupCCodeInteractive(ctx, state, group);
+                    await exportGroupCCodeInteractive(ctx, state, group,
+                        blackBox: widget.blackBox);
                   }
                 },
               ),
@@ -308,10 +338,11 @@ class _GroupCodePageState extends State<GroupCodePage> {
                 },
               ),
               filesLoader: () async => files,
-              topName: groupCTopName(group),
+              topName: _topName(group),
               compileRunner: widget.compileRunner,
-              preCompileCheck: (ctx) =>
-                  ensureGroupCExportable(ctx, state.graph, group),
+              preCompileCheck: (ctx) => ensureGroupCExportable(
+                  ctx, state.graph, group,
+                  blackBox: widget.blackBox),
             ),
           ),
         ],

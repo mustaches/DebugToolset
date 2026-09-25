@@ -100,6 +100,42 @@ Future<void> showIspGroupNamingDialog(
   }
 }
 
+/// 更改编组名对话框：预填当前编组名，确定后重命名（空名视为放弃
+/// 修改——空名会让组名显示带消失，不允许）。编组右键菜单
+/// 「更改编组名」使用。
+Future<void> showIspGroupRenameDialog(
+    BuildContext context, IspStudioState state, String groupId) async {
+  final group = state.graph.groups.firstWhere((g) => g.id == groupId);
+  final controller = TextEditingController(text: group.name);
+  final name = await showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF2E2E2E),
+      title: const Text('更改编组名',
+          style: TextStyle(color: Colors.white, fontSize: 14)),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(hintText: '编组名'),
+        onSubmitted: (v) => Navigator.of(ctx).pop(v),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消')),
+        TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: const Text('确定')),
+      ],
+    ),
+  );
+  final trimmed = name?.trim();
+  if (trimmed != null && trimmed.isNotEmpty && trimmed != group.name) {
+    state.renameGroup(groupId, trimmed);
+  }
+}
+
 /// 节点画布。节点与连线绘制在画布（未缩放）坐标系中，
 /// 通过外层 Transform.translate + Transform.scale 映射到屏幕。
 class IspNodeCanvas extends StatefulWidget {
@@ -298,8 +334,9 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
   }
 
   /// 编组右键菜单：多选时点中选中节点提供「编组」；点中已编组节点
-  /// 或编组框内任意位置提供「查看C代码」「取消编组」。其余情况不弹
-  /// 菜单（保留右键拖动平移画布）。
+  /// 或编组框内任意位置提供「查看C代码」「查看黑盒子C代码」（行级
+  /// 流水变体）「更改编组名」「取消编组」。
+  /// 其余情况不弹菜单（保留右键拖动平移画布）。
   void _showNodeGroupMenu(
       IspStudioState state, String nodeId, Offset globalPos) {
     final groupId = state.groupIdOf(nodeId);
@@ -313,11 +350,22 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
           globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
       items: [
         if (canGroup)
-          const PopupMenuItem(value: 'group', child: Text('编组')),
+          const PopupMenuItem(
+              value: 'group', height: 32, child: Text('编组')),
         if (groupId != null)
-          const PopupMenuItem(value: 'viewCode', child: Text('查看C代码')),
+          const PopupMenuItem(
+              value: 'viewCode', height: 32, child: Text('查看C代码')),
         if (groupId != null)
-          const PopupMenuItem(value: 'ungroup', child: Text('取消编组')),
+          const PopupMenuItem(
+              value: 'viewBBCode', height: 32, child: Text('查看黑盒子C代码')),
+        // 分组：代码查看 / 编组管理
+        if (groupId != null) const PopupMenuDivider(height: 8),
+        if (groupId != null)
+          const PopupMenuItem(
+              value: 'rename', height: 32, child: Text('更改编组名')),
+        if (groupId != null)
+          const PopupMenuItem(
+              value: 'ungroup', height: 32, child: Text('取消编组')),
       ],
     ).then((v) {
       if (!mounted) return;
@@ -326,6 +374,10 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
         showIspGroupNamingDialog(context, state);
       } else if (v == 'viewCode' && groupId != null) {
         _viewGroupCode(state, groupId);
+      } else if (v == 'viewBBCode' && groupId != null) {
+        _viewGroupBlackBoxCode(state, groupId);
+      } else if (v == 'rename' && groupId != null) {
+        showIspGroupRenameDialog(context, state, groupId);
       } else if (v == 'ungroup' && groupId != null) {
         state.ungroup(groupId);
       }
@@ -337,6 +389,18 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
     final group = state.graph.groups.firstWhere((g) => g.id == groupId);
     if (!await ensureGroupCExportable(context, state.graph, group)) return;
     state.openGroupCodeTab(groupId);
+  }
+
+  /// 编组「查看黑盒子C代码」（行级流水变体）：校验口径更严（统计/跨帧/
+  /// 窗口类节点暂不支持），通过则打开黑盒代码标签页。
+  Future<void> _viewGroupBlackBoxCode(
+      IspStudioState state, String groupId) async {
+    final group = state.graph.groups.firstWhere((g) => g.id == groupId);
+    if (!await ensureGroupCExportable(context, state.graph, group,
+        blackBox: true)) {
+      return;
+    }
+    state.openGroupBlackBoxCodeTab(groupId);
   }
 
   @override

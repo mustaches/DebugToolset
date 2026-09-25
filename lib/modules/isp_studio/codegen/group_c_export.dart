@@ -16,6 +16,10 @@
 /// - fluoro_temporal 的 history 走竞技场持久区（scratch 起始段），
 ///   调用方跨帧复用同一 scratch 时该区数据得以保留。
 /// - combiner 未连接的通道输入传 NULL（c_ref 内部填缺省值）。
+///
+/// 结构为 plan + emit 两段式：全部图推导（拓扑序、裁剪、缓冲布局）在
+/// group_c_plan.dart 的 planGroupC 完成，本文件只负责把 GroupCPlan
+/// 拼接为代码字符串并写盘。
 library;
 
 import 'dart:io';
@@ -24,7 +28,11 @@ import '../models/isp_graph.dart';
 import '../models/isp_node.dart';
 import '../pipeline/node_c_code.dart';
 import 'c_ident.dart';
+import 'group_c_plan.dart';
 import 'node_c_gen.dart';
+
+export 'group_c_plan.dart'
+    show GroupCExtPort, GroupCPlan, groupCTopName, lutDomainMaxOf, planGroupC;
 
 /// 校验编组能否导出 C 代码；可导出返回 null，否则返回中文错误说明。
 String? validateGroupCExport(IspGraph graph, IspNodeGroup group) {
@@ -78,48 +86,6 @@ class GroupCExportResult {
   const GroupCExportResult(this.files, this.topName);
 }
 
-class _ExtPort {
-  final String name;
-  final int channels;
-  final String cType;
-  const _ExtPort(this.name, this.channels, this.cType);
-}
-
-/// 节点的 LUT 烘焙域上限：沿各输入端口向上追溯（跨组边界、gamma 直通
-/// 不影响位深）到无输入的源节点，取其 bitDepth 参数（bayerMaxValue 等价
-/// (1<<bitDepth)-1）；追溯不到回退 1023（源节点 bitDepth 缺省 10bit）。
-/// LUT 模式节点的烘焙表按 0..该值全量生成；运行时 max_value 不一致时
-/// wrapper 回退直算（见各模板注释），所以推导只影响表大小与快路径命中。
-int lutDomainMaxOf(IspGraph graph, IspNode node) {
-  final seen = <String>{};
-  final queue = [node.id];
-  while (queue.isNotEmpty) {
-    final id = queue.removeLast();
-    if (!seen.add(id)) continue;
-    final n = graph.nodes[id];
-    if (n == null) continue;
-    final type = IspNodeRegistry.byId(n.typeId);
-    if (type == null) continue;
-    if (type.inputs.isEmpty) {
-      // 源节点：bitDepth 参数兼容字符串/数字（面板文本框存字符串）。
-      final bd = int.tryParse('${n.paramValues['bitDepth'] ?? ''}');
-      if (bd != null && bd > 0 && bd <= 16) return (1 << bd) - 1;
-      continue;
-    }
-    for (final port in type.inputs) {
-      final c = graph.connectionAt(id, port.name);
-      if (c != null) queue.add(c.fromNodeId);
-    }
-  }
-  return 1023;
-}
-
-/// 编组 top 层名（`isp_pipeline_<组名净化>`，组名全非 C 字符时回退组 id）。
-String groupCTopName(IspNodeGroup group) {
-  final topBase = sanitizeCIdent(group.name);
-  return 'isp_pipeline_${topBase ?? group.id.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_')}';
-}
-
 /// 内存生成编组 C 代码：文件名 → 内容（每节点封装 .h/.c、top 层 .h/.c、
 /// 引用到的 c_ref 算法文件）。键顺序与 [exportGroupCCode] 的写盘顺序一致：
 /// 节点封装（拓扑序）→ top 层 → c_ref 并集。读取失败的 c_ref 文件
@@ -136,240 +102,24 @@ Future<Map<String, String>> buildGroupCFiles(
   DateTime? genTime,
 }) async {
   genTime ??= DateTime.now();
-  final members = {
-    for (final id in group.nodeIds)
-      if (graph.nodes[id] != null) id: graph.nodes[id]!,
-  };
-  final memberIds = members.keys.toSet();
+  final plan = planGroupC(graph, group);
+  final members = plan.members;
+  final topo = plan.topo;
+  final wrappers = plan.wrappers;
+  final edgeBuffers = plan.edgeBuffers;
+  final edgeBytes = plan.edgeBytes;
+  final extInputParams = plan.extInputParams;
+  final extOutputs = plan.extOutputs;
+  final extOutputParams = plan.extOutputParams;
+  final persistPorts = plan.persistPorts;
+  final persistNames = plan.persistNames;
+  final scratchMacros = plan.scratchMacros;
+  final topName = plan.topName;
 
-  // ---- 命名 ----
-  final taken = <String>{};
-  final idents = <String, String>{
-    for (final n in members.values)
-      n.id: uniqueCIdent(n.name, 'node_${n.id}', taken),
-  };
-  final topName = groupCTopName(group);
-
-  // ---- 拓扑序（仅组内成员；防御环导致的漏项）----
-  final fullTopo = graph.topologicalOrder();
-  final topo = <String>[
-    for (final id in fullTopo)
-      if (memberIds.contains(id)) id,
-    for (final id in memberIds)
-      if (!fullTopo.contains(id)) id,
-  ];
-
-  // ---- mux4 未选中支路裁剪（与 Dart 预览 compileChain 一致：未选中槽位
-  // 是死路——不追溯、不计算）。连到 mux4 未选中槽位（inN*，N != 烘焙
-  // select）的组内边为死边；只经死边下游的组内节点整体不活跃：不生成
-  // 封装、不分配边缓冲/scratch、top 层不调用，也不为其组外来源生成
-  // run() 形参。互斥输入组（in/in_yuv/... 同组只允一路连接）无此问题，
-  // 各 wrapper 模板本就按 ctx.inputFormats 只生成活动分支。----
-  int muxSelectOf(IspNode n) =>
-      ((n.paramValues['select'] as num?)?.toInt() ?? 1).clamp(1, 4);
-  bool isDeadConn(IspConnection c) {
-    final to = members[c.toNodeId];
-    return to != null &&
-        to.typeId == 'mux4' &&
-        !c.toPort.startsWith('in${muxSelectOf(to)}');
-  }
-
-  final inGroupConns = [
-    for (final c in graph.connections)
-      if (memberIds.contains(c.fromNodeId) && memberIds.contains(c.toNodeId)) c,
-  ];
-  final liveConns = [for (final c in inGroupConns) if (!isDeadConn(c)) c];
-
-  // 活跃成员（不动点）：有组外连接、真尾节点（无任何组内出边，输出按
-  // 尾节点语义暴露为组输出）、gamma（链尾 rgba 恒暴露）为种子，再沿活边
-  // 反向扩散。只经死边下游的节点（死支路上游）被裁剪。
-  final live = <String>{
-    for (final id in topo)
-      if (graph.connections.any(
-              (c) => c.fromNodeId == id && !memberIds.contains(c.toNodeId)) ||
-          !inGroupConns.any((c) => c.fromNodeId == id) ||
-          members[id]!.typeId == 'gamma')
-        id,
-  };
-  var grew = true;
-  while (grew) {
-    grew = false;
-    for (final c in liveConns) {
-      if (live.contains(c.toNodeId) && live.add(c.fromNodeId)) grew = true;
-    }
-  }
-  topo.removeWhere((id) => !live.contains(id));
-  inGroupConns
-    ..clear()
-    ..addAll(liveConns.where(
-        (c) => live.contains(c.fromNodeId) && live.contains(c.toNodeId)));
-
-  // ---- 端口格式工具 ----
-  String formatOfPort(IspPortType t) => switch (t) {
-        IspPortType.rgb => 'rgb',
-        IspPortType.yuv => 'yuv',
-        IspPortType.hsl => 'hsl',
-        IspPortType.bayer => 'bayer',
-        _ => 'mono', // mono 与全部单通道端口
-      };
-  int channelsOfPort(IspPortType t) => switch (t) {
-        IspPortType.rgb || IspPortType.yuv || IspPortType.hsl => 3,
-        _ => 1,
-      };
-
-  // 成员的活动输入端口：已连接（组内/组外）的端口；全无连接时取首要端口。
-  // mux4 只统计选中槽位（inN*，N == 烘焙 select）——未选中槽位的连接是
-  // 死支路，不参与生成（见上方裁剪说明）。
-  Map<String, String> activeInputFormats(IspNode n, IspNodeType type) {
-    final selSlot = n.typeId == 'mux4' ? 'in${muxSelectOf(n)}' : null;
-    final result = <String, String>{};
-    for (final port in type.inputs) {
-      if (selSlot != null && !port.name.startsWith(selSlot)) continue;
-      if (graph.connectionAt(n.id, port.name) != null) {
-        result[port.name] = formatOfPort(port.type);
-      }
-    }
-    if (result.isEmpty && type.inputs.isNotEmpty) {
-      final p = type.inputs.first;
-      result[p.name] = formatOfPort(p.type);
-    }
-    return result;
-  }
-
-  // ---- 生成各节点封装 ----
-  final wrappers = <String, CNodeFiles>{};
-  for (final id in topo) {
-    final n = members[id]!;
-    final type = IspNodeRegistry.byId(n.typeId)!;
-    wrappers[id] = genCNodeWrapper(CNodeGenCtx(
-      node: n,
-      type: type,
-      ident: idents[id]!,
-      inputFormats: activeInputFormats(n, type),
-      lutDomainMax: lutDomainMaxOf(graph, n),
-    ));
-  }
-
-  // ---- 中间边缓冲：按生产者 (node, port) 一个缓冲；gamma 不开边缓冲
-  //（其组内下游直接用 gamma 的输入缓冲，见 inputBufferOf）。只统计裁剪
-  // 后的活边（inGroupConns 已在上方剔除 mux4 死支路）。----
-  final edgeBuffers = <String, String>{}; // 'nodeId:port' → 缓冲名
-  final edgeBytes = <String, String>{}; // 缓冲名 → bytesExpr
-  var edgeSeq = 0;
-  for (final c in inGroupConns) {
-    final key = '${c.fromNodeId}:${c.fromPort}';
-    if (edgeBuffers.containsKey(key)) continue;
-    if (members[c.fromNodeId]!.typeId == 'gamma') continue;
-    final fromType = IspNodeRegistry.byId(members[c.fromNodeId]!.typeId)!;
-    final port = fromType.outputs.firstWhere((p) => p.name == c.fromPort,
-        orElse: () => fromType.outputs.first);
-    final buf = 'e${edgeSeq++}';
-    edgeBuffers[key] = buf;
-    edgeBytes[buf] =
-        '(size_t)(w) * (size_t)(h) * ${channelsOfPort(port.type)}u * sizeof(uint16_t)';
-  }
-
-  // ---- 外部输入（run() 形参）：活动输入端口中，组外连接或无连接的 ----
-  final extInputs = <String, _ExtPort>{}; // 'nodeId:port' → 形参
-  final extInputParams = <_ExtPort>[];
-  for (final id in topo) {
-    final n = members[id]!;
-    final type = IspNodeRegistry.byId(n.typeId)!;
-    final active = activeInputFormats(n, type);
-    for (final port in type.inputs) {
-      if (!active.containsKey(port.name)) continue;
-      final conn = graph.connectionAt(id, port.name);
-      if (conn != null && memberIds.contains(conn.fromNodeId)) continue;
-      final p = _ExtPort('in${extInputParams.length}',
-          channelsOfPort(port.type), 'uint16_t');
-      extInputs['$id:${port.name}'] = p;
-      extInputParams.add(p);
-    }
-  }
-
-  // ---- 外部输出（run() 形参）：连到组外的输出端口；或节点在组内无
-  // 出边时其未连接输出。gamma 的 rgba 恒暴露（链尾语义）。----
-  final extOutputs = <String, _ExtPort>{}; // 'nodeId:regPort' → 形参
-  final extOutputParams = <_ExtPort>[];
-  final hasInGroupOut = {
-    for (final id in topo) id: inGroupConns.any((c) => c.fromNodeId == id),
-  };
-  for (final id in topo) {
-    final w = wrappers[id]!;
-    for (final cp in w.outputs) {
-      if (cp.isPersistent) continue;
-      final regPort = cp.name == 'out_rgba' ? 'out' : cp.name;
-      final conns = [
-        for (final c in graph.connections)
-          if (c.fromNodeId == id && c.fromPort == regPort) c,
-      ];
-      final inGroup = conns.where((c) => memberIds.contains(c.toNodeId));
-      final outGroup = conns.where((c) => !memberIds.contains(c.toNodeId));
-      final exposed = cp.name == 'out_rgba' ||
-          outGroup.isNotEmpty ||
-          (inGroup.isEmpty && !(hasInGroupOut[id] ?? false));
-      if (!exposed) continue;
-      final p = _ExtPort('out${extOutputParams.length}', cp.channels, cp.cType);
-      extOutputs['$id:$regPort'] = p;
-      extOutputParams.add(p);
-    }
-  }
-
-  // 消费端口 → 缓冲名解析（gamma 直通沿其输入向上解析）。
-  String? inputBufferOf(String nodeId, String portName) {
-    final conn = graph.connectionAt(nodeId, portName);
-    if (conn == null || !memberIds.contains(conn.fromNodeId)) {
-      return extInputs['$nodeId:$portName']?.name;
-    }
-    var producer = conn.fromNodeId;
-    var producerPort = conn.fromPort;
-    var guard = 0;
-    while (members[producer]!.typeId == 'gamma' && guard++ < 32) {
-      final up = graph.connectionAt(producer, 'in');
-      if (up == null || !memberIds.contains(up.fromNodeId)) {
-        return extInputs['$producer:in']?.name;
-      }
-      producer = up.fromNodeId;
-      producerPort = up.fromPort;
-    }
-    return edgeBuffers['$producer:$producerPort'];
-  }
-
-  // ---- scratch 竞技场布局：持久区 → 边缓冲 → 节点 scratch 区 ----
-  final persistPorts = [
-    for (final id in topo)
-      ...wrappers[id]!.outputs
-          .where((p) => p.isPersistent)
-          .map((p) => (nodeId: id, port: p)),
-  ];
-  final persistNames = <String, String>{
-    for (final pp in persistPorts)
-      '${pp.nodeId}:${pp.port.name}': 'hist_${idents[pp.nodeId]}',
-  };
-  final scratchMacros = [
-    for (final id in topo)
-      if (wrappers[id]!.scratchMacro != null)
-        '${wrappers[id]!.scratchMacro}(w, h, max_value)',
-  ];
-  String maxExpr(List<String> exprs) {
-    if (exprs.isEmpty) return '(size_t)0';
-    var e = exprs.last;
-    for (var i = exprs.length - 2; i >= 0; i--) {
-      e = 'ISP_MAX(${exprs[i]}, $e)';
-    }
-    return e;
-  }
-
-  final macro = cMacroPrefix(topName);
-  final scratchTerms = <String>[
-    for (final pp in persistPorts) pp.port.bytesExpr,
-    for (final b in edgeBytes.values) b,
-    if (scratchMacros.isNotEmpty) maxExpr(scratchMacros),
-  ];
   // 多行宏：每行行尾必须带续行反斜杠。
-  final scratchTotal = scratchTerms.isEmpty
+  final scratchTotal = plan.scratchTerms.isEmpty
       ? '(size_t)0'
-      : scratchTerms.map((t) => 'ISP_PIPE_ALIGN8($t)').join(' +\\\n    ');
+      : plan.scratchTerms.map((t) => 'ISP_PIPE_ALIGN8($t)').join(' +\\\n    ');
 
   // ---- top .h ----
   final runParams = <String>[
@@ -381,7 +131,8 @@ Future<Map<String, String>> buildGroupCFiles(
     'void *scratch',
     'size_t scratch_bytes',
   ];
-  final topGuard = '${cMacroPrefix(topName)}_H';
+  final macro = cMacroPrefix(topName);
+  final topGuard = '${macro}_H';
   final topH = '''
 #ifndef $topGuard
 #define $topGuard
@@ -432,7 +183,7 @@ int ${topName}_run(${runParams.join(', ')});
     final args = <String>[];
     for (final cp in w.inputs) {
       // 未连接的次要输入（如 combiner 空通道）传 NULL。
-      args.add(inputBufferOf(id, cp.name) ?? 'NULL');
+      args.add(plan.inputBuffers['$id:${cp.name}'] ?? 'NULL');
     }
     args.addAll(['w', 'h', 'max_value']);
     final deferredCopies = <String>[];
