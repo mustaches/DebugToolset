@@ -3,10 +3,12 @@
 /// 纯 Dart（仅依赖 dart:io / dart:convert），不依赖 Flutter，方便单测。
 ///
 /// 工具链：
-/// - X86：本机 MSVC（cl.exe）。探测与 scripts/c_syntax_check.bat 同一
-///   思路——常见 VS 安装根下取最高版本 MSVC 目录 + Windows Kits 10 最高
-///   版本，手工拼 PATH/INCLUDE/LIB 环境（本机 vcvars64.bat 损坏，不能走
-///   vcvars；且手工注入环境对 Process.run 更可控）。
+/// - X86：本机 MSVC（cl.exe）。探测顺序：vswhere -latest（VS2017+ 安装器
+///   自带，版本无关，VS2026 的 "18" 目录命名亦可定位）→ VS 安装目录枚举
+///   兜底（任意年份/SKU）→ 历史硬编码根；取最高版本 MSVC 子目录 +
+///   Windows Kits 10 最高版本，手工拼 PATH/INCLUDE/LIB 环境（本机
+///   vcvars64.bat 损坏，不能走 vcvars；且手工注入环境对 Process.run 更
+///   可控）。scripts/c_syntax_check.bat 等同思路。
 /// - ARM：arm-none-eabi-gcc。查 PATH 各目录与 GNU Arm Embedded Toolchain
 ///   常见安装根。
 /// 探测不到时由对话框让用户手填路径，手动值写入 [sessionCompilerPaths]
@@ -73,17 +75,71 @@ Map<String, String>? _msvcEnv(
   };
 }
 
-/// 探测本机 MSVC 工具链；未找到返回 null。
-/// [vsRoots] / [sdkIncludeRoot] / [sdkLibRoot] 可注入（测试用临时目录）。
-CToolchain? detectMsvc({
-  List<String> vsRoots = const [
+/// 枚举本机 VS 安装的 MSVC 工具目录候选根（...\VC\Tools\MSVC）。
+/// 顺序：vswhere -latest（VS2017+ 安装器自带，版本无关——VS2026 的
+/// "18" 目录命名也能正确定位最新安装）→ VS 目录枚举兜底（任意年份/
+/// SKU；年份目录字符串排序在新旧命名混用时不可靠，仅作兜底，多版本
+/// 并存时以 vswhere 为准）→ 两个历史硬编码根（保持旧行为）。
+List<String> enumerateVsMsvcRoots() {
+  final roots = <String>[];
+  final pf86 = Platform.environment['ProgramFiles(x86)'] ??
+      r'C:\Program Files (x86)';
+  // 1. vswhere。
+  final vswhere = '$pf86\\Microsoft Visual Studio\\Installer\\vswhere.exe';
+  if (File(vswhere).existsSync()) {
+    try {
+      final r = Process.runSync(vswhere, const [
+        '-latest',
+        '-products', '*',
+        '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+        '-property', 'installationPath',
+      ]);
+      if (r.exitCode == 0) {
+        final p = '${r.stdout}'.trim();
+        if (p.isNotEmpty) roots.add('$p\\VC\\Tools\\MSVC');
+      }
+    } catch (_) {
+      // vswhere 执行失败时退回目录枚举。
+    }
+  }
+  // 2. 目录枚举兜底：<ProgramFiles>\Microsoft Visual Studio\<年份>\<SKU>。
+  for (final base in [
+    r'C:\Program Files\Microsoft Visual Studio',
+    '$pf86\\Microsoft Visual Studio',
+  ]) {
+    final bd = Directory(base);
+    if (!bd.existsSync()) continue;
+    final years = [
+      for (final e in bd.listSync())
+        if (e is Directory) e.path
+    ]..sort();
+    for (final y in years.reversed) {
+      final skus = [
+        for (final e in Directory(y).listSync())
+          if (e is Directory) e.path
+      ]..sort();
+      for (final s in skus.reversed) {
+        roots.add('$s\\VC\\Tools\\MSVC');
+      }
+    }
+  }
+  // 3. 历史硬编码根。
+  roots.addAll(const [
     r'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC',
     r'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC',
-  ],
+  ]);
+  return roots;
+}
+
+/// 探测本机 MSVC 工具链；未找到返回 null。
+/// [vsRoots] / [sdkIncludeRoot] / [sdkLibRoot] 可注入（测试用临时目录）；
+/// vsRoots 缺省为 [enumerateVsMsvcRoots] 的全机枚举结果。
+CToolchain? detectMsvc({
+  List<String>? vsRoots,
   String sdkIncludeRoot = r'C:\Program Files (x86)\Windows Kits\10\Include',
   String sdkLibRoot = r'C:\Program Files (x86)\Windows Kits\10\Lib',
 }) {
-  for (final root in vsRoots) {
+  for (final root in vsRoots ?? enumerateVsMsvcRoots()) {
     final msvc = _highestSubdir(root);
     if (msvc == null) continue;
     final cl = '$msvc\\bin\\Hostx64\\x64\\cl.exe';
