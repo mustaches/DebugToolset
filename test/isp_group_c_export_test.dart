@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:debug_tool_set/modules/isp_studio/codegen/c_compile.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/c_ident.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/group_c_export.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/node_c_gen.dart';
@@ -409,13 +410,9 @@ void main() {
       expect(map['isp_pipeline_g100.c'], isNot(contains('(NULL,')));
 
       // MSVC 语法编译（无 MSVC 自动 skip）。
-      const msvcRoots = [
-        r'C:\Program Files\Microsoft Visual Studio2\Community\VC\Tools\MSVC',
-        r'C:\Program Files (x86)\Microsoft Visual Studio9\BuildTools\VC\Tools\MSVC',
-      ];
-      final msvcOk = msvcRoots.any((root) =>
-          Directory(root).existsSync() &&
-          Directory(root).listSync().isNotEmpty);
+      // 探测走 c_compile.dart 的 detectMsvc（vswhere 优先 + 目录枚举，
+      // 覆盖 VS2022/2019/2026）。
+      final msvcOk = detectMsvc() != null;
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
@@ -467,13 +464,9 @@ void main() {
       expect(wrapper, contains('isp_white_balance_apply'));
 
       // MSVC 语法编译（无 MSVC 自动 skip）。
-      const msvcRoots = [
-        r'C:\Program Files\Microsoft Visual Studio2\Community\VC\Tools\MSVC',
-        r'C:\Program Files (x86)\Microsoft Visual Studio9\BuildTools\VC\Tools\MSVC',
-      ];
-      final msvcOk = msvcRoots.any((root) =>
-          Directory(root).existsSync() &&
-          Directory(root).listSync().isNotEmpty);
+      // 探测走 c_compile.dart 的 detectMsvc（vswhere 优先 + 目录枚举，
+      // 覆盖 VS2022/2019/2026）。
+      final msvcOk = detectMsvc() != null;
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
@@ -539,13 +532,9 @@ void main() {
       expect(map2['lv.c']!, contains('memcpy'));
 
       // MSVC 语法编译（无 MSVC 自动 skip）。
-      const msvcRoots = [
-        r'C:\Program Files\Microsoft Visual Studio2\Community\VC\Tools\MSVC',
-        r'C:\Program Files (x86)\Microsoft Visual Studio9\BuildTools\VC\Tools\MSVC',
-      ];
-      final msvcOk = msvcRoots.any((root) =>
-          Directory(root).existsSync() &&
-          Directory(root).listSync().isNotEmpty);
+      // 探测走 c_compile.dart 的 detectMsvc（vswhere 优先 + 目录枚举，
+      // 覆盖 VS2022/2019/2026）。
+      final msvcOk = detectMsvc() != null;
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
@@ -634,13 +623,75 @@ void main() {
       }
 
       // MSVC 语法编译（无 MSVC 自动 skip）。
-      const msvcRoots = [
-        r'C:\Program Files\Microsoft Visual Studio2\Community\VC\Tools\MSVC',
-        r'C:\Program Files (x86)\Microsoft Visual Studio9\BuildTools\VC\Tools\MSVC',
-      ];
-      final msvcOk = msvcRoots.any((root) =>
-          Directory(root).existsSync() &&
-          Directory(root).listSync().isNotEmpty);
+      // 探测走 c_compile.dart 的 detectMsvc（vswhere 优先 + 目录枚举，
+      // 覆盖 VS2022/2019/2026）。
+      final msvcOk = detectMsvc() != null;
+      if (msvcOk) {
+        final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
+        addTearDown(() => dir.delete(recursive: true));
+        await exportGroupCCode(graph, graph.groups.single, dir.path,
+            readFile: readDisk);
+        final cFiles = [
+          for (final f in Directory(dir.path).listSync().whereType<File>())
+            if (f.path.endsWith('.c'))
+              f.absolute.path.replaceAll('/', r'\'),
+        ]..sort();
+        final result = await Process.run(
+          'cmd',
+          ['/c', r'scripts\c_syntax_check.bat', ...cFiles],
+          workingDirectory: Directory.current.path,
+        );
+        final output = '${result.stdout}\n${result.stderr}';
+        expect(output, isNot(contains('error C')), reason: output);
+      }
+    });
+
+    test('multi_band_eq 封装：func 直算 / lut 烘焙三表 + MSVC 语法编译',
+        () async {
+      final graph = IspGraph();
+      String add(String typeId, String name, Map<String, Object?> params) {
+        final id = graph.addNode(typeId, 0, 0);
+        graph.nodes[id]!.name = name;
+        graph.nodes[id]!.paramValues.addAll(params);
+        return id;
+      }
+
+      final f = add('multi_band_eq', 'mbf', {
+        'band_count': 3,
+        'band_mode': 'serial',
+        'b0_h': 30.0, 'b0_q': 0.5, 'b0_dh': 45.0, 'b0_s': 1.3,
+        'b1_h': 150.0, 'b1_q': 2.0, 'b1_dh': -70.0,
+        // b2 全缺省 → 恒等段（缺键回退口径）。
+      });
+      final l = add('multi_band_eq', 'mbl', {
+        'band_count': 2,
+        'band_mode': 'parallel',
+        'codegenMode': 'lut',
+        'b0_h': 0.0, 'b0_q': 2.0, 'b0_dh': 90.0,
+        'b1_h': 90.0, 'b1_q': 2.0, 'b1_dh': 90.0, 'b1_s': 2.0,
+      });
+      expect(graph.connect(f, 'out', l, 'in'), isNull);
+      graph.groups.add(IspNodeGroup('g_mb', {f, l}, name: 'mbeq'));
+
+      final map = await buildGroupCFiles(graph, graph.groups.single,
+          readFile: readDisk);
+      // func：段参数烘焙为 static const 数组 + 直算调用，无烘焙表。
+      expect(map['mbf.c'],
+          contains('static const IspMultiBandEqBand mbf_bands[3]'));
+      expect(map['mbf.c'], contains('isp_multi_band_eq_apply'));
+      expect(map['mbf.h'], contains('ISP_MBF_SERIAL 1'));
+      expect(map['mbf.c'], isNot(contains('_shift_lut')));
+      // lut：三表烘焙 + 查表调用 + 运行时守卫回退，wrapper 主循环无 exp。
+      expect(map['mbl.c'],
+          contains('static const int32_t mbl_shift_lut[1024]'));
+      expect(map['mbl.c'],
+          contains('static const double mbl_s_mul_lut[1024]'));
+      expect(map['mbl.c'], contains('isp_multi_band_eq_lut_apply'));
+      expect(map['mbl.c'], contains('if (max_value == 1023)'));
+      expect(map['mbl.c'], isNot(contains('exp(')));
+
+      // MSVC 语法编译（无 MSVC 自动 skip；探测同 detectMsvc 口径）。
+      final msvcOk = detectMsvc() != null;
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
@@ -662,7 +713,7 @@ void main() {
     });
 
     test('生成代码无未初始化声明（指针 NULL 化、标量零值）', () async {
-      // 全 48 类型编组，扫描 wrapper 与 top 层（c_ref 为资产不检查）。
+      // 全 49 类型编组，扫描 wrapper 与 top 层（c_ref 为资产不检查）。
       final graph = IspGraph();
       final ids = <String, String>{
         for (final t in cExportSupportedTypeIds) t: graph.addNode(t, 0, 0),
@@ -709,15 +760,11 @@ void main() {
   });
 
   test(
-    '全部 48 类型导出 + MSVC 语法编译',
+    '全部 49 类型导出 + MSVC 语法编译',
     () async {
-      const msvcRoots = [
-        r'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC',
-        r'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC',
-      ];
-      final msvcOk = msvcRoots.any((root) =>
-          Directory(root).existsSync() &&
-          Directory(root).listSync().isNotEmpty);
+      // 探测走 c_compile.dart 的 detectMsvc（vswhere 优先 + 目录枚举，
+      // 覆盖 VS2022/2019/2026）。
+      final msvcOk = detectMsvc() != null;
       if (!msvcOk) {
         // ignore: avoid_print
         print('未检测到 MSVC，跳过生成代码语法编译');

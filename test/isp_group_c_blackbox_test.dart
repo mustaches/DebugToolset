@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:debug_tool_set/modules/isp_studio/codegen/c_compile.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/c_ident.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/group_c_export.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/group_c_export_bb.dart';
@@ -12,16 +13,9 @@ void main() {
   /// 从磁盘读真实 c_ref 文件（测试不依赖 rootBundle 资产）。
   Future<String> readDisk(String path) => File(path).readAsString();
 
-  /// MSVC 探测（与 isp_group_c_export_test.dart 同口径；无 MSVC 时对拍/
-  /// 语法编译用例自动跳过）。
-  bool msvcAvailable() {
-    const msvcRoots = [
-      r'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC',
-      r'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC',
-    ];
-    return msvcRoots.any((root) =>
-        Directory(root).existsSync() && Directory(root).listSync().isNotEmpty);
-  }
+  /// MSVC 探测（走 c_compile.dart 的 detectMsvc：vswhere 优先 + 目录枚举，
+  /// 覆盖 VS2022/2019/2026；无 MSVC 时对拍/语法编译用例自动跳过）。
+  bool msvcAvailable() => detectMsvc() != null;
 
   group('黑盒导出校验', () {
     test('分离趟算子（morphology/gaussian_blur）放行，混合不支持类型仍拒绝', () {
@@ -786,6 +780,62 @@ ${cmp.join('\n')}
       graph.groups.add(IspNodeGroup(
           'g8', {wb, r2h, cc, h2r, bc, lv, ct, gamma}, name: 'lut'));
       await runAbCompare('lut-chain', graph, graph.groups.single,
+          sizes: const [(16, 16), (3, 3)],
+          maxValues: const [1023, 4095]); // 1023=查表；4095=回退直算
+    }, skip: hasMsvc ? false : '无 MSVC 环境');
+
+    test('multi_band_eq 串联三段（含恒等段）行核对拍', () async {
+      final graph = IspGraph();
+      String add(String typeId, [Map<String, Object?> p = const {}]) {
+        final id = graph.addNode(typeId, 0, 0);
+        graph.nodes[id]!.paramValues.addAll(p);
+        return id;
+      }
+
+      final r2h = add('csc_rgb2hsl');
+      final mb = add('multi_band_eq', {
+        'band_count': 3,
+        'band_mode': 'serial',
+        'b0_h': 30.0, 'b0_q': 0.5, 'b0_dh': 45.0, 'b0_s': 1.3, 'b0_l': 1.1,
+        'b1_h': 150.0, 'b1_q': 2.0, 'b1_dh': -70.0, 'b1_s': 0.8,
+        // b2 全缺省 → 恒等段（串联级联中无贡献，锻炼缺键回退口径）。
+      });
+      final h2r = add('csc_hsl2rgb');
+      final gamma = add('gamma');
+      graph.connect(r2h, 'out', mb, 'in');
+      graph.connect(mb, 'out', h2r, 'in');
+      graph.connect(h2r, 'out', gamma, 'in');
+      graph.groups.add(
+          IspNodeGroup('g_mbs', {r2h, mb, h2r, gamma}, name: 'mbs'));
+      await runAbCompare('mb-serial', graph, graph.groups.single,
+          sizes: const [(16, 16), (3, 3)],
+          maxValues: const [1023, 4095]);
+    }, skip: hasMsvc ? false : '无 MSVC 环境');
+
+    test('multi_band_eq 并联两段 LUT 模式（查表 + 回退直算）行核对拍', () async {
+      final graph = IspGraph();
+      String add(String typeId, [Map<String, Object?> p = const {}]) {
+        final id = graph.addNode(typeId, 0, 0);
+        graph.nodes[id]!.paramValues.addAll(p);
+        return id;
+      }
+
+      final r2h = add('csc_rgb2hsl');
+      final mb = add('multi_band_eq', {
+        'band_count': 2,
+        'band_mode': 'parallel',
+        'codegenMode': 'lut',
+        'b0_h': 0.0, 'b0_q': 2.0, 'b0_dh': 90.0,
+        'b1_h': 90.0, 'b1_q': 2.0, 'b1_dh': 90.0, 'b1_s': 2.0,
+      });
+      final h2r = add('csc_hsl2rgb');
+      final gamma = add('gamma');
+      graph.connect(r2h, 'out', mb, 'in');
+      graph.connect(mb, 'out', h2r, 'in');
+      graph.connect(h2r, 'out', gamma, 'in');
+      graph.groups.add(
+          IspNodeGroup('g_mbp', {r2h, mb, h2r, gamma}, name: 'mbp'));
+      await runAbCompare('mb-parallel-lut', graph, graph.groups.single,
           sizes: const [(16, 16), (3, 3)],
           maxValues: const [1023, 4095]); // 1023=查表；4095=回退直算
     }, skip: hasMsvc ? false : '无 MSVC 环境');

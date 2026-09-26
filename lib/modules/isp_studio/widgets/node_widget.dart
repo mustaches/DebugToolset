@@ -1,10 +1,13 @@
 /// ISP Studio 节点卡片：标题栏、端口行与类型附加控件。
 library;
 
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,8 +15,10 @@ import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
 import '../models/isp_node.dart';
+import '../models/multi_band_eq_params.dart';
 import '../pipeline/audio_analysis.dart';
 import '../pipeline/color_temp.dart';
+import '../pipeline/isp_kernels.dart';
 import '../pipeline/levels_curve.dart';
 import '../pipeline/pyiqa_worker.dart';
 import 'node_layout.dart';
@@ -161,6 +166,8 @@ class IspNodeWidget extends StatelessWidget {
                     _buildHslDebugExtra(state),
                   if (type.typeId == 'color_controller')
                     _buildColorControllerExtra(state),
+                  if (type.typeId == 'multi_band_eq')
+                    _buildMultiBandEqExtra(state),
                   if (type.typeId == 'rgb_debugger')
                     _buildRgbDebugExtra(state),
                   if (type.typeId == 'yuv_debugger')
@@ -1143,6 +1150,11 @@ class IspNodeWidget extends StatelessWidget {
       ),
     );
   }
+
+  /// 多段色彩均衡器附加区：交互状态（取色/删除模式、取样像素缓存）在
+  /// [_MultiBandEqExtra] 内；布局复用本类的滑块行/对比窗格/手柄构建器。
+  Widget _buildMultiBandEqExtra(IspStudioState state) =>
+      _MultiBandEqExtra(host: this, state: state, node: node);
 
   /// 色彩控制器矢量示波器的半区：迹线图 → 高斯色相带 → 坐标格三层叠加
   /// （无图时显示占位文案 [hint]），左上角叠加半透明小标签 [label]。
@@ -3887,4 +3899,610 @@ class _LevelsCurvePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_LevelsCurvePainter old) => true;
+}
+
+/// 多段色彩均衡器附加区（有状态：取色/删除模式与取样像素缓存）：
+/// 顶部取色器工具栏（增/删 │ 预设占位按钮 │ 段按钮列）+ 前后双联预览
+/// （左调整前/右调整后，取色模式下左区十字光标点击取色）+ 选中段
+/// H中心/Q/ΔH/S/L 五行控制条 + 底部拖动手柄。
+/// 图刷新走 [IspStudioState.frameTick]；滑块拖动实时重跑（同色彩控制器）。
+/// 取色模式：点段按钮进入（光标变十字），在左侧调整前预览点击取样像素
+/// 色相写入该段 H 中心；Esc 或点击预览区外退出。删除模式：点「删除」
+/// 进入（再点退出），段按钮区高亮、悬停叠 ✕，点击删除该段并重排键名。
+class _MultiBandEqExtra extends StatefulWidget {
+  /// 宿主卡片（复用其 _buildHslSliderRow/_buildHslComparePane/_buildResizeBar
+  /// 构建器，同库私有成员直接访问）。
+  final IspNodeWidget host;
+  final IspStudioState state;
+  final IspNode node;
+
+  const _MultiBandEqExtra(
+      {required this.host, required this.state, required this.node});
+
+  @override
+  State<_MultiBandEqExtra> createState() => _MultiBandEqExtraState();
+}
+
+class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
+  /// 取色模式中的段号（null=未取色）；进入时该段同时置为选中段。
+  int? _armedBand;
+
+  /// 删除模式：段按钮区高亮描边，点击按钮删除该段。
+  bool _deleteArmed = false;
+
+  /// 删除模式下悬停的段按钮（叠 ✕ 角标）。
+  int? _hoverDeleteBand;
+
+  /// 左预览区（调整前）取色悬停位置（窗格坐标，画十字线）。
+  Offset? _pickHover;
+
+  /// 最近一次取样点（图像像素坐标，画标记）。
+  Offset? _pickedPixel;
+
+  /// 惰性缓存的调整前图像像素（进入取色后首次点击时 toByteData 一次，
+  /// 图像对象变化时重取）。
+  ui.Image? _pickImage;
+  ByteData? _pickPixels;
+
+  bool _escHandlerOn = false;
+
+  IspStudioState get state => widget.state;
+  IspNode get node => widget.node;
+
+  /// 段数（缺省 1，钳位 1..kMultiBandEqMaxBands）。
+  int get _bandCount {
+    final v = (node.paramValues['band_count'] as num?)?.toInt() ?? 1;
+    return v.clamp(1, kMultiBandEqMaxBands).toInt();
+  }
+
+  /// 选中段（钳位到现有段范围）。
+  int get _selBand {
+    final v = (node.paramValues['sel_band'] as num?)?.toInt() ?? 0;
+    return v.clamp(0, _bandCount - 1).toInt();
+  }
+
+  @override
+  void dispose() {
+    _removeEscHandler();
+    super.dispose();
+  }
+
+  // ---- Esc 退出取色/删除模式（全局键盘钩子，仅在两种模式之一激活时挂载）----
+
+  bool _onKey(KeyEvent e) {
+    if (_armedBand == null && !_deleteArmed) return false;
+    if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.escape) {
+      setState(() {
+        _armedBand = null;
+        _deleteArmed = false;
+        _pickHover = null;
+        _hoverDeleteBand = null;
+      });
+      _removeEscHandler();
+      return true;
+    }
+    return false;
+  }
+
+  void _addEscHandler() {
+    if (_escHandlerOn) return;
+    HardwareKeyboard.instance.addHandler(_onKey);
+    _escHandlerOn = true;
+  }
+
+  void _removeEscHandler() {
+    if (!_escHandlerOn) return;
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    _escHandlerOn = false;
+  }
+
+  // ---- 模式切换与段管理 ----
+
+  /// 点段按钮：删除模式下删除该段；再点取色中的段退出取色；否则选中
+  /// 该段并进入取色模式。
+  void _tapBand(int i) {
+    if (_deleteArmed) {
+      _deleteBand(i);
+      return;
+    }
+    if (_armedBand == i) {
+      _disarmPick();
+      return;
+    }
+    state.setParam(node.id, 'sel_band', i);
+    setState(() => _armedBand = i);
+    _addEscHandler();
+  }
+
+  void _disarmPick() {
+    setState(() {
+      _armedBand = null;
+      _pickHover = null;
+    });
+    if (!_deleteArmed) _removeEscHandler();
+  }
+
+  /// 增加取色器：段数 +1（新段不落参数键，读取侧缺省即恒等默认），
+  /// 选中段切到新段；段结果不变（新段恒等），不重跑预览。
+  void _addBand() {
+    final count = _bandCount;
+    if (count >= kMultiBandEqMaxBands) return;
+    state.setParam(node.id, 'band_count', count + 1);
+    state.setParam(node.id, 'sel_band', count);
+  }
+
+  void _toggleDelete() {
+    setState(() {
+      _deleteArmed = !_deleteArmed;
+      _hoverDeleteBand = null;
+      if (_deleteArmed) {
+        // 删除与取色互斥：进入删除模式退出取色。
+        _armedBand = null;
+        _pickHover = null;
+      }
+    });
+    if (_deleteArmed) {
+      _addEscHandler();
+    } else if (_armedBand == null) {
+      _removeEscHandler();
+    }
+  }
+
+  /// 删除第 [i] 段：键名前移重排（[reindexBandParams]），删除后重跑预览。
+  void _deleteBand(int i) {
+    final count = _bandCount;
+    if (count <= 1) return;
+    final next = reindexBandParams(node.paramValues, i, count);
+    // 差异键一次性批量写入（被清除的键写 null，读取侧缺省回退恒等默认）。
+    final patch = <String, Object?>{};
+    final keys = {...node.paramValues.keys, ...next.keys};
+    for (final k in keys) {
+      if (node.paramValues[k] != next[k]) patch[k] = next[k];
+    }
+    state.setParams(node.id, patch);
+    setState(() {
+      if (_armedBand == i) _armedBand = null;
+      _hoverDeleteBand = null;
+      // 剩 1 段时退出删除模式（按钮随即置灰）。
+      if (count - 1 <= 1) _deleteArmed = false;
+    });
+    if (_armedBand == null && !_deleteArmed) _removeEscHandler();
+    state.runPreview();
+  }
+
+  // ---- 取色 ----
+
+  /// 左预览区点击取色：窗格坐标经 contain 适配换算为图像像素坐标，
+  /// 取该像素 RGB 经管线同款 RGB→HSL 转换得色相（°），写入取色段的
+  /// b{i}_h 并重跑预览。
+  Future<void> _pickAt(Offset local, Size paneSize) async {
+    final band = _armedBand;
+    if (band == null) return;
+    final image = state.previewInputImages[node.id];
+    if (image == null || paneSize.width <= 0 || paneSize.height <= 0) return;
+    final scale =
+        math.min(paneSize.width / image.width, paneSize.height / image.height);
+    final ox = (paneSize.width - image.width * scale) / 2;
+    final oy = (paneSize.height - image.height * scale) / 2;
+    final px = ((local.dx - ox) / scale).floor();
+    final py = ((local.dy - oy) / scale).floor();
+    // 点在图像外的黑边区：忽略。
+    if (px < 0 || py < 0 || px >= image.width || py >= image.height) return;
+    if (!identical(_pickImage, image) || _pickPixels == null) {
+      _pickPixels = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      _pickImage = image;
+    }
+    if (!mounted || _armedBand != band) return;
+    final bytes = _pickPixels;
+    if (bytes == null) return;
+    final off = (py * image.width + px) * 4;
+    // 预览图为 RGBA8，对应 maxValue=255 的管线量化口径。
+    final hsl = rgbToHsl(
+        Uint16List.fromList([
+          bytes.getUint8(off),
+          bytes.getUint8(off + 1),
+          bytes.getUint8(off + 2)
+        ]),
+        maxValue: 255);
+    final hDeg = hsl[0] * 360.0 / 255;
+    setState(() => _pickedPixel = Offset(px.toDouble(), py.toDouble()));
+    state.setParam(node.id, 'b${band}_h', hDeg);
+    state.runPreview();
+  }
+
+  // ---- 色彩风格预设存取（.colorstyle，JSON 文本）----
+
+  /// 预设文件类型（与 .ispflow 同一约定）。
+  static const _styleTypeGroup =
+      XTypeGroup(label: '色彩风格', extensions: ['colorstyle']);
+
+  /// 预设的默认目录（IspFlow/ColorStyle，不存在则创建）。
+  /// 注意：必须使用平台分隔符拼接（仿 isp_studio_view._flowDir() 的坑：
+  /// Windows 上混用 '/' 会使 file_selector 静默回退到「上次使用的目录」）。
+  Future<Directory> _colorStyleDir() async {
+    final dir = Directory(
+        '${Directory.current.path}${Platform.pathSeparator}IspFlow'
+        '${Platform.pathSeparator}ColorStyle');
+    if (!dir.existsSync()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  /// 保存当前段配置为 .colorstyle（缺键按恒等默认补齐写出，文件自足）。
+  Future<void> _saveStyle() async {
+    final dir = await _colorStyleDir();
+    if (!mounted) return;
+    final loc = await getSaveLocation(
+      suggestedName: '未命名风格.colorstyle',
+      acceptedTypeGroups: [_styleTypeGroup],
+      initialDirectory: dir.path,
+    );
+    if (loc == null) return; // 用户取消
+    try {
+      final json = const JsonEncoder.withIndent('  ')
+          .convert(encodeColorStyle(node.paramValues));
+      // 用户未键入扩展名时补上（保存对话框不保证自动追加）。
+      final path = loc.path.toLowerCase().endsWith('.colorstyle')
+          ? loc.path
+          : '${loc.path}.colorstyle';
+      await File(path).writeAsString(json);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text('已保存色彩风格：${path.split(Platform.pathSeparator).last}'),
+          duration: const Duration(seconds: 2)));
+    } catch (e) {
+      if (!mounted) return;
+      await _showStyleError('保存色彩风格失败', '$e');
+    }
+  }
+
+  /// 读取 .colorstyle 恢复段序列：解析校验（版本/段数/结构，数值越界
+  /// clamp）→ setParams 批量恢复（多余旧段键写 null 清除）→ 重跑预览。
+  Future<void> _loadStyle() async {
+    final dir = await _colorStyleDir();
+    if (!mounted) return;
+    final file = await openFile(
+      acceptedTypeGroups: [_styleTypeGroup],
+      initialDirectory: dir.path,
+    );
+    if (file == null) return; // 用户取消
+    final Map<String, Object?> patch;
+    try {
+      patch = decodeColorStyle(await file.readAsString(),
+          oldBandCount: _bandCount);
+    } on FormatException catch (e) {
+      await _showStyleError('无法读取色彩风格预设', e.message);
+      return;
+    } catch (e) {
+      await _showStyleError('无法读取色彩风格预设', '$e');
+      return;
+    }
+    state.setParams(node.id, patch);
+    // 段序列被替换：退出取色/删除模式（sel_band 已由补丁回 0）。
+    setState(() {
+      _armedBand = null;
+      _deleteArmed = false;
+      _pickHover = null;
+      _pickedPixel = null;
+      _hoverDeleteBand = null;
+    });
+    _removeEscHandler();
+    state.runPreview();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('已读取色彩风格：${file.name}'
+            '（${patch['band_count']} 段，'
+            '${patch['band_mode'] == 'serial' ? '串联' : '并联'}）'),
+        duration: const Duration(seconds: 2)));
+  }
+
+  /// 预设错误对话框（风格仿 ensureGroupCExportable 的 AlertDialog）。
+  Future<void> _showStyleError(String title, String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2E2E2E),
+        title: Text(title,
+            style: const TextStyle(color: Colors.white, fontSize: 14)),
+        content: Text(message,
+            style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('知道了')),
+        ],
+      ),
+    );
+  }
+
+  // ---- 构建 ----
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) => _buildContent(),
+    );
+  }
+
+  Widget _buildContent() {
+    final host = widget.host;
+    final image = state.previewImages[node.id];
+    final inputImage = state.previewInputImages[node.id];
+    final hasInput = state.graph.connectionAt(node.id, 'in') != null;
+    final extra = state.previewExtraHeight(node.id);
+    final sel = _selBand;
+    // 顶部留白 4 + 工具栏 26 + 5 行滑块各 24 + 底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 26 - 24 * 5 - 10);
+    return SizedBox(
+      height: extra,
+      // 点击工具栏/右预览/滑条背景等空白处退出取色模式（左预览与按钮
+      // 等内部手势优先，不触发本回调）。
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () {
+          if (_armedBand != null) _disarmPick();
+        },
+        child: Column(
+          children: [
+            _buildToolbar(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+              child: SizedBox(
+                height: imageHeight,
+                child: Row(
+                  children: [
+                    // 左半：调整前（输入链出图），取色模式下可点击取样；
+                    // 右半：调整后（输出链出图）。
+                    Expanded(
+                        child: _buildInputPane(inputImage,
+                            hasInput ? '运行预览后显示' : '未连接输入')),
+                    const SizedBox(width: 4),
+                    Expanded(
+                        child: host._buildHslComparePane(
+                            image, '调整后', '运行预览后显示效果')),
+                  ],
+                ),
+              ),
+            ),
+            host._buildHslSliderRow(state, 'H中心', 'b${sel}_h', 0, 360, 0,
+                (v) => '${v.toStringAsFixed(0)}°',
+                labelWidth: 34, livePreview: true),
+            host._buildHslSliderRow(state, 'Q', 'b${sel}_q', 0.5, 100, 2,
+                // 右侧同时显示高斯带宽 σ = 45°/Q
+                (v) =>
+                    '${v.toStringAsFixed(1)} σ=${(45 / v).toStringAsFixed(1)}°',
+                labelWidth: 34, valueWidth: 92, livePreview: true),
+            host._buildHslSliderRow(state, 'ΔH', 'b${sel}_dh', -180, 180, 0,
+                (v) => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(1)}°',
+                labelWidth: 34, livePreview: true),
+            host._buildHslSliderRow(state, 'S', 'b${sel}_s', 0, 5, 1,
+                (v) => '×${v.toStringAsFixed(2)}',
+                labelWidth: 34, livePreview: true),
+            host._buildHslSliderRow(state, 'L', 'b${sel}_l', 0, 5, 1,
+                (v) => '×${v.toStringAsFixed(2)}',
+                labelWidth: 34, livePreview: true),
+            // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
+            host._buildResizeBar(state),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 取色器工具栏（26px，样式仿 preview 控制条）：[+]增加 [-]删除 │
+  /// [保存风格] [读取预设]（预设为占位禁用）│ [段按钮 1..n]。
+  Widget _buildToolbar() {
+    final count = _bandCount;
+    return SizedBox(
+      height: 26,
+      child: Row(
+        children: [
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.add, size: 16),
+            padding: EdgeInsets.zero,
+            tooltip: '增加取色器',
+            // 段数到上限置灰。
+            onPressed:
+                count >= kMultiBandEqMaxBands ? null : () => _addBand(),
+          ),
+          IconButton(
+            icon: Icon(Icons.remove,
+                size: 16,
+                color: _deleteArmed ? const Color(0xFFFF6E6E) : null),
+            padding: EdgeInsets.zero,
+            tooltip: _deleteArmed ? '退出删除模式' : '删除取色器',
+            // 剩 1 段时置灰。
+            onPressed: count <= 1 ? null : () => _toggleDelete(),
+          ),
+          _toolbarDivider(),
+          IconButton(
+            icon: const Icon(Icons.save_outlined, size: 16),
+            padding: EdgeInsets.zero,
+            tooltip: '保存风格',
+            onPressed: () => _saveStyle(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.folder_open_outlined, size: 16),
+            padding: EdgeInsets.zero,
+            tooltip: '读取预设',
+            onPressed: () => _loadStyle(),
+          ),
+          _toolbarDivider(),
+          // 段按钮列：删除模式下整体红色描边高亮。
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+            decoration: _deleteArmed
+                ? BoxDecoration(
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: const Color(0xFFBF4040)))
+                : null,
+            child: Row(
+              children: [
+                for (var i = 0; i < count; i++) ...[
+                  _buildBandButton(i),
+                  if (i < count - 1) const SizedBox(width: 3),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolbarDivider() => VerticalDivider(
+      width: 9, thickness: 1, indent: 5, endIndent: 5, color: Colors.grey.shade800);
+
+  /// 段按钮（取色器 i+1）：选中段高亮描边；取色中的段琥珀色描边；删除
+  /// 模式悬停时叠 ✕ 角标。
+  Widget _buildBandButton(int i) {
+    final sel = i == _selBand;
+    final armed = _armedBand == i;
+    final deleteHover = _deleteArmed && _hoverDeleteBand == i;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoverDeleteBand = i),
+      onExit: (_) => setState(() => _hoverDeleteBand = null),
+      child: GestureDetector(
+        onTap: () => _tapBand(i),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: 22,
+              height: 18,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: armed
+                    ? const Color(0xFF6A5E2E)
+                    : sel
+                        ? const Color(0xFF4A6E8E)
+                        : const Color(0xFF333333),
+                borderRadius: BorderRadius.circular(3),
+                border: Border.all(
+                    color: deleteHover
+                        ? const Color(0xFFFF6E6E)
+                        : armed
+                            ? const Color(0xFFFFC107)
+                            : sel
+                                ? const Color(0xFF6A9EC0)
+                                : Colors.grey.shade800),
+              ),
+              child: Text('${i + 1}',
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: sel || armed ? Colors.white : Colors.grey.shade500)),
+            ),
+            if (deleteHover)
+              const Positioned(
+                right: -4,
+                top: -5,
+                child: Icon(Icons.close, size: 9, color: Color(0xFFFF6E6E)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 左半「调整前」预览：黑底 contain 图（无图时占位文案）+ 左上角标签；
+  /// 取色模式下十字光标、点击取样、叠加悬停十字线与取样点标记。
+  Widget _buildInputPane(ui.Image? image, String hint) {
+    final armed = _armedBand != null;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        return MouseRegion(
+          cursor: armed ? SystemMouseCursors.precise : MouseCursor.defer,
+          onHover:
+              armed ? (e) => setState(() => _pickHover = e.localPosition) : null,
+          onExit: armed ? (_) => setState(() => _pickHover = null) : null,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapUp: armed ? (d) => _pickAt(d.localPosition, size) : null,
+            child: CustomPaint(
+              foregroundPainter: armed || _pickedPixel != null
+                  ? _PickOverlayPainter(
+                      hover: armed ? _pickHover : null,
+                      pickedPixel: _pickedPixel,
+                      imageWidth: image?.width ?? 0,
+                      imageHeight: image?.height ?? 0)
+                  : null,
+              child: Container(
+                color: Colors.black,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Center(
+                      child: image != null
+                          ? RawImage(image: image, fit: BoxFit.contain)
+                          : Text(hint,
+                              style: const TextStyle(
+                                  fontSize: 11, color: Colors.grey)),
+                    ),
+                    const Positioned(
+                      left: 4,
+                      top: 2,
+                      child: Text('调整前',
+                          style: TextStyle(
+                              fontSize: 10, color: Colors.white54)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 取色模式叠加层：左预览区（调整前）悬停十字线 + 最近取样点标记。
+/// [pickedPixel] 为图像像素坐标，绘制时经 contain 适配换算回窗格坐标
+/// （图像缩放/窗格改尺寸后标记仍对位）。
+class _PickOverlayPainter extends CustomPainter {
+  final Offset? hover;
+  final Offset? pickedPixel;
+  final int imageWidth;
+  final int imageHeight;
+
+  const _PickOverlayPainter(
+      {this.hover,
+      this.pickedPixel,
+      this.imageWidth = 0,
+      this.imageHeight = 0});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final h = hover;
+    if (h != null) {
+      final cross = Paint()
+        ..color = const Color(0xCCFFFFFF)
+        ..strokeWidth = 1;
+      canvas.drawLine(Offset(h.dx, 0), Offset(h.dx, size.height), cross);
+      canvas.drawLine(Offset(0, h.dy), Offset(size.width, h.dy), cross);
+    }
+    final p = pickedPixel;
+    if (p != null && imageWidth > 0 && imageHeight > 0) {
+      final scale =
+          math.min(size.width / imageWidth, size.height / imageHeight);
+      final ox = (size.width - imageWidth * scale) / 2;
+      final oy = (size.height - imageHeight * scale) / 2;
+      final c =
+          Offset(ox + (p.dx + 0.5) * scale, oy + (p.dy + 0.5) * scale);
+      canvas.drawCircle(
+          c,
+          5,
+          Paint()
+            ..color = const Color(0xFFFFFFFF)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5);
+      canvas.drawCircle(c, 1.5, Paint()..color = const Color(0xFFFFFFFF));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PickOverlayPainter old) => true;
 }

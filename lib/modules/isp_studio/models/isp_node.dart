@@ -267,11 +267,16 @@ class IspNode {
                   type.typeId == 'color_balance' ||
                   type.typeId == 'color_temp_adjuster' ||
                   type.typeId == 'color_controller' ||
+                  type.typeId == 'multi_band_eq' ||
                   type.typeId == 'edge_extract' ||
                   type.typeId == 'levels_curves'
               ? kNodeWidth * 2
               : kNodeWidth,
-      extraHeight: type.typeId == 'hsl_debugger' ||
+      extraHeight: type.typeId == 'multi_band_eq'
+          // 多段色彩均衡器在色彩控制器的双联预览+滑条之上还多一行
+          // 取色器工具栏，默认高度相应加大。
+          ? 320
+          : type.typeId == 'hsl_debugger' ||
               type.typeId == 'color_controller' ||
               type.typeId == 'rgb_debugger' ||
               type.typeId == 'yuv_debugger' ||
@@ -1120,6 +1125,55 @@ abstract final class IspNodeRegistry {
           defaultValue: 1.0,
           min: 0,
           max: 5,
+        ),
+        IspParamSpec(
+          key: 'codegenMode',
+          label: '代码生成方式',
+          type: IspParamType.choice,
+          defaultValue: 'func',
+          options: ['func', 'lut'],
+          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
+        ),
+      ],
+    ),
+    // ---- 多段色彩均衡器：多组（≤8 段）色彩控制器式高斯色相带的并联/串联
+    // 合成。每段参数为拍平键 b{i}_h/q/dh/s/l（段数动态，不进参数 spec，
+    // 由卡片 UI 直接写 paramValues，读取侧全部缺省回退恒等值），此处仅
+    // 登记段数/工作方式/选中段等固定参数 ----
+    'multi_band_eq': IspNodeType(
+      typeId: 'multi_band_eq',
+      displayName: '多段色彩均衡器',
+      colorValue: 0xFF6A5670,
+      inputs: [
+        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      outputs: [
+        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
+      ],
+      params: [
+        IspParamSpec(
+          key: 'band_count',
+          label: '段数',
+          type: IspParamType.intNumber,
+          defaultValue: 1,
+          min: 1,
+          max: 8,
+        ),
+        IspParamSpec(
+          key: 'band_mode',
+          label: '工作方式',
+          type: IspParamType.choice,
+          defaultValue: 'parallel',
+          options: ['parallel', 'serial'],
+          optionLabels: {'parallel': '并联', 'serial': '串联'},
+        ),
+        IspParamSpec(
+          key: 'sel_band',
+          label: '选中段',
+          type: IspParamType.intNumber,
+          defaultValue: 0,
+          min: 0,
+          max: 7,
         ),
         IspParamSpec(
           key: 'codegenMode',
@@ -2480,6 +2534,7 @@ abstract final class IspNodeRegistry {
     'csc_hsl2yuv',
     'hsl_debugger',
     'color_controller',
+    'multi_band_eq',
     'rgb_debugger',
     'yuv_debugger',
     'sat_bright_adjuster',

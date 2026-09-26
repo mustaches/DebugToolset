@@ -84,6 +84,7 @@ class GpuPipeline {
     'csc_hsl2rgb',
     'hsl_debugger',
     'color_controller',
+    'multi_band_eq',
     'rgb_debugger',
     'color_temp_adjuster',
     'yuv_debugger',
@@ -163,6 +164,7 @@ class GpuPipeline {
     'rgb2hsl': 'shaders/isp/isp_rgb2hsl.frag',
     'hsl_adjust': 'shaders/isp/isp_hsl_adjust.frag',
     'hsl_band': 'shaders/isp/isp_hsl_band.frag',
+    'hsl_bands': 'shaders/isp/isp_hsl_bands.frag',
     'rgba8_to_rgb16': 'shaders/isp/isp_rgba8_to_rgb16.frag',
     'rgba8_to_yuv420p': 'shaders/isp/isp_rgba8_to_yuv420p.frag',
     'yuv420p_to_rgb16': 'shaders/isp/isp_yuv420p_to_rgb16.frag',
@@ -1547,6 +1549,43 @@ class GpuPipeline {
                 frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
                 maxValue.toDouble(), hCenter, 45.0 / q, bandShift,
                 bandSGain, bandLGain,
+              ], [frame.tex], frame.texW, frame.texH),
+              frame.texW, frame.texH, 'hsl');
+          }
+          ports['$nodeId:out'] = frame;
+        case 'multi_band_eq':
+          _requireFormat(frame, 'hsl', '多段色彩均衡器');
+          // 段数缺省 1，钳位到定义域 1..8（与 CPU 路径同口径）。
+          var bandCount = (p['band_count'] as num?)?.toInt() ?? 1;
+          if (bandCount < 1) bandCount = 1;
+          if (bandCount > 8) bandCount = 8;
+          final serial = p['band_mode']?.toString() == 'serial';
+          // 段参数缺省回退恒等默认；恒等段（无偏移且增益全 1）对并联
+          // 求和/串联级联均无贡献（ΔH 项为 0、增益因子为 1），打包时
+          // 跳过不上传（段序保持原序压实）。
+          final bandFloats = List<double>.filled(40, 0.0);
+          var active = 0;
+          for (var i = 0; i < bandCount; i++) {
+            final bdh = _num(p, 'b${i}_dh');
+            final bs = (p['b${i}_s'] as num?)?.toDouble() ?? 1.0;
+            final bl = (p['b${i}_l'] as num?)?.toDouble() ?? 1.0;
+            if (bdh == 0 && bs == 1.0 && bl == 1.0) continue;
+            final bq = (p['b${i}_q'] as num?)?.toDouble() ?? 2.0;
+            bandFloats[active * 5] = _num(p, 'b${i}_h');
+            bandFloats[active * 5 + 1] = 45.0 / bq; // σ（度）
+            bandFloats[active * 5 + 2] = bdh;
+            bandFloats[active * 5 + 3] = bs;
+            bandFloats[active * 5 + 4] = bl;
+            active++;
+          }
+          if (active > 0) {
+            // GPU 直求 exp（CPU 为 double 烘焙 LUT 查表），σ 按 45°/q
+            // 折算为度数传入（对拍口径 ±2 LSB）。
+            frame = _Port(
+              runPass(_progs['hsl_bands']!, [
+                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                maxValue.toDouble(), active.toDouble(), serial ? 1.0 : 0.0,
+                ...bandFloats,
               ], [frame.tex], frame.texW, frame.texH),
               frame.texW, frame.texH, 'hsl');
           }

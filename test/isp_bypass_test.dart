@@ -416,4 +416,91 @@ void main() {
       await tmp.delete();
     }
   });
+
+  test('GPU 链：multi_band_eq 与 CPU 结果一致（并联/串联/恒等直通）', () async {
+    const w = 8, h = 8;
+    final tmp = await tempRaw(w, h);
+    try {
+      final gpu = await GpuPipeline.tryCreate();
+      expect(gpu, isNotNull);
+
+      Future<void> expectGpuMatchesCpu(
+          List<Map<String, Object?>> chain, String tag,
+          {int tol = 2}) async {
+        expect(GpuPipeline.isSupportedChain(chain), isTrue, reason: tag);
+        final result = await gpu!.run(chain, 0);
+        final gpuRgba = await GpuPipeline.readbackBytes(result.image);
+        result.image.dispose();
+        final cpuRgba = await runChainFrame(chain, 0);
+        expect(gpuRgba.length, cpuRgba.length, reason: tag);
+        var maxDiff = 0;
+        for (var i = 0; i < gpuRgba.length; i++) {
+          final d = (gpuRgba[i] - cpuRgba[i]).abs();
+          if (d > maxDiff) maxDiff = d;
+        }
+        // GPU 权重 float 直求 exp（CPU 为 double LUT），容差 2 覆盖
+        // 带内浮点差与链末色调映射差。
+        expect(maxDiff, lessThanOrEqualTo(tol), reason: tag);
+      }
+
+      List<Map<String, Object?>> chain(Map<String, Object?> mbParams) => [
+            {
+              'typeId': 'cis_bayer_rggb',
+              'nodeId': 'src',
+              'params': {
+                'filePath': tmp.path,
+                'width': w,
+                'height': h,
+                'bitDepth': '8',
+                'packing': 'unpacked_lsb',
+                'bayerPattern': 'RGGB',
+                'littleEndian': true,
+                'frameIndex': 0,
+              },
+            },
+            {'typeId': 'demosaic', 'nodeId': 'dm', 'params': {}},
+            {'typeId': 'csc_rgb2hsl', 'nodeId': 'hsl', 'params': {}},
+            {'typeId': 'multi_band_eq', 'nodeId': 'mb', 'params': mbParams},
+            {'typeId': 'csc_hsl2rgb', 'nodeId': 'rgb', 'params': {}},
+            {'typeId': 'preview', 'nodeId': 'pv', 'params': {}},
+          ];
+
+      // 并联两段。
+      await expectGpuMatchesCpu(
+          chain({
+            'band_count': 2,
+            'band_mode': 'parallel',
+            'b0_h': 0.0, 'b0_q': 2.0, 'b0_dh': 90.0,
+            'b1_h': 90.0, 'b1_q': 2.0, 'b1_dh': 90.0, 'b1_s': 2.0,
+          }),
+          '并联两段');
+      // 串联两段（顺序依赖）。
+      await expectGpuMatchesCpu(
+          chain({
+            'band_count': 2,
+            'band_mode': 'serial',
+            'b0_h': 0.0, 'b0_q': 2.0, 'b0_dh': 90.0,
+            'b1_h': 90.0, 'b1_q': 2.0, 'b1_dh': 90.0, 'b1_s': 2.0,
+          }),
+          '串联两段');
+      // 恒等段跳过打包（b1 恒等不上传），结果与单段一致。
+      await expectGpuMatchesCpu(
+          chain({
+            'band_count': 2,
+            'b0_h': 37.5, 'b0_q': 7.3, 'b0_dh': -42.5,
+            'b0_s': 1.8, 'b0_l': 0.6,
+          }),
+          '恒等段跳过');
+      // bypass：GPU 链直通（通用 bypass 分支，gpu_pipeline.dart :687）。
+      // 透传本身无计算，但链上 demosaic/CSC 往返/链末色调映射的 GPU/CPU
+      // 浮点差既有口径为 ±2 LSB（恒等段跳过子用例同形态实测 maxDiff=2），
+      // 容差取 2。
+      await expectGpuMatchesCpu(
+          chain({'band_count': 1, 'b0_dh': 90.0, 'bypass': true}),
+          'bypass 直通',
+          tol: 2);
+    } finally {
+      await tmp.delete();
+    }
+  });
 }

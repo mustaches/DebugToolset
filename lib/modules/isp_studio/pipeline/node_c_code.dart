@@ -76,6 +76,7 @@ const Map<String, List<String>> nodeCCodeFiles = {
   'bright_contrast_adjuster': ['isp_adjust.h', 'isp_adjust.c'],
   'color_balance': ['isp_adjust.h', 'isp_adjust.c'],
   'color_controller': ['isp_color_controller.h', 'isp_color_controller.c'],
+  'multi_band_eq': ['isp_multi_band_eq.h', 'isp_multi_band_eq.c'],
   'levels_curves': ['isp_levels.h', 'isp_levels.c'],
   'color_temp_adjuster': ['isp_color_temp.h', 'isp_color_temp.c'],
   // ---- 荧光 mono 域 ----

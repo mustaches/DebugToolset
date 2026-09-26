@@ -95,6 +95,16 @@ String? validateGroupBlackBoxExport(IspGraph graph, IspNodeGroup group) {
     final q = (n.paramValues['q'] as num?)?.toDouble() ?? 2.0;
     if (!(q > 0.0)) return '节点 ${n.name} 的 q 参数必须为正数。';
   }
+  // multi_band_eq：各段 q 必须为正（c_ref 同口径返回参数错误）。
+  for (final n in members) {
+    if (n.typeId != 'multi_band_eq') continue;
+    final count =
+        ((n.paramValues['band_count'] as num?)?.toInt() ?? 1).clamp(1, 8);
+    for (var i = 0; i < count; i++) {
+      final q = (n.paramValues['b${i}_q'] as num?)?.toDouble() ?? 2.0;
+      if (!(q > 0.0)) return '节点 ${n.name} 第 ${i + 1} 段的 q 参数必须为正数。';
+    }
+  }
   // 数据环（splitter/combiner 回环）无法流水。
   return streamPlanDataCycleError(graph, group);
 }

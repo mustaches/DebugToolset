@@ -41,6 +41,7 @@ const _processTypeIds = [
   'ahe',
   'hsl_debugger',
   'color_controller',
+  'multi_band_eq',
   'rgb_debugger',
   'yuv_debugger',
   'sat_bright_adjuster',

@@ -1,8 +1,9 @@
-/// ISP 编组导出 C 代码：调节器域节点模板（9 个类型）。
+/// ISP 编组导出 C 代码：调节器域节点模板（10 个类型）。
 ///
 /// 覆盖：hsl_debugger / rgb_debugger / yuv_debugger / sat_bright_adjuster /
 /// bright_contrast_adjuster / color_balance（以上共用 isp_adjust.h）、
 /// color_controller（isp_color_controller.h，src/dst 分离）、
+/// multi_band_eq（isp_multi_band_eq.h，段参数烘焙为 static const 数组）、
 /// levels_curves（isp_levels.h，生成期按图表曲线烘焙 4096 级 LUT）、
 /// color_temp_adjuster（isp_color_temp.h 增益计算 + isp_adjust.h 施加）。
 ///
@@ -34,6 +35,8 @@ CNodeFiles? genAdjusterCNode(CNodeGenCtx ctx) {
       return _genColorBalance(ctx);
     case 'color_controller':
       return _genColorController(ctx);
+    case 'multi_band_eq':
+      return _genMultiBandEq(ctx);
     case 'levels_curves':
       return _genLevelsCurves(ctx);
     case 'color_temp_adjuster':
@@ -363,6 +366,101 @@ ${cF64Table(lMulLut)}
   return isp_color_controller_apply(in, out, w, h, max_value,
                                     ${m}_H_CENTER, ${m}_Q, ${m}_H_SHIFT,
                                     ${m}_S_GAIN, ${m}_L_GAIN);''',
+  );
+}
+
+/// multi_band_eq：多段高斯色相带的并联/串联（isp_multi_band_eq_apply
+/// 直算，或生成期烘焙 H 域三表 + isp_multi_band_eq_lut_apply 查表）。
+/// 段参数烘焙为 static const 段数组（func/lut 共用回退路径），与 Dart
+/// multiBandLuts 共享同一合成 helper（mb_compose），两模式逐位一致。
+CNodeFiles _genMultiBandEq(CNodeGenCtx ctx) {
+  final m = ctx.macro;
+  const input = CPort('in', channels: 3);
+  const output = CPort('out', channels: 3);
+  // 段参数读取口径与 pipeline_runner.dart case 'multi_band_eq' 一致：
+  // band_count 缺省 1 钳位 1..8；b{i}_* 缺键回退恒等默认。
+  var bandCount = ctx.intParam('band_count');
+  if (bandCount < 1) bandCount = 1;
+  if (bandCount > 8) bandCount = 8;
+  final serial = ctx.strParam('band_mode') == 'serial';
+  double bandParam(int i, String suffix, double fallback) =>
+      (ctx.param('b${i}_$suffix') as num?)?.toDouble() ?? fallback;
+  final bands = [
+    for (var i = 0; i < bandCount; i++)
+      (
+        h: bandParam(i, 'h', 0.0),
+        q: bandParam(i, 'q', 2.0),
+        dh: bandParam(i, 'dh', 0.0),
+        s: bandParam(i, 's', 1.0),
+        l: bandParam(i, 'l', 1.0),
+      ),
+  ];
+  final bandsDecl = '''
+  /* 段参数烘焙（生成期，与节点当前段配置一致）。 */
+  static const IspMultiBandEqBand ${ctx.ident}_bands[$bandCount] = {
+${[for (final b in bands) '    {${cNum(b.h)}, ${cNum(b.q)}, ${cNum(b.dh)}, ${cNum(b.s)}, ${cNum(b.l)}},'].join('\n')}
+  };''';
+  final macroLines = [
+    '#define ${m}_BAND_COUNT $bandCount',
+    '#define ${m}_SERIAL ${serial ? 1 : 0}',
+  ];
+  // LUT 模式（codegenMode=lut）：多段合成三表生成期烘焙（Dart
+  // multiBandLuts，域 0..ctx.lutDomainMax）；运行时 max_value 一致走纯
+  // 查表，不一致回退直算（同一合成 helper，逐位一致）。
+  if (ctx.strParam('codegenMode') == 'lut') {
+    final n = ctx.lutDomainMax;
+    final (shiftLut, sMulLut, lMulLut) =
+        multiBandLuts(bands, serial: serial, maxValue: n);
+    return assembleCNode(
+      ctx: ctx,
+      algoIncludes: const ['isp_multi_band_eq.h'],
+      inputs: const [input],
+      outputs: const [output],
+      macroLines: macroLines,
+      body: '''
+$bandsDecl
+  /* LUT 模式：以下三张 H 域表由生成期按节点参数合成烘焙（Dart
+   * multiBandLuts，域 0..$n）。 */
+  static const int32_t ${ctx.ident}_shift_lut[${n + 1}] = {
+${cI32Table(shiftLut)}
+  };
+  static const double ${ctx.ident}_s_mul_lut[${n + 1}] = {
+${cF64Table(sMulLut)}
+  };
+  static const double ${ctx.ident}_l_mul_lut[${n + 1}] = {
+${cF64Table(lMulLut)}
+  };
+  if (${m}_BYPASS) {
+    if (out != in) {
+      memcpy(out, in, ${input.bytesExpr});
+    }
+    return ISP_OK;
+  }
+  if (max_value == $n) {
+    return isp_multi_band_eq_lut_apply(in, out, w, h, max_value,
+        ${ctx.ident}_shift_lut, ${ctx.ident}_s_mul_lut,
+        ${ctx.ident}_l_mul_lut);
+  }
+  return isp_multi_band_eq_apply(in, out, w, h, max_value, ${m}_SERIAL,
+                                 ${m}_BAND_COUNT, ${ctx.ident}_bands);''',
+    );
+  }
+  return assembleCNode(
+    ctx: ctx,
+    algoIncludes: const ['isp_multi_band_eq.h'],
+    inputs: const [input],
+    outputs: const [output],
+    macroLines: macroLines,
+    body: '''
+$bandsDecl
+  if (${m}_BYPASS) {
+    if (out != in) {
+      memcpy(out, in, ${input.bytesExpr});
+    }
+    return ISP_OK;
+  }
+  return isp_multi_band_eq_apply(in, out, w, h, max_value, ${m}_SERIAL,
+                                 ${m}_BAND_COUNT, ${ctx.ident}_bands);''',
   );
 }
 

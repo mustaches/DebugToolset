@@ -76,6 +76,7 @@ int op_adjust_rgb(CaseIO *io);
 int op_adjust_lut3_apply(CaseIO *io);
 int op_adjust_bc_lut_apply(CaseIO *io);
 int op_color_controller_lut_apply(CaseIO *io);
+int op_multi_band_eq(CaseIO *io);
 int op_adjust_yuv(CaseIO *io);
 int op_adjust_satbright(CaseIO *io);
 int op_adjust_brightcontrast(CaseIO *io);
@@ -160,6 +161,7 @@ static const OpEntry kOpTable[] = {
     {"adjust_lut3_apply", op_adjust_lut3_apply},
     {"adjust_bc_lut_apply", op_adjust_bc_lut_apply},
     {"color_controller_lut_apply", op_color_controller_lut_apply},
+    {"multi_band_eq", op_multi_band_eq},
     {"adjust_yuv", op_adjust_yuv},
     {"adjust_satbright", op_adjust_satbright},
     {"adjust_brightcontrast", op_adjust_brightcontrast},

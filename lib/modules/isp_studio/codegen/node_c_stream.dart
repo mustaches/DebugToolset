@@ -386,6 +386,8 @@ StreamKernelResult emitStreamRowKernel(
       return _kColorTemp(s, ctx, inputs);
     case 'color_controller':
       return _kColorController(s, ctx, inputs);
+    case 'multi_band_eq':
+      return _kMultiBandEq(s, ctx, inputs);
     case 'fluoro_leak':
       return _kFluoroLeak(s, ctx, inputs);
     case 'pseudo_color':
@@ -1306,6 +1308,171 @@ ${cF64Table(lMulLut)}
       'const uint16_t $o0 = (uint16_t)$hnew;',
       'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * $sMulExpr, max_value);',
       'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * $lMulExpr, max_value);',
+    ],
+    {'out': [o0, o1, o2]},
+  );
+}
+
+/// multi_band_eq：多段高斯色相带并联/串联（逐像素，H 量化值整数 →
+/// 合成结果与整帧 LUT 表项逐位一致）。出处：isp_kernels.dart
+/// multiBandLuts + applyHslBandLuts（= isp_multi_band_eq.c mb_compose +
+/// lut_apply 的同公式行核版）。段参数读取口径同 runner（band_count 缺省
+/// 1 钳位 1..8，b{i}_* 缺键回退恒等默认）；全段恒等直通别名（同 runner
+/// 判定）。段合成写为文件级 static helper `<id>_compose`（段参数生成期
+/// 烘焙为字面常量，公式与 mb_compose 逐行一致）；LUT 模式
+///（codegenMode=lut）另烘焙三表（Dart multiBandLuts，域 0..
+/// lutDomainMax），max_value 一致走查表、不一致回退 _compose 直算。
+StreamKernelResult _kMultiBandEq(
+    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  final ie = _in(inputs, 'in');
+  if (ctx.boolParam('bypass')) return _alias(ie, 'out');
+  var bandCount = ctx.intParam('band_count');
+  if (bandCount < 1) bandCount = 1;
+  if (bandCount > 8) bandCount = 8;
+  final serial = ctx.strParam('band_mode') == 'serial';
+  double bandParam(int i, String suffix, double fallback) =>
+      (ctx.param('b${i}_$suffix') as num?)?.toDouble() ?? fallback;
+  final bands = [
+    for (var i = 0; i < bandCount; i++)
+      (
+        h: bandParam(i, 'h', 0.0),
+        q: bandParam(i, 'q', 2.0),
+        dh: bandParam(i, 'dh', 0.0),
+        s: bandParam(i, 's', 1.0),
+        l: bandParam(i, 'l', 1.0),
+      ),
+  ];
+  if (bands.every((b) => b.dh == 0.0 && b.s == 1.0 && b.l == 1.0)) {
+    return _alias(ie, 'out');
+  }
+  s.useHelper('bb_clamp_to');
+  final id = ctx.ident;
+
+  // 段 i 在色相 hueExpr 上的高斯权重（行级展开，字面常量下标/参数）：
+  // 与 mb_compose 的 mb_weight 逐行一致。
+  String bandWeightLines(int i, String hueExpr) {
+    final b = bands[i];
+    return '''
+  double d$i = fabs($hueExpr - ${cNum(b.h)});
+  d$i = fmod(d$i, 360.0);
+  if (d$i > 180.0) d$i = 360.0 - d$i;
+  { const double x$i = d$i / (45.0 / ${cNum(b.q)});
+    const double w$i = exp(-0.5 * x$i * x$i);''';
+  }
+
+  // 文件级逐 hv 合成 helper（func 模式与 LUT 回退共用）。
+  final compose = StringBuffer()
+    ..writeln('''/* multi_band_eq 逐 hv 合成（与 isp_multi_band_eq.c mb_compose 同公式，
+ * 段参数生成期烘焙为字面常量）。 */''')
+    ..writeln('static void ${id}_compose(int hv, int max_value, int32_t *shift,')
+    ..writeln('                          double *s_mul, double *l_mul) {')
+    ..writeln('  const double h_deg = (double)hv * 360.0 / (double)max_value;');
+  if (bandCount == 1) {
+    // 单段捷径：串联与并联语义相同，走色彩控制器同公式（无钳位路径）。
+    compose
+      ..writeln(bandWeightLines(0, 'h_deg'))
+      ..writeln('    *shift ='
+          ' (int32_t)lround(${cNum(bands[0].dh)} * w0 / 360.0 * (double)max_value);')
+      ..writeln('    *s_mul = 1.0 + (${cNum(bands[0].s)} - 1.0) * w0;')
+      ..writeln('    *l_mul = 1.0 + (${cNum(bands[0].l)} - 1.0) * w0;')
+      ..writeln('  }');
+  } else if (!serial) {
+    // 并联：全部段在原 H 上各取权重，加权求和后钳位。
+    compose.writeln('  double dh_sum = 0.0, s_sum = 0.0, l_sum = 0.0;');
+    for (var i = 0; i < bandCount; i++) {
+      compose
+        ..writeln(bandWeightLines(i, 'h_deg'))
+        ..writeln('    dh_sum += w$i * ${cNum(bands[i].dh)};')
+        ..writeln('    s_sum += w$i * (${cNum(bands[i].s)} - 1.0);')
+        ..writeln('    l_sum += w$i * (${cNum(bands[i].l)} - 1.0);')
+        ..writeln('  }');
+    }
+    compose.writeln('''
+  if (dh_sum < -180.0) dh_sum = -180.0;
+  else if (dh_sum > 180.0) dh_sum = 180.0;
+  *shift = (int32_t)lround(dh_sum / 360.0 * (double)max_value);
+  { const double sm = 1.0 + s_sum;
+    *s_mul = sm < 0.0 ? 0.0 : (sm > 5.0 ? 5.0 : sm); }
+  { const double lm = 1.0 + l_sum;
+    *l_mul = lm < 0.0 ? 0.0 : (lm > 5.0 ? 5.0 : lm); }''');
+  } else {
+    // 串联：按段序级联，后段在前段更新后的中间色相上取权重（fmod 归一
+    // 等价 Dart 欧几里得 %），首尾偏移取色环最短路径。
+    compose.writeln('  double h_cur = h_deg;');
+    compose.writeln('  double s_acc = 1.0, l_acc = 1.0;');
+    for (var i = 0; i < bandCount; i++) {
+      compose
+        ..writeln(bandWeightLines(i, 'h_cur'))
+        ..writeln('    s_acc *= 1.0 + w$i * (${cNum(bands[i].s)} - 1.0);')
+        ..writeln('    l_acc *= 1.0 + w$i * (${cNum(bands[i].l)} - 1.0);')
+        ..writeln('    h_cur = fmod(h_cur + w$i * ${cNum(bands[i].dh)}, 360.0);')
+        ..writeln('    if (h_cur < 0.0) h_cur += 360.0;')
+        ..writeln('  }');
+    }
+    compose.writeln('''
+  { double dd = fmod(h_cur - h_deg, 360.0);
+    if (dd < 0.0) dd += 360.0;
+    if (dd > 180.0) dd -= 360.0;
+    if (dd < -180.0) dd += 360.0;
+    *shift = (int32_t)lround(dd / 360.0 * (double)max_value); }
+  *s_mul = s_acc < 0.0 ? 0.0 : (s_acc > 5.0 ? 5.0 : s_acc);
+  *l_mul = l_acc < 0.0 ? 0.0 : (l_acc > 5.0 ? 5.0 : l_acc);''');
+  }
+  compose.writeln('}');
+  s.addFileDecl('${id}_compose', compose.toString());
+
+  // LUT 模式：多段合成三表生成期烘焙（与整帧版同一路径）。
+  final lutMode = ctx.strParam('codegenMode') == 'lut';
+  final n = ctx.lutDomainMax;
+  if (lutMode) {
+    final (shiftLut, sMulLut, lMulLut) =
+        multiBandLuts(bands, serial: serial, maxValue: n);
+    s.addFileDecl('${id}_shift_lut', '''
+/* multi_band_eq LUT 模式：H 域三表（H 偏移/S 乘子/L 乘子）生成期烘焙
+ *（Dart multiBandLuts，域 0..$n）；max_value 一致走查表，不一致回退
+ * ${id}_compose 直算。 */
+static const int32_t ${id}_shift_lut[${n + 1}] = {
+${cI32Table(shiftLut)}
+};''');
+    s.addFileDecl('${id}_s_mul_lut', '''
+static const double ${id}_s_mul_lut[${n + 1}] = {
+${cF64Table(sMulLut)}
+};''');
+    s.addFileDecl('${id}_l_mul_lut', '''
+static const double ${id}_l_mul_lut[${n + 1}] = {
+${cF64Table(lMulLut)}
+};''');
+  }
+
+  final hv = s.freshVar();
+  final shift = s.freshVar();
+  final sMul = s.freshVar();
+  final lMul = s.freshVar();
+  final hnew = s.freshVar();
+  final o0 = s.freshVar();
+  final o1 = s.freshVar();
+  final o2 = s.freshVar();
+  return (
+    [
+      'int $hv = ${ie[0]};',
+      'if ($hv > max_value) $hv = max_value;',
+      'int32_t $shift;',
+      'double $sMul, $lMul;',
+      if (lutMode) ...[
+        'if (max_value == $n) {',
+        '  $shift = ${id}_shift_lut[$hv];',
+        '  $sMul = ${id}_s_mul_lut[$hv];',
+        '  $lMul = ${id}_l_mul_lut[$hv];',
+        '} else {',
+        '  ${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
+        '}',
+      ] else
+        '${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
+      'int $hnew = ($hv + $shift) % (max_value + 1);',
+      'if ($hnew < 0) $hnew += (max_value + 1);',
+      'const uint16_t $o0 = (uint16_t)$hnew;',
+      'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * $sMul, max_value);',
+      'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * $lMul, max_value);',
     ],
     {'out': [o0, o1, o2]},
   );

@@ -693,6 +693,7 @@ class IspStudioState extends ChangeNotifier {
   static double maxNodeWidthFor(String typeId) =>
       (typeId == 'hsl_debugger' ||
           typeId == 'color_controller' ||
+          typeId == 'multi_band_eq' ||
           typeId == 'rgb_debugger' ||
           typeId == 'yuv_debugger' ||
           typeId == 'sat_bright_adjuster' ||
@@ -1202,6 +1203,7 @@ class IspStudioState extends ChangeNotifier {
       case 'color_balance':
       case 'color_temp_adjuster':
       case 'edge_extract':
+      case 'multi_band_eq':
         // 双联对比图（左调整前/右调整后），每格内容为图像本身。
         final img = previewImages[node.id] ?? previewInputImages[node.id];
         if (img != null && img.height > 0) return 2.0 * img.width / img.height;
@@ -1229,6 +1231,8 @@ class IspStudioState extends ChangeNotifier {
           (20.0, 86.0), // 横 8+4+8；纵 4+滑块 24*3+手柄 10
         'sat_bright_adjuster' => (20.0, 62.0), // 滑块 24*2
         'color_controller' => (20.0, 134.0), // 滑块 24*5
+        // 工具栏 26 + 滑块 24*5
+        'multi_band_eq' => (20.0, 160.0),
         'gaussian_blur' => (20.0, 62.0), // 滑块 24*2
         'edge_extract' => (20.0, 62.0), // 滑块 24*2
         'color_temp_adjuster' => (20.0, 126.0), // 温度行 24+滑块 24+底行 64
@@ -1700,6 +1704,21 @@ class IspStudioState extends ChangeNotifier {
         value.isNotEmpty) {
       autoFillFromVideo(nodeId); // 异步，失败静默
     }
+  }
+
+  /// 批量写参数：等价于多次 [setParam] 合并为单次 notifyListeners。
+  /// 不含 filePath 等键的联动副作用（目前用于多段色彩均衡器的段参数
+  /// 批量写入/预设恢复）；value 为 null 时写入 null，读取侧按缺键
+  /// 回退默认（「缺键=恒等」语义）。
+  void setParams(String nodeId, Map<String, Object?> values) {
+    final node = graph.nodes[nodeId];
+    if (node == null) return;
+    node.paramValues.addAll(values);
+    totalFrames = null;
+    nodeOutputCaptures = {};
+    nodeRunTimesUs = {}; // 运行值已过期
+    nodeRunOnGpu = {}; // 同上
+    notifyListeners();
   }
 
   /// 视频源文件路径对应的帧率/总帧数（ffmpeg 解析）自动填充到下游
@@ -2346,6 +2365,7 @@ class IspStudioState extends ChangeNotifier {
       if (node.typeId == 'preview' ||
           node.typeId == 'hsl_debugger' ||
           node.typeId == 'color_controller' ||
+          node.typeId == 'multi_band_eq' ||
           node.typeId == 'rgb_debugger' ||
           node.typeId == 'yuv_debugger' ||
           node.typeId == 'sat_bright_adjuster' ||
@@ -2402,6 +2422,7 @@ class IspStudioState extends ChangeNotifier {
         }
         if (pvNode.typeId == 'hsl_debugger' ||
             pvNode.typeId == 'color_controller' ||
+            pvNode.typeId == 'multi_band_eq' ||
             pvNode.typeId == 'rgb_debugger' ||
             pvNode.typeId == 'yuv_debugger' ||
             pvNode.typeId == 'sat_bright_adjuster' ||
@@ -4770,14 +4791,15 @@ class IspStudioState extends ChangeNotifier {
   /// 最大化前的几何备份：nodeId → (x, y, width, extraHeight)。
   final Map<String, (double, double, double, double)> _maximizeBackup = {};
 
-  /// 有显示区（可最大化）的节点：预览 + 调节器（HSL/RGB/YUV、色饱和度/
-  /// 亮度、亮度/对比度、色彩平衡、色温）+ 高频边缘提取 + 曲线调节器 +
-  /// 仪器（含音频仪器）。
+  /// 有显示区（可最大化）的节点：预览 + 调节器（HSL/RGB/YUV、色彩控制器、
+  /// 多段色彩均衡器、色饱和度/亮度、亮度/对比度、色彩平衡、色温）+
+  /// 高频边缘提取 + 曲线调节器 + 仪器（含音频仪器）。
   bool canMaximize(String nodeId) {
     final t = graph.nodes[nodeId]?.typeId;
     return t == 'preview' ||
         t == 'hsl_debugger' ||
         t == 'color_controller' ||
+        t == 'multi_band_eq' ||
         t == 'rgb_debugger' ||
         t == 'yuv_debugger' ||
         t == 'sat_bright_adjuster' ||

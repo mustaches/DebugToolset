@@ -38,7 +38,7 @@ import 'node_c_gen_raw.dart';
 import 'node_c_gen_rgb.dart';
 
 /// 当前支持导出的节点类型（Process 含 ColorTrans/Fluorescence 子分组 +
-/// Datapath，共 48 个；Source 类暂不支持）。
+/// Datapath，共 49 个；Source 类暂不支持）。
 const Set<String> cExportSupportedTypeIds = {
   // Process — RAW 域
   'black_level', 'dpc', 'fpn', 'lsc', 'grgb_balance', 'bayer_dnr', 'highlight',
@@ -49,7 +49,7 @@ const Set<String> cExportSupportedTypeIds = {
   'csc_rgb2yuv', 'csc_rgb2hsl', 'csc_yuv2rgb', 'csc_yuv2hsl', 'csc_hsl2rgb',
   'csc_hsl2yuv',
   // Process — 调节器
-  'hsl_debugger', 'color_controller', 'rgb_debugger', 'yuv_debugger',
+  'hsl_debugger', 'color_controller', 'multi_band_eq', 'rgb_debugger', 'yuv_debugger',
   'sat_bright_adjuster', 'bright_contrast_adjuster', 'levels_curves',
   'color_balance', 'color_temp_adjuster',
   // Process — Fluorescence

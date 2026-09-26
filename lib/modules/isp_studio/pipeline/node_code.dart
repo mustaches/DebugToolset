@@ -82,6 +82,9 @@ const Map<String, List<NodeCodeSeg>> nodeCodeSpec = {
   // ---- 调节器 ----
   'hsl_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustHsl'])],
   'color_controller': [NodeCodeSeg('isp_kernels.dart', ['adjustHslBand'])],
+  'multi_band_eq': [
+    NodeCodeSeg('isp_kernels.dart', ['multiBandLuts', 'applyHslBandLuts'])
+  ],
   'rgb_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustRgb'])],
   'yuv_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustYuv'])],
   'sat_bright_adjuster': [NodeCodeSeg('isp_kernels.dart', ['adjustSatBright'])],

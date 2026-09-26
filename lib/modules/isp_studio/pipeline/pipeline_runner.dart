@@ -1075,6 +1075,48 @@ Future<Uint8List> runChainFrame(
           height: h,
           maxValue: max,
         );
+      // ---- 多段色彩均衡器：多组高斯色相带并联/串联合成为三张 H 域 LUT
+      // 后查表施加（与色彩控制器 LUT 分支同形态）----
+      case 'multi_band_eq':
+        frame.requireHsl('多段色彩均衡器');
+        final w = frame.width;
+        final h = frame.height;
+        final max = frame.maxValue;
+        // 段数缺省 1，钳位到定义域 1..8。
+        var bandCount = _int(p, 'band_count');
+        if (bandCount < 1) bandCount = 1;
+        if (bandCount > 8) bandCount = 8;
+        final mbSerial = _str(p, 'band_mode') == 'serial';
+        // 段参数为拍平键 b{i}_*（不进参数 spec），缺键全部回退恒等默认。
+        final mbBands = [
+          for (var i = 0; i < bandCount; i++)
+            (
+              h: _double(p, 'b${i}_h'),
+              q: (p['b${i}_q'] as num?)?.toDouble() ?? 2.0,
+              dh: _double(p, 'b${i}_dh'),
+              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+              s: (p['b${i}_s'] as num?)?.toDouble() ?? 1.0,
+              l: (p['b${i}_l'] as num?)?.toDouble() ?? 1.0,
+            ),
+        ];
+        // 全部段恒等（无偏移且增益全 1）时直通不拷贝。
+        if (!mbBands.every((b) => b.dh == 0 && b.s == 1.0 && b.l == 1.0)) {
+          final (mbShift, mbSMul, mbLMul) =
+              multiBandLuts(mbBands, serial: mbSerial, maxValue: max);
+          frame = _Frame(
+            data: await applyHslBandLutsParallel(frame.data,
+                width: w,
+                height: h,
+                maxValue: max,
+                shiftLut: mbShift,
+                sMulLut: mbSMul,
+                lMulLut: mbLMul),
+            format: 'hsl',
+            width: w,
+            height: h,
+            maxValue: max,
+          );
+        }
       // ---- RGB 调节器：RGB 域通道增益（恒等参数时核内直通不拷贝）----
       case 'rgb_debugger':
         frame.requireRgb('RGB调节器');

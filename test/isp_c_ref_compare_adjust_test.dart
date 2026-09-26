@@ -789,6 +789,92 @@ Future<void> main() async {
     });
   });
 
+  group('isp_c_ref_compare_adjust: multi_band_eq 多段合成 C↔Dart 对拍',
+      skip: built ? false : '无 MSVC 环境或 harness 构建失败', () {
+    /// C 侧 isp_multi_band_eq_build_luts + lut_apply 全路径，Dart 基准为
+    /// multiBandLuts + applyHslBandLuts（同 runner 路径），tol=0 逐位一致。
+    Future<void> checkMb(String context, Uint16List hsl, int w, int h,
+        List<({double h, double q, double dh, double s, double l})> bands,
+        {bool serial = false, int maxValue = _max}) async {
+      final (shift, sMul, lMul) =
+          multiBandLuts(bands, serial: serial, maxValue: maxValue);
+      final expected = applyHslBandLuts(hsl, 0, hsl.length ~/ 3,
+          maxValue: maxValue,
+          shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+      final params = <String, Object?>{
+        'width': w,
+        'height': h,
+        'max_value': maxValue,
+        'serial': serial ? 1 : 0,
+        'band_count': bands.length,
+      };
+      for (var i = 0; i < bands.length; i++) {
+        params['b${i}_h'] = bands[i].h;
+        params['b${i}_q'] = bands[i].q;
+        params['b${i}_dh'] = bands[i].dh;
+        params['b${i}_s'] = bands[i].s;
+        params['b${i}_l'] = bands[i].l;
+      }
+      final c = await runCOp('multi_band_eq',
+          params: params, inputs: [hsl], tag: _tag);
+      expectFramesEqual(c.outputs[0], expected, context: context);
+    }
+
+    test('并联两段 64x48（中带 q=2 + 邻带 S 增益）', () async {
+      const w = 64, h = 48;
+      final hsl = hslFromRgb(lcgFrame(w, h, 3, 81, maxValue: _max), _max);
+      await checkMb('并联两段', hsl, w, h, [
+        (h: 120.0, q: 2.0, dh: 30.0, s: 1.5, l: 0.8),
+        (h: 200.0, q: 4.0, dh: -20.0, s: 0.7, l: 1.2),
+      ]);
+    });
+
+    test('串联两段 64x48（顺序依赖 + 乘性增益）', () async {
+      const w = 64, h = 48;
+      final hsl = hslFromRgb(lcgFrame(w, h, 3, 82, maxValue: _max), _max);
+      await checkMb('串联两段', hsl, w, h, [
+        (h: 0.0, q: 2.0, dh: 90.0, s: 1.0, l: 1.0),
+        (h: 90.0, q: 2.0, dh: 90.0, s: 2.0, l: 0.9),
+      ], serial: true);
+    });
+
+    test('单段退化（并联/串联均同色彩控制器公式）', () async {
+      const w = 32, h = 24;
+      final hsl = hslFromRgb(lcgFrame(w, h, 3, 83, maxValue: _max), _max);
+      const one = [(h: 37.5, q: 7.3, dh: -42.5, s: 1.8, l: 0.6)];
+      await checkMb('单段并联', hsl, w, h, one);
+      await checkMb('单段串联', hsl, w, h, one, serial: true);
+    });
+
+    test('串联环绕边界（中心 350° 负偏移 + 恒等段）', () async {
+      const w = 64, h = 48;
+      final hsl = hslFromRgb(gradientFrame(w, h, 3, maxValue: _max), _max);
+      await checkMb('串联环绕+恒等段', hsl, w, h, [
+        (h: 350.0, q: 2.0, dh: -60.0, s: 1.0, l: 1.0),
+        (h: 100.0, q: 2.0, dh: 0.0, s: 1.0, l: 1.0),
+      ], serial: true);
+    });
+
+    test('并联 clamp（同中心 dh 180+180 → ±180°；s 5+5 → ×5）', () async {
+      const w = 32, h = 24;
+      final hsl = hslFromRgb(lcgFrame(w, h, 3, 85, maxValue: _max), _max);
+      await checkMb('并联 clamp', hsl, w, h, [
+        (h: 60.0, q: 0.8, dh: 180.0, s: 5.0, l: 5.0),
+        (h: 60.0, q: 1.6, dh: 180.0, s: 5.0, l: 0.0),
+      ]);
+    });
+
+    test('宽带三段串联 64x48（q=0.5 全域覆盖）', () async {
+      const w = 64, h = 48;
+      final hsl = hslFromRgb(gradientFrame(w, h, 3, maxValue: _max), _max);
+      await checkMb('三段串联宽带', hsl, w, h, [
+        (h: 30.0, q: 0.5, dh: 45.0, s: 1.3, l: 1.1),
+        (h: 150.0, q: 0.6, dh: -70.0, s: 0.8, l: 1.0),
+        (h: 270.0, q: 0.7, dh: 25.0, s: 1.1, l: 0.9),
+      ], serial: true);
+    });
+  });
+
   group('isp_c_ref_compare_adjust: 亮度/对比度 LUT 查表 C↔Dart 对拍',
       skip: built ? false : '无 MSVC 环境或 harness 构建失败', () {
     /// LUT 模式一条龙：Dart brightContrastAdjustLut/RatioLut 建表 →

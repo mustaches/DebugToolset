@@ -200,6 +200,66 @@ void main() {
     expectClose(gpuOut, cpu, 2, 'hsl_band');
   });
 
+  test('hsl_bands（多段色彩均衡器：单段/并联/串联/恒等段/clamp）', () async {
+    final src = randFrame(w * h * 3, 88);
+    // uniforms：texW/texH/width/maxValue/count/mode + 8 段 × 5 参数
+    //（h°、σ°=45°/q、dh°、s、l；空槽补 σ=1 的恒等段，循环按 count 截断）。
+    List<double> bandsUniforms(
+        List<({double h, double q, double dh, double s, double l})> bands,
+        double mode) {
+      final u = <double>[
+        w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
+        bands.length.toDouble(), mode,
+      ];
+      for (var i = 0; i < 8; i++) {
+        if (i < bands.length) {
+          final b = bands[i];
+          u.addAll([b.h, 45.0 / b.q, b.dh, b.s, b.l]);
+        } else {
+          u.addAll([0.0, 1.0, 0.0, 1.0, 1.0]);
+        }
+      }
+      return u;
+    }
+
+    // CPU 参考：multiBandLuts 合成 LUT + 查表（与 runner 同路径）。
+    Future<void> check(
+        List<({double h, double q, double dh, double s, double l})> bands,
+        bool serial, String tag) async {
+      final (shift, sMul, lMul) =
+          multiBandLuts(bands, serial: serial, maxValue: maxValue);
+      final cpu = applyHslBandLuts(src, 0, src.length ~/ 3,
+          maxValue: maxValue,
+          shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+      final gpuOut = await runShader(prog('hsl_bands'),
+          bandsUniforms(bands, serial ? 1.0 : 0.0), [src], [3], 3);
+      expectClose(gpuOut, cpu, 2, tag);
+    }
+
+    // 单段退化：并联/串联同结果（与色彩控制器同参数）。
+    final one = [(h: 37.5, q: 7.3, dh: -42.5, s: 1.8, l: 0.6)];
+    await check(one, false, 'hsl_bands 单段并联');
+    await check(one, true, 'hsl_bands 单段串联');
+    // 并联两段（级联邻带 + S 增益合成）。
+    final two = [
+      (h: 0.0, q: 2.0, dh: 90.0, s: 1.0, l: 1.0),
+      (h: 90.0, q: 2.0, dh: 90.0, s: 2.0, l: 1.0),
+    ];
+    await check(two, false, 'hsl_bands 并联两段');
+    // 串联两段（顺序依赖 + 乘性增益）。
+    await check(two, true, 'hsl_bands 串联两段');
+    // 串联色环环绕 + 恒等段参与循环（不跳过）。
+    await check([
+      (h: 350.0, q: 2.0, dh: -60.0, s: 1.0, l: 1.0),
+      (h: 100.0, q: 2.0, dh: 0.0, s: 1.0, l: 1.0),
+    ], true, 'hsl_bands 串联环绕+恒等段');
+    // 并联 clamp：两段同中心 dh 180+180 → 钳位 180°；s 5+5 → 钳位 ×5。
+    await check([
+      (h: 0.0, q: 2.0, dh: 180.0, s: 5.0, l: 5.0),
+      (h: 0.0, q: 2.0, dh: 180.0, s: 5.0, l: 5.0),
+    ], false, 'hsl_bands 并联 clamp');
+  });
+
   test('rgba8_to_rgb16（流式源重排）', () async {
     final rgba = Uint8List.fromList(
         [for (final v in randFrame(w * h * 4, 9)) v % 256]);

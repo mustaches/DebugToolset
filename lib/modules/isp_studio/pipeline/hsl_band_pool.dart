@@ -192,3 +192,44 @@ Future<Uint16List> adjustHslBandParallel(Uint16List hsl,
   }
   return out;
 }
+
+/// 多段色彩均衡器等「生成期合成 LUT」路径的并行查表：与
+/// [adjustHslBandParallel] 同口径（宽×高 ≥ 1M 像素按行带扇出、按带序
+/// 确定性拼接），各带经 Isolate.run 执行 [applyHslBandLuts]（三张 LUT
+/// 随闭包复制进各 isolate，恒等性由调用方在合成前按段参数判定），
+/// 与整幅串行 [applyHslBandLuts] 逐位一致；小图走串行。
+Future<Uint16List> applyHslBandLutsParallel(Uint16List hsl,
+    {required int width,
+    required int height,
+    required int maxValue,
+    required Int32List shiftLut,
+    required Float64List sMulLut,
+    required Float64List lMulLut}) async {
+  const parallelPixels = 1 << 20;
+  if (width * height < parallelPixels) {
+    return applyHslBandLuts(hsl, 0, hsl.length ~/ 3,
+        maxValue: maxValue,
+        shiftLut: shiftLut,
+        sMulLut: sMulLut,
+        lMulLut: lMulLut);
+  }
+  final nw = math.min(cpuBandWorkers, height);
+  final tasks = <Future<Uint16List>>[];
+  for (var t = 0; t < nw; t++) {
+    final y0 = height * t ~/ nw, y1 = height * (t + 1) ~/ nw;
+    if (y0 >= y1) continue;
+    tasks.add(Isolate.run(() => applyHslBandLuts(hsl, y0 * width, y1 * width,
+        maxValue: maxValue,
+        shiftLut: shiftLut,
+        sMulLut: sMulLut,
+        lMulLut: lMulLut)));
+  }
+  final bands = await Future.wait(tasks);
+  final out = Uint16List(hsl.length);
+  var o = 0;
+  for (final b in bands) {
+    out.setRange(o, o + b.length, b);
+    o += b.length;
+  }
+  return out;
+}

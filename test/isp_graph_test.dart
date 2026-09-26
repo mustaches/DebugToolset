@@ -37,6 +37,7 @@ void main() {
         'csc_hsl2yuv',
         'hsl_debugger',
         'color_controller',
+        'multi_band_eq',
         'rgb_debugger',
         'yuv_debugger',
         'sat_bright_adjuster',
@@ -93,7 +94,7 @@ void main() {
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 81);
+      expect(IspNodeRegistry.types.length, 82);
     });
 
     test('端口类型符合预期', () {

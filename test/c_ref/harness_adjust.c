@@ -16,6 +16,7 @@
 #include "harness.h"
 #include "isp_adjust.h"
 #include "isp_color_controller.h"
+#include "isp_multi_band_eq.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -312,5 +313,75 @@ int op_color_controller_lut_apply(CaseIO *io) {
   free(frame);
   free(raw);
   free(out);
+  return rc;
+}
+
+/**
+ * 多段色彩均衡器（multi_band_eq）：C 侧建表 + 查表全路径对拍。
+ * in0 = HSL 帧（w*h*3 u16）。
+ * params: max_value、serial(0=并联/1=串联)、band_count(1..8)；
+ * 每段 b{i}_h / b{i}_q / b{i}_dh / b{i}_s / b{i}_l（double，
+ * 缺省 h=0、q=2、dh=0、s=1、l=1，与 Dart runner 回退口径一致）。
+ */
+int op_multi_band_eq(CaseIO *io) {
+  int w, h;
+  size_t len;
+  const int max_value = case_param_int(io, "max_value", 1023);
+  const int serial = case_param_int(io, "serial", 0);
+  int band_count = case_param_int(io, "band_count", 1);
+  IspMultiBandEqBand bands[ISP_MULTI_BAND_EQ_MAX_BANDS];
+  const size_t n = (size_t)max_value + 1;
+  uint16_t *src, *dst;
+  int32_t *shift_lut;
+  double *s_mul_lut, *l_mul_lut;
+  int i;
+  int rc;
+  if (band_count < 1) band_count = 1;
+  if (band_count > ISP_MULTI_BAND_EQ_MAX_BANDS) {
+    band_count = ISP_MULTI_BAND_EQ_MAX_BANDS;
+  }
+  for (i = 0; i < band_count; i++) {
+    char key[16];
+    snprintf(key, sizeof(key), "b%d_h", i);
+    bands[i].h = case_param_double(io, key, 0.0);
+    snprintf(key, sizeof(key), "b%d_q", i);
+    bands[i].q = case_param_double(io, key, 2.0);
+    snprintf(key, sizeof(key), "b%d_dh", i);
+    bands[i].dh = case_param_double(io, key, 0.0);
+    snprintf(key, sizeof(key), "b%d_s", i);
+    bands[i].s = case_param_double(io, key, 1.0);
+    snprintf(key, sizeof(key), "b%d_l", i);
+    bands[i].l = case_param_double(io, key, 1.0);
+  }
+  if (!adj_frame_len(io, "multi_band_eq", 0, &w, &h, &len)) {
+    return ISP_ERR_SIZE;
+  }
+  src = case_load_in(io, 0, len);
+  shift_lut = (int32_t *)malloc(n * sizeof(int32_t));
+  s_mul_lut = (double *)malloc(n * sizeof(double));
+  l_mul_lut = (double *)malloc(n * sizeof(double));
+  dst = (uint16_t *)malloc(len * sizeof(uint16_t));
+  if (src == NULL || shift_lut == NULL || s_mul_lut == NULL ||
+      l_mul_lut == NULL || dst == NULL) {
+    snprintf(io->err, CASE_ERR_LEN, "multi_band_eq: out of memory");
+    free(src);
+    free(shift_lut);
+    free(s_mul_lut);
+    free(l_mul_lut);
+    free(dst);
+    return ISP_ERR_ARG;
+  }
+  rc = isp_multi_band_eq_build_luts(shift_lut, s_mul_lut, l_mul_lut,
+                                    max_value, serial, band_count, bands);
+  if (rc == ISP_OK) {
+    rc = isp_multi_band_eq_lut_apply(src, dst, w, h, max_value, shift_lut,
+                                     s_mul_lut, l_mul_lut);
+  }
+  if (rc == ISP_OK) rc = case_write_out(io, 0, dst, len);
+  free(src);
+  free(shift_lut);
+  free(s_mul_lut);
+  free(l_mul_lut);
+  free(dst);
   return rc;
 }

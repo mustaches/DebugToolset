@@ -81,6 +81,7 @@ const Set<String> streamSupportedTypeIds = {
   'hsl_debugger', 'rgb_debugger', 'yuv_debugger',
   'sat_bright_adjuster', 'bright_contrast_adjuster', 'levels_curves',
   'color_balance', 'color_temp_adjuster', 'color_controller',
+  'multi_band_eq',
   // Process — Fluorescence（逐像素子集）
   'fluoro_leak', 'pseudo_color',
   // Datapath

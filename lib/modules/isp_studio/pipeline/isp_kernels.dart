@@ -1271,6 +1271,78 @@ Uint16List adjustHslBand(Uint16List hsl,
   return (shiftLut, sMulLut, lMulLut);
 }
 
+/// 多段色彩均衡器的三张 H 域 LUT 合成：每段为与色彩控制器同构的高斯
+/// 色相带（中心 h、带宽 q、色相偏移 dh、S/L 增益 s/l，权重
+/// w=exp(-0.5·(Δ/σ)²)，Δ 为色环最短角距，σ=45°/q，与 [hslBandLuts]
+/// 同公式同运算序）。
+/// 并联（serial=false）：全部段在原 H 上各取权重，ΔH 加权求和后钳位
+/// 到色环最短路径域 ±180°，S/L 乘子按 1+Σwᵢ·(gᵢ−1) 合成后钳位 0..5；
+/// 串联（serial=true）：按段序级联，第 i 段在前段更新后的中间色相
+/// Hᵢ（每段累加后模 360 保持在 [0,360)）上取权重，S/L 逐段乘性合成
+/// （钳位 0..5），最终偏移取首尾色环最短路径。
+/// 单段时两种模式均经 [hslBandLuts] 捷径返回，与色彩控制器逐位一致；
+/// 空段/全恒等段合成恒等 LUT（shift=0、乘子=1）。
+(Int32List, Float64List, Float64List) multiBandLuts(
+    List<({double h, double q, double dh, double s, double l})> bands,
+    {required bool serial, required int maxValue}) {
+  // 单段捷径：串联与并联语义相同，直接走色彩控制器建表（逐位一致）。
+  if (bands.length == 1) {
+    final b = bands[0];
+    return hslBandLuts(
+        maxValue: maxValue,
+        hCenterDeg: b.h,
+        q: b.q,
+        hShiftDeg: b.dh,
+        sGain: b.s,
+        lGain: b.l);
+  }
+  final m = maxValue + 1; // 色环模数：H 在 0..maxValue 上循环
+  final shiftLut = Int32List(m);
+  final sMulLut = Float64List(m);
+  final lMulLut = Float64List(m);
+  // 段 i 在色相 hDeg 上的高斯权重（与 hslBandLuts 同公式同运算序）。
+  double weight(int i, double hDeg) {
+    var d = (hDeg - bands[i].h).abs() % 360.0;
+    if (d > 180) d = 360 - d;
+    final x = d / (45.0 / bands[i].q);
+    return math.exp(-0.5 * x * x);
+  }
+
+  for (var hv = 0; hv < m; hv++) {
+    final hDeg = hv * 360.0 / maxValue;
+    if (!serial) {
+      var dhSum = 0.0, sSum = 0.0, lSum = 0.0;
+      for (var i = 0; i < bands.length; i++) {
+        final w = weight(i, hDeg);
+        dhSum += w * bands[i].dh;
+        sSum += w * (bands[i].s - 1);
+        lSum += w * (bands[i].l - 1);
+      }
+      final dhClamped = dhSum.clamp(-180.0, 180.0);
+      shiftLut[hv] = (dhClamped / 360 * maxValue).round();
+      sMulLut[hv] = (1 + sSum).clamp(0.0, 5.0).toDouble();
+      lMulLut[hv] = (1 + lSum).clamp(0.0, 5.0).toDouble();
+    } else {
+      var hCur = hDeg, sAcc = 1.0, lAcc = 1.0;
+      for (var i = 0; i < bands.length; i++) {
+        final w = weight(i, hCur);
+        sAcc *= 1 + w * (bands[i].s - 1);
+        lAcc *= 1 + w * (bands[i].l - 1);
+        hCur = (hCur + w * bands[i].dh) % 360.0;
+        if (hCur < 0) hCur += 360.0;
+      }
+      // 首尾色环最短路径偏移（多段累计量可超 ±180°，需环绕归一）。
+      var dd = (hCur - hDeg) % 360.0;
+      if (dd > 180) dd -= 360.0;
+      if (dd < -180) dd += 360.0;
+      shiftLut[hv] = (dd / 360 * maxValue).round();
+      sMulLut[hv] = sAcc.clamp(0.0, 5.0).toDouble();
+      lMulLut[hv] = lAcc.clamp(0.0, 5.0).toDouble();
+    }
+  }
+  return (shiftLut, sMulLut, lMulLut);
+}
+
 /// 色彩控制器 LUT 查表施加：逐像素 3 次查表 + 2 次乘法 + 1 次取模
 /// （与 adjustHslBandRows 的表内实现逐位一致）。
 Uint16List applyHslBandLuts(Uint16List hsl, int startPx, int endPx,
