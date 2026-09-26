@@ -159,7 +159,11 @@ CNodeFiles _genPseudoColor(CNodeGenCtx ctx) {
       algoIncludes: const ['isp_fluoro.h'],
       inputs: const [input],
       outputs: const [output],
-      macroLines: const [],
+      // 回退直算路径引用 COLORMAP/GAIN 宏，LUT 分支同样要烘焙。
+      macroLines: [
+        '#define ${m}_COLORMAP ${_fluoroColormapEnum(ctx.strParam('colormap'))}',
+        '#define ${m}_GAIN ${cNum(ctx.doubleParam('gain'))}',
+      ],
       body: '''
   /* LUT 模式：以下三张色表由生成期按节点参数烘焙（Dart
    * pseudoColorLuts，域 0..${ctx.lutDomainMax}）。 */
