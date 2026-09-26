@@ -39,6 +39,30 @@ class CToolchain {
   const CToolchain(this.target, this.compilerPath, this.env);
 }
 
+/// 判定一段字节是否像 UTF-16LE（wsl.exe 自身消息的特征：文本以 ASCII
+/// 为主时奇数位（UTF-16 高字节）大量为 NUL）。
+bool looksLikeUtf16Le(List<int> bytes) {
+  if (bytes.length < 4) return false;
+  var nul = 0;
+  final n = math.min(bytes.length, 128);
+  for (var i = 1; i < n; i += 2) {
+    if (bytes[i] == 0) nul++;
+  }
+  return nul >= n ~/ 4;
+}
+
+/// UTF-16LE 解码（去 BOM；dart:convert 无现成 UTF-16 codec）。
+/// 尾部奇数字节（块边界截断）丢弃。
+String decodeUtf16Le(List<int> bytes) {
+  var b = bytes;
+  if (b.length >= 2 && b[0] == 0xFF && b[1] == 0xFE) b = b.sublist(2);
+  final units = <int>[];
+  for (var i = 0; i + 1 < b.length; i += 2) {
+    units.add(b[i] | (b[i + 1] << 8));
+  }
+  return String.fromCharCodes(units);
+}
+
 /// 目录下版本号子目录中取最高者（字符串序末位，与 .bat 的 for /d 覆盖
 /// 取值同效）；目录不存在或为空返回 null。
 String? _highestSubdir(String root) {
@@ -637,10 +661,11 @@ Future<CCompileResult> compileGroupCFiles(
   /// 流式执行一条命令，返回 exitCode；启动失败返回 -1。
   /// [sink] 非空时输出按文件缓冲（只写 sink、不实时进终端，由调用方在
   /// 该文件结束后整体 flush——并发编译时避免多进程输出交织）。
-  /// [stripNul] 为 true 时用 utf8 容错解码并去 NUL 字节（wsl.exe 自身
-  /// 消息可能是 UTF-16LE，严格 utf8 解码会抛 FormatException）。
+  /// [wslMixed] 为 true 时按块启发式解码：wsl.exe 自身消息是 UTF-16LE
+  ///（如 localhost 代理警告），bash/gcc 输出是 UTF-8，同一管道写批次
+  /// 通常同源，按块判定（见 [looksLikeUtf16Le]）。
   Future<int> runStep(String exe, List<String> stepArgs,
-      {StringBuffer? sink, bool stripNul = false}) async {
+      {StringBuffer? sink, bool wslMixed = false}) async {
     final Process proc;
     try {
       proc = await Process.start(
@@ -654,13 +679,7 @@ Future<CCompileResult> compileGroupCFiles(
       emit('编译器启动失败：$e\n');
       return -1;
     }
-    // wsl：utf8 容错解码（wsl.exe 自身消息可能是 UTF-16LE，严格 utf8
-    // 会抛 FormatException；bash 输出的 UTF-8 中文仍正确解码，wsl 自身
-    // 乱码段以 U+FFFD 呈现，无害）并去 NUL。
-    final stepEncoding =
-        stripNul ? const Utf8Codec(allowMalformed: true) : encoding;
     void drain(String chunk) {
-      if (stripNul) chunk = chunk.replaceAll('\x00', '');
       if (chunk.isEmpty) return;
       if (sink != null) {
         sink.write(chunk);
@@ -670,10 +689,21 @@ Future<CCompileResult> compileGroupCFiles(
     }
 
     // 先挂流监听再 await exitCode，避免管道缓冲打满阻塞子进程。
-    final outDone =
-        proc.stdout.transform(stepEncoding.decoder).forEach(drain);
-    final errDone =
-        proc.stderr.transform(stepEncoding.decoder).forEach(drain);
+    // wslMixed：直接听原始字节流按块启发式解码（wsl.exe 自身消息
+    // UTF-16LE / bash 输出 UTF-8 混流）；UTF-8 中文跨块截断时边界处
+    // 可能出现单个 U+FFFD（罕见，无害）。
+    final Future outDone;
+    final Future errDone;
+    if (wslMixed) {
+      void drainBytes(List<int> bytes) => drain(looksLikeUtf16Le(bytes)
+          ? decodeUtf16Le(bytes)
+          : utf8.decode(bytes, allowMalformed: true));
+      outDone = proc.stdout.listen(drainBytes).asFuture<void>();
+      errDone = proc.stderr.listen(drainBytes).asFuture<void>();
+    } else {
+      outDone = proc.stdout.transform(encoding.decoder).forEach(drain);
+      errDone = proc.stderr.transform(encoding.decoder).forEach(drain);
+    }
     final code = await proc.exitCode;
     await Future.wait([outDone, errDone]);
     return code;
@@ -714,7 +744,7 @@ Future<CCompileResult> compileGroupCFiles(
     commandLine = '"wsl.exe" --cd ${windowsToWslPath(workDir.path)} -- '
         'bash compile_steps.sh（并行编译 ${sources.length} 个源文件）';
     emit('$commandLine\n\n');
-    exitCode = await runStep('wsl.exe', execArgs, stripNul: true);
+    exitCode = await runStep('wsl.exe', execArgs, wslMixed: true);
   } else {
     // 原生 gcc：跨文件并行编译（等效 make -j；gcc 单文件无法多核并行），
     // 并发度 = min(核数, 文件数)。进度行按源文件顺序在调度时打印；每个

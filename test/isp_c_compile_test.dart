@@ -23,6 +23,28 @@ void main() {
   }
 
   group('工具链探测', () {
+    test('wsl 混流解码：UTF-16LE 自身消息与 UTF-8 bash 输出分派', () {
+      // wsl.exe 的 localhost 代理警告为 UTF-16LE（带 BOM）。
+      const msg = 'wsl: 检测到 localhost 代理配置，但未镜像到 WSL。';
+      final units = msg.codeUnits;
+      final utf16 = <int>[0xFF, 0xFE];
+      for (final u in units) {
+        utf16.add(u & 0xFF);
+        utf16.add((u >> 8) & 0xFF);
+      }
+      expect(looksLikeUtf16Le(utf16), isTrue);
+      expect(decodeUtf16Le(utf16), msg);
+
+      // bash/gcc 的 UTF-8 中文输出不误判为 UTF-16LE。
+      final utf8Bytes = utf8.encode('编译失败：未定义的符号');
+      expect(looksLikeUtf16Le(utf8Bytes), isFalse);
+      expect(utf8.decode(utf8Bytes, allowMalformed: true), '编译失败：未定义的符号');
+
+      // 短块/空块不构成 UTF-16 判定。
+      expect(looksLikeUtf16Le([1, 0]), isFalse);
+      expect(looksLikeUtf16Le([]), isFalse);
+    });
+
     test('detectMsvc：伪 VS/SDK 布局推导环境，取最高版本目录', () async {
       final tmp = await Directory.systemTemp.createTemp('isp_tc_');
       addTearDown(() => tmp.delete(recursive: true));
