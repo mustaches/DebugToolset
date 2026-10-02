@@ -12,7 +12,7 @@
  *   - `applyHslBandLuts`（查表施加：3 次查表 + 2 次乘法 + 1 次取模）
  *   - `_clampTo`（浮点路径的收尾钳位）
  * - pipeline_runner.dart 的 `case 'multi_band_eq'`（段参数缺省回退恒等
- *   默认、band_count 钳位 1..8、全段恒等直通）。
+ *   默认、band_count 钳位 1..24、全段恒等直通）。
  * hsl_band_pool.dart 的条带池并行为 PC 侧调度优化（逐像素无依赖，
  * 与串行逐位一致），不移植。
  *
@@ -33,7 +33,7 @@ extern "C" {
 #endif
 
 /** 段数上限（与 Dart kMultiBandEqMaxBands 一致）。 */
-#define ISP_MULTI_BAND_EQ_MAX_BANDS 8
+#define ISP_MULTI_BAND_EQ_MAX_BANDS 24
 
 /**
  * @brief 多段色彩均衡器的单段参数（与色彩控制器同构的高斯色相带）。

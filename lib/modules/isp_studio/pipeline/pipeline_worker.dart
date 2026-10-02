@@ -236,6 +236,9 @@ class PipelineWorkerPool {
       'audio_level', 'audio_waveform', 'audio_eq',
       'rgb_splitter', 'yuv_splitter', 'hsl_splitter',
       'rgb_combiner', 'yuv_combiner', 'hsl_combiner',
+      // 多段色彩均衡器非恒等时输出恒为新帧、恒等时直通引用，不就地
+      // 改写输入帧（播放中「调整前」输入链的前缀覆盖捕获依赖此性质）。
+      'multi_band_eq',
     };
     for (var k = a.length; k < b.length; k++) {
       if (!passthroughOk.contains(b[k]['typeId'])) return false;
@@ -427,6 +430,9 @@ Future<void> _exportRangeWorkerMain(SendPort ui) async {
           width: w,
           height: h,
           ffmpegPath: ffmpegPath,
+          // 每包一帧，禁 CFR 复制：VUI 标称 60fps 的 30fps 片源（如手术
+          // 录像 HEVC Rext）默认被逐帧复制成 60fps，帧号与内容错位。
+          passthrough: true,
           startSec: start / fps)) {
         final rgba = await runChainFrame(chain, start + produced,
             sourceRgba: frame, sourceWidth: w, sourceHeight: h);

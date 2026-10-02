@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:debug_tool_set/modules/isp_studio/codegen/c_compile.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/c_ident.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/group_c_export.dart';
+import 'package:debug_tool_set/modules/isp_studio/codegen/group_c_export_bb.dart';
 import 'package:debug_tool_set/modules/isp_studio/codegen/node_c_gen.dart';
 import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/isp_kernels.dart';
@@ -52,6 +54,29 @@ void main() {
       final b = graph.addNode('gamma', 0, 0);
       graph.groups.add(IspNodeGroup('g1', {a, b}, name: 'g'));
       expect(validateGroupCExport(graph, graph.groups.single), isNotNull);
+    });
+
+    test('单节点编组：仅多段色彩均衡器放行（等效多个色彩控制器混叠）',
+        () async {
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.nodes[eq]!.name = 'mb';
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'eq'));
+      expect(validateGroupCExport(graph, graph.groups.single), isNull);
+
+      // 单节点编组可完整导出：节点封装 + top 层 + c_ref 并集。
+      final map = await buildGroupCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      expect(map.keys, containsAll(['mb.h', 'mb.c',
+          'isp_pipeline_eq.h', 'isp_pipeline_eq.c',
+          'isp_multi_band_eq.h', 'isp_multi_band_eq.c']));
+
+      // 其它类型单节点仍拒绝。
+      final graph2 = IspGraph();
+      final g = graph2.addNode('gamma', 0, 0);
+      graph2.groups.add(IspNodeGroup('g1', {g}, name: 'g'));
+      expect(validateGroupCExport(graph2, graph2.groups.single),
+          contains('不足'));
     });
 
     test('multiplier 双输入未接全时报错', () {
@@ -821,4 +846,273 @@ void main() {
     // 逐文件 cl 语法检查较慢，放宽超时。
     timeout: const Timeout(Duration(minutes: 10)),
   );
+
+  group('Win32 可运行验证程序（main_win.c）', () {
+    /// FNV-1a 32（与 main_win.c 的批模式哈希同口径；小端字节流）。
+    int fnv1a(Uint8List bytes) {
+      var h = 0x811c9dc5;
+      for (final c in bytes) {
+        h ^= c;
+        h = (h * 16777619) & 0xFFFFFFFF;
+      }
+      return h;
+    }
+
+    /// Dart 侧期望哈希：整数测试图案 → 按量化域缩放 → rgbToHsl → 均衡器
+    /// LUT → FNV-1a（与 main_win.c 的图案/装帧（`* MAXV / 255` 缩放）/
+    /// 批模式同口径，ΔH=+30 非恒等段；max=255 时缩放为恒等）。
+    List<String> eqExpectedHashes(int frames, {int max = 255}) {
+      const w = 640, h = 360;
+      final (shift, sMul, lMul) = multiBandLuts(
+          [(h: 0.0, q: 2.0, dh: 30.0, s: 1.0, l: 1.0)],
+          serial: false, maxValue: max);
+      final expected = <String>[];
+      for (var f = 0; f < frames; f++) {
+        final rgb = Uint16List(w * h * 3);
+        final bx = (f * 3) % (w + 80) - 40;
+        var i = 0;
+        for (var y = 0; y < h; y++) {
+          for (var x = 0; x < w; x++, i += 3) {
+            var r = (x * 255) ~/ (w - 1);
+            var g = (y * 255) ~/ (h - 1);
+            var b = ((x + y) * 255) ~/ (w + h - 2);
+            if (x >= bx && x < bx + 80 && y >= h ~/ 3 && y < h ~/ 3 + 80) {
+              r = (f * 5) & 255;
+              g = (255 - (f * 5)) & 255;
+              b = (f * 5 + 128) & 255;
+            }
+            rgb[i] = r * max ~/ 255;
+            rgb[i + 1] = g * max ~/ 255;
+            rgb[i + 2] = b * max ~/ 255;
+          }
+        }
+        final hsl = rgbToHsl(rgb, maxValue: max);
+        final out = applyHslBandLuts(hsl, 0, hsl.length ~/ 3,
+            maxValue: max, shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+        expected.add(
+            'frame $f: ${fnv1a(out.buffer.asUint8List()).toRadixString(16).padLeft(8, '0')}');
+      }
+      return expected;
+    }
+
+    test('stubMainWinSource 内容：双模式/批模式/签名/HSL 转换', () {
+      final src = stubMainWinSource(
+          topName: 'isp_pipeline_eq', inFormat: 'hsl', outFormat: 'hsl');
+      expect(src, contains('isp_pipeline_eq_run(g_in, g_w, g_h, MAXV, g_out'));
+      expect(src, contains('ISP_PIPELINE_EQ_SCRATCH_BYTES'));
+      expect(src, contains('模式: 单视频'));
+      expect(src, contains('模式: 并列'));
+      expect(src, contains('--dump-hash'));
+      expect(src, contains('isp_csc_rgb_to_hsl_px'));
+      expect(src, contains('isp_csc_hsl_to_rgb_px'));
+      // rgb 端口不引入 csc 转换头。
+      final rgb = stubMainWinSource(topName: 'isp_pipeline_eq');
+      expect(rgb, isNot(contains('isp_csc_common.h')));
+    });
+
+    test('MSVC 集成：构建 + 批模式哈希与 Dart 管线逐位一致', () async {
+      if (detectMsvc() == null) return; // 无 MSVC 环境自动跳过
+      // 单节点多段色彩均衡器编组（单节点编组放行），ΔH=+30 非恒等段。
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.nodes[eq]!.name = 'mb';
+      graph.nodes[eq]!.paramValues['b0_dh'] = 30.0;
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'eq'));
+      expect(validateGroupCExport(graph, graph.groups.single), isNull);
+      final files = await buildGroupCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+
+      final result = await buildWinVerifyApp(files,
+          topName: 'isp_pipeline_eq', inFormat: 'hsl', outFormat: 'hsl');
+      expect(result.success, isTrue, reason: result.output);
+      final run = await Process.run(
+          result.artifactPath!, ['--frames', '3', '--dump-hash']);
+      expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
+      final lines = '${run.stdout}'
+          .trim()
+          .split('\n')
+          .map((l) => l.trim())
+          .toList();
+      expect(lines.take(3).toList(), equals(eqExpectedHashes(3)));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('黑盒（无 scratch 签名）MSVC 集成：构建 + 批模式哈希一致', () async {
+      if (detectMsvc() == null) return; // 无 MSVC 环境自动跳过
+      // 单节点多段色彩均衡器黑盒编组：无环形缓冲需求时 bb top run 不带
+      // scratch 参数（此前 main_win.c 按整帧版签名传参导致 C2197 报错）。
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.nodes[eq]!.name = 'mb';
+      graph.nodes[eq]!.paramValues['b0_dh'] = 30.0;
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
+      expect(validateGroupBlackBoxExport(graph, graph.groups.single), isNull);
+      final files = await buildGroupBlackBoxCFiles(
+          graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final topName = groupBlackBoxTopName(graph.groups.single);
+      final hasScratch =
+          (files['$topName.h'] ?? '').contains('void *scratch');
+      expect(hasScratch, isFalse, reason: '该编组黑盒 top 应无 scratch 参数');
+
+      final result = await buildWinVerifyApp(files,
+          topName: topName,
+          inFormat: 'hsl',
+          outFormat: 'hsl',
+          hasScratch: hasScratch);
+      expect(result.success, isTrue, reason: result.output);
+      final run = await Process.run(
+          result.artifactPath!, ['--frames', '2', '--dump-hash']);
+      expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
+      final lines = '${run.stdout}'
+          .trim()
+          .split('\n')
+          .map((l) => l.trim())
+          .toList();
+      expect(lines.take(2).toList(), equals(eqExpectedHashes(2)));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('LUT 模式 maxValue=1023：构建 + 批模式哈希与 Dart 查表逐位一致',
+        () async {
+      if (detectMsvc() == null) return; // 无 MSVC 环境自动跳过
+      // LUT 模式单节点编组：lutDomainMaxOf 无上游回退 1023，验证程序
+      // maxValue 同域传入——查表快路径命中（255 会失配回退直算，本测试
+      // 同时锁定该口径）。
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.nodes[eq]!.name = 'mb';
+      graph.nodes[eq]!.paramValues['b0_dh'] = 30.0;
+      graph.nodes[eq]!.paramValues['codegenMode'] = 'lut';
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
+      expect(validateGroupBlackBoxExport(graph, graph.groups.single), isNull);
+      final files = await buildGroupBlackBoxCFiles(
+          graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final topName = groupBlackBoxTopName(graph.groups.single);
+      final hasScratch =
+          (files['$topName.h'] ?? '').contains('void *scratch');
+
+      final result = await buildWinVerifyApp(files,
+          topName: topName,
+          inFormat: 'hsl',
+          outFormat: 'hsl',
+          hasScratch: hasScratch,
+          maxValue: 1023);
+      expect(result.success, isTrue, reason: result.output);
+      final run = await Process.run(
+          result.artifactPath!, ['--frames', '2', '--dump-hash']);
+      expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
+      final lines = '${run.stdout}'
+          .trim()
+          .split('\n')
+          .map((l) => l.trim())
+          .toList();
+      expect(lines.take(2).toList(), equals(eqExpectedHashes(2, max: 1023)));
+      // 查表路径产物应输出 max=1023（批模式收尾 frames= 行）。
+      expect('${run.stdout}', contains('max=1023'));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    /// Q14 定点钳位（bb_clamp_q14 的 Dart 参考实现）。
+    int fxClampQ14(int v, double mul, int maxV) {
+      final q = (mul * 16384.0).round();
+      final r = (v * q + 8192) >> 14;
+      return r < 0 ? 0 : (r > maxV ? maxV : r);
+    }
+
+    /// lut_fixed 期望哈希：图案 → 缩放 → rgbToHsl → H 表回绕（与 FP64
+    /// 同路径，整数精确）+ Q14 定点 S/L → FNV-1a。
+    List<String> fxExpectedHashes(int frames, {int max = 1023}) {
+      const w = 640, h = 360;
+      final (shift, sMul, lMul) = multiBandLuts(
+          [(h: 0.0, q: 2.0, dh: 30.0, s: 1.0, l: 1.0)],
+          serial: false, maxValue: max);
+      final expected = <String>[];
+      final m = max + 1;
+      for (var f = 0; f < frames; f++) {
+        final rgb = Uint16List(w * h * 3);
+        final bx = (f * 3) % (w + 80) - 40;
+        var i = 0;
+        for (var y = 0; y < h; y++) {
+          for (var x = 0; x < w; x++, i += 3) {
+            var r = (x * 255) ~/ (w - 1);
+            var g = (y * 255) ~/ (h - 1);
+            var b = ((x + y) * 255) ~/ (w + h - 2);
+            if (x >= bx && x < bx + 80 && y >= h ~/ 3 && y < h ~/ 3 + 80) {
+              r = (f * 5) & 255;
+              g = (255 - (f * 5)) & 255;
+              b = (f * 5 + 128) & 255;
+            }
+            rgb[i] = r * max ~/ 255;
+            rgb[i + 1] = g * max ~/ 255;
+            rgb[i + 2] = b * max ~/ 255;
+          }
+        }
+        final hsl = rgbToHsl(rgb, maxValue: max);
+        final out = Uint16List(hsl.length);
+        var maxDev = 0;
+        for (var px = 0; px < hsl.length ~/ 3; px++) {
+          final j = px * 3;
+          var hv = hsl[j];
+          if (hv > max) hv = max;
+          var hnew = hv + shift[hv];
+          if (hnew > max) {
+            hnew -= m;
+          } else if (hnew < 0) {
+            hnew += m;
+          }
+          out[j] = hnew;
+          out[j + 1] = fxClampQ14(hsl[j + 1], sMul[hv], max);
+          out[j + 2] = fxClampQ14(hsl[j + 2], lMul[hv], max);
+        }
+        // 与 FP64 查表路径逐像素对比：偏差必须 ≤1 LSB。
+        final fp64 = applyHslBandLuts(hsl, 0, hsl.length ~/ 3,
+            maxValue: max, shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+        for (var j = 0; j < out.length; j++) {
+          final dev = (out[j] - fp64[j]).abs();
+          if (dev > maxDev) maxDev = dev;
+        }
+        expect(maxDev, lessThanOrEqualTo(1),
+            reason: 'lut_fixed 与 FP64 偏差超 1 LSB（帧 $f）');
+        expected.add(
+            'frame $f: ${fnv1a(out.buffer.asUint8List()).toRadixString(16).padLeft(8, '0')}');
+      }
+      return expected;
+    }
+
+    test('lut_fixed 定点模式：构建 + 与 Dart Q14 逐位一致 + 与 FP64 偏差 ≤1',
+        () async {
+      if (detectMsvc() == null) return; // 无 MSVC 环境自动跳过
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.nodes[eq]!.name = 'mb';
+      graph.nodes[eq]!.paramValues['b0_dh'] = 30.0;
+      graph.nodes[eq]!.paramValues['codegenMode'] = 'lut_fixed';
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
+      expect(validateGroupBlackBoxExport(graph, graph.groups.single), isNull);
+      final files = await buildGroupBlackBoxCFiles(
+          graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final topName = groupBlackBoxTopName(graph.groups.single);
+      final hasScratch =
+          (files['$topName.h'] ?? '').contains('void *scratch');
+      expect(files['$topName.c'], contains('bb_clamp_q14'));
+      expect(files['$topName.c'], contains('_s_mul_q14'));
+
+      final result = await buildWinVerifyApp(files,
+          topName: topName,
+          inFormat: 'hsl',
+          outFormat: 'hsl',
+          hasScratch: hasScratch,
+          maxValue: 1023);
+      expect(result.success, isTrue, reason: result.output);
+      final run = await Process.run(
+          result.artifactPath!, ['--frames', '2', '--dump-hash']);
+      expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
+      final lines = '${run.stdout}'
+          .trim()
+          .split('\n')
+          .map((l) => l.trim())
+          .toList();
+      expect(lines.take(2).toList(), equals(fxExpectedHashes(2)));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+  });
 }

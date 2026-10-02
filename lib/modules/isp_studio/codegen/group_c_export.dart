@@ -39,7 +39,11 @@ String? validateGroupCExport(IspGraph graph, IspNodeGroup group) {
   final members = [
     for (final id in group.nodeIds) ?graph.nodes[id],
   ];
-  if (members.length < 2) return '编组成员不足 2 个节点';
+  // 例外：多段色彩均衡器允许单节点编组（等效多个色彩控制器混叠）。
+  if (members.length < 2 &&
+      !(members.length == 1 && members.first.typeId == 'multi_band_eq')) {
+    return '编组成员不足 2 个节点';
+  }
   final unsupported = <String>[];
   for (final n in members) {
     if (!cExportSupportedTypeIds.contains(n.typeId)) {

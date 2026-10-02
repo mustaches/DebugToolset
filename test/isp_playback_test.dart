@@ -65,6 +65,43 @@ void main() {
       }
     });
 
+    test('cancelProcessing 停止播放并同步复位 isPlaying', () async {
+      // 右上角红色停止按钮走 cancelProcessing：bump _runToken 使播放循环
+      // 退出后，循环 finally 因 token 失配跳过状态复位——cancelProcessing
+      // 必须同步清 isPlaying，否则预览节点控制条仍显示播放中。
+      const w = 8, h = 8, frames = 3;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final raw = File('${Directory.systemTemp.path}/isp_play_cancel_$stamp.raw');
+      await raw.writeAsBytes(
+          raw8Le(List<int>.generate(w * h * frames, (i) => i % (w * h))));
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        final srcId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'bayer_source')
+            .key;
+        state.setParam(srcId, 'filePath', raw.path);
+        state.setParam(srcId, 'width', w);
+        state.setParam(srcId, 'height', h);
+        state.setParam(srcId, 'bitDepth', '8');
+
+        final playing = state.togglePlayback();
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(state.isPlaying, isTrue);
+        expect(state.isProcessing, isTrue);
+
+        state.cancelProcessing();
+        expect(state.isPlaying, isFalse, reason: '取消后播放态应立即复位');
+        expect(state.isProcessing, isFalse);
+        await playing.timeout(const Duration(seconds: 5),
+            onTimeout: () =>
+                fail('播放循环未在 cancelProcessing 后退出'));
+        expect(state.isPlaying, isFalse);
+        expect(state.isProcessing, isFalse);
+      } finally {
+        await deleteWithRetry(raw);
+      }
+    });
+
     test('进入播放清空单次预览的节点后端/耗时标记', () async {
       // 播放帧由 worker isolate 的 CPU 流水线生产，单次预览测得的
       // GPU/CPU 徽标与耗时对播放不再适用，进入播放即应清空。
@@ -373,6 +410,123 @@ void main() {
         expect(state.previewImage, isNotNull);
         expect(state.previewWidth, 64);
         expect(state.previewHeight, 64);
+      } finally {
+        await deleteWithRetry(tmp);
+      }
+    });
+
+    test('视频经多段色彩均衡器播放：附加区预览/示波器随帧同步', () async {
+      // 依赖项目内置 ffmpeg；缺失时跳过。
+      if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
+      // 64x64 testsrc，4fps × 1s = 4 帧；链上插 multi_band_eq 后播放
+      // 走常驻 PipelineFrameRunner（CPU worker 路径）。
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final tmp = File('${Directory.systemTemp.path}/isp_eq_play_$stamp.mp4');
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=4:duration=1',
+        '-pix_fmt', 'yuv420p', tmp.path,
+      ]);
+      expect(enc.exitCode, 0);
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        final prevId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'preview')
+            .key;
+        final srcId = state.graph.addNode('video_source', 0, 0);
+        final eqId = state.graph.addNode('multi_band_eq', 0, 100);
+        expect(
+            state.graph.connect(srcId, 'out_hsl', eqId, 'in'), isNull);
+        // 预览节点视频输入组互斥：先断开默认链的 gamma→preview。
+        state.graph.disconnectInput(prevId, 'in');
+        expect(state.graph.connect(eqId, 'out', prevId, 'in_hsl'), isNull);
+        state.setParam(srcId, 'filePath', tmp.path);
+        await state.autoFillFromVideo(srcId);
+
+        final playing = state.togglePlayback();
+        // 播放中示波器按 ~5Hz 节流刷新（busy 闸 + 200ms 限频）：轮询
+        // 等待两路示波器均被填充。
+        var filledDuringPlay = false;
+        for (var i = 0; i < 30; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          if (state.hslVectorscopes[eqId] != null &&
+              state.hslInputVectorscopes[eqId] != null) {
+            filledDuringPlay = true;
+            break;
+          }
+        }
+        expect(filledDuringPlay, isTrue,
+            reason: '播放中「调整后/调整前」矢量示波器应节流刷新填充');
+        state.stopPlayback();
+        await playing;
+        // 停播时以最后一帧前后预览图补齐示波器（在 togglePlayback 收尾
+        // 内 await 完成，playing 返回即已就绪；短暂延时作冗余保险）。
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        expect(state.previewImages[eqId], isNotNull,
+            reason: '「调整后」预览图应随播放逐帧更新');
+        expect(state.previewInputImages[eqId], isNotNull,
+            reason: '「调整前」预览图应随播放逐帧更新');
+        expect(state.hslVectorscopes[eqId], isNotNull,
+            reason: '停播后「调整后」矢量示波器应补齐');
+        expect(state.hslInputVectorscopes[eqId], isNotNull,
+            reason: '停播后「调整前」矢量示波器应补齐');
+      } finally {
+        await deleteWithRetry(tmp);
+      }
+    });
+
+    test('无预览节点：视频源直连均衡器也可播放（均衡器即播放汇点）',
+        () async {
+      // 依赖项目内置 ffmpeg；缺失时跳过。
+      if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final tmp = File('${Directory.systemTemp.path}/isp_eq_only_$stamp.mp4');
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=4:duration=1',
+        '-pix_fmt', 'yuv420p', tmp.path,
+      ]);
+      expect(enc.exitCode, 0);
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        // 摘掉默认链预览节点的输入：图中只剩均衡器一个可播放汇点。
+        final prevId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'preview')
+            .key;
+        state.graph.disconnectInput(prevId, 'in');
+        final srcId = state.graph.addNode('video_source', 0, 0);
+        final eqId = state.graph.addNode('multi_band_eq', 0, 100);
+        expect(
+            state.graph.connect(srcId, 'out_hsl', eqId, 'in'), isNull);
+        state.setParam(srcId, 'filePath', tmp.path);
+        await state.autoFillFromVideo(srcId);
+        // 帧率/总帧数同样自动填充到均衡器（播放节奏与进度条的数据源）。
+        expect(state.graph.nodes[eqId]!.paramValues['fps'], 4);
+        expect(state.graph.nodes[eqId]!.paramValues['frameCount'], 4);
+
+        final playing = state.togglePlayback();
+        final seen = <int>{};
+        state.frameTick.addListener(() => seen.add(state.previewFrame));
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        expect(state.isPlaying, isTrue, reason: '无预览节点也应能播放');
+        // 播放中示波器按 ~5Hz 节流刷新：1.5s 后两路应已填充。
+        expect(state.hslVectorscopes[eqId], isNotNull,
+            reason: '播放中「调整后」矢量示波器应节流刷新填充');
+        expect(state.hslInputVectorscopes[eqId], isNotNull,
+            reason: '播放中「调整前」矢量示波器应节流刷新填充');
+        state.stopPlayback();
+        await playing;
+        // 停播时示波器以最后一帧补齐（togglePlayback 收尾内完成）。
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        expect(seen.length, greaterThan(1), reason: '播放应推进帧');
+        expect(state.previewImages[eqId], isNotNull,
+            reason: '「调整后」预览图应随播放逐帧更新');
+        expect(state.previewInputImages[eqId], isNotNull,
+            reason: '「调整前」预览图应随播放逐帧更新');
+        expect(state.hslVectorscopes[eqId], isNotNull,
+            reason: '停播后「调整后」矢量示波器应补齐');
+        expect(state.hslInputVectorscopes[eqId], isNotNull,
+            reason: '停播后「调整前」矢量示波器应补齐');
       } finally {
         await deleteWithRetry(tmp);
       }

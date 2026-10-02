@@ -29,6 +29,8 @@
 /// `((y & 1) << 1) | (x & 1)`），四相位偏移在生成期按烘焙 pattern 解析。
 library;
 
+import 'dart:typed_data';
+
 import '../models/isp_graph.dart';
 import '../models/isp_node.dart';
 import '../pipeline/color_temp.dart';
@@ -141,11 +143,18 @@ const Map<String, String> _kHelperDefs = {
 /* Dart _clampTo 浮点路径：先按 double 原值与 0/max_value 比较，界内才
  * round()（Dart round 半值远离零，同 C99 round）。出处：isp_blend.c
  * blend_clamp_to / isp_adjust.c isp_adjust_clamp_to /
- * isp_csc_common.h isp_csc_clamp_d（三处同语义）。 */
+ * isp_csc_common.h isp_csc_clamp_d（三处同语义）。
+ * round 用快路径（界内 v ≥ 0）：floor(v+0.5) + 加法进位修正（t 恰为整
+ * 数且 v 严格小于中点 t-0.5 时退一格），与 round(v) 逐位一致——libm
+ * round/lround 是函数调用，逐像素路径上占耗时大头（实测 4K ~64ms/帧）。 */
 static uint16_t bb_clamp_to(double v, int max_value) {
   if (v < 0) return 0;
   if (v > (double)max_value) return (uint16_t)max_value;
-  return (uint16_t)round(v);
+  {
+    const double t = v + 0.5;
+    const int r = (int)t;
+    return (uint16_t)(t == (double)r && v < t - 0.5 ? r - 1 : r);
+  }
 }''',
   'bb_clamp_i64': '''
 /* int64 域钳位到 [0, max_value]（Dart int 为 64 位，极端增益/矩阵下
@@ -166,6 +175,21 @@ static double bb_clamp01(double v) {
   if (v < 0.0) return 0.0;
   if (v > 1.0) return 1.0;
   return v;
+}''',
+  'bb_clamp_q14': '''
+/* Q14 定点乘 + 钳位（codegenMode=lut_fixed）：out = clamp((in*q + 2^13)
+ * >> 14)。乘子生成期按 round(mul × 2^14) 烘焙，与 FP64 (double)in × mul
+ * 再 round 的偏差 ≤1 LSB（仅当 FP64 乘积距 .5 边界小于 in/2^15 时可能
+ * 差 1）。int64 乘积防溢出（uint16 输入 × 5×2^14 超出 int32）；面向无
+ * FP64 SIMD 的嵌入式核（A55 NEON 仅 FP32，FP64 只能标量 FPU）。NEON 行
+ * 核（lut_fixed 行函数）内的同款计算为 32 位通道：q ≥ 2^14（mul ≥ 1）
+ * 且 in 超域时结果必钳到 max_value，先钳位输入与之等价（向量比较选
+ * 择，无分支）。 */
+static uint16_t bb_clamp_q14(int in_v, int32_t q, int max_value) {
+  const int64_t r = ((int64_t)in_v * q + 8192) >> 14;
+  if (r < 0) return 0;
+  if (r > (int64_t)max_value) return (uint16_t)max_value;
+  return (uint16_t)r;
 }''',
   'bb_bc_map': '''
 /* 亮度/对比度单点映射 adjust(y)。出处：isp_adjust.c isp_adjust_bc_map
@@ -866,7 +890,12 @@ StreamKernelResult _kHslDebugger(
   return (
     [
       'const int64_t $hv = (int64_t)${ie[0]} + ${ctx.ident}_shift;',
-      'const uint16_t $o0 = (uint16_t)((($hv % (max_value + 1)) + (max_value + 1)) % (max_value + 1));',
+      // 色环回绕：|shift| ≤ max/2（h_shift ≤ ±180°），单次条件加减与双重
+      // 取模逐位一致，且消灭 int64 除法。
+      'int64_t ${hv}w = $hv;',
+      'if (${hv}w > max_value) ${hv}w -= (max_value + 1);',
+      'else if (${hv}w < 0) ${hv}w += (max_value + 1);',
+      'const uint16_t $o0 = (uint16_t)${hv}w;',
       'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * ${cNum(sg)}, max_value);',
       'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * ${cNum(lg)}, max_value);',
     ],
@@ -1303,8 +1332,12 @@ ${cF64Table(lMulLut)}
       'const double $x = $d / ${cNum(sigma)};',
       'const double $w = exp(-0.5 * $x * $x);',
       'const int $shift = $shiftExpr;',
-      'int $hnew = ($hv + $shift) % (max_value + 1);',
-      'if ($hnew < 0) $hnew += (max_value + 1);',
+      // 色环回绕：|shift| ≤ max/2（h_shift ≤ ±180°）、hv ∈ [0,max]，单次
+      // 条件加减与 % (max+1) 逐位一致——max_value 是运行时参数，% 会退化
+      // 为逐像素整数除法（实测占单帧耗时大头），模数 2 的幂也救不了。
+      'int $hnew = $hv + $shift;',
+      'if ($hnew > max_value) $hnew -= (max_value + 1);',
+      'else if ($hnew < 0) $hnew += (max_value + 1);',
       'const uint16_t $o0 = (uint16_t)$hnew;',
       'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * $sMulExpr, max_value);',
       'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * $lMulExpr, max_value);',
@@ -1317,18 +1350,21 @@ ${cF64Table(lMulLut)}
 /// 合成结果与整帧 LUT 表项逐位一致）。出处：isp_kernels.dart
 /// multiBandLuts + applyHslBandLuts（= isp_multi_band_eq.c mb_compose +
 /// lut_apply 的同公式行核版）。段参数读取口径同 runner（band_count 缺省
-/// 1 钳位 1..8，b{i}_* 缺键回退恒等默认）；全段恒等直通别名（同 runner
+/// 1 钳位 1..24，b{i}_* 缺键回退恒等默认）；全段恒等直通别名（同 runner
 /// 判定）。段合成写为文件级 static helper `<id>_compose`（段参数生成期
 /// 烘焙为字面常量，公式与 mb_compose 逐行一致）；LUT 模式
 ///（codegenMode=lut）另烘焙三表（Dart multiBandLuts，域 0..
 /// lutDomainMax），max_value 一致走查表、不一致回退 _compose 直算。
+/// LUT 定点模式（codegenMode=lut_fixed）：H 表同 lut（int16），S/L 乘子
+/// 烘焙为 Q14 定点整数表（bb_clamp_q14 整数乘加，面向 A55 等无 FP64
+/// SIMD 的嵌入式核；与 FP64 口径偏差 ≤1 LSB），回退路径同 lut。
 StreamKernelResult _kMultiBandEq(
     StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   var bandCount = ctx.intParam('band_count');
   if (bandCount < 1) bandCount = 1;
-  if (bandCount > 8) bandCount = 8;
+  if (bandCount > 24) bandCount = 24;
   final serial = ctx.strParam('band_mode') == 'serial';
   double bandParam(int i, String suffix, double fallback) =>
       (ctx.param('b${i}_$suffix') as num?)?.toDouble() ?? fallback;
@@ -1424,24 +1460,48 @@ StreamKernelResult _kMultiBandEq(
   // LUT 模式：多段合成三表生成期烘焙（与整帧版同一路径）。
   final lutMode = ctx.strParam('codegenMode') == 'lut';
   final n = ctx.lutDomainMax;
-  if (lutMode) {
+  // LUT 定点模式（lut_fixed）：H 表同 lut（int16），S/L 乘子烘焙为 Q14
+  // 定点整数表（bb_clamp_q14 整数乘加，面向 A55 等无 FP64 SIMD 的嵌入
+  // 式核；与 FP64 口径偏差 ≤1 LSB）。域失配时与 lut 同口径回退 compose。
+  final fixedMode = ctx.strParam('codegenMode') == 'lut_fixed';
+  if (lutMode || fixedMode) {
     final (shiftLut, sMulLut, lMulLut) =
         multiBandLuts(bands, serial: serial, maxValue: n);
     s.addFileDecl('${id}_shift_lut', '''
-/* multi_band_eq LUT 模式：H 域三表（H 偏移/S 乘子/L 乘子）生成期烘焙
- *（Dart multiBandLuts，域 0..$n）；max_value 一致走查表，不一致回退
+/* multi_band_eq LUT 模式：H 偏移表生成期烘焙（Dart multiBandLuts，域
+ * 0..$n；|shift| ≤ 域半宽 ±180° 恒成立，int16 足够且表 footprint/带宽
+ * 减半——A55 D-Cache 只有 32KB）；max_value 一致走查表，不一致回退
  * ${id}_compose 直算。 */
-static const int32_t ${id}_shift_lut[${n + 1}] = {
+static const int16_t ${id}_shift_lut[${n + 1}] = {
 ${cI32Table(shiftLut)}
 };''');
-    s.addFileDecl('${id}_s_mul_lut', '''
+    if (lutMode) {
+      s.addFileDecl('${id}_s_mul_lut', '''
 static const double ${id}_s_mul_lut[${n + 1}] = {
 ${cF64Table(sMulLut)}
 };''');
-    s.addFileDecl('${id}_l_mul_lut', '''
+      s.addFileDecl('${id}_l_mul_lut', '''
 static const double ${id}_l_mul_lut[${n + 1}] = {
 ${cF64Table(lMulLut)}
 };''');
+    } else {
+      s.useHelper('bb_clamp_q14');
+      s.addFileDecl('${id}_s_mul_q14', '''
+/* S 乘子 Q14 定点表（生成期 round(mul × 2^14) 烘焙，配 bb_clamp_q14
+ * 整数乘加；与 FP64 口径偏差 ≤1 LSB）。 */
+static const int32_t ${id}_s_mul_q14[${n + 1}] = {
+${cI32Table(Int32List.fromList([for (final v in sMulLut) (v * 16384.0).round()]))}
+};''');
+      s.addFileDecl('${id}_l_mul_q14', '''
+/* L 乘子 Q14 定点表。 */
+static const int32_t ${id}_l_mul_q14[${n + 1}] = {
+${cI32Table(Int32List.fromList([for (final v in lMulLut) (v * 16384.0).round()]))}
+};''');
+      // 整行函数（NEON/标量双变体，逐位一致）：仅当本节点独占一个零延迟
+      // 阶段时被 top .c 调用（见 group_c_export_bb 阶段发射特判）；其余
+      // 形态走融合行核（逐像素标量），两者逐位一致。
+      s.addFileDecl('${id}_row', _lutFixedRowFn(ctx.ident, n));
+    }
   }
 
   final hv = s.freshVar();
@@ -1457,7 +1517,7 @@ ${cF64Table(lMulLut)}
       'int $hv = ${ie[0]};',
       'if ($hv > max_value) $hv = max_value;',
       'int32_t $shift;',
-      'double $sMul, $lMul;',
+      'double $sMul = 1.0, $lMul = 1.0;',
       if (lutMode) ...[
         'if (max_value == $n) {',
         '  $shift = ${id}_shift_lut[$hv];',
@@ -1466,16 +1526,175 @@ ${cF64Table(lMulLut)}
         '} else {',
         '  ${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
         '}',
+      ] else if (fixedMode) ...[
+        'if (max_value == $n) {',
+        '  $shift = ${id}_shift_lut[$hv];',
+        '} else {',
+        '  ${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
+        '}',
       ] else
         '${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
-      'int $hnew = ($hv + $shift) % (max_value + 1);',
-      'if ($hnew < 0) $hnew += (max_value + 1);',
+      // 色环回绕：烘焙/合成 shift 恒满足 |shift| ≤ max/2（dh ≤ ±180°，
+      // 并联/串联均钳位）、hv ∈ [0,max]，单次条件加减与 % (max+1) 逐位
+      // 一致——max_value 为运行时参数，% 退化为逐像素整数除法（实测占
+      // 单帧耗时大头）。
+      'int $hnew = $hv + $shift;',
+      'if ($hnew > max_value) $hnew -= (max_value + 1);',
+      'else if ($hnew < 0) $hnew += (max_value + 1);',
       'const uint16_t $o0 = (uint16_t)$hnew;',
-      'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * $sMul, max_value);',
-      'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * $lMul, max_value);',
+      // lut_fixed：Q14 整数乘加（域一致时），域失配与 lut 同口径回退
+      // compose 的 FP64 路径（$sMul/$lMul 恒被 compose 或默认 1.0 初始化，
+      // 三目未选中分支不读取）。
+      if (fixedMode) ...[
+        'const uint16_t $o1 = (max_value == $n) ? bb_clamp_q14(${ie[1]}, ${id}_s_mul_q14[$hv], max_value) : bb_clamp_to((double)${ie[1]} * $sMul, max_value);',
+        'const uint16_t $o2 = (max_value == $n) ? bb_clamp_q14(${ie[2]}, ${id}_l_mul_q14[$hv], max_value) : bb_clamp_to((double)${ie[2]} * $lMul, max_value);',
+      ] else ...[
+        'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * $sMul, max_value);',
+        'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * $lMul, max_value);',
+      ],
     ],
     {'out': [o0, o1, o2]},
   );
+}
+
+// ---------------------------------------------------------------------------
+// 荧光 mono 域（逐像素子集）
+// ---------------------------------------------------------------------------
+
+/// lut_fixed 整行函数源码（[id] 前缀，烘焙域 [n]）：NEON（VLD3 解交织 +
+/// int16 通道 H 回绕 + 32 位通道 Q14 乘加）与标量双变体，逐位一致；
+/// 量化域失配整行走标量 compose 回退（与融合行核同口径）。
+String _lutFixedRowFn(String id, int n) {
+  return '''
+/* multi_band_eq lut_fixed 整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON)
+  if (max_value == $n) {
+    const int m = max_value + 1;
+    const int16x8_t vmax16 = vdupq_n_s16((int16_t)max_value);
+    const int16x8_t vm16 = vdupq_n_s16((int16_t)m);
+    const uint32x4_t vmax32 = vdupq_n_u32((uint32_t)max_value);
+    const int32x4_t vhalf = vdupq_n_s32(8192);
+    const int32x4_t vq14 = vdupq_n_s32(16384);
+    const int32x4_t vzero32 = vdupq_n_s32(0);
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → 通道标量 gather（NEON 无 gather 指令）→
+       * 向量回绕/乘加 → VST3 重交织。 */
+      const uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      uint16_t h[8];
+      int16_t sh[8];
+      int32_t qs[8], ql[8];
+      int k;
+      vst1q_u16(h, px.val[0]);
+      for (k = 0; k < 8; k++) {
+        int hv = h[k];
+        if (hv > max_value) hv = max_value;
+        h[k] = (uint16_t)hv;
+        sh[k] = ${id}_shift_lut[hv];
+        qs[k] = ${id}_s_mul_q14[hv];
+        ql[k] = ${id}_l_mul_q14[hv];
+      }
+      /* H：int16 通道单次条件回绕（|shift| ≤ max/2 恒成立）。 */
+      int16x8_t hnew = vaddq_s16(vld1q_s16((const int16_t *)h), vld1q_s16(sh));
+      {
+        const int16x8_t sub = vsubq_s16(hnew, vm16);
+        const int16x8_t add = vaddq_s16(hnew, vm16);
+        hnew = vbslq_s16(vcgtq_s16(hnew, vmax16), sub, hnew);
+        hnew = vbslq_s16(vcltq_s16(hnew, vdupq_n_s16(0)), add, hnew);
+      }
+      /* S/L：bb_clamp_q14 同口径——q ≥ 2^14 且超域先钳输入（与先乘加
+       * 后钳位结果一致），32 位乘加、移位、[0, max] 钳位、窄化。 */
+      uint16x8_t so, lo;
+      {
+        const int32x4_t q0 = vld1q_s32(qs), q1 = vld1q_s32(qs + 4);
+        uint32x4_t a0 = vmovl_u16(vget_low_u16(px.val[1]));
+        uint32x4_t a1 = vmovl_u16(vget_high_u16(px.val[1]));
+        int32x4_t r0, r1;
+        a0 = vbslq_u32(
+            vandq_u32(vcgtq_u32(a0, vmax32), vcgeq_s32(q0, vq14)),
+            vmax32, a0);
+        a1 = vbslq_u32(
+            vandq_u32(vcgtq_u32(a1, vmax32), vcgeq_s32(q1, vq14)),
+            vmax32, a1);
+        r0 = vshrq_n_s32(
+            vaddq_s32(vmulq_s32(vreinterpretq_s32_u32(a0), q0), vhalf), 14);
+        r1 = vshrq_n_s32(
+            vaddq_s32(vmulq_s32(vreinterpretq_s32_u32(a1), q1), vhalf), 14);
+        r0 = vminq_s32(vmaxq_s32(r0, vzero32),
+                       vreinterpretq_s32_u32(vmax32));
+        r1 = vminq_s32(vmaxq_s32(r1, vzero32),
+                       vreinterpretq_s32_u32(vmax32));
+        so = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(r0)),
+                          vmovn_u32(vreinterpretq_u32_s32(r1)));
+      }
+      {
+        const int32x4_t q0 = vld1q_s32(ql), q1 = vld1q_s32(ql + 4);
+        uint32x4_t a0 = vmovl_u16(vget_low_u16(px.val[2]));
+        uint32x4_t a1 = vmovl_u16(vget_high_u16(px.val[2]));
+        int32x4_t r0, r1;
+        a0 = vbslq_u32(
+            vandq_u32(vcgtq_u32(a0, vmax32), vcgeq_s32(q0, vq14)),
+            vmax32, a0);
+        a1 = vbslq_u32(
+            vandq_u32(vcgtq_u32(a1, vmax32), vcgeq_s32(q1, vq14)),
+            vmax32, a1);
+        r0 = vshrq_n_s32(
+            vaddq_s32(vmulq_s32(vreinterpretq_s32_u32(a0), q0), vhalf), 14);
+        r1 = vshrq_n_s32(
+            vaddq_s32(vmulq_s32(vreinterpretq_s32_u32(a1), q1), vhalf), 14);
+        r0 = vminq_s32(vmaxq_s32(r0, vzero32),
+                       vreinterpretq_s32_u32(vmax32));
+        r1 = vminq_s32(vmaxq_s32(r1, vzero32),
+                       vreinterpretq_s32_u32(vmax32));
+        lo = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(r0)),
+                          vmovn_u32(vreinterpretq_u32_s32(r1)));
+      }
+      {
+        uint16x8x3_t opx;
+        opx.val[0] = vreinterpretq_u16_s16(hnew);
+        opx.val[1] = so;
+        opx.val[2] = lo;
+        vst3q_u16(out + (size_t)x * 3u, opx);
+      }
+    }
+  }
+#endif
+  for (; x < w; x++) {
+    /* 标量路径（含量化域失配的 compose 回退），与融合行核逐位一致。 */
+    int hv = in[(size_t)x * 3u + 0u];
+    int32_t shift;
+    double s_mul = 1.0, l_mul = 1.0;
+    if (hv > max_value) hv = max_value;
+    if (max_value == $n) {
+      shift = ${id}_shift_lut[hv];
+    } else {
+      ${id}_compose(hv, max_value, &shift, &s_mul, &l_mul);
+    }
+    {
+      int hnew = hv + shift;
+      if (hnew > max_value) {
+        hnew -= (max_value + 1);
+      } else if (hnew < 0) {
+        hnew += (max_value + 1);
+      }
+      out[(size_t)x * 3u + 0u] = (uint16_t)hnew;
+    }
+    out[(size_t)x * 3u + 1u] = (max_value == $n)
+        ? bb_clamp_q14(in[(size_t)x * 3u + 1u], ${id}_s_mul_q14[hv],
+                       max_value)
+        : bb_clamp_to((double)in[(size_t)x * 3u + 1u] * s_mul, max_value);
+    out[(size_t)x * 3u + 2u] = (max_value == $n)
+        ? bb_clamp_q14(in[(size_t)x * 3u + 2u], ${id}_l_mul_q14[hv],
+                       max_value)
+        : bb_clamp_to((double)in[(size_t)x * 3u + 2u] * l_mul, max_value);
+  }
+}''';
 }
 
 // ---------------------------------------------------------------------------

@@ -3,8 +3,11 @@
 // CPU 侧把 ffmpeg 直出的 yuv420p 帧（Y 平面 w*h，U/V 平面各 (w/2)*(h/2)
 // 顺序排列）原样当作一张 (w/4) x (h*3/2) 的 RGBA8888 图片上传（每个
 // RGBA 纹素装 4 个连续字节，零重排、零转换），本 shader 在 GPU 上按
-// 扁平字节偏移解包并做 BT.601 上色 / 单平面灰度显示，CPU 零逐像素
+// 扁平字节偏移解包并做 YUV→RGB 上色 / 单平面灰度显示，CPU 零逐像素
 // 工作。limited range 扩展也在 GPU 完成（uLimited=1）。
+// 色彩矩阵按 uMatrix 选择（0=BT.601，1=BT.709，2=BT.2020），随片源
+// 元数据传入（videoFileInfo.colorMatrix——ffmpeg 的 rgba 转换尊重帧
+// 元数据，平面路径保持同口径）。
 #include <flutter/runtime_effect.glsl>
 
 precision highp float;
@@ -14,6 +17,7 @@ uniform vec2 uDrawSize;   // 绘制矩形尺寸
 uniform vec2 uSrcSize;    // 视频逻辑尺寸（宽, 高）
 uniform float uMode;      // 0=YUV→RGB 彩色, 1=Y 灰度, 2=U 灰度, 3=V 灰度
 uniform float uLimited;   // 1=limited range（tv），0=full range（pc）
+uniform float uMatrix;    // 0=BT.601, 1=BT.709, 2=BT.2020
 uniform sampler2D uTex;   // 打包纹理：宽 w/4，高 h*3/2
 
 out vec4 fragColor;
@@ -62,11 +66,18 @@ void main() {
     float g = uMode < 1.5 ? y : (uMode < 2.5 ? u : v);
     fragColor = vec4(g, g, g, 1.0);
   } else {
-    // BT.601 全范围 YUV→RGB（u/v 以 0.5 为零点）。
+    // 全范围 YUV→RGB（u/v 以 0.5 为零点），矩阵按 uMatrix：
+    // 0=BT.601（Kr=.299, Kb=.114），1=BT.709（.2126/.0722），
+    // 2=BT.2020（.2627/.0593）。
+    float kr = uMatrix > 1.5 ? 0.2627 : (uMatrix > 0.5 ? 0.2126 : 0.299);
+    float kb = uMatrix > 1.5 ? 0.0593 : (uMatrix > 0.5 ? 0.0722 : 0.114);
     float cu = u - 0.5;
     float cv = v - 0.5;
-    fragColor = vec4(clamp(y + 1.402 * cv, 0.0, 1.0),
-                     clamp(y - 0.344136 * cu - 0.714136 * cv, 0.0, 1.0),
-                     clamp(y + 1.772 * cu, 0.0, 1.0), 1.0);
+    float r = y + 2.0 * (1.0 - kr) * cv;
+    float b = y + 2.0 * (1.0 - kb) * cu;
+    float g = y - 2.0 * (1.0 - kb) * kb / (1.0 - kb - kr) * cu -
+              2.0 * (1.0 - kr) * kr / (1.0 - kb - kr) * cv;
+    fragColor = vec4(clamp(r, 0.0, 1.0), clamp(g, 0.0, 1.0),
+                     clamp(b, 0.0, 1.0), 1.0);
   }
 }

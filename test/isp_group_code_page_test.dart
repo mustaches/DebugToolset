@@ -648,6 +648,7 @@ void main() {
   /// 直接泵编译对话框（注入 fake WSL 探测，不依赖真机 WSL 时序）。
   Future<void> pumpDialog(WidgetTester tester, WslProber prober) {
     sessionCompilerPaths.clear(); // 会话内手动路径，跨用例隔离
+    sessionLinuxCrossWslToolchains = null; // WSL 探测缓存，跨用例隔离
     return tester.pumpWidget(MaterialApp(
         home: Scaffold(body: GroupCompileDialog(wslProber: prober))));
   }
@@ -656,7 +657,7 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller!.text;
 
   testWidgets('Linux 交叉探测：等待态 → 成功回填（不覆盖用户输入）', (tester) async {
-    final gate = Completer<CToolchain?>();
+    final gate = Completer<List<CToolchain>>();
     await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) => gate.future);
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
@@ -665,40 +666,42 @@ void main() {
 
     // 探测期间用户手动输入：探测完成后不覆盖用户内容。
     await tester.enterText(find.byType(TextField), 'user-gcc');
-    gate.complete(const CToolchain(
-        CCompileTarget.linuxCross, 'wsl:Ubuntu:/home/x/gcc', {}));
+    gate.complete(const [
+      CToolchain(CCompileTarget.linuxCross, 'wsl:Ubuntu:/home/x/gcc', {}),
+    ]);
     await tester.pump();
     expect(find.text('已自动探测到交叉编译器'), findsOneWidget);
     expect(pathFieldText(tester), 'user-gcc');
   });
 
   testWidgets('Linux 交叉探测：路径框为空时成功回填', (tester) async {
-    final gate = Completer<CToolchain?>();
+    final gate = Completer<List<CToolchain>>();
     await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) => gate.future);
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
     expect(find.text('正在启动 WSL…'), findsOneWidget);
 
-    gate.complete(const CToolchain(
-        CCompileTarget.linuxCross, 'wsl:Ubuntu:/home/x/gcc', {}));
+    gate.complete(const [
+      CToolchain(CCompileTarget.linuxCross, 'wsl:Ubuntu:/home/x/gcc', {}),
+    ]);
     await tester.pump();
     expect(find.text('已自动探测到交叉编译器'), findsOneWidget);
     expect(pathFieldText(tester), 'wsl:Ubuntu:/home/x/gcc');
   });
 
   testWidgets('Linux 交叉探测：超时未找到显示安装提示', (tester) async {
-    // fake 探测在阶段二返回 null（等价于 WSL 就绪后探测超时未找到）。
+    // fake 探测在阶段二返回空表（等价于 WSL 就绪后探测超时未找到）。
     await pumpDialog(tester,
         ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
       onPhase?.call('detect');
-      return null;
+      return const <CToolchain>[];
     });
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
     await tester.pump();
     expect(find.text('正在探测交叉编译器（含 WSL）…'), findsNothing);
     expect(find.textContaining('未检测到 Linux 交叉编译器'), findsOneWidget);
-    expect(find.textContaining('~/toolchains/bin'), findsOneWidget);
+    expect(find.textContaining('~/toolchains'), findsOneWidget);
     expect(find.textContaining('wsl:<发行版>:<路径>'), findsOneWidget);
   });
 
@@ -710,8 +713,9 @@ void main() {
       onPhase?.call('startup');
       await gate.future;
       onPhase?.call('detect');
-      return const CToolchain(
-          CCompileTarget.linuxCross, 'wsl:Ubuntu:/home/x/gcc', {});
+      return const [
+        CToolchain(CCompileTarget.linuxCross, 'wsl:Ubuntu:/home/x/gcc', {}),
+      ];
     });
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
@@ -728,7 +732,7 @@ void main() {
   testWidgets('Linux 交叉探测：WSL 不就绪直接安装提示', (tester) async {
     await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
       onPhase?.call('startup');
-      return null; // 阶段一失败（未装 WSL / 冷启动超时未就绪）
+      return const <CToolchain>[]; // 阶段一失败（未装 WSL / 冷启动超时未就绪）
     });
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
@@ -740,13 +744,95 @@ void main() {
     await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
       onPhase?.call('startup');
       onPhase?.call('detect');
-      return null; // 阶段二超时未命中
+      return const <CToolchain>[]; // 阶段二超时未命中
     });
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
     await tester.pump();
     expect(find.textContaining('未检测到 Linux 交叉编译器'), findsOneWidget);
     expect(find.textContaining('未检测到可用的 WSL'), findsNothing);
+  });
+
+  testWidgets('Linux 交叉：多编译器下拉选择写入路径框', (tester) async {
+    const aarch64 = 'wsl:Ubuntu:/home/fzdl/toolchains/bin/'
+        'aarch64-mix210-linux-gcc';
+    const riscv =
+        'wsl:Ubuntu-24.04:/home/fzdl/toolchains/riscv32-musl/'
+        'cc-riscv32-cfg5-musl-20211008-elf/bin/'
+        'riscv32-cfg5-musl-20211008-elf-gcc';
+    await pumpDialog(tester,
+        ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
+      onPhase?.call('startup');
+      onPhase?.call('detect');
+      return const [
+        CToolchain(CCompileTarget.linuxCross, aarch64, {}),
+        CToolchain(CCompileTarget.linuxCross, riscv, {}),
+      ];
+    });
+    await tester.tap(find.text('Linux 交叉'));
+    await tester.pump();
+    await tester.pump();
+    // 两个候选并入下拉，路径框回填首个候选。
+    expect(find.byType(DropdownButton<String>), findsOneWidget);
+    expect(pathFieldText(tester), aarch64);
+
+    // 打开下拉，点选 riscv 项 → 写入路径框。
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find
+        .widgetWithText(DropdownMenuItem<String>,
+            'riscv32-cfg5-musl-20211008-elf-gcc（wsl: Ubuntu-24.04）')
+        .last);
+    await tester.pumpAndSettle();
+    expect(pathFieldText(tester), riscv);
+  });
+
+  testWidgets('Linux 交叉：探测结果写入会话缓存，重开对话框不再探测',
+      (tester) async {
+    const aarch64 = 'wsl:Ubuntu:/home/fzdl/toolchains/bin/'
+        'aarch64-mix210-linux-gcc';
+    var probeCount = 0;
+    Future<List<CToolchain>> prober(
+        {Duration? startupTimeout,
+        Duration? timeout,
+        void Function(String phase)? onPhase}) async {
+      probeCount++;
+      return const [CToolchain(CCompileTarget.linuxCross, aarch64, {})];
+    }
+
+    // 重开对话框用（不清会话缓存，模拟程序未退出）。
+    Future<void> reopenDialog() {
+      return tester.pumpWidget(MaterialApp(
+          home: Scaffold(body: GroupCompileDialog(wslProber: prober))));
+    }
+
+    // 第一次打开：探测一次，结果写入缓存并呈现。
+    await pumpDialog(tester, prober);
+    await tester.tap(find.text('Linux 交叉'));
+    await tester.pump();
+    await tester.pump();
+    expect(probeCount, 1);
+    expect(sessionLinuxCrossWslToolchains, hasLength(1));
+
+    // 重开对话框：直接呈现缓存候选，不再调用探测。
+    await reopenDialog();
+    await tester.pump();
+    expect(probeCount, 1);
+    expect(find.byType(DropdownButton<String>), findsOneWidget);
+    await tester.tap(find.text('Linux 交叉'));
+    await tester.pump();
+    await tester.pump();
+    expect(probeCount, 1);
+    expect(pathFieldText(tester), aarch64);
+
+    // 探过但未命中（空表）同样缓存：重开不再探测、不再转等待态。
+    sessionLinuxCrossWslToolchains = const [];
+    await reopenDialog();
+    await tester.tap(find.text('Linux 交叉'));
+    await tester.pump();
+    await tester.pump();
+    expect(probeCount, 1);
+    expect(find.text('正在启动 WSL…'), findsNothing);
   });
 
   testWidgets('编译中：状态显示编译中、关闭禁用、编译按钮隐藏', (tester) async {

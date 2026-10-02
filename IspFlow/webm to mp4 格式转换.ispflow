@@ -1,0 +1,24 @@
+{
+  "name": "webm to mp4 格式转换",
+  "nodes": [
+    {
+      "id": "n2",
+      "typeId": "format_converter",
+      "x": 350.0,
+      "y": -90.0,
+      "width": 1500.0,
+      "extraHeight": 1162.0,
+      "name": "格式转换#1",
+      "params": {
+        "inputFile": "G:\\DebugToolSet\\4k60VRec\\SONY OLED 4K Video ULTRA HD Demo  HDR Test Part 2.webm",
+        "outputFile": "G:\\DebugToolSet\\4k60VRec\\SONY OLED 4K Video ULTRA HD Demo SDR Test Part 2.webm",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe",
+        "encoder": "auto",
+        "outputRange": "sdr"
+      }
+    }
+  ],
+  "connections": [],
+  "groups": [],
+  "nextId": 3
+}

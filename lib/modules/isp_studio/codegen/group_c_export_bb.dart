@@ -99,7 +99,7 @@ String? validateGroupBlackBoxExport(IspGraph graph, IspNodeGroup group) {
   for (final n in members) {
     if (n.typeId != 'multi_band_eq') continue;
     final count =
-        ((n.paramValues['band_count'] as num?)?.toInt() ?? 1).clamp(1, 8);
+        ((n.paramValues['band_count'] as num?)?.toInt() ?? 1).clamp(1, 24);
     for (var i = 0; i < count; i++) {
       final q = (n.paramValues['b${i}_q'] as num?)?.toDouble() ?? 2.0;
       if (!(q > 0.0)) return '节点 ${n.name} 第 ${i + 1} 段的 q 参数必须为正数。';
@@ -245,6 +245,15 @@ int ${topName}_run(${runParams.join(', ')});
 ''';
 
   // ---- top .c ----
+  // lut_fixed 单节点独占（唯一阶段且满足 [_lutFixedRowNodeId]）：y 循环加
+  // OpenMP 行域并行。整数路径（int16/Q14）行间独立、与线程数无关逐位一
+  // 致——A55 四核配 -fopenmp 即多核，不开 omp 自动串行；MSVC /openmp 的
+  // 对拍同口径（仅整数路径；FP 内核的编组不加此 pragma，见先前 omp 轮
+  // 廓 FP 差异教训）。
+  final lutFixedRowParallel = stream.stages.length == 1 &&
+      _lutFixedRowNodeId(
+              graph, stream, stream.stages.single, stream.stages.single.delay) !=
+          null;
   final topC = '''
 #include "$topName.h"
 
@@ -252,13 +261,20 @@ int ${topName}_run(${runParams.join(', ')});
 #include <string.h>
 ${helpers.isEmpty ? '' : '\n$helpers\n'}${s.fileDecls.isEmpty ? '' : '\n${s.fileDecls.join('\n\n')}\n'}
 int ${topName}_run(${runParams.join(', ')}) {
-  int y, x;
+  /* lut_fixed 单节点独占时阶段整行走 <id>_row，top 层无 x 循环——
+   * 条件声明避免 GCC -Wunused-variable。 */
+  int y${lutFixedRowParallel ? '' : ', x'};
 ${stream.needsScratch ? '''  if (scratch == NULL ||
       scratch_bytes < ${macro}_SCRATCH_BYTES(w, h, max_value)) {
     return ISP_ERR_SIZE;
   }
 ${carve.join('\n')}
-''' : ''}${gammaBuild.isEmpty ? '' : '${gammaBuild.join('\n')}\n'}${s.prelude.isEmpty ? '' : '${s.prelude.map((l) => '  $l').join('\n')}\n'}  for (y = 0; y < h; y++) {
+''' : ''}${gammaBuild.isEmpty ? '' : '${gammaBuild.join('\n')}\n'}${s.prelude.isEmpty ? '' : '${s.prelude.map((l) => '  $l').join('\n')}\n'}${lutFixedRowParallel ? '''#if defined(_OPENMP)
+  /* lut_fixed 单节点整数行核：行间独立、全程整数运算，行域并行与串行
+   * 逐位一致（omp 开关随编译选项；不开 omp 自动串行）。 */
+#pragma omp parallel for
+#endif
+''' : ''}  for (y = 0; y < h; y++) {
 ${rowDecls.join('\n')}
 ${stageCodes.join('\n')}  }
 ${flushCodes.join('\n')}
@@ -281,6 +297,29 @@ ${flushCodes.join('\n')}
     }
   }
   return files;
+}
+
+/// lut_fixed 单节点独占阶段的节点 id（不满足条件返回 null）：零延迟、
+/// 单节点链、无窗口、外部输入、单一外部输出、codegenMode=lut_fixed。
+/// 命中时阶段整行走 `<id>_row`（NEON/标量双变体），且 top 层 y 循环可
+/// 加 OpenMP 行域并行（整数路径逐位一致）。
+String? _lutFixedRowNodeId(IspGraph graph, GroupStreamPlan stream,
+    StreamStage stage, int delay) {
+  if (delay != 0 || stage.chain.length != 1) return null;
+  final plan = stream.plan;
+  final nid = stage.chain.single;
+  final member = plan.members[nid]!;
+  final inSrc = stream.inputSrcs['$nid:in'];
+  if (member.typeId != 'multi_band_eq' ||
+      member.paramValues['codegenMode'] != 'lut_fixed' ||
+      stream.windowInfos[nid] != null ||
+      inSrc == null ||
+      inSrc.ext == null ||
+      stage.targets.length != 1 ||
+      stage.targets.single.extOutput == null) {
+    return null;
+  }
+  return nid;
 }
 
 /// 发射一个行循环阶段：窗口预备（派生行/窗口行指针）→ 融合链逐节点
@@ -353,7 +392,34 @@ String _emitStage(
     if (wi != null) _emitWindowPreamble(b, s, stream, id, wi, ind);
   }
 
+  // ---- lut_fixed 单节点独占阶段：整行走 ${id}_row（NEON/标量双变体），
+  // 跳过逐像素融合循环（条件见 [_lutFixedRowNodeId]）。----
+  String? fixedRowCall;
+  {
+    final nid = _lutFixedRowNodeId(graph, stream, stage, d);
+    if (nid != null) {
+      final ident = streamNodeCtx(graph, plan, nid).ident;
+      final inExt = stream.inputSrcs['$nid:in']!.ext!;
+      fixedRowCall =
+          '${ident}_row(row_${inExt.name}, row_${stage.targets.single.extOutput!.name}, w, max_value)';
+    }
+  }
+
   // ---- 主行循环：融合链逐节点行核 ----
+  if (fixedRowCall != null) {
+    // 触发表/行函数/helper 登记（行核行本身不内联）。
+    final id = stage.chain.single;
+    final wrapper = plan.wrappers[id]!;
+    final inputs = <String, List<String>?>{};
+    for (final cp in wrapper.inputs) {
+      inputs[cp.name] =
+          _srcExprs(stream, stream.inputSrcs['$id:${cp.name}']!, values, d);
+    }
+    emitStreamRowKernel(s, streamNodeCtx(graph, plan, id), inputs);
+    b.writeln('$ind  $fixedRowCall;');
+    if (d > 0) b.writeln('    }');
+    return b.toString();
+  }
   b.writeln('$ind  for (x = 0; x < w; x++) {');
   for (final id in stage.chain) {
     final wrapper = plan.wrappers[id]!;

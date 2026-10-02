@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 
 import 'dart:ui' show Offset, Rect, Size;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:path/path.dart' as p;
 
 import '../modules/isp_studio/models/isp_align_mode.dart';
@@ -18,6 +19,8 @@ import '../modules/isp_studio/pipeline/audio_player.dart';
 import '../modules/isp_studio/pipeline/export_progress.dart';
 import '../modules/isp_studio/pipeline/export_segments.dart';
 import '../modules/isp_studio/pipeline/exporters.dart';
+import '../modules/isp_studio/pipeline/format_convert.dart' as fmtconv;
+import '../modules/isp_studio/pipeline/video_health.dart' as vhealth;
 import '../modules/isp_studio/pipeline/image_source.dart';
 import '../modules/isp_studio/pipeline/ilniqe.dart';
 import '../modules/isp_studio/pipeline/instrument_worker.dart';
@@ -44,8 +47,8 @@ import '../modules/isp_studio/pipeline/raw_sidecar.dart';
 import '../modules/isp_studio/pipeline/video_source.dart';
 import '../modules/isp_studio/widgets/node_layout.dart';
 
-/// GPU 平面预览帧：视频 yuv444p 直出帧原样打包成的单张纹理
-/// （宽 w/4、高 h*3，RGBA 纹素各装 4 个连续样本）+ 显示模式。
+/// GPU 平面预览帧：视频 yuv420p 直出帧原样打包成的单张纹理
+/// （宽 w/4、高 h*3/2，RGBA 纹素各装 4 个连续样本）+ 显示模式。
 /// 由 shaders/yuv_planes.frag 在 GPU 上解包上色，CPU 零逐像素工作。
 class PlanePreviewFrame {
   /// 打包纹理（同帧所有预览节点共享，只随换帧释放一次）。
@@ -61,8 +64,13 @@ class PlanePreviewFrame {
   /// 源是否 limited range（tv）：shader 里做范围扩展。
   final bool limited;
 
+  /// YUV→RGB 色彩矩阵（0=BT.601，1=BT.709，2=BT.2020；随片源元数据，
+  /// 见 VideoInfo.colorMatrix）。
+  final int matrix;
+
   const PlanePreviewFrame(
-      this.packed, this.mode, this.width, this.height, this.limited);
+      this.packed, this.mode, this.width, this.height, this.limited,
+      [this.matrix = 0]);
 }
 
 /// GPU 前缀覆盖去重的处理链视图：透传汇点（preview/histogram）不参与
@@ -310,6 +318,29 @@ class IspStudioState extends ChangeNotifier {
   double progress = 0;
   String statusMessage = '';
   final List<String> errors = [];
+
+  /// 格式转换节点（format_converter）的内嵌终端全文：节点 id → 已追加
+  /// 的 ffmpeg 输出（经 appendConsoleText 做 \r 覆盖行处理）。
+  final formatConvertLogs = <String, String>{};
+
+  /// 格式转换进行中的节点 id 集合（按钮禁用/文案切换用，防重入）。
+  final formatConvertRunning = <String>{};
+
+  /// 格式转换终端刷新信号：终端面板唯一监听它（ValueListenableBuilder
+  /// 局部重建），onOutput 高频回调只动它不 notifyListeners
+  /// （参照 instrumentTick 模式）。
+  final ValueNotifier<int> formatConvertTick = ValueNotifier(0);
+
+  /// 格式转换节点：实测可用的硬件编码器 id 列表（probeHwEncoders 探测
+  /// 缓存，供属性面板编码器下拉与 auto 尝试链使用）。
+  List<String> hwEncoders = const [];
+
+  /// 硬件编码器探测进行中标记（属性面板据此显示「探测中…」）。
+  bool hwEncoderProbing = false;
+
+  /// 硬件编码器探测已完成标记：无硬件的机器探测结果为空表，靠它避免
+  /// 属性面板每次重建都重新触发探测。
+  bool hwEncoderProbed = false;
 
   /// 进度显示信号：状态栏百分比唯一监听它（逐 tick 更新），避免
   /// 走 notifyListeners 引发全树重建。显示值在事件锚点之间由
@@ -689,22 +720,57 @@ class IspStudioState extends ChangeNotifier {
 
   /// 节点宽度上限：调节器（HSL/RGB/YUV、色彩控制器、色饱和度/亮度、
   /// 亮度/对比度、色彩平衡、色温）、高频边缘提取与曲线调节器为附加显示区需要更宽，
-  /// 放宽到全局上限的 1.6 倍，其余节点用全局上限。
+  /// 放宽到全局上限的 1.6 倍；多段色彩均衡器（示波器+预览双行，配合
+  /// 加高上限需要更宽）再放宽到其 1.5 倍（全局的 2.4 倍）；预览节点
+  /// 放宽到全局上限的 1.5 倍；其余节点用全局上限。
   static double maxNodeWidthFor(String typeId) =>
-      (typeId == 'hsl_debugger' ||
-          typeId == 'color_controller' ||
-          typeId == 'multi_band_eq' ||
-          typeId == 'rgb_debugger' ||
-          typeId == 'yuv_debugger' ||
-          typeId == 'sat_bright_adjuster' ||
-          typeId == 'bright_contrast_adjuster' ||
-          typeId == 'gaussian_blur' ||
-          typeId == 'color_balance' ||
-          typeId == 'color_temp_adjuster' ||
-          typeId == 'edge_extract' ||
-          typeId == 'levels_curves')
-          ? kMaxPreviewNodeWidth * 1.6
-          : kMaxPreviewNodeWidth;
+      typeId == 'multi_band_eq'
+          ? kMaxPreviewNodeWidth * 1.6 * 1.5
+          : typeId == 'format_converter' || typeId == 'video_health_check'
+              // 格式转换/视频健康检查节点尺寸固定 1500x1200（min=max，不可调）。
+              ? 1500
+              : typeId == 'preview'
+              ? kMaxPreviewNodeWidth * 1.5
+              : (typeId == 'hsl_debugger' ||
+                  typeId == 'color_controller' ||
+                  typeId == 'rgb_debugger' ||
+                  typeId == 'yuv_debugger' ||
+                  typeId == 'sat_bright_adjuster' ||
+                  typeId == 'bright_contrast_adjuster' ||
+                  typeId == 'gaussian_blur' ||
+                  typeId == 'color_balance' ||
+                  typeId == 'color_temp_adjuster' ||
+                  typeId == 'edge_extract' ||
+                  typeId == 'levels_curves')
+                  ? kMaxPreviewNodeWidth * 1.6
+                  : kMaxPreviewNodeWidth;
+
+  /// 节点宽度下限：格式转换/视频健康检查节点内嵌终端固定 1500x1200
+  ///（min=max，不可调；ffmpeg 处理信息整页可读）；其余节点用全局下限。
+  static double minNodeWidthFor(String typeId) =>
+      typeId == 'format_converter' || typeId == 'video_health_check'
+          ? 1500
+          : kMinPreviewNodeWidth;
+
+  /// 节点附加区高度下限：格式转换/视频健康检查节点 1162（标题 30 +
+  /// 底部留白 8 + extra = 总高 1200）；其余节点用全局下限。
+  static double minExtraHeightFor(String typeId) =>
+      typeId == 'format_converter' || typeId == 'video_health_check'
+          ? 1162
+          : kMinPreviewExtraHeight;
+
+  /// 节点附加区高度上限：多段色彩均衡器（矢量示波器 + 预览图双行显示，
+  /// 预览图需要更大加高空间）放宽到全局上限的 2 倍；预览节点放宽到
+  /// 全局上限的 1.5 倍；格式转换节点固定 1162（总高 1200，min=max 不
+  /// 可调）；其余节点用全局上限。
+  static double maxPreviewExtraHeightFor(String typeId) =>
+      typeId == 'multi_band_eq'
+          ? kMaxPreviewExtraHeight * 2
+          : typeId == 'format_converter' || typeId == 'video_health_check'
+              ? 1162
+              : typeId == 'preview'
+                  ? kMaxPreviewExtraHeight * 1.5
+                  : kMaxPreviewExtraHeight;
   final Map<String, double> _previewExtraHeights = {};
 
   int _runToken = 0;
@@ -769,9 +835,21 @@ class IspStudioState extends ChangeNotifier {
 
   // ---- 节点操作 ----
 
-  void addNodeAt(String typeId, Offset canvasPos) {
-    final snappedX = snapToGrid(canvasPos.dx);
-    final snappedY = snapToGrid(canvasPos.dy);
+  void addNodeAt(String typeId, Offset canvasPos, {bool centered = false}) {
+    var dx = canvasPos.dx, dy = canvasPos.dy;
+    // centered：落点 = 节点**中心**对齐聚点（大节点如 Tools 的
+    // 1500x1200 按左上角落点会整体偏到视口右下，观感是"没有居中"；
+    // 缺省保持左上角落点——测试与既有调用方的坐标语义不变）。
+    if (centered) {
+      final type = IspNodeRegistry.byId(typeId);
+      if (type != null) {
+        final probe = IspNode.create(type, '_probe', 0, 0);
+        dx -= probe.width / 2;
+        dy -= nodeHeight(type, previewExtraHeight: probe.extraHeight) / 2;
+      }
+    }
+    final snappedX = snapToGrid(dx);
+    final snappedY = snapToGrid(dy);
     final id = graph.addNode(typeId, snappedX, snappedY);
     selectedNodeId = id;
     notifyListeners();
@@ -966,13 +1044,14 @@ class IspStudioState extends ChangeNotifier {
   /// 示波器左半区显示）。所有权与释放规则同 [previewImages]。
   final Map<String, ui.Image> brightContrastInputWaveforms = {};
 
-  /// HSL 调节器节点的矢量示波器图（hsl_debugger 使用，键为节点 id；
-  /// 由输出链末端 RGBA 经 vectorscope 统计渲染，与 vectorscope 仪器
-  /// 同一口径）。所有权与释放规则同 [previewImages]。
+  /// HSL 调节器节点的矢量示波器图（hsl_debugger / color_controller /
+  /// multi_band_eq 使用，键为节点 id；由输出链末端 RGBA 经 vectorscope
+  /// 统计渲染，与 vectorscope 仪器同一口径）。所有权与释放规则同
+  /// [previewImages]。
   final Map<String, ui.Image> hslVectorscopes = {};
 
-  /// HSL 调节器的「调整前」输入矢量示波器图（由输入链末端 RGBA 统计，
-  /// 左半区显示）。所有权与释放规则同 [previewImages]。
+  /// 「调整前」输入矢量示波器图（由输入链末端 RGBA 统计，左半区显示；
+  /// 使用节点同 [hslVectorscopes]）。所有权与释放规则同 [previewImages]。
   final Map<String, ui.Image> hslInputVectorscopes = {};
 
   /// 曲线调节器节点的输入 Y 直方图（levels_curves 使用，键为节点 id；
@@ -1026,15 +1105,30 @@ class IspStudioState extends ChangeNotifier {
   /// 同帧所有节点共享一张打包纹理）。
   Map<String, PlanePreviewFrame> previewPlanes = {};
 
+  /// 换帧淘汰的打包纹理（双缓冲：延迟一帧释放——GL 纹理删除若与
+  /// 上传串行，立即释放会把开销顶在发布帧上）。
+  ui.Image? _planePackedRetire;
+
   /// yuv_planes.frag 着色器实例（GPU 平面预览播放时加载；失败回退 CPU）。
   ui.FragmentShader? yuvPlaneShader;
 
-  /// 释放共享打包纹理并清空平面预览（换帧/单次运行时调用）。
+  /// 释放共享打包纹理并清空平面预览（播放停止/单次运行时调用；
+  /// 逐帧换帧走 [_retirePlanePacked] 延迟释放）。
   void _clearPlanePreviews() {
     if (previewPlanes.isNotEmpty) {
       previewPlanes.values.first.packed.dispose();
       previewPlanes = {};
     }
+    _planePackedRetire?.dispose();
+    _planePackedRetire = null;
+  }
+
+  /// 换帧时淘汰上一张共享打包纹理：释放的是上上一张（延迟一帧）。
+  void _retirePlanePacked() {
+    final old =
+        previewPlanes.isNotEmpty ? previewPlanes.values.first.packed : null;
+    _planePackedRetire?.dispose();
+    _planePackedRetire = old;
   }
 
   /// 预览节点的 GPU 平面模式：1/2/3 = Y/U/V 平面灰度（in_mono 追溯到
@@ -1203,10 +1297,17 @@ class IspStudioState extends ChangeNotifier {
       case 'color_balance':
       case 'color_temp_adjuster':
       case 'edge_extract':
-      case 'multi_band_eq':
         // 双联对比图（左调整前/右调整后），每格内容为图像本身。
         final img = previewImages[node.id] ?? previewInputImages[node.id];
         if (img != null && img.height > 0) return 2.0 * img.width / img.height;
+        return null;
+      case 'multi_band_eq':
+        // 上双联矢量示波器（格 1:1，高 = 半格宽）+ 下双联对比图，
+        // 内容高 = 半宽 × (1 + 图高/图宽)，故整体纵横比如下。
+        final img = previewImages[node.id] ?? previewInputImages[node.id];
+        if (img != null && img.height > 0) {
+          return 2.0 * img.width / (img.width + img.height);
+        }
         return null;
       case 'hsl_debugger':
       case 'color_controller':
@@ -1231,8 +1332,8 @@ class IspStudioState extends ChangeNotifier {
           (20.0, 86.0), // 横 8+4+8；纵 4+滑块 24*3+手柄 10
         'sat_bright_adjuster' => (20.0, 62.0), // 滑块 24*2
         'color_controller' => (20.0, 134.0), // 滑块 24*5
-        // 工具栏 26 + 滑块 24*5
-        'multi_band_eq' => (20.0, 160.0),
+        // 工具栏 26 + 示波器/图像行间隔 4 + 滑块 24*5
+        'multi_band_eq' => (20.0, 164.0),
         'gaussian_blur' => (20.0, 62.0), // 滑块 24*2
         'edge_extract' => (20.0, 62.0), // 滑块 24*2
         'color_temp_adjuster' => (20.0, 126.0), // 温度行 24+滑块 24+底行 64
@@ -1252,7 +1353,7 @@ class IspStudioState extends ChangeNotifier {
     final oldRight = node.x + node.width;
     final snappedRight = snapToGrid(oldRight + delta.dx);
     var newWidth = (snappedRight - node.x)
-        .clamp(kMinPreviewNodeWidth, maxNodeWidthFor(node.typeId));
+        .clamp(minNodeWidthFor(node.typeId), maxNodeWidthFor(node.typeId));
 
     // Snap the absolute bottom edge: bottomY = node.y + baseHeight + extraHeight.
     // Snapping only extraHeight fails when baseHeight is not a multiple of the grid.
@@ -1261,7 +1362,7 @@ class IspStudioState extends ChangeNotifier {
     final oldBottom = node.y + baseHeight + oldExtra;
     final snappedBottom = snapToGrid(oldBottom + delta.dy);
     var newExtra = (snappedBottom - node.y - baseHeight)
-        .clamp(kMinPreviewExtraHeight, kMaxPreviewExtraHeight);
+        .clamp(minExtraHeightFor(node.typeId), maxPreviewExtraHeightFor(node.typeId));
 
     // 内容比例适配：显示内容有固定长宽比时，非主拖动维自动跟随，
     // 使内容区恰好匹配内容比例，消除显示区留白（提高画布利用率）。
@@ -1273,11 +1374,11 @@ class IspStudioState extends ChangeNotifier {
       if (_resizeDragAcc.dx.abs() >= _resizeDragAcc.dy.abs()) {
         // 横向为主：高度跟随宽度。
         newExtra = ((newWidth - chromeW) / aspect + chromeH)
-            .clamp(kMinPreviewExtraHeight, kMaxPreviewExtraHeight);
+            .clamp(minExtraHeightFor(node.typeId), maxPreviewExtraHeightFor(node.typeId));
       } else {
         // 纵向为主（中部手柄恒为纵向）：宽度跟随高度。
         newWidth = ((newExtra - chromeH) * aspect + chromeW)
-            .clamp(kMinPreviewNodeWidth, maxNodeWidthFor(node.typeId));
+            .clamp(minNodeWidthFor(node.typeId), maxNodeWidthFor(node.typeId));
       }
     }
 
@@ -1360,9 +1461,16 @@ class IspStudioState extends ChangeNotifier {
     return null;
   }
 
-  /// 当前多选是否可以编组：至少 2 个节点，且没有任何成员已在编组中
-  ///（已编组节点须先取消编组，才允许参与新的编组）。
+  /// 当前选择是否可以编组：至少 2 个节点，且没有任何成员已在编组中
+  ///（已编组节点须先取消编组，才允许参与新的编组）。例外：多段色彩
+  /// 均衡器等效于多个色彩控制器的混叠，单节点也允许编组（编组后即可
+  /// 经右键菜单查看/导出 C 代码）。
   bool get canGroupSelectedNodes {
+    if (selectedNodeIds.length == 1) {
+      final id = selectedNodeIds.first;
+      return groupIdOf(id) == null &&
+          graph.nodes[id]?.typeId == 'multi_band_eq';
+    }
     if (selectedNodeIds.length < 2) return false;
     for (final id in selectedNodeIds) {
       if (groupIdOf(id) != null) return false;
@@ -1395,7 +1503,12 @@ class IspStudioState extends ChangeNotifier {
   void groupSelectedNodes({String? name}) {
     final members =
         selectedNodeIds.where((id) => graph.nodes.containsKey(id)).toSet();
-    if (members.length < 2) return;
+    // 例外：多段色彩均衡器允许单节点编组（见 canGroupSelectedNodes）。
+    if (members.length < 2 &&
+        !(members.length == 1 &&
+            graph.nodes[members.first]?.typeId == 'multi_band_eq')) {
+      return;
+    }
     if (members.any((id) => groupIdOf(id) != null)) return;
     if (selectionMixesCExportNodes) return;
     graph.groups.add(IspNodeGroup('g${graph.nextId++}', members,
@@ -1462,8 +1575,9 @@ class IspStudioState extends ChangeNotifier {
     } else if (arg1 is num && extraHeight != null) {
       node.width = arg1
           .toDouble()
-          .clamp(kMinPreviewNodeWidth, maxNodeWidthFor(node.typeId));
-      final clampedH = extraHeight.clamp(kMinPreviewExtraHeight, kMaxPreviewExtraHeight);
+          .clamp(minNodeWidthFor(node.typeId), maxNodeWidthFor(node.typeId));
+      final clampedH = extraHeight.clamp(
+          minExtraHeightFor(node.typeId), maxPreviewExtraHeightFor(node.typeId));
       node.extraHeight = clampedH;
       _previewExtraHeights[nodeId] = clampedH;
       notifyListeners();
@@ -1679,6 +1793,13 @@ class IspStudioState extends ChangeNotifier {
     final node = graph.nodes[nodeId];
     if (node == null) return;
     node.paramValues[key] = value;
+    // 多段色彩均衡器：色彩风格预设（标题栏「（文件名）」标注）被任何
+    // 配置调整后清除——选中段切换与风格名自身写入除外。
+    if (node.typeId == 'multi_band_eq' &&
+        key != 'sel_band' &&
+        key != 'style_name') {
+      node.paramValues.remove('style_name');
+    }
     totalFrames = null; // 源参数可能变了
     nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 运行值已过期
@@ -1714,6 +1835,13 @@ class IspStudioState extends ChangeNotifier {
     final node = graph.nodes[nodeId];
     if (node == null) return;
     node.paramValues.addAll(values);
+    // 同上：批量写含配置键时清除风格名（预设读取在同一批写入
+    // style_name 的情况除外——见 values 含 style_name 的保留分支）。
+    if (node.typeId == 'multi_band_eq' &&
+        !values.containsKey('style_name') &&
+        values.keys.any((k) => k != 'sel_band' && k != 'style_name')) {
+      node.paramValues.remove('style_name');
+    }
     totalFrames = null;
     nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 运行值已过期
@@ -1722,7 +1850,8 @@ class IspStudioState extends ChangeNotifier {
   }
 
   /// 视频源文件路径对应的帧率/总帧数（ffmpeg 解析）自动填充到下游
-  /// 预览节点的「播放帧率」与「预览帧数」参数。失败静默。
+  /// 预览节点的「播放帧率」与「预览帧数」参数；多段色彩均衡器同为
+  /// 播放汇点（其附加区含播放控制条），一并填充。失败静默。
   Future<void> autoFillFromVideo(String sourceId) async {
     final node = graph.nodes[sourceId];
     if (node == null || node.typeId != 'video_source') return;
@@ -1731,11 +1860,16 @@ class IspStudioState extends ChangeNotifier {
     try {
       final info = await videoFileInfo(path,
           ffmpegPath: node.paramValues['ffmpegPath']?.toString() ?? '');
+      // 预览节点 HDR/SDR 切换按钮的显示形态：选完文件未播放即正确显示。
+      if (playbackSrcTransfer != info.colorTransfer) {
+        playbackSrcTransfer = info.colorTransfer;
+        notifyListeners();
+      }
       final fps = info.fps.round().clamp(1, 60);
       var changed = false;
       for (final n in graph.nodes.values) {
-        if (n.typeId != 'preview') continue;
-        // 只填位于该源下游的预览节点。
+        if (n.typeId != 'preview' && n.typeId != 'multi_band_eq') continue;
+        // 只填位于该源下游的预览/均衡器节点。
         if (!graph.upstreamOf(n.id).contains(sourceId)) continue;
         n.paramValues['fps'] = fps;
         n.paramValues['frameCount'] = info.frameCount;
@@ -2097,15 +2231,17 @@ class IspStudioState extends ChangeNotifier {
           }
         }
       }
-      // HSL 调节器/色彩控制器矢量示波器馈源：被 GPU 覆盖的 hsl_debugger /
-      // color_controller 节点不再走
+      // HSL 调节器/色彩控制器/多段色彩均衡器矢量示波器馈源：被 GPU 覆盖
+      // 的 hsl_debugger / color_controller / multi_band_eq 节点不再走
       // CPU 闭包（其矢量图在那里由链末端 RGBA 统计），此处对其自身输出
       // 与输入链末端端口做同样的 RGBA 回读，运行后据此渲染矢量图。
       // 键为回读端口 'nodeId:port'，值为目标缓存 key（节点 id = 调整后，
       // 'id#in' = 调整前）。
       final hslScopeFeeds = <String, String>{};
       for (final node in graph.nodes.values) {
-        if (node.typeId != 'hsl_debugger' && node.typeId != 'color_controller') {
+        if (node.typeId != 'hsl_debugger' &&
+            node.typeId != 'color_controller' &&
+            node.typeId != 'multi_band_eq') {
           continue;
         }
         if (covered.contains(node.id) || node.id == mainSink) {
@@ -2354,6 +2490,41 @@ class IspStudioState extends ChangeNotifier {
     return completer.future;
   }
 
+  /// 停播（暂停）时刷新多段色彩均衡器的双联矢量示波器：以最后一帧
+  /// 「调整后/调整前」预览图为馈源统计补齐（播放中已由
+  /// [_refreshEqScopesFromPlayback] 按 ~5Hz 节流刷新，此处落定最终帧）。
+  /// 统计渲染与单次预览同口径（[_hslVectorscopeImage]；CPU 路径预览图
+  /// 本就是 ≤480p 解码，GPU 链路径由该函数内部降采样到 ~240p）。
+  Future<void> _refreshEqScopesFromPreviews(
+      List<IspNode> eqNodes, int token) async {
+    for (final eq in eqNodes) {
+      final pairs = [
+        (false, previewImages[eq.id]),
+        (true, previewInputImages[eq.id]),
+      ];
+      for (final (isIn, src) in pairs) {
+        if (src == null) continue;
+        final bd = await src.toByteData();
+        if (bd == null) continue;
+        final scope = await _hslVectorscopeImage(
+            bd.buffer.asUint8List(), src.width, src.height);
+        if (scope == null) continue;
+        if (token != _runToken) {
+          scope.dispose();
+          return;
+        }
+        if (isIn) {
+          hslInputVectorscopes.remove(eq.id)?.dispose();
+          hslInputVectorscopes[eq.id] = scope;
+        } else {
+          hslVectorscopes.remove(eq.id)?.dispose();
+          hslVectorscopes[eq.id] = scope;
+        }
+      }
+    }
+    if (token == _runToken) frameTick.value++;
+  }
+
   /// 运行所有有效预览节点并更新预览图（previewImages 映射 + 向后兼容的
   /// _legacyPreviewImage/previewImage 入口）。
   Future<void> runPreview() async {
@@ -2414,7 +2585,7 @@ class IspStudioState extends ChangeNotifier {
       var totalChainLen = 0;
       for (final pvNode in previewNodes) {
         try {
-          final c = compileChain(graph, pvNode.id);
+          final c = _withHdrToneMapFlag(compileChain(graph, pvNode.id));
           chains[pvNode.id] = c;
           totalChainLen += c.length;
         } catch (_) {
@@ -2442,7 +2613,7 @@ class IspStudioState extends ChangeNotifier {
               graph.connectionAt(pvNode.id, 'in_mono');
           if (up != null) {
             try {
-              final c = compileChain(graph, up.fromNodeId);
+              final c = _withHdrToneMapFlag(compileChain(graph, up.fromNodeId));
               inputChains[pvNode.id] = c;
               totalChainLen += c.length;
             } catch (_) {
@@ -2652,14 +2823,16 @@ class IspStudioState extends ChangeNotifier {
                   inputWaveformImage = await decodeWaveform(inputRgba);
                 }
               }
-              // HSL 调节器/色彩控制器：由输出链/输入链末端 RGBA 分别统计
-              // Cb/Cr 矢量示波器（与 vectorscope 仪器同一口径），渲染成图供
-              // 节点右半（调整后）/左半（调整前）显示。统计走仪器
-              // worker 池（降采样 + 后台 isolate），两图并行。
+              // HSL 调节器/色彩控制器/多段色彩均衡器：由输出链/输入链
+              // 末端 RGBA 分别统计 Cb/Cr 矢量示波器（与 vectorscope 仪器
+              // 同一口径），渲染成图供节点右半（调整后）/左半（调整前）
+              // 显示。统计走仪器 worker 池（降采样 + 后台 isolate），
+              // 两图并行。
               ui.Image? vectorscopeImage;
               ui.Image? inputVectorscopeImage;
               if (pvNode.typeId == 'hsl_debugger' ||
-                  pvNode.typeId == 'color_controller') {
+                  pvNode.typeId == 'color_controller' ||
+                  pvNode.typeId == 'multi_band_eq') {
                 final outScope = _hslVectorscopeImage(rgba, w, h);
                 final inScope = inputRgba == null
                     ? null
@@ -2696,7 +2869,8 @@ class IspStudioState extends ChangeNotifier {
                 }
               }
               if (pvNode.typeId == 'hsl_debugger' ||
-                  pvNode.typeId == 'color_controller') {
+                  pvNode.typeId == 'color_controller' ||
+                  pvNode.typeId == 'multi_band_eq') {
                 hslVectorscopes.remove(pvNode.id)?.dispose();
                 if (vectorscopeImage != null) {
                   hslVectorscopes[pvNode.id] = vectorscopeImage;
@@ -3774,6 +3948,50 @@ class IspStudioState extends ChangeNotifier {
   /// 是否正在连续播放预览。
   bool isPlaying = false;
 
+  /// 当前/最近播放的视频源帧率（0 = 非视频源或未播放）：播放控制条
+  /// 进度滑条右侧的「已播放时间/总时间」按它换算。播放停止后保留
+  /// 最后一次的值（暂停态拖动进度条时时间文本仍正确）。
+  double playbackSrcFps = 0;
+
+  /// 当前视频源的色彩传递特性（0=SDR/1=PQ/2=HLG，VideoInfo.colorTransfer
+  /// 同口径）：预览节点播放控制条的 HDR/SDR 切换按钮按它决定显示形态
+  /// （0 → 静态「SDR」标识；非 0 → SDR/HDR 互斥切换）。视频源设文件
+  /// （autoFillFromVideo）与播放启动（togglePlayback）时填入。
+  int playbackSrcTransfer = 0;
+
+  /// 预览 HDR/SDR 开关：true = HDR 片源经 zscale+tonemap 映射显示
+  /// （默认，修复后行为）；false = HDR 片源按 SDR 直解（不插 tonemap
+  /// 滤镜链，发灰原样，供对比）。只影响预览/播放路径；导出路径恒映射。
+  bool hdrToneMapEnabled = true;
+
+  /// HDR/SDR 切换（预览节点按钮）：播放中先停播（解码流已按旧口径起
+  /// 好），翻转标志后重跑预览，当前帧按新口径重出。
+  Future<void> toggleHdrToneMap() async {
+    if (isPlaying) stopPlayback();
+    hdrToneMapEnabled = !hdrToneMapEnabled;
+    notifyListeners();
+    runPreview();
+  }
+
+  /// 把预览 HDR/SDR 开关注入视频源链参数（在链副本上注入——
+  /// compileChain 的 params 是 node.paramValues 活引用，直接写会污染
+  /// 节点参数）。仅 video_source 开头的链注入；pipeline_runner /
+  /// gpu_pipeline 读 '_toneMapHdr'（缺省 true）；导出链不注入，恒映射。
+  List<Map<String, Object?>> _withHdrToneMapFlag(
+      List<Map<String, Object?>> chain) {
+    if (chain.isEmpty || chain.first['typeId'] != 'video_source') {
+      return chain;
+    }
+    final first = chain.first;
+    final params = Map<String, Object?>.from(
+        (first['params'] as Map).cast<String, Object?>());
+    params['_toneMapHdr'] = hdrToneMapEnabled;
+    return [
+      {...first, 'params': params},
+      ...chain.skip(1),
+    ];
+  }
+
   /// 播放逐帧刷新信号：每帧 +1，取代全树 notifyListeners——只有预览
   /// 附加区与状态栏监听它逐帧重建，画布/节点结构不再逐帧重排
   /// （否则缩小画布后十几个节点卡片每帧全量重建，UI isolate 被堵死，
@@ -3813,6 +4031,10 @@ class IspStudioState extends ChangeNotifier {
   /// 播放中最近一次上屏帧的各预览链 RGBA（暂停时仪器刷新直接复用，
   /// 免逐仪器重新 seek 解码视频帧）。
   Map<String, Uint8List>? _lastPlaybackRgba;
+
+  /// 诊断（ISP_AUTOHASH）：当前上屏帧首条链的原始字节（平面直连为
+  /// YUV 平面数据，其余路径为 RGBA），供逐帧内容哈希对比实验。
+  Uint8List? get debugDisplayedBytes => _lastPlaybackRgba?.values.firstOrNull;
   int _lastPlaybackW = 0;
   int _lastPlaybackH = 0;
 
@@ -3840,14 +4062,18 @@ class IspStudioState extends ChangeNotifier {
 
     final validChains = <String, List<Map<String, Object?>>>{};
     for (final n in graph.nodes.values) {
-      if (n.typeId == 'preview') {
+      // 播放汇点：预览节点 + 多段色彩均衡器（其附加区本身就是前后双联
+      // 预览 + 播放控制条；没有预览节点的图也应能以均衡器为目标播放。
+      // 均衡器链同时充当其「调整后」馈源链，下游有预览链时经前缀覆盖
+      // 去重，不重复计算）。
+      if (n.typeId == 'preview' || n.typeId == 'multi_band_eq') {
         try {
           validChains[n.id] = compileChain(graph, n.id);
         } catch (_) {}
       }
     }
     if (validChains.isEmpty) {
-      statusMessage = '图中没有有效的预览节点算子链';
+      statusMessage = '图中没有有效的预览/多段色彩均衡器算子链';
       notifyListeners();
       return;
     }
@@ -3864,6 +4090,60 @@ class IspStudioState extends ChangeNotifier {
       await runPreview();
       return;
     }
+
+    // ---- 多段色彩均衡器附加区预览同步 ----
+    // 均衡器已计入播放汇点（validChains），此处找出位于各播放链上的
+    // multi_band_eq 节点，播放逐帧顺带捕获其输出（「调整后」）与上游
+    // 输出（「调整前」）：CPU 路径并入 runParallel 靠前缀覆盖捕获（链
+    // 为预览链前缀时零额外计算）；GPU 链路径用 displayCaptures 顺带出图
+    // （GPU 驻留免回读）。矢量示波器播放中不刷新（灰停），暂停时以最后
+    // 一帧前后预览图统计补齐（见循环收尾处 _refreshEqScopesFromPreviews）。
+    final eqNodes = <IspNode>[];
+    final eqUpstream = <String, String>{}; // eqId → 上游节点 id
+    {
+      final seen = <String>{};
+      for (final c in validChains.values) {
+        for (final op in c) {
+          if (op['typeId'] != 'multi_band_eq') continue;
+          final eqId = op['nodeId'] as String;
+          if (!seen.add(eqId)) continue;
+          final eqNode = graph.nodes[eqId];
+          if (eqNode == null) continue;
+          // 与单次运行同一近似：互斥输入组取第一个已连接端口；上游多
+          // 输出节点时捕获的是其主帧（端口差异可接受）。
+          final conn = graph.connectionAt(eqId, 'in') ??
+              graph.connectionAt(eqId, 'in_hsl') ??
+              graph.connectionAt(eqId, 'in_yuv') ??
+              graph.connectionAt(eqId, 'in_mono');
+          if (conn == null) continue;
+          eqNodes.add(eqNode);
+          eqUpstream[eqId] = conn.fromNodeId;
+        }
+      }
+    }
+    // CPU 路径的额外链：键 = 汇点 nodeId（与 runParallel 前缀覆盖捕获的
+    // 结果键口径一致）。输出链键 eqId；输入链键上游 id（多段共享上游时
+    // 去重；上游恰为另一均衡器时其输出链已涵盖）。
+    final eqExtraChains = <String, List<Map<String, Object?>>>{};
+    for (final eq in eqNodes) {
+      try {
+        eqExtraChains[eq.id] = compileChain(graph, eq.id);
+      } catch (_) {} // 编译失败：该节点不同步，不影响播放主链
+      final up = eqUpstream[eq.id];
+      if (up != null && !eqExtraChains.containsKey(up)) {
+        try {
+          eqExtraChains[up] = compileChain(graph, up);
+        } catch (_) {}
+      }
+    }
+    final cpuChains = eqExtraChains.isEmpty
+        ? validChains
+        : {...validChains, ...eqExtraChains};
+    // 均衡器馈源图键集合（'eqId' 与 '$eqId#in'）：GPU 链路径的仪器回读
+    // 循环据此剔除——馈源图不是仪器馈源，不做逐帧全幅回读。
+    final eqFeedImageKeys = <String>{
+      for (final eq in eqNodes) ...[eq.id, '${eq.id}#in'],
+    };
 
     isProcessing = true;
     isPlaying = true;
@@ -3935,6 +4215,24 @@ class IspStudioState extends ChangeNotifier {
       final videoDirect = isVideo &&
           (chain.first['outFormat'] as String? ?? 'rgb') == 'rgb' &&
           chain.skip(1).every((op) => sinkNodeTypes.contains(op['typeId']));
+      // RGB 视频直连预览同样走 yuv420p 平面上屏（planeDirect）：解码器
+      // 原生输出 + 打包纹理 + GPU 上色，免去 ffmpeg 侧 →rgba 全像素 CSC
+      // 与 2.67 倍管道/上传流量（RGBA 直连 4K 每帧 33MB 纹理上传，产能
+      // 贴帧预算抖动——4K30 观感"丢帧"的主因）。与 gpuPlanes 共用生产/
+      // 显示/仪器馈源路径；条件不满足回退 RGBA 直连。
+      if (!gpuPlanes &&
+          videoDirect &&
+          w % 4 == 0 &&
+          h % 2 == 0 &&
+          w * h * 3 ~/ 2 < 1 << 24) {
+        try {
+          yuvPlaneShader ??= (await ui.FragmentProgram.fromAsset(
+                  'shaders/yuv_planes.frag'))
+              .fragmentShader();
+          gpuPlanes = true;
+          planeModes = {firstEntry.key: 0};
+        } catch (_) {} // shader 不可用：维持 RGBA 直连
+      }
       final gpuChain = gpu != null &&
           !gpuPlanes &&
           !videoDirect &&
@@ -3943,14 +4241,47 @@ class IspStudioState extends ChangeNotifier {
       final pixelFormat = gpuPlanes
           ? 'yuv420p'
           : (gpuChain ? 'yuv420p' : (yuvDirect ? 'yuv444p' : 'rgba'));
+      // 播放形态标签（状态栏可见，现场确认走的哪条路径）。
+      final pathTag = gpuPlanes
+          ? (videoDirect ? '平面直连' : '平面')
+          : (videoDirect
+              ? '直连RGBA'
+              : (gpuChain ? 'GPU链' : 'CPU池'));
       // 视频源：从当前帧起顺序流式解码（内部前向缓冲，背压限速）。
       // 全分辨率出帧：预览按原始尺寸播放，不做降采样。
       var stream = isVideo
           ? await VideoFrameStream.start(
               srcParams['filePath']?.toString() ?? '', frame,
               ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '',
-              pixelFormat: pixelFormat)
+              pixelFormat: pixelFormat,
+              // 每包一帧，禁掉默认 CFR 补/丢帧：VUI 标称 60fps 的 30fps
+              // 片源（如手术录像 HEVC Rext）默认会被 ffmpeg 逐帧复制
+              // 成 60fps 交付，播放时每帧画面停 66ms 呈 15fps 卡顿观感。
+              passthrough: true,
+              // 预览 HDR/SDR 开关（SDR 直解对比 / HDR tonemap 显示）。
+              toneMapHdr: hdrToneMapEnabled)
           : null;
+      // 起步预读闸：解码器管线填充期（帧线程延迟 + B 帧重排，HEVC
+      // Rext 等高成本源尤其明显）交付是"先干后涌"，不等够帧就起步
+      // 会把填充等待暴露成开播后的一串停滞（实测 2024 手术录像
+      // HEVC Rext 起步 ~17s 内 5 次停滞，H.264 无 B 帧源为 0）。
+      // 最多等 ~1.5s 攒够 8 帧（≈270ms@30fps）再开始走帧；弱源
+      // （EOF/出错/停止）立即放行。代价仅是开播延迟最多 1.5s。
+      if (isVideo && stream != null) {
+        final s = stream;
+        // 目标帧数封顶到剩余帧数：短素材（如 4 帧测试片）攒不满 8 帧，
+        // 不设上限会白等满 1.5s 超时。
+        final gateTarget =
+            math.min(8, s.info.frameCount - frame).clamp(1, 8);
+        final gateSw = Stopwatch()..start();
+        while (s.bufferedCount < gateTarget &&
+            !s.isDrained &&
+            isPlaying &&
+            token == _runToken &&
+            gateSw.elapsedMilliseconds < 1500) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      }
       // 音频回放（有音轨时）：ffmpeg 抽取 WAV + MCI 播放。
       final audio = MciAudioPlayer();
       var audioReady = false;
@@ -3969,9 +4300,37 @@ class IspStudioState extends ChangeNotifier {
       final fps = (graph.nodes[firstEntry.key]!.paramValues['fps'] as num?)?.toInt() ?? 30;
       final frameDuration =
           Duration(microseconds: (1000000 / fps.clamp(1, 60)).round());
+      // 视频源信息标签（状态栏随播放显示）：分辨率@帧率 + SDR/HDR +
+      // 当前时间/总时长。静态部分循环前拼好，当前时间逐帧更新。
+      String fmtClock(double sec) {
+        final s = sec.isFinite && sec > 0 ? sec.floor() : 0;
+        return '${(s ~/ 60).toString().padLeft(2, '0')}:'
+            '${(s % 60).toString().padLeft(2, '0')}';
+      }
+
+      var srcInfoTag = '';
+      var srcInfoTotal = '';
+      double srcFps = 0;
+      if (isVideo) {
+        final vi = stream!.info;
+        final vfps = vi.fps == vi.fps.roundToDouble()
+            ? '${vi.fps.toInt()}'
+            : vi.fps.toStringAsFixed(2);
+        final rangeTag = switch (vi.colorTransfer) {
+          1 => 'HDR(PQ)',
+          2 => 'HDR(HLG)',
+          _ => 'SDR',
+        };
+        srcInfoTag = '${vi.width}x${vi.height}@$vfps $rangeTag  ';
+        srcInfoTotal = fmtClock(vi.frameCount / vi.fps);
+        srcFps = vi.fps;
+        // 预览节点 HDR/SDR 切换按钮的显示形态随当前播放源更新。
+        playbackSrcTransfer = vi.colorTransfer;
+      }
+      playbackSrcFps = srcFps;
       final poolSize = videoDirect || gpuPlanes || gpuChain
           ? 0
-          : math.min(validChains.length,
+          : math.min(cpuChains.length,
               math.max(1, Platform.numberOfProcessors - 1));
       final pipeline = videoDirect || gpuPlanes || gpuChain
           ? null
@@ -4028,7 +4387,11 @@ class IspStudioState extends ChangeNotifier {
               stream = await VideoFrameStream.start(
                   srcParams['filePath']?.toString() ?? '', 0,
                   ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '',
-                  pixelFormat: pixelFormat);
+                  pixelFormat: pixelFormat,
+                  // 同首播：每包一帧，禁 CFR 复制（防 60fps VUI 片源
+                  // 重复帧导致的 15fps 卡顿观感）。
+                  passthrough: true,
+                  toneMapHdr: hdrToneMapEnabled);
               bytes = await stream!.next();
               if (bytes == null) return null;
               f = 0;
@@ -4061,6 +4424,7 @@ class IspStudioState extends ChangeNotifier {
             // 在 shader 里做。仪器馈源按平面模式步长抽样合成 ~480p
             // 小图（统计类仪器不需要更高分辨率）。
             final limited = !stream!.info.fullRange;
+            final matrix = stream!.info.colorMatrix;
             var step = 1;
             while (workH ~/ step > 480) {
               step *= 2;
@@ -4070,7 +4434,7 @@ class IspStudioState extends ChangeNotifier {
             for (final e in planeModes.entries) {
               if (e.value == 0) {
                 rgbaMap[e.key] = yuv420p8ToRgbaStep(frameData, workW, workH,
-                    step, limited: limited);
+                    step, limited: limited, matrix: matrix);
                 gpuPlaneDims[e.key] = (workW ~/ step, workH ~/ step);
               } else {
                 // U/V chroma 平面（planeIdx = mode-1 = 1/2）半尺寸
@@ -4134,6 +4498,27 @@ class IspStudioState extends ChangeNotifier {
                 extraRuns.add(e);
               }
             }
+            // 多段色彩均衡器附加区馈源：eq 节点与其上游都在本次执行的链
+            // 上时顺带捕获出图（'eqId' 调整后 / 'eqId#in' 调整前，GPU
+            // 驻留免回读）；矢量示波器播放中按 ~5Hz 节流刷新
+            // （_refreshEqScopesFromPlayback 需要像素时自行回读预览图），
+            // 不做逐帧端口回读。
+            final eqAssigned = <String>{};
+            void eqAssign(List<String> ids, Map<String, String> caps) {
+              for (final eq in eqNodes) {
+                if (eqAssigned.contains(eq.id)) continue;
+                if (!ids.contains(eq.id)) continue;
+                final up = eqUpstream[eq.id]!;
+                if (!ids.contains(up)) continue;
+                // 本链汇点即 eq 时主出图就是「调整后」，不再重复捕获
+                // （否则 images 同键覆盖会使主出图纹理泄漏）。
+                if (ids.last != eq.id) caps[eq.id] = eq.id;
+                caps['${eq.id}#in'] = up;
+                eqAssigned.add(eq.id);
+              }
+            }
+
+            eqAssign(mainIds, displayCaptures);
             final r = await gpu.run(mainEntry.value, f,
                 imageSources: {srcId: (workBytes, workW, workH)},
                 streamFormat: 'yuv420p',
@@ -4143,15 +4528,22 @@ class IspStudioState extends ChangeNotifier {
             images[mainEntry.key] = r.image;
             images.addAll(r.displayImages);
             for (final e in extraRuns) {
+              final ids = [for (final op in e.value) op['nodeId'] as String];
+              final caps = <String, String>{};
+              eqAssign(ids, caps);
               final r2 = await gpu.run(e.value, f,
                   imageSources: {srcId: (workBytes, workW, workH)},
                   streamFormat: 'yuv420p',
                   streamLimited: limited,
+                  displayCaptures: caps,
                   captureSamples: false);
               images[e.key] = r2.image;
+              images.addAll(r2.displayImages);
             }
             if (allImageInstruments.isNotEmpty) {
               for (final entry in images.entries) {
+                // 均衡器馈源图不是仪器馈源：剔出逐帧全幅回读。
+                if (eqFeedImageKeys.contains(entry.key)) continue;
                 rgbaMap[entry.key] =
                     await GpuPipeline.readbackBytes(entry.value);
               }
@@ -4166,7 +4558,10 @@ class IspStudioState extends ChangeNotifier {
                   '${prodSw.elapsedMicroseconds - downUs} us');
             }
           } else {
-            rgbaMap = await pipeline!.runParallel(validChains, f,
+            // cpuChains = 预览链 + 均衡器附加区馈源链（输出链/输入链）。
+            // 馈源链为预览链前缀时由 runParallel 前缀覆盖顺带捕获，零额外
+            // 计算；捕获不安全（eq 下游还有就地改写算子）时回退单独执行。
+            rgbaMap = await pipeline!.runParallel(cpuChains, f,
                 sourceRgba: yuvDirect ? null : workBytes,
                 sourceYuv: yuvDirect ? workBytes : null,
                 sourceWidth: workW,
@@ -4174,13 +4569,51 @@ class IspStudioState extends ChangeNotifier {
             primaryRgba = rgbaMap[firstEntry.key] ?? workBytes;
             final pipeUs = prodSw.elapsedMicroseconds;
 
+            Future<ui.Image> decodeFrame(Uint8List rgba) {
+              final completer = Completer<ui.Image>();
+              ui.decodeImageFromPixels(rgba, workW, workH,
+                  ui.PixelFormat.rgba8888, completer.complete);
+              return completer.future;
+            }
+
+            // 均衡器馈源图按 ≤480p 步长抽样解码：预览格仅 ~200px，视觉
+            // 等效而上传/解码数据量降为 1/64（4K）；点采样成本与输出尺寸
+            // 成正比。单次运行仍用全分辨率（取色器逐像素精度）。
+            Future<ui.Image> decodeEqFeed(Uint8List rgba) {
+              var step = 1;
+              while (workH ~/ step > 480) {
+                step *= 2;
+              }
+              if (step <= 1) return decodeFrame(rgba);
+              final (d, dw, dh) =
+                  downsampleRgba8Step(rgba, workW, workH, step);
+              final completer = Completer<ui.Image>();
+              ui.decodeImageFromPixels(d, dw, dh, ui.PixelFormat.rgba8888,
+                  completer.complete);
+              return completer.future;
+            }
+
             await Future.wait([
+              // 预览汇点出图（均衡器馈源链的键在此剔除，改按下条路由）。
               for (final entry in rgbaMap.entries)
+                if (!eqExtraChains.containsKey(entry.key))
+                  () async {
+                    images[entry.key] = await decodeFrame(entry.value);
+                  }(),
+              // 均衡器馈源：输出 → images[eqId]（调整后），上游输出 →
+              // images['$eqId#in']（调整前）；共享上游时按段各自解码，
+              // 避免同一 ui.Image 双重归属。
+              for (final eq in eqNodes)
                 () async {
-                  final completer = Completer<ui.Image>();
-                  ui.decodeImageFromPixels(entry.value, workW, workH,
-                      ui.PixelFormat.rgba8888, completer.complete);
-                  images[entry.key] = await completer.future;
+                  final outRgba = rgbaMap[eq.id];
+                  if (outRgba != null) {
+                    images[eq.id] = await decodeEqFeed(outRgba);
+                  }
+                  final up = eqUpstream[eq.id];
+                  final inRgba = up == null ? null : rgbaMap[up];
+                  if (inRgba != null) {
+                    images['${eq.id}#in'] = await decodeEqFeed(inRgba);
+                  }
                 }(),
             ]);
             if (debugPlaybackTiming) {
@@ -4190,7 +4623,12 @@ class IspStudioState extends ChangeNotifier {
                   '${pipeUs - downUs} us, 图像解码 ${imgUs - pipeUs} us');
             }
           }
-          if (!videoDirect || validChains.length > 1) {
+          // 流帧缓冲归还：gpuPlanes（含 planeDirect——videoDirect 为 true
+          // 时）在生产内已把帧打包上传并抽完仪器馈源，须立即归还（否则
+          // 走不到 4661 的延迟归还——其归还的是降采样馈源而非流缓冲，
+          // 16 帧信用额度耗尽后解码死锁）；RGBA 直连单链延迟到仪器
+          // 刷新后归还（其 rgbaMap 值即流缓冲本身）。
+          if (!videoDirect || validChains.length > 1 || gpuPlanes) {
             stream!.recycle(bytes);
           }
           return (
@@ -4204,16 +4642,48 @@ class IspStudioState extends ChangeNotifier {
             workH
           );
         } else {
-          rgbaMap = await pipeline!.runParallel(validChains, f);
+          rgbaMap = await pipeline!.runParallel(cpuChains, f);
           primaryRgba = rgbaMap[firstEntry.key]!;
+
+          Future<ui.Image> decodeFrame(Uint8List rgba) {
+            final completer = Completer<ui.Image>();
+            ui.decodeImageFromPixels(rgba, w, h, ui.PixelFormat.rgba8888,
+                completer.complete);
+            return completer.future;
+          }
+
+          // 均衡器馈源图 ≤480p 解码（口径见视频 CPU 分支注释）。
+          Future<ui.Image> decodeEqFeed(Uint8List rgba) {
+            var step = 1;
+            while (h ~/ step > 480) {
+              step *= 2;
+            }
+            if (step <= 1) return decodeFrame(rgba);
+            final (d, dw, dh) = downsampleRgba8Step(rgba, w, h, step);
+            final completer = Completer<ui.Image>();
+            ui.decodeImageFromPixels(d, dw, dh, ui.PixelFormat.rgba8888,
+                completer.complete);
+            return completer.future;
+          }
 
           await Future.wait([
             for (final entry in rgbaMap.entries)
+              if (!eqExtraChains.containsKey(entry.key))
+                () async {
+                  images[entry.key] = await decodeFrame(entry.value);
+                }(),
+            // 均衡器馈源路由同上（视频 CPU 分支注释）。
+            for (final eq in eqNodes)
               () async {
-                final completer = Completer<ui.Image>();
-                ui.decodeImageFromPixels(entry.value, w, h,
-                    ui.PixelFormat.rgba8888, completer.complete);
-                images[entry.key] = await completer.future;
+                final outRgba = rgbaMap[eq.id];
+                if (outRgba != null) {
+                  images[eq.id] = await decodeEqFeed(outRgba);
+                }
+                final up = eqUpstream[eq.id];
+                final inRgba = up == null ? null : rgbaMap[up];
+                if (inRgba != null) {
+                  images['${eq.id}#in'] = await decodeEqFeed(inRgba);
+                }
               }(),
           ]);
           return (
@@ -4245,23 +4715,77 @@ class IspStudioState extends ChangeNotifier {
       }
 
       refillInflight();
+      // vsync 对齐上屏（真机）：自由运行的秒表节拍（33.33ms ±2ms）与
+      // 显示器 vsync 无锁相，发布抖动会周期性把帧推过 vsync 边界，
+      // 呈现时长在 1/2/3 个 vsync 间跳变——30fps 观感"丢帧"的主因
+      //（系统播放器按 vsync 对齐呈递）。改为相位累加：每个 vsync
+      // acc += fps，acc >= refresh 时发布一帧并 acc -= refresh——
+      // 平均帧率精确、呈现间隔以 vsync 为粒度尽量均匀（60Hz/30fps
+      // 恒为 2 vsync/帧）。回退秒表节拍的情形：无绑定环境（纯单元
+      // 测试 SchedulerBinding 未初始化）、取不到刷新率、帧泵停摆
+      //（首个 vsync 等待超时，如自动化测试不 pump 帧或窗口被遮蔽）。
+      double vsyncRefresh = 0.0;
+      try {
+        SchedulerBinding.instance; // 未初始化环境抛 StateError
+        vsyncRefresh = ui.PlatformDispatcher.instance.views.firstOrNull
+                ?.display.refreshRate ??
+            0.0;
+      } catch (_) {
+        vsyncRefresh = 0.0;
+      }
+      var vsyncDead = false;
+      Future<void> nextVsync() {
+        final c = Completer<void>();
+        SchedulerBinding.instance.scheduleFrameCallback((_) {
+          if (!c.isCompleted) c.complete();
+        });
+        SchedulerBinding.instance.scheduleFrame();
+        return c.future;
+      }
+
       try {
         while (isPlaying && token == _runToken) {
-          var remain = nextDeadline - playSw.elapsed;
-          while (remain > const Duration(milliseconds: 4) &&
-              isPlaying &&
-              token == _runToken) {
-            await Future<void>.delayed(
-                remain - const Duration(milliseconds: 4));
-            remain = nextDeadline - playSw.elapsed;
+          if (vsyncRefresh > 0 && !vsyncDead) {
+            // 按需出帧（不强制满速帧泵——4K/75Hz 下每次强制出帧的呈现
+            // 开销会耗尽栅格线程，实测满速泵时栅格 18ms/帧、泵被拖到
+            // ~48Hz）：秒表粗等到截止前 ~6ms，再调度一帧并对齐其
+            // vsync 回调，发布被引擎量化到 vsync；栅格只承担发布帧。
+            var remain = nextDeadline - playSw.elapsed;
+            while (remain > const Duration(milliseconds: 6) &&
+                isPlaying &&
+                token == _runToken) {
+              await Future<void>.delayed(
+                  remain - const Duration(milliseconds: 6));
+              remain = nextDeadline - playSw.elapsed;
+            }
+            var fired = true;
+            await nextVsync().timeout(const Duration(milliseconds: 250),
+                onTimeout: () {
+              fired = false;
+            });
+            if (!fired) {
+              vsyncDead = true;
+            }
           }
-          while (remain > Duration.zero && isPlaying && token == _runToken) {
-            await Future<void>.delayed(Duration.zero);
-            remain = nextDeadline - playSw.elapsed;
-          }
-          final over = playSw.elapsed - nextDeadline;
-          if (over.inMicroseconds > playbackMaxWaitOverUs) {
-            playbackMaxWaitOverUs = over.inMicroseconds;
+          if (vsyncRefresh <= 0 || vsyncDead) {
+            var remain = nextDeadline - playSw.elapsed;
+            while (remain > const Duration(milliseconds: 4) &&
+                isPlaying &&
+                token == _runToken) {
+              await Future<void>.delayed(
+                  remain - const Duration(milliseconds: 4));
+              remain = nextDeadline - playSw.elapsed;
+            }
+            while (remain > Duration.zero &&
+                isPlaying &&
+                token == _runToken) {
+              await Future<void>.delayed(Duration.zero);
+              remain = nextDeadline - playSw.elapsed;
+            }
+            final over = playSw.elapsed - nextDeadline;
+            if (over.inMicroseconds > playbackMaxWaitOverUs) {
+              playbackMaxWaitOverUs = over.inMicroseconds;
+            }
           }
           final produced = await inflight.removeFirst();
           if (produced == null) break;
@@ -4288,22 +4812,34 @@ class IspStudioState extends ChangeNotifier {
           if (playbackDisplayed == 0 || restarted) {
             nextDeadline = playSw.elapsed;
           } else if (playSw.elapsed - nextDeadline > pace * 2) {
+            // 停滞重建时间轴。
             playbackDropped++;
             nextDeadline = playSw.elapsed;
           }
           if (gpuPlanes) {
-            // 打包纹理换帧：同帧所有预览节点共享，旧纹理只释放一次。
+            // 打包纹理换帧：同帧所有预览节点共享；旧纹理延迟一帧释放
+            //（双缓冲，避免 GL 删除开销顶在发布帧上）。
             final packed = images['']!;
             final limited = !(stream?.info.fullRange ?? false);
-            _clearPlanePreviews();
+            final matrix = stream?.info.colorMatrix ?? 0;
+            _retirePlanePacked();
             previewPlanes = {
               for (final e in planeModes.entries)
-                e.key: PlanePreviewFrame(packed, e.value, w, h, limited),
+                e.key: PlanePreviewFrame(packed, e.value, w, h, limited, matrix),
             };
           } else {
             for (final entry in images.entries) {
-              previewImages.remove(entry.key)?.dispose();
-              previewImages[entry.key] = entry.value;
+              // 均衡器「调整前」输入图（'$eqId#in' 键）路由到
+              // previewInputImages，与单次运行的合并口径一致。
+              if (entry.key.endsWith('#in')) {
+                final base =
+                    entry.key.substring(0, entry.key.length - 3);
+                previewInputImages.remove(base)?.dispose();
+                previewInputImages[base] = entry.value;
+              } else {
+                previewImages.remove(entry.key)?.dispose();
+                previewImages[entry.key] = entry.value;
+              }
             }
           }
           previewWidth = w;
@@ -4342,8 +4878,13 @@ class IspStudioState extends ChangeNotifier {
               playSw.elapsedMicroseconds - fpsWindow.first > 1000000) {
             fpsWindow.removeFirst();
           }
-          statusMessage = '播放中 第 ${f + 1}/$total 帧  '
-              '${fpsWindow.length} FPS  停滞 $playbackDropped 次';
+          statusMessage = srcFps > 0
+              ? '播放中[$pathTag] $srcInfoTag'
+                  '${fmtClock(f / srcFps)}/$srcInfoTotal  '
+                  '第 ${f + 1}/$total 帧  '
+                  '${fpsWindow.length} FPS  停滞 $playbackDropped 次'
+              : '播放中[$pathTag] 第 ${f + 1}/$total 帧  '
+                  '${fpsWindow.length} FPS  停滞 $playbackDropped 次';
           // 逐帧刷新只走 frameTick：避免全模块重建堵死 UI isolate。
           frameTick.value++;
           if (audioReady && isVideo) {
@@ -4373,10 +4914,14 @@ class IspStudioState extends ChangeNotifier {
           _refreshInstrumentsFromFrame(
               rgbaMap, rgbaW, rgbaH, allImageInstruments, token,
               dims: gpuPlanes ? gpuPlaneDims : null);
+          // 多段均衡器矢量示波器随播放刷新（~5Hz 节流 + busy 闸，
+          // 不阻塞走帧；详见 _refreshEqScopesFromPlayback）。
+          if (eqNodes.isNotEmpty) _refreshEqScopesFromPlayback(eqNodes, token);
           // 音频仪器（电平/波形/EQ）随播放位置刷新（限频 ~15Hz）。
           _refreshAudioInstrumentsFromPlayback(f, token);
-          if (isVideo && videoDirect) {
-            // 像素与仪器数据都已取走，流帧缓冲归还池。
+          if (isVideo && videoDirect && !gpuPlanes) {
+            // 像素与仪器数据都已取走，流帧缓冲归还池（gpuPlanes 的流
+            // 缓冲已在生产内归还，此处 rgba 为降采样馈源，不归还）。
             stream!.recycle(rgba);
           }
           // 补充在途生产（预缓冲深度 2），与下一轮的截止等待并发。
@@ -4403,6 +4948,11 @@ class IspStudioState extends ChangeNotifier {
       // 暂停：刷新当前帧的仪器分析。
       if (token == _runToken) {
         await _runInstruments(previewFrame, token);
+        // 均衡器矢量示波器停播时再以最后一帧前后预览图统计补齐一次
+        //（播放中已按 ~5Hz 节流刷新，此处确保停在精确的最终帧口径）。
+        if (token == _runToken && eqNodes.isNotEmpty) {
+          await _refreshEqScopesFromPreviews(eqNodes, token);
+        }
         if (token == _runToken) {
           statusMessage = '已暂停 第 ${previewFrame + 1}/$total 帧';
         }
@@ -4467,6 +5017,82 @@ class IspStudioState extends ChangeNotifier {
 
   /// 常驻仪器分析 isolate（随 state 生命周期，懒启动）。
   final InstrumentAnalyzer _instrumentAnalyzer = InstrumentAnalyzer();
+
+  /// 多段均衡器矢量示波器播放刷新的限频与重入闸（同 _instrumentBusy
+  /// 思路；连线渲染是仪器池热点，~5Hz 节流而非逐帧）。
+  bool _eqScopeBusy = false;
+  DateTime _lastEqScopeRefresh = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 播放中刷新多段色彩均衡器的前后双联矢量示波器：以当前上屏帧的
+  /// 「调整后/调整前」馈源统计（优先 [_lastPlaybackRgba] 的
+  /// 'eqId'/'eqId#in' 条目——CPU worker 路径经 runParallel 前缀覆盖
+  /// 顺带捕获；GPU 链路径馈源是 GPU 驻留 ui.Image，回退 previewImages
+  /// 回读；GPU 平面模式条目按 [_lastPlaybackDims] 的真实平面尺寸喂
+  /// 数，缺失/尺寸不符跳过该次）。统计口径与停播补齐
+  /// [_refreshEqScopesFromPreviews] 一致（[_hslVectorscopeImage]：
+  /// ~240p 降采样 + 仪器池多核并行）。fire-and-forget + busy 闸，
+  /// 不阻塞走帧；刷新只走 instrumentTick（局部重建）。
+  void _refreshEqScopesFromPlayback(List<IspNode> eqNodes, int token) {
+    if (eqNodes.isEmpty || _eqScopeBusy) return;
+    final now = DateTime.now();
+    if (now.difference(_lastEqScopeRefresh) <
+        const Duration(milliseconds: 200)) {
+      return;
+    }
+    final rgbaMap = _lastPlaybackRgba;
+    if (rgbaMap == null) return;
+    _lastEqScopeRefresh = now;
+    _eqScopeBusy = true;
+    () async {
+      try {
+        for (final eq in eqNodes) {
+          for (final isIn in [false, true]) {
+            if (token != _runToken) return;
+            final key = isIn ? '${eq.id}#in' : eq.id;
+            Uint8List? rgba;
+            var w = 0, h = 0;
+            final entry = rgbaMap[key];
+            if (entry != null) {
+              final dim = _lastPlaybackDims?[key];
+              final ew = dim?.$1 ?? _lastPlaybackW;
+              final eh = dim?.$2 ?? _lastPlaybackH;
+              if (ew > 0 && eh > 0 && entry.length == ew * eh * 4) {
+                rgba = entry;
+                w = ew;
+                h = eh;
+              }
+            }
+            if (rgba == null) {
+              final img =
+                  isIn ? previewInputImages[eq.id] : previewImages[eq.id];
+              if (img == null) continue;
+              final bd = await img.toByteData();
+              if (bd == null) continue;
+              rgba = bd.buffer.asUint8List();
+              w = img.width;
+              h = img.height;
+            }
+            final scope = await _hslVectorscopeImage(rgba, w, h);
+            if (scope == null) continue;
+            if (token != _runToken) {
+              scope.dispose();
+              return;
+            }
+            if (isIn) {
+              hslInputVectorscopes.remove(eq.id)?.dispose();
+              hslInputVectorscopes[eq.id] = scope;
+            } else {
+              hslVectorscopes.remove(eq.id)?.dispose();
+              hslVectorscopes[eq.id] = scope;
+            }
+          }
+        }
+        if (token == _runToken) instrumentTick.value++;
+      } finally {
+        _eqScopeBusy = false;
+      }
+    }();
+  }
 
   /// 音频仪器播放刷新的限频与重入闸（同 _instrumentBusy 思路）。
   bool _audioInstrumentBusy = false;
@@ -4766,7 +5392,7 @@ class IspStudioState extends ChangeNotifier {
   /// 编译到该节点为止的链，在后台 isolate 执行当前预览帧并取单个元素。
   Future<int> queryNodeOutputAt(
       String nodeId, int x, int y, int channel) async {
-    final chain = compileChain(graph, nodeId);
+    final chain = _withHdrToneMapFlag(compileChain(graph, nodeId));
     return compute(runChainValueAtInIsolate, {
       'chain': chain,
       'frameIndex': previewFrame,
@@ -4855,7 +5481,9 @@ class IspStudioState extends ChangeNotifier {
 
   /// 拖动调整预览节点屏幕高度（[height] 为画布坐标下的附加区总高）。
   void setPreviewExtraHeight(String nodeId, double height) {
-    final h = height.clamp(kMinPreviewExtraHeight, kMaxPreviewExtraHeight);
+    final h = height.clamp(
+        minExtraHeightFor(graph.nodes[nodeId]?.typeId ?? ''),
+        maxPreviewExtraHeightFor(graph.nodes[nodeId]?.typeId ?? ''));
     if (h == previewExtraHeight(nodeId)) return;
     _previewExtraHeights[nodeId] = h;
     notifyListeners();
@@ -4940,6 +5568,195 @@ class IspStudioState extends ChangeNotifier {
         isProcessing = false;
         notifyListeners();
       }
+    }
+  }
+
+  /// 视频健康检查：内嵌终端流式输出检查报告（record-2024-09-26 卡顿
+  /// 排查检查项固化，见 pipeline/video_health）。报告实时显示在节点
+  /// 卡片的终端面板（[healthCheckLogs] + [healthCheckTick]）；结构化
+  /// 进度（阶段/已检帧/时间/完成度/预估剩余）节流写到状态栏
+  /// [statusMessage]。[stopHealthCheck] 置取消标记中止（引擎返回 -2）。
+  Future<void> runHealthCheck(String nodeId) async {
+    if (healthCheckRunning.contains(nodeId)) return; // 防重入
+    if (isPlaying) return; // 播放中不开始检查（statusMessage 不冲突）
+    final node = graph.nodes[nodeId];
+    if (node == null) return;
+    final p = node.paramValues;
+    final input = p['inputFile']?.toString() ?? '';
+    var ffmpeg = p['ffmpegPath']?.toString() ?? '';
+    if (ffmpeg.isEmpty) ffmpeg = 'tools/ffmpeg/ffmpeg.exe';
+    healthCheckRunning.add(nodeId);
+    healthCheckLogs[nodeId] = '';
+    healthCheckTick.value++;
+    statusMessage = '检查中[准备] 正在读取基本信息…';
+    notifyListeners();
+    var lastProgMs = 0;
+    try {
+      final exit = await vhealth.runVideoHealthCheck(
+        ffmpegPath: ffmpeg,
+        inputFile: input,
+        scanDepth: p['scanDepth']?.toString() ?? 'fast',
+        isCancelled: () => healthCheckCancelRequested.contains(nodeId),
+        onProgress: (prog) {
+          // 状态栏进度 ~2Hz 节流（引擎侧已 ~4Hz）。
+          final now = DateTime.now().millisecondsSinceEpoch;
+          if (now - lastProgMs < 500) return;
+          lastProgMs = now;
+          statusMessage = '检查中[${prog.stageName}] 已检查 '
+              '${prog.stageFramesDone}/${prog.totalFrames} 帧  '
+              '${vhealth.fmtClockSec(prog.videoSecDone)}/'
+              '${vhealth.fmtClockSec(prog.videoSecTotal)}  '
+              '完成 ${(prog.overall * 100).toStringAsFixed(0)}%  '
+              '预计剩余 ${vhealth.fmtHmsSec(prog.etaSec)}';
+          notifyListeners();
+        },
+        onOutput: (chunk) {
+          // 高频回调：只追加日志并动 tick（局部重建），不 notifyListeners。
+          healthCheckLogs[nodeId] = fmtconv.appendConsoleText(
+              healthCheckLogs[nodeId] ?? '', chunk);
+          healthCheckTick.value++;
+        },
+      );
+      healthCheckLogs[nodeId] = fmtconv.appendConsoleText(
+          healthCheckLogs[nodeId] ?? '',
+          exit == -2
+              ? '\n[已中止] 检查未完成\n'
+              : exit < 0
+                  ? '\n[FAILED] 检查未完成（exit $exit）\n'
+                  : '\n[DONE] 检查完成\n');
+      statusMessage = exit == -2
+          ? '检查已中止'
+          : exit < 0
+              ? '检查失败（exit $exit）'
+              : exit == 0
+                  ? '检查完成：全部正常'
+                  : '检查完成：有警告（详见节点报告）';
+    } finally {
+      healthCheckRunning.remove(nodeId);
+      healthCheckCancelRequested.remove(nodeId);
+      healthCheckTick.value++;
+      notifyListeners();
+    }
+  }
+
+  /// 中止指定节点的视频健康检查（仅检查进行中有效）：置取消标记，
+  /// 引擎在行循环/阶段边界 kill 当前 ffmpeg 子进程并返回 -2。
+  void stopHealthCheck(String nodeId) {
+    if (!healthCheckRunning.contains(nodeId)) return;
+    healthCheckCancelRequested.add(nodeId);
+  }
+
+  /// 探测实测可用的硬件编码器（-encoders 编译支持 + 逐候选微缩试编码
+  /// 验证）。幂等：探测中或已探测过且非强制时直接返回；失败静默留空表。
+  Future<void> probeHwEncoders({    String ffmpegPath = 'tools/ffmpeg/ffmpeg.exe',
+    bool force = false,
+  }) async {
+    if (hwEncoderProbing) return;
+    if (!force && hwEncoderProbed) return;
+    hwEncoderProbing = true;
+    notifyListeners();
+    try {
+      hwEncoders = await fmtconv.probeHwEncoders(ffmpegPath);
+    } catch (_) {
+      hwEncoders = const [];
+    } finally {
+      hwEncoderProbing = false;
+      hwEncoderProbed = true;
+      notifyListeners();
+    }
+  }
+
+  /// 视频健康检查节点（video_health_check）的内嵌终端全文：节点 id →
+  /// 报告文本（经 appendConsoleText 做 \r 覆盖行处理）。
+  final healthCheckLogs = <String, String>{};
+
+  /// 视频健康检查进行中的节点 id 集合（按钮禁用/文案切换，防重入）。
+  final healthCheckRunning = <String>{};
+
+  /// 视频健康检查取消请求的节点 id 集合（stopHealthCheck 置位，引擎
+  /// isCancelled 轮询，runHealthCheck 结束时清理）。
+  final healthCheckCancelRequested = <String>{};
+
+  /// 视频健康检查终端刷新信号（同 formatConvertTick 模式）。
+  final ValueNotifier<int> healthCheckTick = ValueNotifier(0);
+
+  /// 格式转换节点输入片源的动态范围探测结果：节点 id → 0 SDR/1 PQ/
+  /// 2 HLG，-1 = 探测失败（属性面板「输入」显示与 outputRange 选项
+  /// 过滤用）。
+  final formatConvertInputRange = <String, int>{};
+
+  /// 各节点最近一次探测时的 inputFile（幂等：同路径不重复探测）。
+  final _formatConvertProbePath = <String, String>{};
+
+  /// 探测格式转换节点输入片源的动态范围（videoFileInfo 有缓存；
+  /// 幂等：同 inputFile 已探过直接返回；inputFile 变化后再次调用会
+  /// 重新探测）。
+  Future<void> probeFormatConvertInput(String nodeId) async {
+    final node = graph.nodes[nodeId];
+    if (node == null) return;
+    final p = node.paramValues;
+    final input = p['inputFile']?.toString() ?? '';
+    var ffmpeg = p['ffmpegPath']?.toString() ?? '';
+    if (ffmpeg.isEmpty) ffmpeg = 'tools/ffmpeg/ffmpeg.exe';
+    if (_formatConvertProbePath[nodeId] == input) return;
+    _formatConvertProbePath[nodeId] = input;
+    if (input.isEmpty) {
+      formatConvertInputRange[nodeId] = -1;
+      notifyListeners();
+      return;
+    }
+    try {
+      final info = await videoFileInfo(input, ffmpegPath: ffmpeg);
+      formatConvertInputRange[nodeId] = info.colorTransfer;
+    } catch (_) {
+      formatConvertInputRange[nodeId] = -1;
+    }
+    notifyListeners();
+  }
+
+  /// 格式转换（webm → mp4）：内嵌终端流式运行 ffmpeg（编码器由节点
+  /// encoder 参数选择：auto 硬件优先回退 libx264；输出动态范围由
+  /// outputRange 参数选择：auto 跟随片源 / SDR tonemap / HDR HEVC
+  /// 10bit），输出实时显示在节点卡片的终端面板（[formatConvertLogs]
+  /// + [formatConvertTick]）。
+  Future<void> convertVideoFormat(String nodeId) async {
+    if (formatConvertRunning.contains(nodeId)) return; // 防重入
+    final node = graph.nodes[nodeId];
+    if (node == null) return;
+    final p = node.paramValues;
+    final input = p['inputFile']?.toString() ?? '';
+    final output = p['outputFile']?.toString() ?? '';
+    var ffmpeg = p['ffmpegPath']?.toString() ?? '';
+    if (ffmpeg.isEmpty) ffmpeg = 'tools/ffmpeg/ffmpeg.exe';
+    formatConvertRunning.add(nodeId);
+    formatConvertLogs[nodeId] = '';
+    formatConvertTick.value++;
+    notifyListeners();
+    try {
+      final exit = await fmtconv.runFormatConvert(
+        ffmpegPath: ffmpeg,
+        inputFile: input,
+        outputFile: output,
+        encoder: p['encoder']?.toString() ?? 'auto',
+        hwEncoders: hwEncoders,
+        outputRange: p['outputRange']?.toString() ?? 'auto',
+        onOutput: (chunk) {
+          // 高频回调：只追加日志并动 tick（ValueListenableBuilder 局部
+          // 重建，参照 instrumentTick），不 notifyListeners。
+          formatConvertLogs[nodeId] = fmtconv.appendConsoleText(
+              formatConvertLogs[nodeId] ?? '', chunk);
+          formatConvertTick.value++;
+        },
+      );
+      formatConvertLogs[nodeId] = fmtconv.appendConsoleText(
+          formatConvertLogs[nodeId] ?? '',
+          exit == 0
+              ? '\n[DONE] Output file: $output\n'
+              : '\n[FAILED] exit $exit\n');
+    } finally {
+      formatConvertRunning.remove(nodeId);
+      formatConvertTick.value++;
+      notifyListeners();
     }
   }
 
@@ -5128,6 +5945,8 @@ class IspStudioState extends ChangeNotifier {
               ffmpegPath: ffmpeg,
               pixelFormat: gpuStreamFormat,
               hwaccel: hwaccel,
+              // 每包一帧，禁 CFR 复制（防 60fps VUI 片源导出帧数翻倍）。
+              passthrough: true,
               onProcess: (proc) => gpuDecodeProc = proc))
           : null;
 
@@ -5548,11 +6367,15 @@ class IspStudioState extends ChangeNotifier {
     }
   }
 
-  /// 取消正在进行的导出。
+  /// 取消正在进行的导出/播放。
   void cancelProcessing() {
     if (isProcessing) {
       _runToken++;
       isProcessing = false;
+      // 同步复位播放态：播放循环 finally 只在 token 未失配时才清
+      // isPlaying，这里 bump token 后必须由取消方复位，否则预览节点的
+      // 播放控制条仍显示播放中（与右上角停止按钮状态脱节）。
+      isPlaying = false;
       _progressTimer?.cancel();
       _progressTimer = null;
       statusMessage = '已取消';

@@ -1,0 +1,229 @@
+{
+  "name": "YUV通道脂肪增强去雾处理器",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "color_controller",
+      "x": 690.0,
+      "y": -630.0,
+      "width": 1280.0,
+      "extraHeight": 764.0,
+      "name": "色彩控制器#1",
+      "params": {
+        "bypass": false,
+        "h_center": 0.0,
+        "q": 5.3,
+        "h_shift": 10.6,
+        "s_gain": 1.0,
+        "l_gain": 1.0,
+        "codegenMode": "lut"
+      }
+    },
+    {
+      "id": "n4",
+      "typeId": "preview",
+      "x": 780.0,
+      "y": 360.0,
+      "width": 800.0,
+      "extraHeight": 481.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 30,
+        "frameCount": 29180
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "preview",
+      "x": 1580.0,
+      "y": 360.0,
+      "width": 800.0,
+      "extraHeight": 481.0,
+      "name": "预览#2",
+      "params": {
+        "fps": 30,
+        "frameCount": 29180
+      }
+    },
+    {
+      "id": "n8",
+      "typeId": "video_source",
+      "x": 450.0,
+      "y": 360.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "H:\\Surgery_video\\贵州毕节 手术备份2025.12.03\\12.03第二台胆总管切开取石\\record-2025-12-03-10-04-21-0002.mp4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n24",
+      "typeId": "video_output",
+      "x": 2470.0,
+      "y": 360.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "视频输出#1",
+      "params": {
+        "fps": 30,
+        "crf": 25,
+        "encoder": "auto",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\Video_out\\record-2025-12-03-10-04-21-0002-output.mp4",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n27",
+      "typeId": "csc_hsl2rgb",
+      "x": 2030.0,
+      "y": -630.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "HSL→RGB 转换#1",
+      "params": {
+        "bypass": false
+      }
+    },
+    {
+      "id": "n29",
+      "typeId": "levels_curves",
+      "x": 2030.0,
+      "y": -520.0,
+      "width": 652.0,
+      "extraHeight": 650.0,
+      "name": "曲线调节器#1",
+      "params": {
+        "bypass": false,
+        "curveMode": "spline",
+        "gamma": 1.0,
+        "points": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            663.546056531734,
+            429.7129591428832
+          ],
+          [
+            1564.3815265958021,
+            1388.9010341120027
+          ],
+          [
+            4095.0,
+            4095.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "n34",
+      "typeId": "csc_yuv2hsl",
+      "x": 420.0,
+      "y": -630.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "YUV→HSL 转换#1",
+      "params": {
+        "bypass": false
+      }
+    },
+    {
+      "id": "n36",
+      "typeId": "csc_rgb2yuv",
+      "x": 2490.0,
+      "y": -630.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "RGB→YUV 转换#1",
+      "params": {
+        "bypass": false,
+        "standard": "bt601",
+        "range": "full"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c28",
+      "from": "n1",
+      "fromPort": "out",
+      "to": "n27",
+      "toPort": "in"
+    },
+    {
+      "id": "c30",
+      "from": "n27",
+      "fromPort": "out",
+      "to": "n29",
+      "toPort": "in"
+    },
+    {
+      "id": "c32",
+      "from": "n6",
+      "fromPort": "out",
+      "to": "n24",
+      "toPort": "in"
+    },
+    {
+      "id": "c35",
+      "from": "n34",
+      "fromPort": "out",
+      "to": "n1",
+      "toPort": "in"
+    },
+    {
+      "id": "c37",
+      "from": "n29",
+      "fromPort": "out",
+      "to": "n36",
+      "toPort": "in"
+    },
+    {
+      "id": "c38",
+      "from": "n36",
+      "fromPort": "out",
+      "to": "n6",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c39",
+      "from": "n8",
+      "fromPort": "out_yuv",
+      "to": "n4",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c40",
+      "from": "n8",
+      "fromPort": "out_yuv",
+      "to": "n34",
+      "toPort": "in"
+    }
+  ],
+  "groups": [
+    {
+      "id": "g41",
+      "name": "视频效果预览对比",
+      "nodes": [
+        "n4",
+        "n6"
+      ]
+    },
+    {
+      "id": "g42",
+      "name": "YUV通道脂肪增强去雾处理器",
+      "nodes": [
+        "n1",
+        "n27",
+        "n29",
+        "n34",
+        "n36"
+      ]
+    }
+  ],
+  "nextId": 43
+}

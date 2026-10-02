@@ -500,7 +500,11 @@ class GpuPipeline {
                 ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
                     maxValue: maxV)
                 : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
-                    maxValue: maxV, ffmpegPath: _str(sp, 'ffmpegPath'));
+                    maxValue: maxV,
+                    ffmpegPath: _str(sp, 'ffmpegPath'),
+                    // 预览 HDR/SDR 开关（链参数 '_toneMapHdr'，与 CPU
+                    // 路径同口径；缺省 true=映射）。
+                    toneMapHdr: sp['_toneMapHdr'] != false);
         if (w0.isOdd) {
           throw StateError('GPU 路径要求偶数宽（当前 $w0 x $h0）');
         }
@@ -1555,15 +1559,15 @@ class GpuPipeline {
           ports['$nodeId:out'] = frame;
         case 'multi_band_eq':
           _requireFormat(frame, 'hsl', '多段色彩均衡器');
-          // 段数缺省 1，钳位到定义域 1..8（与 CPU 路径同口径）。
+          // 段数缺省 1，钳位到定义域 1..24（与 CPU 路径同口径）。
           var bandCount = (p['band_count'] as num?)?.toInt() ?? 1;
           if (bandCount < 1) bandCount = 1;
-          if (bandCount > 8) bandCount = 8;
+          if (bandCount > 24) bandCount = 24;
           final serial = p['band_mode']?.toString() == 'serial';
           // 段参数缺省回退恒等默认；恒等段（无偏移且增益全 1）对并联
           // 求和/串联级联均无贡献（ΔH 项为 0、增益因子为 1），打包时
           // 跳过不上传（段序保持原序压实）。
-          final bandFloats = List<double>.filled(40, 0.0);
+          final bandFloats = List<double>.filled(120, 0.0);
           var active = 0;
           for (var i = 0; i < bandCount; i++) {
             final bdh = _num(p, 'b${i}_dh');

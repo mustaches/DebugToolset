@@ -149,7 +149,7 @@ const _nodeTooltips = {
 };
 
 /// 节点工具栏：按 Source / Process / ColorTrans / Datapath / Output /
-/// Instrument / Evaluation 分组列出全部节点类型
+/// Instrument / Evaluation / Tools 分组列出全部节点类型
 /// （类型色点 + 名称），点击后把节点添加到视口中心
 /// （[onPickCenter] 由视图/画布计算）。
 /// 注：bayer_source 不在工具栏提供——与 CIS Src → Bayer RGGB 重复
@@ -221,6 +221,10 @@ class IspNodePalette extends StatelessWidget {
                 nested: true,
               ),
             ]),
+            _expansionGroup('Tools', const Color(0xFF2E3A2E), [
+              _item(state, 'format_converter'),
+              _item(state, 'video_health_check'),
+            ]),
           ],
         ),
       ),
@@ -248,7 +252,9 @@ class IspNodePalette extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
         child: InkWell(
-          onTap: () => state.addNodeAt(type.typeId, onPickCenter()),
+          // centered：让节点中心对准视口中心（大节点不再偏到右下）。
+          onTap: () =>
+              state.addNodeAt(type.typeId, onPickCenter(), centered: true),
           child: Container(
             // 紧凑条目：行高压到 1.0、垂直 padding 1，高度约为默认一半。
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),

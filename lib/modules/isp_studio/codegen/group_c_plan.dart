@@ -10,12 +10,17 @@ import '../models/isp_node.dart';
 import 'c_ident.dart';
 import 'node_c_gen.dart';
 
-/// 编组外部端口（run() 形参）：形参名、通道数与 C 类型。
+/// 编组外部端口（run() 形参）：形参名、通道数、C 类型与帧格式。
 class GroupCExtPort {
   final String name;
   final int channels;
   final String cType;
-  const GroupCExtPort(this.name, this.channels, this.cType);
+
+  /// 帧格式（'rgb'/'yuv'/'hsl'/'bayer'/'mono'，见 [cFrameFormatOfPort]；
+  /// gamma 的 rgba 直通输出为 'rgba8'）。
+  final String format;
+
+  const GroupCExtPort(this.name, this.channels, this.cType, this.format);
 }
 
 /// 节点的 LUT 烘焙域上限：沿各输入端口向上追溯（跨组边界、gamma 直通
@@ -294,7 +299,7 @@ GroupCPlan planGroupC(IspGraph graph, IspNodeGroup group) {
       final conn = graph.connectionAt(id, port.name);
       if (conn != null && memberIds.contains(conn.fromNodeId)) continue;
       final p = GroupCExtPort('in${extInputParams.length}',
-          channelsOfPort(port.type), 'uint16_t');
+          cChannelsOfPort(port.type), 'uint16_t', cFrameFormatOfPort(port.type));
       extInputs['$id:${port.name}'] = p;
       extInputParams.add(p);
     }
@@ -322,7 +327,18 @@ GroupCPlan planGroupC(IspGraph graph, IspNodeGroup group) {
           outGroup.isNotEmpty ||
           (inGroup.isEmpty && !(hasInGroupOut[id] ?? false));
       if (!exposed) continue;
-      final p = GroupCExtPort('out${extOutputParams.length}', cp.channels, cp.cType);
+      // 帧格式：gamma 的 rgba 直通输出特判 'rgba8'，其余按节点输出端口
+      // 类型归一（端口 spec 缺失时回退 'mono'）。
+      final outType = cp.name == 'out_rgba'
+          ? null
+          : IspNodeRegistry.byId(members[id]!.typeId)?.outputPort(regPort)?.type;
+      final p = GroupCExtPort(
+          'out${extOutputParams.length}',
+          cp.channels,
+          cp.cType,
+          cp.name == 'out_rgba'
+              ? 'rgba8'
+              : (outType == null ? 'mono' : cFrameFormatOfPort(outType)));
       extOutputs['$id:$regPort'] = p;
       extOutputParams.add(p);
     }

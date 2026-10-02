@@ -1251,4 +1251,40 @@ ${cmp.join('\n')}
       expect(h, isNot(contains('(size_t)(h)')));
     });
   });
+
+  group('lut_fixed NEON 行核 aarch64 实机编译（交叉 gcc）', () {
+    test('单节点 lut_fixed 黑盒 __ARM_NEON 路径交叉编译链接零警告', () async {
+      // __ARM_NEON 分支在 x86/MSVC 编译中被预处理器剔除，只有 aarch64
+      // gcc 真正编译该路径（aarch64 默认定义 __ARM_NEON）。Windows PATH
+      // 优先，未命中补 WSL 探测（冷启动可能数十秒，放宽超时）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      // 单节点 lut_fixed 均衡器编组：命中整行 <id>_row NEON/标量双变体
+      // 发射（含 top 层 _OPENMP 守护的行域并行 pragma）。
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.nodes[eq]!.name = 'mb';
+      graph.nodes[eq]!.paramValues['codegenMode'] = 'lut_fixed';
+      graph.nodes[eq]!.paramValues['b0_dh'] = 30.0;
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      // 守卫：生成物确实含 NEON 行核（否则本用例空转失去意义）。
+      final bb = files['isp_pipe_n1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vld3q_u16'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_n1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_n1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      // -Wall 下零警告（此路径曾出 -Wpointer-sign / -Wunused-variable）。
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+  });
 }

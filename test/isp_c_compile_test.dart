@@ -128,6 +128,34 @@ void main() {
       expect(detectLinuxCrossGcc(searchDirs: ['${tmp.path}/nope']), isNull);
     });
 
+    test('detectLinuxCrossGccAll：多编译器全部命中且无重复', () async {
+      final tmp = await Directory.systemTemp.createTemp('isp_tc_');
+      addTearDown(() => tmp.delete(recursive: true));
+      await File('${tmp.path}/aarch64-mix210-linux-gcc.exe').create();
+      await File('${tmp.path}/riscv32-cfg5-musl-20211008-elf-gcc.exe')
+          .create();
+      await File('${tmp.path}/riscv32-cfg5-musl-v1.2.3-elf-gcc.exe')
+          .create();
+      // 干扰项不命中。
+      await File('${tmp.path}/riscv32-cfg5-musl-v1-elf-objdump.exe')
+          .create();
+
+      // 同一目录传两次：按完整路径去重。
+      final all = detectLinuxCrossGccAll(
+          searchDirs: [tmp.path, tmp.path, '${tmp.path}/nope']);
+      expect(all.length, 3);
+      expect(all.map((t) => t.target).toSet(),
+          equals({CCompileTarget.linuxCross}));
+      expect(
+          all.map((t) => t.compilerPath),
+          containsAll([
+            contains('aarch64-mix210-linux-gcc.exe'),
+            contains('riscv32-cfg5-musl-20211008-elf-gcc.exe'),
+            contains('riscv32-cfg5-musl-v1.2.3-elf-gcc.exe'),
+          ]));
+      expect(detectLinuxCrossGccAll(searchDirs: const []), isEmpty);
+    });
+
     test('parseWslCompilerPath：带/不带发行版与非法形态', () {
       final noDistro = parseWslCompilerPath(
           'wsl:/home/fzdl/toolchains/bin/aarch64-mix210-linux-gcc');
@@ -210,6 +238,8 @@ void main() {
       expect(script, contains('objs/a.o objs/b.o objs/main.o'));
       expect(script, contains('-specs=nosys.specs'));
       expect(script, contains('-lm'));
+      // FLAGS 按原厂文档不带 -mcpu/-mtune（默认调度）。
+      expect(script, isNot(contains('-mcpu')));
 
       final fixed = buildWslCompileScript(
           gccPath: '/x/gcc',

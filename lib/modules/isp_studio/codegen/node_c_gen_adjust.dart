@@ -378,10 +378,10 @@ CNodeFiles _genMultiBandEq(CNodeGenCtx ctx) {
   const input = CPort('in', channels: 3);
   const output = CPort('out', channels: 3);
   // 段参数读取口径与 pipeline_runner.dart case 'multi_band_eq' 一致：
-  // band_count 缺省 1 钳位 1..8；b{i}_* 缺键回退恒等默认。
+  // band_count 缺省 1 钳位 1..24；b{i}_* 缺键回退恒等默认。
   var bandCount = ctx.intParam('band_count');
   if (bandCount < 1) bandCount = 1;
-  if (bandCount > 8) bandCount = 8;
+  if (bandCount > 24) bandCount = 24;
   final serial = ctx.strParam('band_mode') == 'serial';
   double bandParam(int i, String suffix, double fallback) =>
       (ctx.param('b${i}_$suffix') as num?)?.toDouble() ?? fallback;

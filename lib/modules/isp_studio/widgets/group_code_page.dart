@@ -12,6 +12,9 @@
 library;
 
 import 'package:file_selector/file_selector.dart';
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -20,8 +23,10 @@ import '../../text_editor/utils/syntax_highlighter.dart';
 import '../codegen/c_compile.dart';
 import '../codegen/group_c_export.dart';
 import '../codegen/group_c_export_bb.dart';
+import '../codegen/group_c_plan.dart' show lutDomainMaxOf;
 import '../models/isp_graph.dart';
 import '../pipeline/c_def_index.dart';
+import '../pipeline/video_source.dart';
 import 'code_browser.dart';
 
 /// 校验编组能否导出 C 代码；不可导出时弹错误对话框并返回 false。
@@ -262,16 +267,133 @@ class _GroupCodePageState extends State<GroupCodePage> {
     ];
   }
 
+  /// 「运行验证（原尺寸/scale）」：构建成功后带源参数启动窗口程序；无源
+  /// 时回退内置测试图案（不带 --video）。[scaleDown] 为 true 时附加
+  /// --scale（视频逐级减半降档至宽 ≤1280，四段耗时同比缩小）；false 保持
+  /// 原生分辨率，让「处理 Xms」反映嵌入式目标的全尺寸帧耗时。
+  Future<CCompileResult> _buildAndRunWinVerify(
+      IspStudioState state,
+      IspNodeGroup group,
+      Map<String, String> files,
+      String inFormat,
+      String outFormat,
+      bool hasScratch,
+      void Function(String chunk) onOutput,
+      {required bool scaleDown}) async {
+    final launchArgs =
+        await _verifyLaunchArgs(state, group, scaleDown: scaleDown);
+    final result = await buildWinVerifyApp(files,
+        topName: _topName(group),
+        inFormat: inFormat,
+        outFormat: outFormat,
+        hasScratch: hasScratch,
+        maxValue: _verifyMaxValue(state, group),
+        onOutput: onOutput);
+    if (result.success && result.artifactPath != null) {
+      unawaited(
+          Process.start(result.artifactPath!, launchArgs));
+    }
+    return result;
+  }
+
+  /// 验证程序的管线量化域（lutDomainMaxOf，沿编组成员上游位深推导）：
+  /// LUT 模式节点的查表快路径要求运行时 max_value 与烘焙域一致，否则
+  /// 逐像素回退直算（实测 4K ~375ms/帧与 func 无差）。
+  int _verifyMaxValue(IspStudioState state, IspNodeGroup group) {
+    final node = state.graph.nodes[group.nodeIds.first];
+    return node == null ? 255 : lutDomainMaxOf(state.graph, node);
+  }
+
+  /// 验证程序启动参数：编组上游视频/图片源 → ['--video', 文件,
+  /// '--ffmpeg', ffmpeg路径]（窗口程序内 ffmpeg 子进程管道流式解码）；
+  /// 无源或文件缺失返回空（内置测试图案）。[scaleDown] 为 true 且视频宽
+  /// >1280 时附加 ['--scale', 'WxH'] 逐级减半降档；false 保持原生分辨率。
+  Future<List<String>> _verifyLaunchArgs(
+      IspStudioState state, IspNodeGroup group,
+      {required bool scaleDown}) async {
+    // 编组成员的上游中找视频/图片源。
+    String? srcId;
+    for (final id in group.nodeIds) {
+      for (final upId in state.graph.upstreamOf(id)) {
+        final t = state.graph.nodes[upId]?.typeId;
+        if (t == 'video_source' || t == 'image_source') {
+          srcId = upId;
+          break;
+        }
+      }
+      if (srcId != null) break;
+    }
+    if (srcId == null) return const [];
+    final node = state.graph.nodes[srcId]!;
+    final path = node.paramValues['filePath']?.toString() ?? '';
+    if (path.isEmpty || !File(path).existsSync()) return const [];
+    final ff = node.paramValues['ffmpegPath']?.toString() ?? '';
+    // 默认工具相对工程根目录，传绝对路径（验证程序的 cwd 不保证是根目录）。
+    final ffmpeg = ff.isEmpty
+        ? '${Directory.current.path}${Platform.pathSeparator}tools'
+            '${Platform.pathSeparator}ffmpeg${Platform.pathSeparator}ffmpeg.exe'
+        : ff;
+    final args = ['--video', path, '--ffmpeg', ffmpeg];
+    // libav* DLL 目录（ffmpeg shared 包的 bin/）：存在时验证程序内嵌
+    // 常驻解码器做播放器级拖动预览（av_seek_frame 关键帧直达）；缺失时
+    // 验证程序自动回退子进程单帧预览。
+    final avDir = Directory(
+        '${Directory.current.path}${Platform.pathSeparator}tools'
+        '${Platform.pathSeparator}ffmpeg${Platform.pathSeparator}bin');
+    if (avDir.existsSync() &&
+        avDir.listSync().any((f) =>
+            f.path.contains('avcodec-') && f.path.endsWith('.dll'))) {
+      args.addAll(['--avdir', avDir.absolute.path]);
+    }
+    // --scale 降档（解码时缩放，四段耗时同比缩小）；图片源尺寸适中不处理。
+    if (scaleDown && node.typeId == 'video_source') {
+      try {
+        final info = await videoFileInfo(path, ffmpegPath: ffmpeg);
+        var sw = info.width, sh = info.height;
+        while (sw > 1280) {
+          sw ~/= 2;
+          sh ~/= 2;
+        }
+        if (sw < info.width) args.addAll(['--scale', '${sw}x$sh']);
+      } catch (_) {}
+    }
+    return args;
+  }
+
   Widget _buildWithFiles(
       IspStudioState state, IspNodeGroup group, Map<String, String> files) {
+    // Win32 可运行验证的支持判定：单外部输入帧 + 单外部输出帧，均
+    // uint16_t/3 通道且格式 rgb/hsl（HSL 端口经 csc 装帧显示；多输入/
+    // 输出或 mono/bayer/rgba8 端口首版不支持，不显示入口）。
+    final plan = planGroupC(state.graph, group);
+    final extIn = plan.extInputParams;
+    final extOut = plan.extOutputParams;
+    bool fmtOk(String f) => f == 'rgb' || f == 'hsl';
+    final winOk = extIn.length == 1 &&
+        extOut.length == 1 &&
+        extIn.single.cType == 'uint16_t' &&
+        extOut.single.cType == 'uint16_t' &&
+        fmtOk(extIn.single.format) &&
+        fmtOk(extOut.single.format);
+    // top 层 run 是否带 scratch 参数（整帧版恒有；黑盒无需环形缓冲时
+    // 没有——按生成的 top .h 判定）。
+    final hasScratch =
+        (files['${_topName(group)}.h'] ?? '').contains('void *scratch');
     // 展示用文件集：生成物 + 编译 stub main.c（「临时main调用（不导出）」分组，展示
     // 通用形态——不带 ARM syscall 桩；桩在真正编译时按目标补充，见
-    // stubMainCSource）。main.c 只展示，不进导出物（exportGroupCCode
-    // 与编译 filesLoader 都用原 files）。
+    // stubMainCSource）+ Win32 可运行验证 main_win.c（支持时）。两者均只
+    // 展示，不进导出物（exportGroupCCode 与编译 filesLoader 都用原 files）。
     final displayFiles = {
       ...files,
       'main.c': stubMainCSource(
           topName: _topName(group), target: CCompileTarget.x86),
+      if (winOk)
+        'main_win.c': stubMainWinSource(
+            topName: _topName(group),
+            inFormat: extIn.single.format,
+            outFormat: extOut.single.format,
+            hasScratch: hasScratch,
+            maxValue: _verifyMaxValue(state, group)),
     };
     // 默认选中 top 层 .c；无则第一个 .c，再退化为第一个文件。
     final selected =
@@ -313,6 +435,10 @@ class _GroupCodePageState extends State<GroupCodePage> {
                   // 「临时main调用（不导出）」分组标题用红色底标识（VS 系红，白字可读）。
                   const CodeFileGroup('临时main调用（不导出）', ['main.c'],
                       titleColor: Color(0xFFC42B1C)),
+                  if (winOk)
+                    const CodeFileGroup(
+                        'Win32可运行验证（不导出）', ['main_win.c'],
+                        titleColor: Color(0xFFC42B1C)),
                 ],
                 highlightGroupTitles: true,
                 onExport: (ctx) async {
@@ -337,12 +463,40 @@ class _GroupCodePageState extends State<GroupCodePage> {
                   _codeCtl.jumpTo(line);
                 },
               ),
-              filesLoader: () async => files,
+              filesLoader: () async => {
+                    ...files,
+                    if (winOk) ...{
+                      // X86 编译验证时替代 stub main.c（见 compileGroupCFiles
+                      // 的 useWinMain 分支）。
+                      'main_win.c': stubMainWinSource(
+                          topName: _topName(group),
+                          inFormat: extIn.single.format,
+                          outFormat: extOut.single.format,
+                          hasScratch: hasScratch,
+                          maxValue: _verifyMaxValue(state, group)),
+                      // HSL 转换头（文件集缺失时从 c_ref 读盘注入，与
+                      // buildWinVerifyApp 同口径）。
+                      if ((extIn.single.format == 'hsl' ||
+                              extOut.single.format == 'hsl') &&
+                          !files.containsKey('isp_csc_common.h'))
+                        'isp_csc_common.h': await File(
+                                '${Directory.current.path}/lib/modules/isp_studio/c_ref/isp_csc_common.h')
+                            .readAsString(),
+                    },
+                  },
               topName: _topName(group),
               compileRunner: widget.compileRunner,
               preCompileCheck: (ctx) => ensureGroupCExportable(
                   ctx, state.graph, group,
                   blackBox: widget.blackBox),
+              // Win32 可运行验证（支持判定时出现两个按钮）：抽帧（用户源）
+              // + 构建 + 带参启动窗口程序；scaleDown 对应「scale」按钮。
+              winVerifyBuilder: winOk
+                  ? (onOutput, {required scaleDown}) => _buildAndRunWinVerify(
+                      state, group, files, extIn.single.format,
+                      extOut.single.format, hasScratch, onOutput,
+                      scaleDown: scaleDown)
+                  : null,
             ),
           ),
         ],

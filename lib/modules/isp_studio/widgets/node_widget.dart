@@ -118,9 +118,11 @@ class IspNodeWidget extends StatelessWidget {
               ];
 
     return GestureDetector(
-      // 点击卡片任意位置选中节点（端口圆点、按钮等内部手势优先）。
-      // 节点拖动由画布的右键拖拽统一处理；删除只走键盘 Delete。
-      onTap: () {
+      // 按下即选中节点：onTapDown 不经手势竞技场，内部滑条/按钮/附加区
+      // 的手势（拖动调参、取色、播放等）照常优先处理自身逻辑，选中同时
+      // 进行——点击节点内任意位置都高亮选中。节点拖动由画布的右键拖拽
+      // 统一处理；删除只走键盘 Delete。
+      onTapDown: (_) {
         final isMulti = HardwareKeyboard.instance.isShiftPressed ||
             HardwareKeyboard.instance.isControlPressed ||
             HardwareKeyboard.instance.isMetaPressed;
@@ -194,6 +196,10 @@ class IspNodeWidget extends StatelessWidget {
                   if (type.typeId == 'video_output')
                     _buildExportButton(
                         state, '导出 MP4', () => state.exportVideo(node.id)),
+                  if (type.typeId == 'format_converter')
+                    _buildFormatConvertExtra(state),
+                  if (type.typeId == 'video_health_check')
+                    _buildHealthCheckExtra(state),
                 ],
               ),
             ),
@@ -729,7 +735,14 @@ class IspNodeWidget extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              node.name,
+              // 多段色彩均衡器：读取色彩风格预设后标题栏追加
+              // 「（风格文件名）」，配置参数调整后清除（清除逻辑在
+              // IspStudioState.setParam/setParams）。
+              type.typeId == 'multi_band_eq' &&
+                      (node.paramValues['style_name']?.toString() ?? '')
+                          .isNotEmpty
+                  ? '${node.name}（${node.paramValues['style_name']}）'
+                  : node.name,
               style: const TextStyle(
                   color: Colors.white,
                   fontSize: 12,
@@ -947,10 +960,15 @@ class IspNodeWidget extends StatelessWidget {
 
   /// 预览附加区：屏幕 + 播放控制条 + 底部拖动手柄（调整屏幕高度）。
   /// 逐帧刷新走 [IspStudioState.frameTick]，只有本区重建。
+  /// RepaintBoundary 隔离逐帧重绘：没有它时预览换帧的脏区冒泡到根，
+  /// 整个 4K 节点画布（网格背景+全部节点）每帧跟着光栅化（实测
+  /// 栅格 19-21ms/帧、75Hz 屏帧泵被拖到 ~48Hz——4K 播放"丢帧"
+  /// 观感的真凶）。
   Widget _buildPreviewExtra(IspStudioState state) {
     return ValueListenableBuilder<int>(
       valueListenable: state.frameTick,
-      builder: (context, tick, child) => _buildPreviewExtraContent(state),
+      builder: (context, tick, child) =>
+          RepaintBoundary(child: _buildPreviewExtraContent(state)),
     );
   }
 
@@ -997,6 +1015,17 @@ class IspNodeWidget extends StatelessWidget {
                       ? null
                       : () => state.togglePlayback(),
                 ),
+                // HDR/SDR 切换（视频源片源决定形态）：SDR 片源只显示静态
+                // 标识；HDR 片源（PQ/HLG）两段互斥——SDR=直解对比 /
+                // HDR=色调映射显示（默认）。
+                if (state.playbackSrcTransfer == 0)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 2),
+                    child: Text('SDR',
+                        style: TextStyle(fontSize: 10, color: Colors.grey)),
+                  )
+                else
+                  _buildHdrToneMapToggle(state),
                 if (total > 1)
                   Expanded(
                     child: SliderTheme(
@@ -1016,12 +1045,65 @@ class IspNodeWidget extends StatelessWidget {
                       ),
                     ),
                   ),
+                // 进度滑条右侧：已播放时间/总时间（视频源播放时显示）。
+                if (total > 1 && state.playbackSrcFps > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Text(playbackTimeText(state, total),
+                        style:
+                            const TextStyle(fontSize: 10, color: Colors.grey)),
+                  ),
               ],
             ),
           ),
           // 底部手柄条：中间上下拖调整高度，右下角控制点双向调整宽高。
           _buildResizeBar(state),
         ],
+      ),
+    );
+  }
+
+  /// 预览控制条的 HDR/SDR 两段互斥切换（仅 HDR 片源显示；选中段蓝底
+  /// 白字高亮）。选 HDR = zscale+tonemap 映射显示（默认）；选 SDR =
+  /// HDR 片源直解对比（发灰原样）。
+  Widget _buildHdrToneMapToggle(IspStudioState state) {
+    Widget seg(String label, bool selected, String tip) {
+      return Tooltip(
+        message: tip,
+        waitDuration: const Duration(milliseconds: 400),
+        child: InkWell(
+          onTap: selected ? null : () => state.toggleHdrToneMap(),
+          child: Container(
+            height: 18,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFF2B5A8C) : Colors.transparent,
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 10,
+                    color: selected ? Colors.white : Colors.grey)),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 2),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade800),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            seg('SDR', !state.hdrToneMapEnabled, 'SDR 直解对比（不做色调映射）'),
+            seg('HDR', state.hdrToneMapEnabled, 'HDR 色调映射显示（zscale+tonemap）'),
+          ],
+        ),
       ),
     );
   }
@@ -1159,11 +1241,18 @@ class IspNodeWidget extends StatelessWidget {
   /// 色彩控制器矢量示波器的半区：迹线图 → 高斯色相带 → 坐标格三层叠加
   /// （无图时显示占位文案 [hint]），左上角叠加半透明小标签 [label]。
   /// 色相带以 [bandCenterDeg] 为中心（调整前传 H，调整后传 H+ΔH 并加
-  /// 白色参考线指回原 H）。
+  /// 白色参考线指回原 H）。[overridePainter] 非空时替代单段色相带
+  /// painter（多段色彩均衡器 ALL 视图的全段叠加）。[onToggleTrace]
+  /// 非空时右上角显示隐藏/显示迹线（绿色线）按钮，[showTrace] 为当前
+  /// 可见状态。
   /// 布局与 vectorscope 仪器一致：数据区是居中、边长为短边 82% 的正方形。
   Widget _buildBandScopePane(ui.Image? image, String label, String hint,
       double bandCenterDeg, double q,
-      {double? referenceDeg, Color centerColor = Colors.white}) {
+      {double? referenceDeg,
+      Color centerColor = Colors.white,
+      CustomPainter? overridePainter,
+      bool showTrace = true,
+      ValueChanged<bool>? onToggleTrace}) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final side =
@@ -1172,11 +1261,12 @@ class IspNodeWidget extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             _VectorscopeHoverRegion(
-              bandPainter: _HueBandPainter(
-                  centerDeg: bandCenterDeg,
-                  q: q,
-                  centerColor: centerColor,
-                  referenceDeg: referenceDeg),
+              bandPainter: overridePainter ??
+                  _HueBandPainter(
+                      centerDeg: bandCenterDeg,
+                      q: q,
+                      centerColor: centerColor,
+                      referenceDeg: referenceDeg),
               child: Container(
                 color: Colors.black,
                 alignment: Alignment.center,
@@ -1188,7 +1278,10 @@ class IspNodeWidget extends StatelessWidget {
                           child: Text(hint,
                               style: const TextStyle(
                                   fontSize: 11, color: Colors.grey)))
-                      : RawImage(image: image, fit: BoxFit.fill),
+                      // 隐藏迹线时保留黑底（坐标格与色带叠加照常显示）。
+                      : (showTrace
+                          ? RawImage(image: image, fit: BoxFit.fill)
+                          : const SizedBox.shrink()),
                 ),
               ),
             ),
@@ -1199,6 +1292,20 @@ class IspNodeWidget extends StatelessWidget {
                   style:
                       const TextStyle(fontSize: 10, color: Colors.white54)),
             ),
+            // 右上角：隐藏/显示迹线（绿色线）按钮。
+            if (onToggleTrace != null)
+              Positioned(
+                right: 2,
+                top: 2,
+                child: GestureDetector(
+                  onTap: () => onToggleTrace(!showTrace),
+                  child: Icon(
+                    showTrace ? Icons.visibility : Icons.visibility_off,
+                    size: 12,
+                    color: showTrace ? Colors.white54 : Colors.white24,
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -2360,7 +2467,8 @@ class IspNodeWidget extends StatelessWidget {
   }
 
   Widget _buildExportButton(
-      IspStudioState state, String label, VoidCallback onPressed) {
+      IspStudioState state, String label, VoidCallback? onPressed,
+      {Color? backgroundColor}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 3, 8, 3),
       child: SizedBox(
@@ -2370,6 +2478,7 @@ class IspNodeWidget extends StatelessWidget {
           onPressed: state.isProcessing ? null : onPressed,
           style: ElevatedButton.styleFrom(
             foregroundColor: Colors.white,
+            backgroundColor: backgroundColor,
             padding: EdgeInsets.zero,
             textStyle: const TextStyle(fontSize: 12),
           ),
@@ -2378,6 +2487,150 @@ class IspNodeWidget extends StatelessWidget {
       ),
     );
   }
+
+  /// 格式转换节点附加区：「开始转换」按钮 + 内嵌终端面板（流式显示
+  /// ffmpeg 输出，参照 CodeCompileArea 的终端形态）。节点尺寸固定
+  /// 1500x1200（min=max 不可调，无拖动手柄）：附加区总高 = extraHeight
+  /// （1162，即节点总高 1200），构成 = 按钮行 34 + 间距 3 + 终端
+  /// （extra − 34 − 3）。转换中按钮禁用并改文案「转换中…」。
+  Widget _buildFormatConvertExtra(IspStudioState state) {
+    final running = state.formatConvertRunning.contains(node.id);
+    final extra = state.previewExtraHeight(node.id);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          _buildExportButton(state, running ? '转换中…' : '开始转换',
+              running ? null : () => state.convertVideoFormat(node.id)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 3),
+            child: ValueListenableBuilder<int>(
+              valueListenable: state.formatConvertTick,
+              builder: (context, tick, child) => _FormatConvertConsole(
+                  log: state.formatConvertLogs[node.id] ?? '',
+                  height: math.max(0.0, extra - 37)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 视频健康检查节点附加区：「开始检查」按钮 + 内嵌终端面板（流式
+  /// 显示检查报告，复用格式转换的终端组件）。尺寸固定 1500x1200 同
+  /// format_converter（无拖动手柄）。检查中按钮变为红色「停止检查」
+  ///（点击置取消标记，引擎中止返回 -2）；播放中（isProcessing）开始
+  /// 按钮禁用，与导出按钮同口径。
+  Widget _buildHealthCheckExtra(IspStudioState state) {
+    final running = state.healthCheckRunning.contains(node.id);
+    final extra = state.previewExtraHeight(node.id);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          if (running)
+            _buildExportButton(state, '停止检查',
+                () => state.stopHealthCheck(node.id),
+                backgroundColor: const Color(0xFF8C2B2B))
+          else
+            _buildExportButton(
+                state, '开始检查', () => state.runHealthCheck(node.id)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 3),
+            child: ValueListenableBuilder<int>(
+              valueListenable: state.healthCheckTick,
+              builder: (context, tick, child) => _FormatConvertConsole(
+                  log: state.healthCheckLogs[node.id] ?? '',
+                  height: math.max(0.0, extra - 37),
+                  hint: '点击「开始检查」，报告将在此显示'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 内嵌终端面板（格式转换 / 视频健康检查节点共用）：黑底等宽字体、
+/// 自动滚到底。日志经 tick 信号驱动重建（局部刷新，不触发整树
+/// notifyListeners）。
+class _FormatConvertConsole extends StatefulWidget {
+  final String log;
+  final double height;
+
+  /// 空日志时的占位提示。
+  final String hint;
+
+  const _FormatConvertConsole(
+      {required this.log,
+      required this.height,
+      this.hint = '点击「开始转换」，输出将在此显示'});
+
+  @override
+  State<_FormatConvertConsole> createState() => _FormatConvertConsoleState();
+}
+
+class _FormatConvertConsoleState extends State<_FormatConvertConsole> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 日志追加驱动重建：每次重建后滚到底（参照 CodeCompileArea
+    // 的 postFrame jumpTo maxScrollExtent）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      }
+    });
+    return Container(
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: const Color(0xFF151515),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.grey.shade800),
+      ),
+      child: widget.log.isEmpty
+          ? Center(
+              child: Text(widget.hint,
+                  style:
+                      const TextStyle(fontSize: 14.25, color: Colors.grey)))
+          : SingleChildScrollView(
+              controller: _scroll,
+              padding: const EdgeInsets.all(4),
+              child: SizedBox(
+                width: double.infinity,
+                child: SelectableText(
+                  widget.log,
+                  style: const TextStyle(
+                    fontFamily: 'Consolas',
+                    fontFamilyFallback: ['monospace'],
+                    fontSize: 14.25,
+                    color: Color(0xFFB0C0B0),
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+/// 播放控制条时间文本：已播放/总时长（mm:ss/mm:ss），按
+/// [IspStudioState.playbackSrcFps] 换算（视频源播放时由播放循环填入）。
+String playbackTimeText(IspStudioState state, int total) {
+  String fmt(double sec) {
+    final s = sec.isFinite && sec > 0 ? sec.floor() : 0;
+    return '${(s ~/ 60).toString().padLeft(2, '0')}:'
+        '${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  final fps = state.playbackSrcFps;
+  return '${fmt(state.previewFrame / fps)}/${fmt(total / fps)}';
 }
 
 /// 节点工作时间的紧凑格式：µs / ms / s 三档。
@@ -3453,6 +3706,7 @@ class _PlanePreviewPainter extends CustomPainter {
       ..setFloat(5, frame.height.toDouble())
       ..setFloat(6, frame.mode.toDouble())
       ..setFloat(7, frame.limited ? 1.0 : 0.0)
+      ..setFloat(8, frame.matrix.toDouble())
       ..setImageSampler(0, frame.packed);
     canvas.drawRect(rect, Paint()..shader = shader);
   }
@@ -3902,13 +4156,19 @@ class _LevelsCurvePainter extends CustomPainter {
 }
 
 /// 多段色彩均衡器附加区（有状态：取色/删除模式与取样像素缓存）：
-/// 顶部取色器工具栏（增/删 │ 预设占位按钮 │ 段按钮列）+ 前后双联预览
-/// （左调整前/右调整后，取色模式下左区十字光标点击取色）+ 选中段
-/// H中心/Q/ΔH/S/L 五行控制条 + 底部拖动手柄。
+/// 双联矢量示波器行 + 取色器工具栏（增/删 │ 预设占位按钮 │ 段按钮列，
+/// 位于示波器与预览区之间）+ 前后双联预览（左调整前/右调整后，取色
+/// 模式下左区十字光标点击取色）+ 选中段 H中心/Q/ΔH/S/L 五行控制条 +
+/// 播放控制条（播放/暂停 + 帧进度滑条，与预览节点附加区同款）+
+/// 底部拖动手柄。
 /// 图刷新走 [IspStudioState.frameTick]；滑块拖动实时重跑（同色彩控制器）。
-/// 取色模式：点段按钮进入（光标变十字），在左侧调整前预览点击取样像素
-/// 色相写入该段 H 中心；Esc 或点击预览区外退出。删除模式：点「删除」
-/// 进入（再点退出），段按钮区高亮、悬停叠 ✕，点击删除该段并重排键名。
+/// 取色模式：点段按钮进入（光标变十字），左预览区悬停实时计算光标像素
+/// HSL——H 与自动评估的 Q（[estimateBandQ]：8 方向色相平滑段长度评估）
+/// 实时叠加到调整前矢量示波器的色相线/Q 带，光标旁气泡实时显示 HSL
+/// 数值，右预览区同时切换为左区 10 倍放大视图（中心=十字线像素，近
+/// 边缘钳位）；点击取样把 H 与 Q 一并写入该段 b{i}_h/b{i}_q 并重跑
+/// 预览；Esc 或点击预览区外退出。删除模式：点「删除」进入（再点退出），
+/// 段按钮区高亮、悬停叠 ✕，点击删除该段并重排键名。
 class _MultiBandEqExtra extends StatefulWidget {
   /// 宿主卡片（复用其 _buildHslSliderRow/_buildHslComparePane/_buildResizeBar
   /// 构建器，同库私有成员直接访问）。
@@ -3927,17 +4187,40 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
   /// 取色模式中的段号（null=未取色）；进入时该段同时置为选中段。
   int? _armedBand;
 
+  /// 取色悬停时右区放大预览的倍率（工具栏 X2/X4/X6/X8/X10 互斥组，
+  /// 默认 X6）。
+  int _magZoom = 6;
+
+  /// ALL 视图：双联矢量示波器叠加全部段的色相线/色带（按段色着色）。
+  bool _allView = false;
+
+  /// 双联矢量示波器迹线（绿色线）显示开关（右上角按钮切换，隐藏时
+  /// 保留黑底 + 坐标格 + 色带叠加）。
+  bool _showLeftTrace = true;
+  bool _showRightTrace = true;
+
   /// 删除模式：段按钮区高亮描边，点击按钮删除该段。
   bool _deleteArmed = false;
 
   /// 删除模式下悬停的段按钮（叠 ✕ 角标）。
   int? _hoverDeleteBand;
 
+  /// 各段最近一次取样像素的颜色（取色后染到段按钮背景；仅会话内记忆，
+  /// 不落参数——预设/存档恢复后按钮回到默认底色）。
+  final Map<int, Color> _bandColors = {};
+
   /// 左预览区（调整前）取色悬停位置（窗格坐标，画十字线）。
   Offset? _pickHover;
 
-  /// 最近一次取样点（图像像素坐标，画标记）。
-  Offset? _pickedPixel;
+  /// 悬停实时取色：最近计算的图像像素坐标（去重，像素不变不重算）。
+  Offset? _hoverPixel;
+
+  /// 悬停像素的实时色相（°）、饱和度/亮度（0..1）与自动评估 Q
+  /// （H/Q 实时叠加到调整前示波器，HSL 同时显示在悬停气泡）。
+  double? _hoverHueDeg;
+  double? _hoverS;
+  double? _hoverL;
+  double? _hoverQ;
 
   /// 惰性缓存的调整前图像像素（进入取色后首次点击时 toByteData 一次，
   /// 图像对象变化时重取）。
@@ -3977,6 +4260,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
         _deleteArmed = false;
         _pickHover = null;
         _hoverDeleteBand = null;
+        _clearHoverHsl();
       });
       _removeEscHandler();
       return true;
@@ -4012,23 +4296,38 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     state.setParam(node.id, 'sel_band', i);
     setState(() => _armedBand = i);
     _addEscHandler();
+    // 预加载取色像素缓存，悬停实时取色不必等首次点击。
+    final image = state.previewInputImages[node.id];
+    if (image != null) _ensurePickPixels(image);
   }
 
   void _disarmPick() {
     setState(() {
       _armedBand = null;
       _pickHover = null;
+      _clearHoverHsl();
     });
     if (!_deleteArmed) _removeEscHandler();
   }
 
   /// 增加取色器：段数 +1（新段不落参数键，读取侧缺省即恒等默认），
-  /// 选中段切到新段；段结果不变（新段恒等），不重跑预览。
+  /// 自动选中新段并直接进入取色模式（与点段按钮一致，便于立即取样）；
+  /// 段结果不变（新段恒等），不重跑预览。
   void _addBand() {
     final count = _bandCount;
     if (count >= kMultiBandEqMaxBands) return;
     state.setParam(node.id, 'band_count', count + 1);
     state.setParam(node.id, 'sel_band', count);
+    setState(() {
+      _armedBand = count;
+      // 取色与删除互斥：删除模式中新建时退出删除模式。
+      _deleteArmed = false;
+      _hoverDeleteBand = null;
+    });
+    _addEscHandler();
+    // 预加载取色像素缓存，悬停实时取色不必等首次点击。
+    final image = state.previewInputImages[node.id];
+    if (image != null) _ensurePickPixels(image);
   }
 
   void _toggleDelete() {
@@ -4039,6 +4338,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
         // 删除与取色互斥：进入删除模式退出取色。
         _armedBand = null;
         _pickHover = null;
+        _clearHoverHsl();
       }
     });
     if (_deleteArmed) {
@@ -4065,6 +4365,13 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
       _hoverDeleteBand = null;
       // 剩 1 段时退出删除模式（按钮随即置灰）。
       if (count - 1 <= 1) _deleteArmed = false;
+      // 段按钮颜色同步前移重排（与 reindexBandParams 同口径）。
+      final colors = Map<int, Color>.of(_bandColors);
+      _bandColors.clear();
+      for (var k = 0; k < count - 1; k++) {
+        final c = colors[k < i ? k : k + 1];
+        if (c != null) _bandColors[k] = c;
+      }
     });
     if (_armedBand == null && !_deleteArmed) _removeEscHandler();
     state.runPreview();
@@ -4072,28 +4379,133 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
 
   // ---- 取色 ----
 
-  /// 左预览区点击取色：窗格坐标经 contain 适配换算为图像像素坐标，
-  /// 取该像素 RGB 经管线同款 RGB→HSL 转换得色相（°），写入取色段的
-  /// b{i}_h 并重跑预览。
-  Future<void> _pickAt(Offset local, Size paneSize) async {
-    final band = _armedBand;
-    if (band == null) return;
-    final image = state.previewInputImages[node.id];
-    if (image == null || paneSize.width <= 0 || paneSize.height <= 0) return;
+  /// 窗格坐标经 contain 适配换算为图像像素坐标；落在图像外的黑边区
+  /// 或窗格尺寸无效时返回 null（悬停与点击取样共用）。
+  Offset? _pixelAt(Offset local, Size paneSize, ui.Image image) {
+    if (paneSize.width <= 0 || paneSize.height <= 0) return null;
     final scale =
         math.min(paneSize.width / image.width, paneSize.height / image.height);
     final ox = (paneSize.width - image.width * scale) / 2;
     final oy = (paneSize.height - image.height * scale) / 2;
     final px = ((local.dx - ox) / scale).floor();
     final py = ((local.dy - oy) / scale).floor();
-    // 点在图像外的黑边区：忽略。
-    if (px < 0 || py < 0 || px >= image.width || py >= image.height) return;
+    if (px < 0 || py < 0 || px >= image.width || py >= image.height) {
+      return null;
+    }
+    return Offset(px.toDouble(), py.toDouble());
+  }
+
+  /// 取色像素缓存是否正在加载（防并发重复 toByteData）。
+  bool _pickLoading = false;
+
+  /// 惰性加载 [image] 的 RGBA8 像素缓存（图像对象变化时重取；图像已被
+  /// 预览系统置换 dispose 时 toByteData 返回 null/抛错——不缓存失败
+  /// 结果，留待后续悬停重试）。
+  Future<ByteData?> _ensurePickPixels(ui.Image image) async {
     if (!identical(_pickImage, image) || _pickPixels == null) {
-      _pickPixels = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final ByteData? data;
+      try {
+        data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      } catch (_) {
+        return null;
+      }
+      if (data == null) return null;
+      _pickPixels = data;
       _pickImage = image;
     }
+    return _pickPixels;
+  }
+
+  /// 清除悬停实时取色结果（十字线坐标 [_pickHover] 由调用方另行处理）。
+  void _clearHoverHsl() {
+    _hoverPixel = null;
+    _hoverHueDeg = null;
+    _hoverS = null;
+    _hoverL = null;
+    _hoverQ = null;
+  }
+
+  /// 取色模式悬停：更新十字线；像素坐标变化且像素缓存就绪时实时计算
+  /// 光标像素 HSL——H 与 [estimateBandQ] 自动评估的 Q 实时叠加到
+  /// 调整前矢量示波器的色相线/Q 带。
+  void _updateHover(Offset local, Size paneSize) {
+    final image = state.previewInputImages[node.id];
+    if (image == null) {
+      setState(() {
+        _pickHover = local;
+        _clearHoverHsl();
+      });
+      return;
+    }
+    final p = _pixelAt(local, paneSize, image);
+    // 界外黑边区：清实时取色结果，只保留十字线。
+    if (p == null) {
+      setState(() {
+        _pickHover = local;
+        _clearHoverHsl();
+      });
+      return;
+    }
+    // 像素坐标未变（像素内微动）：只画十字线。
+    if (p == _hoverPixel) {
+      setState(() => _pickHover = local);
+      return;
+    }
+    final bytes = identical(_pickImage, image) ? _pickPixels : null;
+    if (bytes == null) {
+      // 缓存未就绪或图像已被预览重建置换：只画十字线，异步加载完成后
+      // 按当前悬停位置补算一次。
+      setState(() => _pickHover = local);
+      if (!_pickLoading) {
+        _pickLoading = true;
+        _ensurePickPixels(image).then((data) {
+          _pickLoading = false;
+          if (!mounted || _armedBand == null || data == null) return;
+          if (!identical(state.previewInputImages[node.id], image)) return;
+          final h = _pickHover;
+          if (h != null) _updateHover(h, paneSize);
+        });
+      }
+      return;
+    }
+    final px = p.dx.toInt();
+    final py = p.dy.toInt();
+    final off = (py * image.width + px) * 4;
+    // 预览图为 RGBA8，对应 maxValue=255 的管线量化口径。
+    final hsl = rgbToHsl(
+        Uint16List.fromList([
+          bytes.getUint8(off),
+          bytes.getUint8(off + 1),
+          bytes.getUint8(off + 2)
+        ]),
+        maxValue: 255);
+    final hDeg = hsl[0] * 360.0 / 255;
+    final q = estimateBandQ(bytes, image.width, image.height, px, py);
+    setState(() {
+      _pickHover = local;
+      _hoverPixel = p;
+      _hoverHueDeg = hDeg;
+      _hoverS = hsl[1] / 255;
+      _hoverL = hsl[2] / 255;
+      _hoverQ = q;
+    });
+  }
+
+  /// 左预览区点击取色：取样像素 RGB 经管线同款 RGB→HSL 转换得色相（°），
+  /// 连同 [estimateBandQ] 自动评估的 Q 一并写入取色段的 b{i}_h/b{i}_q
+  /// 并重跑预览。
+  Future<void> _pickAt(Offset local, Size paneSize) async {
+    final band = _armedBand;
+    if (band == null) return;
+    final image = state.previewInputImages[node.id];
+    if (image == null) return;
+    // 点在图像外的黑边区：忽略。
+    final p = _pixelAt(local, paneSize, image);
+    if (p == null) return;
+    final px = p.dx.toInt();
+    final py = p.dy.toInt();
+    final bytes = await _ensurePickPixels(image);
     if (!mounted || _armedBand != band) return;
-    final bytes = _pickPixels;
     if (bytes == null) return;
     final off = (py * image.width + px) * 4;
     // 预览图为 RGBA8，对应 maxValue=255 的管线量化口径。
@@ -4105,8 +4517,12 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
         ]),
         maxValue: 255);
     final hDeg = hsl[0] * 360.0 / 255;
-    setState(() => _pickedPixel = Offset(px.toDouble(), py.toDouble()));
-    state.setParam(node.id, 'b${band}_h', hDeg);
+    final qEst = estimateBandQ(bytes, image.width, image.height, px, py);
+    // 取样像素的 HSL 颜色染到对应段按钮背景。
+    setState(() => _bandColors[band] = HSLColor.fromAHSL(1.0, hDeg,
+            (hsl[1] / 255).clamp(0.0, 1.0), (hsl[2] / 255).clamp(0.0, 1.0))
+        .toColor());
+    state.setParams(node.id, {'b${band}_h': hDeg, 'b${band}_q': qEst});
     state.runPreview();
   }
 
@@ -4178,13 +4594,17 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
       return;
     }
     state.setParams(node.id, patch);
+    // 标题栏追加「（风格文件名）」标注（须在 setParams 之后写入，
+    // 避免被批量写的清除逻辑抹掉；配置后续调整即自动清除）。
+    state.setParam(node.id, 'style_name', file.name);
     // 段序列被替换：退出取色/删除模式（sel_band 已由补丁回 0）。
     setState(() {
       _armedBand = null;
       _deleteArmed = false;
       _pickHover = null;
-      _pickedPixel = null;
       _hoverDeleteBand = null;
+      _bandColors.clear();
+      _clearHoverHsl();
     });
     _removeEscHandler();
     state.runPreview();
@@ -4232,8 +4652,56 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     final hasInput = state.graph.connectionAt(node.id, 'in') != null;
     final extra = state.previewExtraHeight(node.id);
     final sel = _selBand;
-    // 顶部留白 4 + 工具栏 26 + 5 行滑块各 24 + 底部手柄 10，其余归预览图区。
-    final imageHeight = math.max(0.0, extra - 4 - 26 - 24 * 5 - 10);
+    final scope = state.hslVectorscopes[node.id];
+    final inputScope = state.hslInputVectorscopes[node.id];
+    // 当前选中段的色相带参数（叠加到矢量示波器上，同色彩控制器）。
+    final hCenter = (node.paramValues['b${sel}_h'] as num?)?.toDouble() ?? 0;
+    final q = (node.paramValues['b${sel}_q'] as num?)?.toDouble() ?? 2;
+    final dh = (node.paramValues['b${sel}_dh'] as num?)?.toDouble() ?? 0;
+    // 播放中矢量示波器按 ~5Hz 节流刷新（_refreshEqScopesFromPlayback），
+    // 停播时以最后一帧补齐；取色悬停实时叠加在播放中同样可用。
+    // 取色悬停实时值优先：悬停时调整前示波器的色相线/Q 带跟随光标像素。
+    final hoverLive = _armedBand != null && _hoverHueDeg != null;
+    final leftH = hoverLive ? _hoverHueDeg! : hCenter;
+    final leftQ = hoverLive ? (_hoverQ ?? q) : q;
+    // ALL 视图叠加层：两半区都画各段的 Q 高斯色带 + 中心色相标线——
+    // 调整前以原 H 为中心、按段色着色；调整后以 H+ΔH 为中心、按移位后
+    // 色相着色（已取色段保持取样颜色的饱和度/亮度仅移色相；未取色段
+    // 用移位后色相的纯色：全饱和、55% 亮度）。
+    CustomPainter? leftOverride;
+    CustomPainter? rightOverride;
+    if (_allView) {
+      final before = <(double, double, Color, Color?, String)>[];
+      final after = <(double, double, Color, Color?, String)>[];
+      for (var i = 0; i < _bandCount; i++) {
+        final h = (node.paramValues['b${i}_h'] as num?)?.toDouble() ?? 0;
+        final bq = (node.paramValues['b${i}_q'] as num?)?.toDouble() ?? 2;
+        final bd = (node.paramValues['b${i}_dh'] as num?)?.toDouble() ?? 0;
+        final picked = _bandColors[i];
+        final c = picked ??
+            HSLColor.fromAHSL(1.0, h, 1.0, 0.55).toColor();
+        final shiftedH = ((h + bd) % 360 + 360) % 360;
+        final cAfter = (picked != null
+                ? HSLColor.fromColor(picked).withHue(shiftedH)
+                : HSLColor.fromAHSL(1.0, shiftedH, 1.0, 0.55))
+            .toColor();
+        before.add((h, bq, c, null, '${i + 1}'));
+        // 圆心段传原始色相颜色：调整后的标线分两段（圆心段原色 /
+        // 外圈段移位后色），呈现移位前后对比。
+        after.add((h + bd, bq, cAfter, c, '${i + 1}'));
+      }
+      leftOverride = _AllBandsPainter(bands: before);
+      rightOverride = _AllBandsPainter(bands: after);
+    }
+    // 示波器行顶部留白 4 + 取色器工具栏 26 + 预览行间隔 4 + 5 行滑块
+    // 各 24 + 播放控制条 26 + 底部手柄 10。示波器格保持 1:1（矢量示波器
+    // 为圆形，格高 = 半格宽，与 _displayAspect/_displayChrome 的口径
+    // 一致），其余高度归预览图行。节点高度不足（旧存档/手动压扁）时
+    // 示波器格等比收缩，不溢出。
+    final scopeHeight = math.min((node.width - 20) / 2,
+        math.max(0.0, extra - 4 - 26 - 4 - 24 * 5 - 26 - 10));
+    final imageHeight = math.max(
+        0.0, extra - 4 - 26 - 4 - 24 * 5 - 26 - 10 - scopeHeight);
     return SizedBox(
       height: extra,
       // 点击工具栏/右预览/滑条背景等空白处退出取色模式（左预览与按钮
@@ -4245,6 +4713,53 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
         },
         child: Column(
           children: [
+            // 双联矢量示波器行（左调整前/右调整后），位于预览图上方，
+            // 与 color_controller 同一统计口径（vectorscope 仪器）。
+            // 左格叠加选中段的 H 中心线 + Q 高斯带（白色标线）；右格叠加
+            // ΔH 移位后的中心线 + Q 带（黄色标线），另有白色静态参考线
+            // 指回原 H 位置便于对比——均与色彩控制器同款叠加。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+              child: SizedBox(
+                height: scopeHeight,
+                child: Row(
+                  children: [
+                    // AspectRatio 居中约束：高度不足示波器格收缩时，
+                    // 黑框仍保持 1:1（正常情况格宽==格高，布局不变）。
+                    Expanded(
+                        child: Center(
+                            child: AspectRatio(
+                                aspectRatio: 1,
+                                child: host._buildBandScopePane(
+                                    inputScope,
+                                    '调整前',
+                                    hasInput ? '运行预览后显示' : '未连接输入',
+                                    leftH,
+                                    leftQ,
+                                    overridePainter: leftOverride,
+                                    showTrace: _showLeftTrace,
+                                    onToggleTrace: (v) => setState(
+                                        () => _showLeftTrace = v))))),
+                    const SizedBox(width: 4),
+                    Expanded(
+                        child: Center(
+                            child: AspectRatio(
+                                aspectRatio: 1,
+                                child: host._buildBandScopePane(
+                                    scope, '调整后', '运行预览后显示',
+                                    hCenter + dh, q,
+                                    referenceDeg: hCenter,
+                                    centerColor: const Color(0xFFF5F543),
+                                    overridePainter: rightOverride,
+                                    showTrace: _showRightTrace,
+                                    onToggleTrace: (v) => setState(
+                                        () => _showRightTrace = v))))),
+                  ],
+                ),
+              ),
+            ),
+            // 取色器工具栏位于示波器与预览区之间（取色按钮紧邻左预览区，
+            // 进入取色后视线/光标路径最短）。
             _buildToolbar(),
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
@@ -4253,14 +4768,21 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                 child: Row(
                   children: [
                     // 左半：调整前（输入链出图），取色模式下可点击取样；
-                    // 右半：调整后（输出链出图）。
+                    // 右半：调整后（输出链出图）；取色悬停时切换为左区
+                    // 放大视图（倍率见工具栏 X2~X10 互斥组，中心 = 左区
+                    // 十字线像素，近边缘钳位）。
                     Expanded(
                         child: _buildInputPane(inputImage,
                             hasInput ? '运行预览后显示' : '未连接输入')),
                     const SizedBox(width: 4),
                     Expanded(
-                        child: host._buildHslComparePane(
-                            image, '调整后', '运行预览后显示效果')),
+                      child: _armedBand != null &&
+                              _hoverPixel != null &&
+                              inputImage != null
+                          ? _buildMagnifierPane(inputImage)
+                          : host._buildHslComparePane(
+                              image, '调整后', '运行预览后显示效果'),
+                    ),
                   ],
                 ),
               ),
@@ -4282,6 +4804,9 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
             host._buildHslSliderRow(state, 'L', 'b${sel}_l', 0, 5, 1,
                 (v) => '×${v.toStringAsFixed(2)}',
                 labelWidth: 34, livePreview: true),
+            // 播放控制条（与预览节点附加区同款）：播放/暂停 + 帧进度
+            // 滑条（播放中禁拖；暂停时拖动定位、松手重跑预览）。
+            _buildPlaybackBar(),
             // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
             host._buildResizeBar(state),
           ],
@@ -4290,8 +4815,69 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     );
   }
 
-  /// 取色器工具栏（26px，样式仿 preview 控制条）：[+]增加 [-]删除 │
-  /// [保存风格] [读取预设]（预设为占位禁用）│ [段按钮 1..n]。
+  /// 播放控制条（样式与预览节点附加区一致）：播放/暂停按钮 + 帧进度
+  /// 滑条；多帧源（视频/图像序列，totalFrames > 1）才显示滑条。
+  /// 播放/暂停与帧推进的状态刷新分别走 notifyListeners（父级节点卡片
+  /// 重建）与 [IspStudioState.frameTick]（本区 ValueListenableBuilder）。
+  Widget _buildPlaybackBar() {
+    final total = state.totalFrames ?? 1;
+    return SizedBox(
+      height: 26,
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(state.isPlaying ? Icons.pause : Icons.play_arrow,
+                size: 16),
+            padding: EdgeInsets.zero,
+            tooltip: state.isPlaying ? '暂停' : '连续播放',
+            // 导出等处理中禁用；播放中点击为暂停。
+            onPressed: state.isProcessing && !state.isPlaying
+                ? null
+                : () => state.togglePlayback(),
+          ),
+          // HDR/SDR 切换（与预览节点控制条同款同逻辑）：SDR 片源只显示
+          // 静态标识；HDR 片源（PQ/HLG）两段互斥——SDR=直解对比 /
+          // HDR=色调映射显示（默认）。
+          if (state.playbackSrcTransfer == 0)
+            const Padding(
+              padding: EdgeInsets.only(right: 2),
+              child: Text('SDR',
+                  style: TextStyle(fontSize: 10, color: Colors.grey)),
+            )
+          else
+            widget.host._buildHdrToneMapToggle(state),
+          if (total > 1)
+            Expanded(
+              child: SliderTheme(
+                data: kIspSliderTheme,
+                child: Slider(
+                  value:
+                      state.previewFrame.clamp(0, total - 1).toDouble(),
+                  min: 0,
+                  max: (total - 1).toDouble(),
+                  // 播放中禁用拖帧。
+                  onChanged: state.isPlaying
+                      ? null
+                      : (v) => state.setPreviewFrame(v.round()),
+                  onChangeEnd:
+                      state.isPlaying ? null : (_) => state.runPreview(),
+                ),
+              ),
+            ),
+          // 进度滑条右侧：已播放时间/总时间（视频源播放时显示）。
+          if (total > 1 && state.playbackSrcFps > 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Text(playbackTimeText(state, total),
+                  style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 取色器工具栏（26px，样式仿 preview 控制条）：[读取预设] [保存风格] │
+  /// [+]增加 [-]删除 │ 放大率互斥组 [X2 X4 X6 X8 X10] │ [段按钮 1..n]。
   Widget _buildToolbar() {
     final count = _bandCount;
     return SizedBox(
@@ -4299,6 +4885,19 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
       child: Row(
         children: [
           const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.folder_open_outlined, size: 16),
+            padding: EdgeInsets.zero,
+            tooltip: '读取预设',
+            onPressed: () => _loadStyle(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.save_outlined, size: 16),
+            padding: EdgeInsets.zero,
+            tooltip: '保存风格',
+            onPressed: () => _saveStyle(),
+          ),
+          _toolbarDivider(),
           IconButton(
             icon: const Icon(Icons.add, size: 16),
             padding: EdgeInsets.zero,
@@ -4317,37 +4916,90 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
             onPressed: count <= 1 ? null : () => _toggleDelete(),
           ),
           _toolbarDivider(),
-          IconButton(
-            icon: const Icon(Icons.save_outlined, size: 16),
-            padding: EdgeInsets.zero,
-            tooltip: '保存风格',
-            onPressed: () => _saveStyle(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.folder_open_outlined, size: 16),
-            padding: EdgeInsets.zero,
-            tooltip: '读取预设',
-            onPressed: () => _loadStyle(),
-          ),
+          // 放大率互斥组（取色悬停时右区放大预览的倍率）。
+          for (final z in const [2, 4, 6, 8, 10]) ...[
+            _buildZoomButton(z),
+            if (z != 10) const SizedBox(width: 3),
+          ],
           _toolbarDivider(),
-          // 段按钮列：删除模式下整体红色描边高亮。
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
-            decoration: _deleteArmed
-                ? BoxDecoration(
-                    borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: const Color(0xFFBF4040)))
-                : null,
-            child: Row(
-              children: [
-                for (var i = 0; i < count; i++) ...[
-                  _buildBandButton(i),
-                  if (i < count - 1) const SizedBox(width: 3),
-                ],
-              ],
+          // 段按钮列：删除模式下整体红色描边高亮。段数多（上限 24）
+          // 时超出部分横向滚动，不挤压工具栏图标。
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+                decoration: _deleteArmed
+                    ? BoxDecoration(
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(color: const Color(0xFFBF4040)))
+                    : null,
+                child: Row(
+                  children: [
+                    // ALL 视图：双联示波器叠加全部段的色相线/色带。
+                    _buildAllButton(),
+                    const SizedBox(width: 3),
+                    for (var i = 0; i < count; i++) ...[
+                      _buildBandButton(i),
+                      if (i < count - 1) const SizedBox(width: 3),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 放大率按钮（互斥组 X2/X4/X6/X8/X10）：选中项高亮描边，点击切换
+  /// 右区放大预览倍率。
+  Widget _buildZoomButton(int z) {
+    final sel = _magZoom == z;
+    return GestureDetector(
+      onTap: () => setState(() => _magZoom = z),
+      child: Container(
+        width: 26,
+        height: 18,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: sel ? const Color(0xFF4A6E8E) : const Color(0xFF333333),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(
+              color: sel ? const Color(0xFF6A9EC0) : Colors.grey.shade800),
+        ),
+        child: Text('X$z',
+            style: TextStyle(
+                fontSize: 10,
+                color: sel ? Colors.white : Colors.grey.shade500)),
+      ),
+    );
+  }
+
+  /// ALL 视图按钮（取色器组首位）：开启后双联矢量示波器叠加全部段的
+  /// 色相线/色带（按段按钮取样颜色着色，未取色段用色相纯色）。
+  Widget _buildAllButton() {
+    return GestureDetector(
+      onTap: () => setState(() => _allView = !_allView),
+      child: Container(
+        width: 26,
+        height: 18,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color:
+              _allView ? const Color(0xFF4A6E8E) : const Color(0xFF333333),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(
+              color: _allView
+                  ? const Color(0xFF6A9EC0)
+                  : Colors.grey.shade800),
+        ),
+        child: Text('ALL',
+            style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                color: _allView ? Colors.white : Colors.grey.shade500)),
       ),
     );
   }
@@ -4356,11 +5008,13 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
       width: 9, thickness: 1, indent: 5, endIndent: 5, color: Colors.grey.shade800);
 
   /// 段按钮（取色器 i+1）：选中段高亮描边；取色中的段琥珀色描边；删除
-  /// 模式悬停时叠 ✕ 角标。
+  /// 模式悬停时覆盖半透明遮罩 + 对角线大叉。已取色的段以取样像素的
+  /// HSL 颜色作背景，数字白字黑描边 2px（彩色底上保证可读）。
   Widget _buildBandButton(int i) {
     final sel = i == _selBand;
     final armed = _armedBand == i;
     final deleteHover = _deleteArmed && _hoverDeleteBand == i;
+    final pickedColor = _bandColors[i];
     return MouseRegion(
       onEnter: (_) => setState(() => _hoverDeleteBand = i),
       onExit: (_) => setState(() => _hoverDeleteBand = null),
@@ -4374,11 +5028,12 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
               height: 18,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: armed
-                    ? const Color(0xFF6A5E2E)
-                    : sel
-                        ? const Color(0xFF4A6E8E)
-                        : const Color(0xFF333333),
+                color: pickedColor ??
+                    (armed
+                        ? const Color(0xFF6A5E2E)
+                        : sel
+                            ? const Color(0xFF4A6E8E)
+                            : const Color(0xFF333333)),
                 borderRadius: BorderRadius.circular(3),
                 border: Border.all(
                     color: deleteHover
@@ -4389,16 +5044,43 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                                 ? const Color(0xFF6A9EC0)
                                 : Colors.grey.shade800),
               ),
-              child: Text('${i + 1}',
-                  style: TextStyle(
-                      fontSize: 10,
-                      color: sel || armed ? Colors.white : Colors.grey.shade500)),
+              // 已取色：白字黑描边；未取色：沿用原配色。
+              child: pickedColor != null
+                  ? Stack(
+                      children: [
+                        Text('${i + 1}',
+                            style: TextStyle(
+                                fontSize: 10,
+                                foreground: Paint()
+                                  ..style = PaintingStyle.stroke
+                                  ..strokeWidth = 2
+                                  ..color = Colors.black)),
+                        Text('${i + 1}',
+                            style: const TextStyle(
+                                fontSize: 10, color: Colors.white)),
+                      ],
+                    )
+                  : Text('${i + 1}',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: sel || armed
+                              ? Colors.white
+                              : Colors.grey.shade500)),
             ),
             if (deleteHover)
-              const Positioned(
-                right: -4,
-                top: -5,
-                child: Icon(Icons.close, size: 9, color: Color(0xFFFF6E6E)),
+              // 删除悬停：整个按钮覆盖半透明遮罩 + 对角线大叉。
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: const _DeleteCrossPainter(),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0x88000000),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
               ),
           ],
         ),
@@ -4407,28 +5089,84 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
   }
 
   /// 左半「调整前」预览：黑底 contain 图（无图时占位文案）+ 左上角标签；
-  /// 取色模式下十字光标、点击取样、叠加悬停十字线与取样点标记。
+  /// 取色模式下十字光标、点击取样、叠加悬停十字线；
+  /// 悬停时叠加 HSL 气泡（光标右下方，近右/下边缘翻转到左上侧）。
   Widget _buildInputPane(ui.Image? image, String hint) {
     final armed = _armedBand != null;
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
+        // 取色悬停气泡：实时显示光标像素 HSL，风格与矢量示波器悬停气泡
+        // 一致（VectorscopeGraticule._drawHoverBubble）：圆角黑底白边、
+        // 左侧色样块（HSL 50% 亮度纯色）、H/S/L 百分比文案；默认光标右
+        // 上方，越界换侧并夹进窗格。
+        Widget? bubble;
+        final hov = _pickHover;
+        if (armed && hov != null && _hoverHueDeg != null) {
+          final hue = _hoverHueDeg!;
+          final sat = (_hoverS ?? 0).clamp(0.0, 1.0);
+          final lig = (_hoverL ?? 0).clamp(0.0, 1.0);
+          const bw = 140.0, bh = 24.0; // 估算尺寸（换侧判断用）
+          var bx = hov.dx + 12;
+          var by = hov.dy - 12 - bh;
+          if (bx + bw > size.width - 1) bx = hov.dx - 12 - bw;
+          if (by < 1) by = hov.dy + 12;
+          bx = bx.clamp(1.0, math.max(1.0, size.width - 1 - bw));
+          by = by.clamp(1.0, math.max(1.0, size.height - 1 - bh));
+          bubble = Positioned(
+            left: bx,
+            top: by,
+            // 不拦截手势（气泡仅展示，十字线/点击照常）。
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: const Color(0xD9000000),
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(
+                      color: const Color(0x99FFFFFF), width: 0.8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: HSLColor.fromAHSL(1, hue, sat, 0.5).toColor(),
+                        border: Border.all(
+                            color: const Color(0x99FFFFFF), width: 0.8),
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      'H ${hue.round()}°  S ${(sat * 100).round()}%'
+                      '  L ${(lig * 100).round()}%',
+                      style: const TextStyle(
+                          fontSize: 10, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
         return MouseRegion(
           cursor: armed ? SystemMouseCursors.precise : MouseCursor.defer,
           onHover:
-              armed ? (e) => setState(() => _pickHover = e.localPosition) : null,
-          onExit: armed ? (_) => setState(() => _pickHover = null) : null,
+              armed ? (e) => _updateHover(e.localPosition, size) : null,
+          onExit: armed
+              ? (_) => setState(() {
+                    _pickHover = null;
+                    _clearHoverHsl();
+                  })
+              : null,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: armed ? (d) => _pickAt(d.localPosition, size) : null,
             child: CustomPaint(
-              foregroundPainter: armed || _pickedPixel != null
-                  ? _PickOverlayPainter(
-                      hover: armed ? _pickHover : null,
-                      pickedPixel: _pickedPixel,
-                      imageWidth: image?.width ?? 0,
-                      imageHeight: image?.height ?? 0)
-                  : null,
+              foregroundPainter:
+                  armed ? _PickOverlayPainter(hover: _pickHover) : null,
               child: Container(
                 color: Colors.black,
                 child: Stack(
@@ -4448,6 +5186,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                           style: TextStyle(
                               fontSize: 10, color: Colors.white54)),
                     ),
+                    ?bubble,
                   ],
                 ),
               ),
@@ -4457,22 +5196,40 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
       },
     );
   }
+
+  /// 取色悬停时的右半放大视图：左预览图以悬停像素为中心按 [_magZoom]
+  /// 倍放大（像素中心对齐，近边缘时源窗钳位在图内不出黑边；点采样
+  /// 显示像素格）。左上角叠加标签。
+  Widget _buildMagnifierPane(ui.Image image) {
+    final c = _hoverPixel!;
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CustomPaint(
+              painter: _MagnifierPainter(
+                  image: image,
+                  center: Offset(c.dx + 0.5, c.dy + 0.5),
+                  zoom: _magZoom.toDouble())),
+          Positioned(
+            left: 4,
+            top: 2,
+            child: Text('调整前 ×$_magZoom',
+                style:
+                    const TextStyle(fontSize: 10, color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-/// 取色模式叠加层：左预览区（调整前）悬停十字线 + 最近取样点标记。
-/// [pickedPixel] 为图像像素坐标，绘制时经 contain 适配换算回窗格坐标
-/// （图像缩放/窗格改尺寸后标记仍对位）。
+/// 取色模式叠加层：左预览区（调整前）悬停十字线。
 class _PickOverlayPainter extends CustomPainter {
   final Offset? hover;
-  final Offset? pickedPixel;
-  final int imageWidth;
-  final int imageHeight;
 
-  const _PickOverlayPainter(
-      {this.hover,
-      this.pickedPixel,
-      this.imageWidth = 0,
-      this.imageHeight = 0});
+  const _PickOverlayPainter({this.hover});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -4484,25 +5241,210 @@ class _PickOverlayPainter extends CustomPainter {
       canvas.drawLine(Offset(h.dx, 0), Offset(h.dx, size.height), cross);
       canvas.drawLine(Offset(0, h.dy), Offset(size.width, h.dy), cross);
     }
-    final p = pickedPixel;
-    if (p != null && imageWidth > 0 && imageHeight > 0) {
-      final scale =
-          math.min(size.width / imageWidth, size.height / imageHeight);
-      final ox = (size.width - imageWidth * scale) / 2;
-      final oy = (size.height - imageHeight * scale) / 2;
-      final c =
-          Offset(ox + (p.dx + 0.5) * scale, oy + (p.dy + 0.5) * scale);
-      canvas.drawCircle(
-          c,
-          5,
-          Paint()
-            ..color = const Color(0xFFFFFFFF)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5);
-      canvas.drawCircle(c, 1.5, Paint()..color = const Color(0xFFFFFFFF));
-    }
   }
 
   @override
   bool shouldRepaint(_PickOverlayPainter old) => true;
+}
+
+/// ALL 视图叠加层（多段色彩均衡器）：全部段的高斯色带 + 色相标线，
+/// 按段按钮取样颜色着色。数学口径与 [_HueBandPainter] 一致（σ=45°/Q，
+/// 扇形步进 2°，半径 half-13）。每条标线在 0.55R 处标注取色器序号
+/// （白字黑边 2px）。
+/// [bands]：(中心°, Q, 颜色, 圆心段颜色?, 序号标签)——调整前半区传
+/// 原 H 中心（圆心段颜色 null，色带整径单色、标线从 0.25R 起）；
+/// 调整后半区传 H+ΔH 移位后中心，圆心段颜色 = 原始色相颜色：色带
+/// 径向分两段——0→0.25R 中心饼用原始颜色、0.25R→R 环形段用移位后
+/// 颜色；标线同样分两段（圆心段加粗），呈现移位前后的强烈对比。
+class _AllBandsPainter extends CustomPainter {
+  /// (中心°, Q, 颜色, 圆心段颜色?, 序号标签)。
+  final List<(double, double, Color, Color?, String)> bands;
+
+  const _AllBandsPainter({this.bands = const []});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final half = math.min(size.width, size.height) / 2;
+    final center = size.center(Offset.zero);
+    final bandR = half - 13; // 刻度环内侧（与 _HueBandPainter 同口径）
+    if (bandR <= 0) return;
+    final rect = Rect.fromCircle(center: center, radius: bandR);
+    const step = 2.0;
+
+    void marker(double hDeg, Color color, Color? innerColor) {
+      final a = _HueBandPainter._screenAngleOfHue(hDeg);
+      final dir = Offset(math.cos(a), math.sin(a));
+      if (innerColor != null) {
+        // 圆心段：原始色相颜色（从圆心覆盖到 0.25R，加粗强调对比）。
+        canvas.drawLine(center, center + dir * (bandR * 0.25),
+            Paint()
+              ..color = innerColor
+              ..strokeWidth = 3);
+      }
+      canvas.drawLine(center + dir * (bandR * 0.25), center + dir * bandR,
+          Paint()
+            ..color = color
+            ..strokeWidth = 2);
+    }
+
+    /// 序号标签（0.55R 处）：白字黑边 2px（描边层 + 填充层）。
+    void label(String s, double hDeg) {
+      final a = _HueBandPainter._screenAngleOfHue(hDeg);
+      final at = center +
+          Offset(math.cos(a), math.sin(a)) * (bandR * 0.55);
+      final stroke = TextPainter(
+        text: TextSpan(
+            text: s,
+            style: TextStyle(
+                fontSize: 20,
+                foreground: Paint()
+                  ..style = PaintingStyle.stroke
+                  ..strokeWidth = 2
+                  ..color = Colors.black)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final fill = TextPainter(
+        text: TextSpan(
+            text: s,
+            style: const TextStyle(fontSize: 20, color: Colors.white)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final topLeft = at - Offset(stroke.width / 2, stroke.height / 2);
+      stroke.paint(canvas, topLeft);
+      fill.paint(canvas, topLeft);
+    }
+
+    void band(double centerDeg, double q, Color color, Color? innerColor,
+        String seq) {
+      final sigma = 45.0 / q;
+      final innerRect =
+          Rect.fromCircle(center: center, radius: bandR * 0.25);
+      for (var deg = 0.0; deg < 360; deg += step) {
+        final hue = _HueBandPainter._hueByScreenDeg[deg.round() % 360];
+        var d = (hue - centerDeg).abs() % 360.0;
+        if (d > 180) d = 360 - d;
+        final w = math.exp(-0.5 * (d / sigma) * (d / sigma));
+        if (w < 0.02) continue;
+        final start = (deg - step / 2) * math.pi / 180;
+        final sweep = step * math.pi / 180;
+        if (innerColor != null) {
+          // 径向两段：0.25R→R 环形段用移位后颜色（Path 环形扇区，
+          // 避免与中心饼叠混透明度），0→0.25R 中心饼用原始颜色。
+          final ring = Path()
+            ..addArc(rect, start, sweep)
+            ..arcTo(innerRect, start + sweep, -sweep, false)
+            ..close();
+          canvas.drawPath(ring,
+              Paint()..color = color.withAlpha((w * 0.4 * 255).round()));
+          canvas.drawArc(innerRect, start, sweep, true,
+              Paint()..color = innerColor.withAlpha((w * 0.4 * 255).round()));
+        } else {
+          canvas.drawArc(rect, start, sweep, true,
+              Paint()..color = color.withAlpha((w * 0.4 * 255).round()));
+        }
+      }
+      marker(centerDeg, color, innerColor);
+      label(seq, centerDeg);
+    }
+
+    for (final (h, q, c, inner, seq) in bands) {
+      band(h, q, c, inner, seq);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AllBandsPainter old) => true;
+}
+
+/// 删除模式悬停角标：覆盖整个段按钮的对角线大叉（四角留 2px 内缩）。
+class _DeleteCrossPainter extends CustomPainter {
+  const _DeleteCrossPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = const Color(0xFFFF6E6E)
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    const inset = 2.0;
+    canvas.drawLine(const Offset(inset, inset),
+        Offset(size.width - inset, size.height - inset), p);
+    canvas.drawLine(Offset(size.width - inset, inset),
+        Offset(inset, size.height - inset), p);
+  }
+
+  @override
+  bool shouldRepaint(_DeleteCrossPainter old) => false;
+}
+
+/// 取色放大视图：以 [center]（图像像素坐标，可为小数，平滑跟随十字线）
+/// 为中心、按 [zoom] 倍放大绘制 [image]——**倍率相对左区预览的显示
+/// 缩放**（contain 适配），绝对缩放 = zoom × baseScale，X1 即与左区等
+/// 大（直接按图像像素放大在大图上会远超预期：4K 图在预览格里约缩小
+/// 10 倍显示，X2 绝对放大观感已超 X20）。源窗近边缘时钳位在图内
+/// （视图恒铺满，不出黑边）；图小于源窗时源窗收缩到整图。点采样
+/// （FilterQuality.none）显示像素格，便于逐像素取色。放大图上叠加
+/// 十字线 + 中心圆标记左区锁定的像素（边缘钳位时源窗内移，十字线按
+/// 像素在视图中的实际位置绘制，不恒在画面中心）。
+class _MagnifierPainter extends CustomPainter {
+  final ui.Image image;
+  final Offset center;
+  final double zoom;
+
+  const _MagnifierPainter(
+      {required this.image, required this.center, this.zoom = 6});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    // 左右预览格同尺寸，baseScale 即左区 contain 显示缩放。
+    final baseScale =
+        math.min(size.width / image.width, size.height / image.height);
+    final absZoom = zoom * baseScale;
+    var srcW = size.width / absZoom;
+    var srcH = size.height / absZoom;
+    // 图小于源窗：源窗收缩到整图（极限边缘条件）。
+    if (srcW > image.width) srcW = image.width.toDouble();
+    if (srcH > image.height) srcH = image.height.toDouble();
+    // 近边缘：源窗钳位在图内（中心随之内移，视图不出现黑边）。
+    final left =
+        (center.dx - srcW / 2).clamp(0.0, image.width - srcW).toDouble();
+    final top =
+        (center.dy - srcH / 2).clamp(0.0, image.height - srcH).toDouble();
+    canvas.drawImageRect(
+        image,
+        Rect.fromLTWH(left, top, srcW, srcH),
+        Rect.fromLTWH(0, 0, size.width, size.height),
+        Paint()..filterQuality = FilterQuality.none);
+
+    // 锁定像素在视图中的实际位置（源窗被钳位内移时不恒在画面中心）。
+    final scaleX = size.width / srcW;
+    final scaleY = size.height / srcH;
+    final cx = (center.dx - left) * scaleX;
+    final cy = (center.dy - top) * scaleY;
+    // 中心圆：半径随放大像素尺寸（约 3 个像素格），标记左区十字线
+    // 锁定的像素。
+    final r = math.max(18.0, math.min(scaleX, scaleY) * 1.8);
+    // 十字线画到圆圈外：四段线止于圆周，不穿过中心圆。
+    final cross = Paint()
+      ..color = const Color(0xCCFFFFFF)
+      ..strokeWidth = 1;
+    canvas.drawLine(Offset(cx, 0), Offset(cx, cy - r), cross);
+    canvas.drawLine(Offset(cx, cy + r), Offset(cx, size.height), cross);
+    canvas.drawLine(Offset(0, cy), Offset(cx - r, cy), cross);
+    canvas.drawLine(Offset(cx + r, cy), Offset(size.width, cy), cross);
+    canvas.drawCircle(
+        Offset(cx, cy),
+        r,
+        Paint()
+          ..color = const Color(0xFFFFFFFF)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
+    canvas.drawCircle(
+        Offset(cx, cy), 1.5, Paint()..color = const Color(0xFFFFFFFF));
+  }
+
+  @override
+  bool shouldRepaint(_MagnifierPainter old) =>
+      old.image != image || old.center != center || old.zoom != zoom;
 }

@@ -38,6 +38,28 @@ class VideoInfo {
   /// yuv420p 直出流程由 GPU shader / 馈源 LUT 按此标志做范围扩展。
   final bool fullRange;
 
+  /// YUV→RGB 色彩矩阵（0=BT.601，1=BT.709，2=BT.2020；缺省 0）。
+  /// 解析自 Video: 行的色彩元数据（bt2020/bt709 关键字，皆无则按
+  /// BT.601——与 yuv_planes.frag 的历史默认一致）。yuv420p 平面直出
+  /// 流程由 GPU shader 按此选择上色矩阵（ffmpeg 的 rgba 转换尊重帧
+  /// 元数据，平面路径须保持同口径）。
+  ///
+  /// **口径：VideoInfo 描述「交付帧」的格式而非容器元数据**——HDR
+  /// 片源解码时统一经 zscale+tonemap 映射为 BT.709 SDR 8bit 交付
+  /// （见 [kHdrTonemapFilter]），故 HDR 时此字段恒报 1（BT.709），
+  /// 下游（yuv_planes.frag / 仪器馈源 / ffmpeg rgba 转换）全部按
+  /// 709 上色即与交付帧一致。
+  final int colorMatrix;
+
+  /// 色彩传递特性（0=SDR，1=PQ/smpte2084，2=HLG/arib-std-b67）：
+  /// 解析自 Video: 行的 transfer 元数据
+  /// （如 `yuv420p10le(tv, bt2020nc/bt2020/smpte2084)`）。
+  final int colorTransfer;
+
+  /// HDR 片源（PQ 或 HLG）：解码侧统一 tonemap 为 BT.709 SDR 8bit
+  /// 交付（见 [kHdrTonemapFilter] 与 [buildDecodeVf]）。
+  bool get isHdr => colorTransfer != 0;
+
   const VideoInfo({
     required this.width,
     required this.height,
@@ -45,6 +67,8 @@ class VideoInfo {
     required this.frameCount,
     required this.hasAudio,
     this.fullRange = false,
+    this.colorMatrix = 0,
+    this.colorTransfer = 0,
   });
 }
 
@@ -82,15 +106,90 @@ Future<VideoInfo> videoFileInfo(String path, {String ffmpegPath = ''}) async {
   final frameCount = (duration * fps).floor();
   if (frameCount < 1) throw StateError('视频没有可解码的帧: $path');
 
+  final transfer = parseColorTransfer(text);
+  // 交付帧口径：HDR 片源解码时统一 tonemap 为 BT.709 SDR 8bit tv
+  // 交付，故 colorMatrix 报 709、fullRange 报 false（无论容器元数据）；
+  // SDR 片源按容器元数据。
+  final (matrix, fullRange) = deliveredColorFormat(transfer,
+      parseColorMatrix(text), RegExp(r'Color Range:\s*pc').hasMatch(text));
   final info = VideoInfo(
       width: width,
       height: height,
       fps: fps,
       frameCount: frameCount,
       hasAudio: RegExp(r'Stream.*Audio:').hasMatch(text),
-      fullRange: RegExp(r'Color Range:\s*pc').hasMatch(text));
+      fullRange: fullRange,
+      colorMatrix: matrix,
+      colorTransfer: transfer);
   _infoCache[key] = info;
   return info;
+}
+
+/// 从 `ffmpeg -i` 横幅解析 YUV→RGB 色彩矩阵：Video: 行含 `bt2020` →
+/// 2（BT.2020），含 `bt709` → 1（BT.709），否则 0（BT.601——未标注
+/// 时的惯例默认，与 yuv_planes.frag 的历史行为一致）。
+int parseColorMatrix(String text) {
+  final line = RegExp('Video:[^\\n]*').firstMatch(text)?.group(0) ?? '';
+  if (line.contains('bt2020')) return 2;
+  if (line.contains('bt709')) return 1;
+  return 0;
+}
+
+/// 从 `ffmpeg -i` 横幅解析色彩传递特性：Video: 行含 `smpte2084` →
+/// 1（PQ），含 `arib-std-b67` → 2（HLG），否则 0（SDR）。
+int parseColorTransfer(String text) {
+  final line = RegExp('Video:[^\\n]*').firstMatch(text)?.group(0) ?? '';
+  if (line.contains('smpte2084')) return 1;
+  if (line.contains('arib-std-b67')) return 2;
+  return 0;
+}
+
+/// 交付帧口径（VideoInfo 描述交付帧而非容器元数据）：HDR（[transfer]
+/// ≠ 0）片源解码时统一经 [kHdrTonemapFilter] 映射为 BT.709 SDR 8bit
+/// tv 交付，故 colorMatrix 恒报 1（BT.709）、fullRange 恒报 false；
+/// SDR 片源按容器元数据原样返回。
+(int colorMatrix, bool fullRange) deliveredColorFormat(
+        int transfer, int matrix, bool fullRange) =>
+    transfer != 0 ? (1, false) : (matrix, fullRange);
+
+/// HDR→SDR 色调映射滤镜链：zscale 线性化（npl=100 标称峰值亮度）→
+/// hable tonemap（desat=0）→ 重标定为 BT.709 SDR tv → yuv420p 8bit。
+/// PQ（smpte2084）与 HLG（arib-std-b67）走同一链（zscale 按帧元数据
+/// 识别输入 transfer）。内置 ffmpeg（gyan full build）含 zscale/
+/// tonemap；实测 4K60 片源 ~55fps（8 线程，0.9x 实时）。
+const String kHdrTonemapFilter = 'zscale=transfer=linear:npl=100,'
+    'tonemap=hable:desat=0,'
+    'zscale=transfer=bt709:primaries=bt709:matrix=bt709:range=tv,'
+    'format=yuv420p';
+
+/// 解码 -vf 滤镜链构造（纯函数，便于单测）：
+/// - [isHdr]（BT.2020 PQ/HLG 片源）且 [toneMapHdr] 时前置
+///   [kHdrTonemapFilter]：交付 BT.709 SDR 8bit（后续 scale/范围扩展/
+///   rgba 转换都在 SDR 域进行）。
+/// - [toneMapHdr] = false（预览节点的 HDR/SDR 切换选 SDR 时）：HDR
+///   片源按 SDR 口径直解（不插 tonemap——发灰原样，供用户对比），
+///   返回形态与 SDR 零改动红线一致；SDR 片源忽略该参数。
+/// - SDR 片源链零改动（回归红线）。
+/// - yuv420p 平面直出 SDR（或 HDR 直解）时无滤镜（解码器原生输出）。
+String? buildDecodeVf({
+  required String pixelFormat,
+  required int downsampleFactor,
+  required int outWidth,
+  required int outHeight,
+  required bool isHdr,
+  bool toneMapHdr = true,
+}) {
+  final tm = isHdr && toneMapHdr;
+  final hdr = tm ? '$kHdrTonemapFilter,' : '';
+  return switch (pixelFormat) {
+    'yuv444p' => downsampleFactor > 1
+        ? '${hdr}scale=$outWidth:$outHeight:out_range=pc'
+        : '${hdr}scale=out_range=pc',
+    'yuv420p' => tm ? kHdrTonemapFilter : null,
+    _ => downsampleFactor > 1
+        ? '${hdr}scale=$outWidth:$outHeight'
+        : (tm ? kHdrTonemapFilter : null),
+  };
 }
 
 /// 解码第 [frameIndex] 帧为 16 位量级的交织 RGB（长度 w*h*3），
@@ -101,6 +200,10 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
   int frameIndex, {
   required int maxValue,
   String ffmpegPath = '',
+
+  /// 预览 HDR/SDR 切换（false = HDR 片源 SDR 直解对比）；缺省 true
+  /// （映射）。导出链不传该参数，恒映射。
+  bool toneMapHdr = true,
 }) async {
   final info = await videoFileInfo(path, ffmpegPath: ffmpegPath);
   if (frameIndex < 0 || frameIndex >= info.frameCount) {
@@ -112,6 +215,9 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
     '-hide_banner', '-loglevel', 'error',
     '-ss', t.toStringAsFixed(6),
     '-i', path,
+    // HDR 片源：tonemap 为 BT.709 SDR 8bit 后再转 rgba（预览选 SDR
+    // 直解时跳过）。
+    if (info.isHdr && toneMapHdr) ...['-vf', kHdrTonemapFilter],
     '-frames:v', '1',
     '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1',
   ]);
@@ -135,17 +241,20 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
 
 /// 流式解码命令参数（纯函数，便于单测）。
 /// [pixelFormat]：'rgba'（w*h*4/帧）或 'yuv420p'（w*h*3/2/帧，4K 下
-/// 流量为 37%，供 GPU 420 直传）；[hwaccel] 为空不加硬件加速参数。
+/// 流量为 37%，供 GPU 420 直传）；[hwaccel] 为空不加硬件加速参数；
+/// [isHdr] 时插入 zscale+tonemap 链（HDR→BT.709 SDR 8bit 交付）。
 List<String> videoDecodeArgs({
   required String pixelFormat,
   String hwaccel = '',
   double startSec = 0,
+  bool isHdr = false,
 }) {
   return [
     '-hide_banner', '-loglevel', 'error',
     if (hwaccel.isNotEmpty) ...['-hwaccel', hwaccel],
     if (startSec > 0) ...['-ss', startSec.toStringAsFixed(6)],
     '-i', '__PATH__',
+    if (isHdr) ...['-vf', kHdrTonemapFilter],
     '-f', 'rawvideo', '-pix_fmt', pixelFormat, 'pipe:1',
   ];
 }
@@ -184,8 +293,13 @@ Stream<Uint8List> decodeVideoStreamRgba(
   final frameBytes = pixelFormat == 'yuv420p'
       ? width * height * 3 ~/ 2
       : width * height * 4;
+  // HDR 片源统一 tonemap（videoFileInfo 有缓存，几乎零开销）。
+  final isHdr = (await videoFileInfo(path, ffmpegPath: ffmpegPath)).isHdr;
   final args = videoDecodeArgs(
-      pixelFormat: pixelFormat, hwaccel: hwaccel, startSec: startSec);
+      pixelFormat: pixelFormat,
+      hwaccel: hwaccel,
+      startSec: startSec,
+      isHdr: isHdr);
   args[args.indexOf('__PATH__')] = path;
   if (passthrough) {
     args.insert(args.indexOf('-f'), '-fps_mode');
@@ -358,7 +472,11 @@ class VideoFrameStream {
       int maxFrames = 0,
       int skipFrames = 0,
       bool passthrough = false,
-      String concatListPath = ''}) async {
+      String concatListPath = '',
+
+      /// 预览 HDR/SDR 切换（false = HDR 片源 SDR 直解对比）；缺省 true
+      /// （映射）。导出路径不传，恒映射。
+      bool toneMapHdr = true}) async {
     final info = await videoFileInfo(path, ffmpegPath: ffmpegPath);
     if (startFrame < 0 || startFrame >= info.frameCount) {
       throw StateError('帧 $startFrame 超出视频范围（共 ${info.frameCount} 帧）');
@@ -387,7 +505,8 @@ class VideoFrameStream {
         _streamWorker,
         _StreamWorkerConfig(port.sendPort, ffmpeg, path, startFrame,
             info.width, info.height, info.fps, pixelFormat, factor, hwaccel,
-            maxFrames, skipFrames, passthrough, concatListPath));
+            maxFrames, skipFrames, passthrough, concatListPath, info.isHdr,
+            toneMapHdr));
     await ready.future;
     return stream;
   }
@@ -410,6 +529,13 @@ class VideoFrameStream {
     _notEmpty?.complete();
     _notEmpty = null;
   }
+
+  /// 当前已缓冲待消费的帧数（播放起步预读闸用：解码器管线填充期
+  /// 交付是"先干后涌"的，起步不等够帧会把等待暴露成丢帧停滞）。
+  int get bufferedCount => _frames.length;
+
+  /// 是否已到 EOF（或解码失败/已释放）：预读闸据此提前放行。
+  bool get isDrained => _eof || _disposed || _error != null;
 
   /// 取下一帧（RGBA8888 w*h*4 或 yuv444p 平面 w*h*3，见 [pixelFormat]）；
   /// EOF 后无帧返回 null。解码失败抛 [StateError]。
@@ -498,10 +624,17 @@ class _StreamWorkerConfig {
   /// 非空时输入改用 concat demuxer 列表（startFrame 须为 0）。
   final String concatListPath;
 
+  /// HDR 片源（PQ/HLG）：解码 -vf 前置 zscale+tonemap 链（见
+  /// [buildDecodeVf]），交付 BT.709 SDR 8bit。
+  final bool isHdr;
+
+  /// 预览 HDR/SDR 切换：false 时 HDR 片源按 SDR 直解（不插 tonemap）。
+  final bool toneMapHdr;
+
   const _StreamWorkerConfig(this.uiPort, this.ffmpeg, this.path,
       this.startFrame, this.width, this.height, this.fps, this.pixelFormat,
       this.downsampleFactor, this.hwaccel, this.maxFrames, this.skipFrames,
-      this.passthrough, this.concatListPath);
+      this.passthrough, this.concatListPath, this.isHdr, this.toneMapHdr);
 }
 
 /// worker 同时最多持有的帧缓冲数（信用额度；1080p ≈ 130MB）。
@@ -551,10 +684,16 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   final frameBytes = is420 ? (outPx * 3 ~/ 2) : outPx * (is444 ? 3 : 4);
   // 降采样由 ffmpeg 的 scale 滤镜完成（C 实现，远快于 Dart 逐像素
   // 抽样，且管道只流小帧）。yuv420p 是解码器原生输出（GPU 平面预览
-  // 专用）：不做任何滤镜转换，limited range 扩展由 shader/馈源完成。
-  final vf = is444
-      ? (factor > 1 ? 'scale=$outW:$outH:out_range=pc' : 'scale=out_range=pc')
-      : (!is420 && factor > 1 ? 'scale=$outW:$outH' : null);
+  // 专用）：SDR 片源不做任何滤镜转换，limited range 扩展由 shader/
+  // 馈源完成；HDR 片源（PQ/HLG）则必须前置 zscale+tonemap 链
+  // （映射为 BT.709 SDR 8bit 交付，否则下游按 SDR 上色发灰发暗）。
+  final vf = buildDecodeVf(
+      pixelFormat: cfg.pixelFormat,
+      downsampleFactor: factor,
+      outWidth: outW,
+      outHeight: outH,
+      isHdr: cfg.isHdr,
+      toneMapHdr: cfg.toneMapHdr);
 
   /// 单趟解码：返回 (送出的帧数, 错误消息)。进程出问题但已送出过帧时
   /// 按 EOF 处理（错误为 null），避免后半段已播的帧被误判为失败。
@@ -567,6 +706,10 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
     try {
       process = await Process.start(cfg.ffmpeg, [
         '-hide_banner', '-loglevel', 'error',
+        // 解码/滤镜线程封顶：默认 auto 按逻辑核数开线程，112 核机上
+        // 软解会以百线程爆发式占满全核，饿死栅格线程/DWM（4K 播放
+        // 栅格段实测被拖到 ~19ms/帧）；吞吐仍数倍于实时需求。
+        '-threads', '8', '-filter_threads', '8',
         // GPU 硬解：ffmpeg 自动选取可用设备并在输出系统内存帧时
         // 自动插入 hwdownload + 格式转换。
         if (useHwaccel && cfg.hwaccel.isNotEmpty)
@@ -663,6 +806,8 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
     try {
       pipe.start(cfg.ffmpeg, [
         '-hide_banner', '-loglevel', 'error', '-nostdin',
+        // 解码/滤镜线程封顶（与上行 Process 路径同口径）。
+        '-threads', '8', '-filter_threads', '8',
         if (useHwaccel && cfg.hwaccel.isNotEmpty)
           ...['-hwaccel', cfg.hwaccel],
         if (cfg.concatListPath.isNotEmpty)

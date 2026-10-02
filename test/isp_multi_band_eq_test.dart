@@ -6,8 +6,10 @@ import 'dart:typed_data';
 
 import 'package:debug_tool_set/modules/isp_studio/models/isp_node.dart';
 import 'package:debug_tool_set/modules/isp_studio/models/multi_band_eq_params.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/hsl_band_pool.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/isp_kernels.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/pipeline_runner.dart';
+import 'package:debug_tool_set/providers/isp_studio_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -42,7 +44,7 @@ void main() {
           ['bypass', 'band_count', 'band_mode', 'sel_band', 'codegenMode']);
       expect(type.params[1].defaultValue, 1);
       expect(type.params[1].min, 1);
-      expect(type.params[1].max, 8);
+      expect(type.params[1].max, 24);
       expect(type.params[2].defaultValue, 'parallel');
       expect(type.params[2].options, ['parallel', 'serial']);
       expect(type.params[3].defaultValue, 0);
@@ -59,6 +61,32 @@ void main() {
       expect(node.paramValues['band_mode'], 'parallel');
       expect(node.paramValues['sel_band'], 0);
       expect(node.paramValues['bypass'], false);
+    });
+  });
+
+  group('色彩风格名标注（标题栏「（文件名）」）', () {
+    test('读取预设写入 style_name；配置调整清除，切换选中段保留', () {
+      final state = IspStudioState.empty();
+      final id = state.graph.addNode('multi_band_eq', 0, 0);
+      final node = state.graph.nodes[id]!;
+
+      state.setParam(id, 'style_name', 'a.colorstyle');
+      expect(node.paramValues['style_name'], 'a.colorstyle');
+      // 切换选中段不清除。
+      state.setParam(id, 'sel_band', 0);
+      expect(node.paramValues['style_name'], 'a.colorstyle');
+      // 调整段参数即清除。
+      state.setParam(id, 'b0_h', 120.0);
+      expect(node.paramValues.containsKey('style_name'), isFalse);
+
+      // 批量写含配置键同样清除。
+      state.setParam(id, 'style_name', 'b.colorstyle');
+      state.setParams(id, {'b0_q': 3.0});
+      expect(node.paramValues.containsKey('style_name'), isFalse);
+
+      // 批量写自带 style_name（预设读取路径）时保留新名字。
+      state.setParams(id, {'b0_h': 10.0, 'style_name': 'c.colorstyle'});
+      expect(node.paramValues['style_name'], 'c.colorstyle');
     });
   });
 
@@ -323,7 +351,7 @@ void main() {
               jsonEncode({
                 'version': 1,
                 'band_mode': 'parallel',
-                'bands': List.generate(9, (i) => {}),
+                'bands': List.generate(25, (i) => {}),
               }),
               oldBandCount: 1),
           throwsFormatException);
@@ -513,6 +541,87 @@ void main() {
       } finally {
         await tmp.delete();
       }
+    });
+  });
+
+  group('estimateBandQ 取色器 Q 值自动评估', () {
+    /// 合成 RGBA8 像素缓冲（[pixel] 返回 (r,g,b)，alpha 恒 255）。
+    ByteData rgbaOf(int w, int h, (int, int, int) Function(int, int) pixel) {
+      final bd = ByteData(w * h * 4);
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final (r, g, b) = pixel(x, y);
+          final off = (y * w + x) * 4;
+          bd.setUint8(off, r);
+          bd.setUint8(off + 1, g);
+          bd.setUint8(off + 2, b);
+          bd.setUint8(off + 3, 255);
+        }
+      }
+      return bd;
+    }
+
+    test('硬边界：平滑段到边界距离 d，Q = 宽/d', () {
+      // 左半纯红（0°）右半纯绿（120°）：从 (0,5) 向右走 20 像素到边界，
+      // 为 8 方向最长段，Q = 40/20 = 2。
+      final bd =
+          rgbaOf(40, 10, (x, y) => x < 20 ? (255, 0, 0) : (0, 255, 0));
+      expect(estimateBandQ(bd, 40, 10, 0, 5), closeTo(2.0, 1e-9));
+    });
+
+    test('低饱和灰像素视为相位突变，阻断平滑段', () {
+      // x=10 灰列：向右平滑段缩短为 10，Q = 40/10 = 4。
+      final bd = rgbaOf(40, 10, (x, y) {
+        if (x == 10) return (128, 128, 128);
+        return x < 20 ? (255, 0, 0) : (0, 255, 0);
+      });
+      expect(estimateBandQ(bd, 40, 10, 0, 5), closeTo(4.0, 1e-9));
+    });
+
+    test('起始像素低饱和（色相无意义）回退默认 2.0', () {
+      final bd = rgbaOf(40, 10, (x, y) => (128, 128, 128));
+      expect(estimateBandQ(bd, 40, 10, 5, 5), 2.0);
+    });
+
+    test('孤立像素 d=1，Q=M 且钳位不超过 100', () {
+      // 200x1：唯一红像素四周皆绿，d=1，M=200，Q 钳位到 100。
+      final bd =
+          rgbaOf(200, 1, (x, y) => x == 100 ? (255, 0, 0) : (0, 255, 0));
+      expect(estimateBandQ(bd, 200, 1, 100, 0), 100.0);
+    });
+
+    test('色相环绕：355° 与 5° 环差约 10° 判为连续', () {
+      // 左半 hue≈355°、右半 hue≈5°，边界不中断：从 (10,1) 向右平滑段
+      // 直达右边界（d=20），Q = 30/20 = 1.5；若环绕处理缺失会在 x=15
+      // 处误判突变（d=5，Q=6）。
+      final bd =
+          rgbaOf(30, 4, (x, y) => x < 15 ? (255, 0, 21) : (255, 21, 0));
+      expect(estimateBandQ(bd, 30, 4, 10, 1), closeTo(1.5, 1e-9));
+    });
+  });
+
+  group('applyHslBandLutsParallel 常驻条带池', () {
+    test('池路径（≥1M 像素）与整幅串行逐位一致', () async {
+      // 1024x1024 触发并行池路径（parallelPixels = 1M）。
+      const w = 1024, h = 1024, max = 255;
+      final hsl = Uint16List(w * h * 3);
+      for (var i = 0; i < hsl.length; i++) {
+        hsl[i] = (i * 7 + (i ~/ 3)) % 256;
+      }
+      final (shift, sMul, lMul) = multiBandLuts([
+        (h: 100.0, q: 3.0, dh: 40.0, s: 1.5, l: 0.8),
+        (h: 300.0, q: 8.0, dh: -60.0, s: 0.7, l: 1.2),
+      ], serial: true, maxValue: max);
+      final expected = applyHslBandLuts(hsl, 0, hsl.length ~/ 3,
+          maxValue: max, shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+      final actual = await applyHslBandLutsParallel(hsl,
+          width: w,
+          height: h,
+          maxValue: max,
+          shiftLut: shift,
+          sMulLut: sMul,
+          lMulLut: lMul);
+      expect(actual, equals(expected));
     });
   });
 }

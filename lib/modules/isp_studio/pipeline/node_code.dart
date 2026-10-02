@@ -575,6 +575,15 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
         name: 'lGain', type: 'double', value: '亮度增益（节点参数 l_gain）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
+  'multi_band_eq': [
+    CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
+    CodeVariable(
+        name: 'bands',
+        type: 'List<({double h, double q, double dh, double s, double l})>',
+        value: '段参数列表（色相中心 h、带宽 q、偏移 dh、饱和 s、亮度 l）'),
+    CodeVariable(name: 'serial', type: 'bool', value: '串联模式（节点参数 band_mode）'),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
+  ],
   'rgb_debugger': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
     CodeVariable(
@@ -981,6 +990,10 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'color_controller': [
     CodeVariable(
         name: 'out', type: 'Uint16List', value: '带内调整后交织 HSL（w*h*3）'),
+  ],
+  'multi_band_eq': [
+    CodeVariable(
+        name: 'out', type: 'Uint16List', value: '多段均衡后交织 HSL（w*h*3）'),
   ],
   'rgb_debugger': [
     CodeVariable(

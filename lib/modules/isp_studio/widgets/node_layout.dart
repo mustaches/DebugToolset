@@ -35,7 +35,7 @@ const double kPortRadius = 5;
 /// 节点总高度：标题 + 端口行 + 类型附加区 + 底部留白。
 /// [previewExtraHeight] 对 preview、调节器（HSL/RGB/YUV、色彩控制器、多段
 /// 色彩均衡器、色饱和度/亮度、亮度/对比度、色彩平衡、色温）、高频边缘提取、
-/// 曲线调节器与仪器节点生效（可拖动调整的附加区高度）。
+/// 曲线调节器、仪器节点、格式转换与视频健康检查节点生效（附加区高度）。
 double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
   final rows = math.max(type.inputs.length, type.outputs.length);
   var h = kNodeTitleHeight + rows * kPortRowHeight + 8;
@@ -54,6 +54,8 @@ double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
       type.typeId == 'color_temp_adjuster' ||
       type.typeId == 'edge_extract' ||
       type.typeId == 'levels_curves' ||
+      type.typeId == 'format_converter' ||
+      type.typeId == 'video_health_check' ||
       allInstrumentTypes.contains(type.typeId)) {
     h += previewExtraHeight;
   }

@@ -1,5 +1,5 @@
 // 多段色彩均衡器（GPU 版，对应 CPU multiBandLuts + applyHslBandLuts）：
-// 多组（≤8 段）高斯色相带的并联/串联合成。段参数经 uBands 数组传入
+// 多组（≤24 段）高斯色相带的并联/串联合成。段参数经 uBands 数组传入
 //（每段 5 个 float：色相中心°、σ°=45°/q、ΔH°、S 增益、L 增益），
 // uCount 为有效段数（恒等段已由调用侧跳过不上传——其对并联求和/串联
 // 级联均无贡献），uMode 0=并联 1=串联。
@@ -10,7 +10,7 @@
 // 单段退化（uCount=1）与 isp_hsl_band.frag 同结果。GPU 权重 float
 // 直求 exp（CPU 为 double 烘焙 LUT 查表），精度口径同其它 GPU 节点
 //（对拍容差 ±2 LSB）。
-// 注意：SkSL 不支持动态下标索引 uniform 数组，8 段循环经宏完全展开、
+// 注意：SkSL 不支持动态下标索引 uniform 数组，24 段循环经宏完全展开、
 // 数组下标全部为字面常量（PAR_BAND/SER_BAND，编译期由预处理器展开）。
 #include <flutter/runtime_effect.glsl>
 
@@ -21,9 +21,9 @@ uniform float uTexW;   // HSL 打包纹理宽（w*3/2）
 uniform float uTexH;
 uniform float uWidth;
 uniform float uMaxValue;
-uniform float uCount;    // 有效段数（1..8）
+uniform float uCount;    // 有效段数（1..24）
 uniform float uMode;     // 0=并联 1=串联
-uniform float uBands[40]; // 8 段 × 5 参数（h°、σ°、dh°、s、l）
+uniform float uBands[120]; // 24 段 × 5 参数（h°、σ°、dh°、s、l）
 uniform sampler2D uTex;
 
 out vec4 fragColor;
@@ -81,6 +81,10 @@ float kernel(int idx) {
     float dhSum = 0.0, sSum = 0.0, lSum = 0.0;
     PAR_BAND(0) PAR_BAND(1) PAR_BAND(2) PAR_BAND(3)
     PAR_BAND(4) PAR_BAND(5) PAR_BAND(6) PAR_BAND(7)
+    PAR_BAND(8) PAR_BAND(9) PAR_BAND(10) PAR_BAND(11)
+    PAR_BAND(12) PAR_BAND(13) PAR_BAND(14) PAR_BAND(15)
+    PAR_BAND(16) PAR_BAND(17) PAR_BAND(18) PAR_BAND(19)
+    PAR_BAND(20) PAR_BAND(21) PAR_BAND(22) PAR_BAND(23)
     shiftDeg = clamp(dhSum, -180.0, 180.0);
     sMul = clamp(1.0 + sSum, 0.0, 5.0);
     lMul = clamp(1.0 + lSum, 0.0, 5.0);
@@ -90,6 +94,10 @@ float kernel(int idx) {
     float sAcc = 1.0, lAcc = 1.0;
     SER_BAND(0) SER_BAND(1) SER_BAND(2) SER_BAND(3)
     SER_BAND(4) SER_BAND(5) SER_BAND(6) SER_BAND(7)
+    SER_BAND(8) SER_BAND(9) SER_BAND(10) SER_BAND(11)
+    SER_BAND(12) SER_BAND(13) SER_BAND(14) SER_BAND(15)
+    SER_BAND(16) SER_BAND(17) SER_BAND(18) SER_BAND(19)
+    SER_BAND(20) SER_BAND(21) SER_BAND(22) SER_BAND(23)
     // 首尾色环最短路径（mod 结果恒 [0,360)，只需单边归一）。
     float dd = mod(hCur - hDeg, 360.0);
     if (dd > 180.0) dd -= 360.0;

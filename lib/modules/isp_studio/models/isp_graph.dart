@@ -85,15 +85,25 @@ class IspGraph {
     return '$prefix${max + 1}';
   }
 
+  /// 编组在节点删除后是否仍然成立：≥2 成员恒成立；单成员仅当该
+  /// 成员是多段色彩均衡器（等效多个色彩控制器混叠，允许单节点编组，
+  /// 见 IspStudioState.canGroupSelectedNodes）。
+  bool _isGroupValid(IspNodeGroup g) {
+    if (g.nodeIds.length >= 2) return true;
+    if (g.nodeIds.isEmpty) return false;
+    return nodes[g.nodeIds.first]?.typeId == 'multi_band_eq';
+  }
+
   /// 删除节点，并级联删除其所有连接与编组成员关系
-  /// （组成员不足 2 个时编组自动解散）。
+  /// （组成员不足 2 个时编组自动解散；多段色彩均衡器的单节点
+  /// 编组除外，见 [_isGroupValid]）。
   void removeNode(String id) {
     nodes.remove(id);
     connections.removeWhere((c) => c.fromNodeId == id || c.toNodeId == id);
     for (final g in groups) {
       g.nodeIds.remove(id);
     }
-    groups.removeWhere((g) => g.nodeIds.length < 2);
+    groups.removeWhere((g) => !_isGroupValid(g));
   }
 
   /// 建立连接。成功返回 null，失败返回中文错误信息。
@@ -311,18 +321,21 @@ class IspGraph {
       ));
     }
     graph.nextId = (json['nextId'] as num?)?.toInt() ?? graph._deriveNextId();
-    // 编组：旧文件无此字段；成员引用缺失节点时剔除，不足 2 人解散。
+    // 编组：旧文件无此字段；成员引用缺失节点时剔除，剔除后按
+    // [_isGroupValid] 判定（不足 2 人解散；多段色彩均衡器的单节点
+    // 编组除外）。
     for (final raw in json['groups'] as List? ?? const []) {
       final m = (raw as Map).cast<String, Object?>();
       final members = <String>{
         for (final id in m['nodes'] as List? ?? const [])
           if (graph.nodes.containsKey(id)) id as String,
       };
-      if (members.length < 2) continue;
-      graph.groups.add(IspNodeGroup(
+      final group = IspNodeGroup(
           m['id'] as String? ?? 'g${graph.nextId++}', members,
           // 旧文件无编组名：按现有最大序号补默认名。
-          name: m['name'] as String? ?? graph.uniqueGroupName()));
+          name: m['name'] as String? ?? graph.uniqueGroupName());
+      if (!graph._isGroupValid(group)) continue;
+      graph.groups.add(group);
     }
     return graph;
   }

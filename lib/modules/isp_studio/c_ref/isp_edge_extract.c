@@ -24,7 +24,14 @@
 static uint16_t clamp_round_u16(double v, int max_value) {
   if (v < 0.0) return 0;
   if (v > (double)max_value) return (uint16_t)max_value;
-  return (uint16_t)lround(v);
+  /* lround 快路径（界内 v ≥ 0）：floor(v+0.5) + 加法进位修正（t 恰为整
+   * 数且 v 严格小于中点 t-0.5 时退一格），与 lround(v) 逐位一致——
+   * libm lround 是函数调用，逐像素路径上占耗时大头。 */
+  {
+    const double t = v + 0.5;
+    const int r = (int)t;
+    return (uint16_t)(t == (double)r && v < t - 0.5 ? r - 1 : r);
+  }
 }
 
 int isp_edge_extract_run(const uint16_t *data, uint16_t *out, int width,

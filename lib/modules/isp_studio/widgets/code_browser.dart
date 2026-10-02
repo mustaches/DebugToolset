@@ -873,6 +873,14 @@ class CodeCompileArea extends StatefulWidget {
   /// 编译前校验（返回 false 则不打开终端，由校验方弹错误对话框）。
   final Future<bool> Function(BuildContext context)? preCompileCheck;
 
+  /// Win32 可运行验证程序的构建回调（编组页注入）：非空时工具栏出现
+  /// 「运行验证（原尺寸）」/「运行验证（scale）」两个按钮——点击后在
+  /// 终端面板流式构建，成功即启动生成的窗口程序（[buildWinVerifyApp]
+  /// 口径，main_win.c 不导出）。[scaleDown] 为 true 时启动参数附
+  /// --scale（视频逐级减半降档至宽 ≤1280）。
+  final Future<CCompileResult> Function(void Function(String chunk) onOutput,
+      {required bool scaleDown})? winVerifyBuilder;
+
   final double leftWidth;
 
   const CodeCompileArea({
@@ -885,6 +893,7 @@ class CodeCompileArea extends StatefulWidget {
     this.topName,
     this.compileRunner,
     this.preCompileCheck,
+    this.winVerifyBuilder,
     this.leftWidth = 190,
   });
 
@@ -960,6 +969,27 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
     });
   }
 
+  /// 点「运行验证（原尺寸/scale）」（[CodeCompileArea.winVerifyBuilder]
+  /// 非空时显示）：终端面板流式构建。启动由构建回调自行负责（它需要附加
+  /// 参数，如用户视频源的 --video/--scale），此处只呈现构建过程。
+  Future<void> _startWinVerify({required bool scaleDown}) async {
+    if (_compiling) return;
+    final builder = widget.winVerifyBuilder;
+    if (builder == null) return;
+    setState(() {
+      _terminalVisible = true;
+      _compiling = true;
+      _lastResult = null;
+      _terminalText.clear();
+    });
+    final result = await builder(_appendTerminal, scaleDown: scaleDown);
+    if (!mounted) return;
+    setState(() {
+      _compiling = false;
+      _lastResult = result;
+    });
+  }
+
   /// 工具栏：编译入口（带图标按钮，编译中转进度态并禁用）。
   Widget _buildToolbar() {
     final fg = _compiling ? Colors.white38 : Colors.white70;
@@ -971,43 +1001,100 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8),
       alignment: Alignment.centerLeft,
-      child: InkWell(
-        key: widget.buttonKey,
-        onTap: _compiling ? null : _startCompile,
-        borderRadius: BorderRadius.circular(3),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2D2D30),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            key: widget.buttonKey,
+            onTap: _compiling ? null : _startCompile,
             borderRadius: BorderRadius.circular(3),
-            border: Border.all(color: const Color(0xFF3A3A3A)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_compiling)
-                const SizedBox(
-                  width: 13,
-                  height: 13,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                // 自绘 VS「生成项目」风格图标（锤子 + 砖墙），禁用时降透明度。
-                Opacity(
-                  opacity: _compiling ? 0.5 : 1.0,
-                  child: SvgPicture.asset(
-                    'icons/build_project.svg',
-                    width: 13,
-                    height: 13,
-                  ),
-                ),
-              const SizedBox(width: 6),
-              Text(
-                _compiling ? '编译中…' : '编译',
-                style: TextStyle(fontSize: 11, color: fg),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2D2D30),
+                borderRadius: BorderRadius.circular(3),
+                border: Border.all(color: const Color(0xFF3A3A3A)),
               ),
-            ],
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_compiling)
+                    const SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    // 自绘 VS「生成项目」风格图标（锤子 + 砖墙），禁用时降透明度。
+                    Opacity(
+                      opacity: _compiling ? 0.5 : 1.0,
+                      child: SvgPicture.asset(
+                        'icons/build_project.svg',
+                        width: 13,
+                        height: 13,
+                      ),
+                    ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _compiling ? '编译中…' : '编译',
+                    style: TextStyle(fontSize: 11, color: fg),
+                  ),
+                ],
+              ),
+            ),
           ),
+          // 「运行验证（原尺寸/scale）」：编组页注入 winVerifyBuilder
+          // 时出现。原尺寸按钮绿色播放图标，scale 按钮蓝色播放图标。
+          if (widget.winVerifyBuilder != null) ...[
+            const SizedBox(width: 8),
+            _winVerifyButton(
+              label: '运行验证（原尺寸）',
+              iconColor:
+                  _compiling ? Colors.white38 : const Color(0xFF4CAF50),
+              scaleDown: false,
+              fg: fg,
+            ),
+            const SizedBox(width: 8),
+            _winVerifyButton(
+              label: '运行验证（scale）',
+              iconColor:
+                  _compiling ? Colors.white38 : const Color(0xFF2196F3),
+              scaleDown: true,
+              fg: fg,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 「运行验证」按钮（原尺寸 / --scale 降档两个形态共用样式）。
+  Widget _winVerifyButton({
+    required String label,
+    required Color iconColor,
+    required bool scaleDown,
+    required Color fg,
+  }) {
+    return InkWell(
+      onTap: _compiling ? null : () => _startWinVerify(scaleDown: scaleDown),
+      borderRadius: BorderRadius.circular(3),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2D2D30),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: const Color(0xFF3A3A3A)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.play_arrow, size: 14, color: iconColor),
+            const SizedBox(width: 4),
+            Text(
+              _compiling ? '编译中…' : label,
+              style: TextStyle(fontSize: 11, color: fg),
+            ),
+          ],
         ),
       ),
     );

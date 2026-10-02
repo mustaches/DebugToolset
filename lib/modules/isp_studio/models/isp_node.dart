@@ -257,25 +257,35 @@ class IspNode {
       // 高频边缘提取与曲线调节器内嵌附加显示区（双联预览、波形示波器或
       // 曲线编辑器），默认宽度加倍；加法器的平衡控制条需要更长行程，
       // 默认宽度 3 倍。其附加区比预览多若干行滑块，默认高度相应加大。
-      width: type.typeId == 'adder'
-          ? kNodeWidth * 3
-          : type.typeId == 'hsl_debugger' ||
-                  type.typeId == 'rgb_debugger' ||
-                  type.typeId == 'yuv_debugger' ||
-                  type.typeId == 'sat_bright_adjuster' ||
-                  type.typeId == 'bright_contrast_adjuster' ||
-                  type.typeId == 'color_balance' ||
-                  type.typeId == 'color_temp_adjuster' ||
-                  type.typeId == 'color_controller' ||
-                  type.typeId == 'multi_band_eq' ||
-                  type.typeId == 'edge_extract' ||
-                  type.typeId == 'levels_curves'
-              ? kNodeWidth * 2
-              : kNodeWidth,
-      extraHeight: type.typeId == 'multi_band_eq'
-          // 多段色彩均衡器在色彩控制器的双联预览+滑条之上还多一行
-          // 取色器工具栏，默认高度相应加大。
-          ? 320
+      width: type.typeId == 'format_converter' ||
+              type.typeId == 'video_health_check'
+          // 格式转换/视频健康检查节点尺寸固定 1500x1200（min=max 不可调），
+          // 内嵌终端整页显示 ffmpeg 处理信息。
+          ? 1500
+          : type.typeId == 'adder'
+              ? kNodeWidth * 3
+              : type.typeId == 'hsl_debugger' ||
+                      type.typeId == 'rgb_debugger' ||
+                      type.typeId == 'yuv_debugger' ||
+                      type.typeId == 'sat_bright_adjuster' ||
+                      type.typeId == 'bright_contrast_adjuster' ||
+                      type.typeId == 'color_balance' ||
+                      type.typeId == 'color_temp_adjuster' ||
+                      type.typeId == 'color_controller' ||
+                      type.typeId == 'multi_band_eq' ||
+                      type.typeId == 'edge_extract' ||
+                      type.typeId == 'levels_curves'
+                  ? kNodeWidth * 2
+                  : kNodeWidth,
+      extraHeight: type.typeId == 'format_converter' ||
+              type.typeId == 'video_health_check'
+          // 1162 = 总高 1200 − 标题 30 − 底部留白 8（内嵌终端占满其余）。
+          ? 1162
+          : type.typeId == 'multi_band_eq'
+          // 多段色彩均衡器附加区 = 取色器工具栏 + 双联矢量示波器方格
+          // （1:1，高 = 半格宽 = (380-20)/2 = 180）+ 双联预览图（16:9
+          // 约 96）+ 5 行滑块 + 播放控制条 26 + 手柄，默认高度相应加大。
+          ? 466
           : type.typeId == 'hsl_debugger' ||
               type.typeId == 'color_controller' ||
               type.typeId == 'rgb_debugger' ||
@@ -1136,7 +1146,7 @@ abstract final class IspNodeRegistry {
         ),
       ],
     ),
-    // ---- 多段色彩均衡器：多组（≤8 段）色彩控制器式高斯色相带的并联/串联
+    // ---- 多段色彩均衡器：多组（≤24 段）色彩控制器式高斯色相带的并联/串联
     // 合成。每段参数为拍平键 b{i}_h/q/dh/s/l（段数动态，不进参数 spec，
     // 由卡片 UI 直接写 paramValues，读取侧全部缺省回退恒等值），此处仅
     // 登记段数/工作方式/选中段等固定参数 ----
@@ -1157,7 +1167,7 @@ abstract final class IspNodeRegistry {
           type: IspParamType.intNumber,
           defaultValue: 1,
           min: 1,
-          max: 8,
+          max: 24,
         ),
         IspParamSpec(
           key: 'band_mode',
@@ -1173,15 +1183,19 @@ abstract final class IspNodeRegistry {
           type: IspParamType.intNumber,
           defaultValue: 0,
           min: 0,
-          max: 7,
+          max: 23,
         ),
         IspParamSpec(
           key: 'codegenMode',
           label: '代码生成方式',
           type: IspParamType.choice,
           defaultValue: 'func',
-          options: ['func', 'lut'],
-          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
+          options: ['func', 'lut', 'lut_fixed'],
+          optionLabels: {
+            'func': '函数（运行期直算）',
+            'lut': 'LUT（生成期烘焙查找表）',
+            'lut_fixed': 'LUT 定点（Q14，嵌入式）',
+          },
         ),
       ],
     ),
@@ -2503,6 +2517,87 @@ abstract final class IspNodeRegistry {
       ],
       outputs: [
         IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
+      ],
+    ),
+    // 纯工具节点：无任何输入/输出端口，不参与图像流水线。点击节点上的
+    // 「开始转换」经内置 ffmpeg 做 webm → mp4 转码（NVENC 优先，失败回退
+    // libx264），转换过程在独立终端窗口实时显示（pipeline/format_convert）。
+    'format_converter': IspNodeType(
+      typeId: 'format_converter',
+      displayName: '格式转换',
+      colorValue: 0xFF4E6E7E,
+      params: [
+        IspParamSpec(
+          key: 'inputFile',
+          label: '输入文件（webm）',
+          type: IspParamType.filePath,
+          defaultValue: 'input.webm',
+        ),
+        IspParamSpec(
+          key: 'outputFile',
+          label: '输出文件（mp4）',
+          type: IspParamType.filePath,
+          defaultValue: 'output.mp4',
+        ),
+        IspParamSpec(
+          key: 'ffmpegPath',
+          label: 'ffmpeg 路径',
+          type: IspParamType.text,
+          // 默认用项目内置的 ffmpeg（tools/ffmpeg/ffmpeg.exe）。
+          defaultValue: 'tools/ffmpeg/ffmpeg.exe',
+        ),
+        // 编码器选择：options 只含序列化兜底项，属性面板特判动态渲染
+        //（追加实测可用的硬件编码器，见 node_property_panel 的
+        // _formatConverterEncoderRow）。
+        IspParamSpec(
+          key: 'encoder',
+          label: '编码器',
+          type: IspParamType.choice,
+          defaultValue: 'auto',
+          options: ['auto', 'libx264'],
+          optionLabels: {'auto': '自动（硬件优先）', 'libx264': 'CPU libx264'},
+        ),
+        // 输出动态范围：options 为序列化全集，属性面板按输入探测结果
+        // 过滤（SDR/未探测输入只给 auto/sdr；见 _formatConverterOutputRangeRow）。
+        IspParamSpec(
+          key: 'outputRange',
+          label: '输出动态范围',
+          type: IspParamType.choice,
+          defaultValue: 'auto',
+          options: ['auto', 'sdr', 'hdr'],
+          optionLabels: {'auto': '自动（跟随片源）', 'sdr': 'SDR', 'hdr': 'HDR'},
+        ),
+      ],
+    ),
+    // 纯工具节点：视频健康检查（record-2024-09-26 卡顿排查检查项固化：
+    // VUI 虚标帧率/时间戳异常/冻结帧/交付帧数对比等），报告流式显示在
+    // 节点内嵌终端（pipeline/video_health）。尺寸固定 1500x1200 同
+    // format_converter。
+    'video_health_check': IspNodeType(
+      typeId: 'video_health_check',
+      displayName: '视频健康检查',
+      colorValue: 0xFF6E5E4E,
+      params: [
+        IspParamSpec(
+          key: 'inputFile',
+          label: '视频文件',
+          type: IspParamType.filePath,
+          defaultValue: '',
+        ),
+        IspParamSpec(
+          key: 'ffmpegPath',
+          label: 'ffmpeg 路径',
+          type: IspParamType.text,
+          defaultValue: 'tools/ffmpeg/ffmpeg.exe',
+        ),
+        IspParamSpec(
+          key: 'scanDepth',
+          label: '检查深度',
+          type: IspParamType.choice,
+          defaultValue: 'fast',
+          options: ['fast', 'full'],
+          optionLabels: {'fast': '快速（仅元数据与索引）', 'full': '完整（含全片解码扫描）'},
+        ),
       ],
     ),
   });

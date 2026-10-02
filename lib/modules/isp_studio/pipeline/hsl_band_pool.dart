@@ -9,6 +9,9 @@
 /// 池为每 isolate 单例（懒创建，[HslBandPool.instance]）：单帧预览的链
 /// isolate、播放路径的常驻流水线 worker（pipeline_worker.dart）各自持
 /// 有自己的池，后者逐帧复用、启动开销只付一次。
+///
+/// 两种消息模式：参数模式（色彩控制器，worker 内合成高斯带权重）与
+/// LUT 模式（多段色彩均衡器，生成期合成的 H 域 LUT 随消息传入）。
 library;
 
 import 'dart:async';
@@ -18,14 +21,27 @@ import 'dart:typed_data';
 
 import 'isp_kernels.dart';
 
-/// 条带 worker isolate 入口：收 [replyTo, bandData, maxValue, hCenterDeg,
-/// q, hShiftDeg, sGain, lGain]（bandData 为本行带切片视图），回
+/// 条带 worker isolate 入口。
+/// 参数模式收 [replyTo, bandData, maxValue, hCenterDeg, q, hShiftDeg,
+/// sGain, lGain]（bandData 为本行带切片视图）；LUT 模式收 ['lut',
+/// replyTo, bandData, maxValue, shiftLut, sMulLut, lMulLut]（多段色彩
+/// 均衡器，生成期合成的 H 域 LUT 随消息传入）。统一回
 /// TransferableTypedData 封装的行带结果。
 void _hslBandWorkerMain(SendPort ready) {
   final port = ReceivePort();
   ready.send(port.sendPort);
   port.listen((msg) {
     final m = msg as List;
+    if (m[0] == 'lut') {
+      final band = m[2] as Uint16List;
+      final out = applyHslBandLuts(band, 0, band.length ~/ 3,
+          maxValue: m[3] as int,
+          shiftLut: m[4] as Int32List,
+          sMulLut: m[5] as Float64List,
+          lMulLut: m[6] as Float64List);
+      (m[1] as SendPort).send(TransferableTypedData.fromList([out]));
+      return;
+    }
     final band = m[1] as Uint16List;
     final out = adjustHslBandRows(band, 0, band.length ~/ 3,
         maxValue: m[2] as int,
@@ -132,6 +148,29 @@ class HslBandPool {
     _release(w);
     return (msg as TransferableTypedData).materialize().asUint16List();
   }
+
+  /// LUT 模式：在空闲 worker 上按生成期合成的 H 域 LUT 计算
+  /// [startPx, endPx) 像素区间（多段色彩均衡器用），返回该区间的新
+  /// 数据。LUT 各 361 项量级，随消息复制进 worker 可忽略；与串行
+  /// [applyHslBandLuts] 逐位一致。
+  Future<Uint16List> runBandLuts(Uint16List src, int startPx, int endPx,
+      {required int maxValue,
+      required Int32List shiftLut,
+      required Float64List sMulLut,
+      required Float64List lMulLut}) async {
+    await _ensureStarted();
+    final w = await _takeIdle();
+    final reply = ReceivePort();
+    w.send([
+      'lut', reply.sendPort, //
+      src.sublist(startPx * 3, endPx * 3),
+      maxValue, shiftLut, sMulLut, lMulLut,
+    ]);
+    final msg = await reply.first;
+    reply.close();
+    _release(w);
+    return (msg as TransferableTypedData).materialize().asUint16List();
+  }
 }
 
 /// 色彩控制器多核并行路径：宽×高 ≥ 1M 像素时按行带切分提交常驻条带池
@@ -195,9 +234,9 @@ Future<Uint16List> adjustHslBandParallel(Uint16List hsl,
 
 /// 多段色彩均衡器等「生成期合成 LUT」路径的并行查表：与
 /// [adjustHslBandParallel] 同口径（宽×高 ≥ 1M 像素按行带扇出、按带序
-/// 确定性拼接），各带经 Isolate.run 执行 [applyHslBandLuts]（三张 LUT
-/// 随闭包复制进各 isolate，恒等性由调用方在合成前按段参数判定），
-/// 与整幅串行 [applyHslBandLuts] 逐位一致；小图走串行。
+/// 确定性拼接），各带优先提交常驻条带池（播放路径每帧 Isolate.run
+/// 扇出的 spawn 开销 ~300ms 级，不可承受；池不可用时才回退
+/// Isolate.run），与整幅串行 [applyHslBandLuts] 逐位一致；小图走串行。
 Future<Uint16List> applyHslBandLutsParallel(Uint16List hsl,
     {required int width,
     required int height,
@@ -213,16 +252,26 @@ Future<Uint16List> applyHslBandLutsParallel(Uint16List hsl,
         sMulLut: sMulLut,
         lMulLut: lMulLut);
   }
+  final pool = HslBandPool.instance;
+  final usePool = pool.isAvailable;
   final nw = math.min(cpuBandWorkers, height);
   final tasks = <Future<Uint16List>>[];
   for (var t = 0; t < nw; t++) {
     final y0 = height * t ~/ nw, y1 = height * (t + 1) ~/ nw;
     if (y0 >= y1) continue;
-    tasks.add(Isolate.run(() => applyHslBandLuts(hsl, y0 * width, y1 * width,
-        maxValue: maxValue,
-        shiftLut: shiftLut,
-        sMulLut: sMulLut,
-        lMulLut: lMulLut)));
+    if (usePool) {
+      tasks.add(pool.runBandLuts(hsl, y0 * width, y1 * width,
+          maxValue: maxValue,
+          shiftLut: shiftLut,
+          sMulLut: sMulLut,
+          lMulLut: lMulLut));
+    } else {
+      tasks.add(Isolate.run(() => applyHslBandLuts(hsl, y0 * width, y1 * width,
+          maxValue: maxValue,
+          shiftLut: shiftLut,
+          sMulLut: sMulLut,
+          lMulLut: lMulLut)));
+    }
   }
   final bands = await Future.wait(tasks);
   final out = Uint16List(hsl.length);

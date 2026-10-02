@@ -41,7 +41,14 @@
 static uint16_t cc_clamp_to(double v, int max_value) {
   if (v < 0.0) return 0;
   if (v > (double)max_value) return (uint16_t)max_value;
-  return (uint16_t)lround(v);
+  /* lround 快路径（界内 v ≥ 0）：floor(v+0.5) + 加法进位修正（t 恰为整
+   * 数且 v 严格小于中点 t-0.5 时退一格），与 lround(v) 逐位一致——
+   * libm lround 是函数调用，逐像素路径上占耗时大头。 */
+  {
+    const double t = v + 0.5;
+    const int r = (int)t;
+    return (uint16_t)(t == (double)r && v < t - 0.5 ? r - 1 : r);
+  }
 }
 
 int isp_color_controller_apply(const uint16_t *src, uint16_t *dst,
@@ -109,8 +116,15 @@ int isp_color_controller_apply(const uint16_t *src, uint16_t *dst,
      * 乘除顺序保持左结合一致；lround 与 Dart round() 同半值远离零。
      * C 的 % 与被除数同号，负数修正后等价 Dart ((x % m) + m) % m。 */
     shift = (int)lround(h_shift_deg * weight / 360.0 * (double)max_value);
-    h_new = (hv + shift) % m;
-    if (h_new < 0) h_new += m;
+    /* 色环回绕：|shift| ≤ max_value/2（h_shift ≤ ±180°、w ∈ [0,1]），
+     * hv ∈ [0, max_value]，单次条件加减与 ((x % m) + m) % m 逐位一致，
+     * 消灭运行时参数整数除法。 */
+    h_new = hv + shift;
+    if (h_new > max_value) {
+      h_new -= m;
+    } else if (h_new < 0) {
+      h_new += m;
+    }
     dst[i] = (uint16_t)h_new;
 
     /* S/L 按 1 + (gain − 1) × w 渐变（Dart: 1 + (sGain - 1) * w），
@@ -136,14 +150,20 @@ int isp_color_controller_lut_apply(const uint16_t *src, uint16_t *dst,
     return ISP_ERR_ARG;
   }
   if (w <= 0 || h <= 0 || max_value <= 0) return ISP_ERR_SIZE;
-  /* 与 Dart applyHslBandLuts 一致：3 次查表 + 2 次乘法 + 1 次取模。 */
+  /* 与 Dart applyHslBandLuts 一致：3 次查表 + 2 次乘法 + 色环回绕（单次
+   * 条件加减替代 % m：表项 |shift| ≤ max_value/2，hv ∈ [0, max_value]，
+   * 逐位一致，见 isp_multi_band_eq.c lut_apply 注）。 */
   for (px = 0; px < px_count; px++) {
     const size_t i = px * 3u;
     int hv = (int)src[i];
     int h_new;
     if (hv > max_value) hv = max_value; /* 防御钳位（同直算路径） */
-    h_new = (hv + shift_lut[hv]) % m;
-    if (h_new < 0) h_new += m; /* Dart ((x % m) + m) % m 修正环绕 */
+    h_new = hv + shift_lut[hv];
+    if (h_new > max_value) {
+      h_new -= m;
+    } else if (h_new < 0) {
+      h_new += m;
+    }
     dst[i] = (uint16_t)h_new;
     dst[i + 1] = cc_clamp_to((double)src[i + 1] * s_mul_lut[hv], max_value);
     dst[i + 2] = cc_clamp_to((double)src[i + 2] * l_mul_lut[hv], max_value);

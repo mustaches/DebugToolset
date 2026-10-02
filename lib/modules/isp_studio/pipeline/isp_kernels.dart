@@ -648,10 +648,11 @@ Uint8List limitedToFullLut8({bool chroma = false}) {
 
 /// yuv420p 缓冲（Y 平面 w*h，U/V 平面各 (w/2)*(h/2) 顺序排列）→
 /// 步长抽样的小尺寸 RGBA。仪器馈源用：统计类计算不需要全分辨率，
-/// 读取量与输出尺寸成正比。[limited] 为 true 时做 tv→pc 范围扩展
-/// （与 yuv_planes.frag 的显示一致）。
+/// 读取量与输出尺寸成正比。[limited] 为 true 时做 tv→pc 范围扩展，
+/// [matrix] 为 YUV→RGB 色彩矩阵（0=BT.601，1=BT.709，2=BT.2020），
+/// 均与 yuv_planes.frag 的显示一致。
 Uint8List yuv420p8ToRgbaStep(Uint8List src, int w, int h, int step,
-    {bool limited = false}) {
+    {bool limited = false, int matrix = 0}) {
   final outW = w ~/ step;
   final outH = h ~/ step;
   final cw = w >> 1;
@@ -659,10 +660,22 @@ Uint8List yuv420p8ToRgbaStep(Uint8List src, int w, int h, int step,
   final vBase = uBase + cw * (h >> 1);
   final yLut = limited ? limitedToFullLut8() : null;
   final cLut = limited ? limitedToFullLut8(chroma: true) : null;
-  const crV = 91881;  // 1.402 * 65536
-  const cgU = -22553; // -0.344136 * 65536
-  const cgV = -46801; // -0.714136 * 65536
-  const cbU = 116130; // 1.772 * 65536
+  final int crV, cgU, cgV, cbU;
+  if (matrix == 0) {
+    crV = 91881;  // 1.402 * 65536
+    cgU = -22553; // -0.344136 * 65536
+    cgV = -46801; // -0.714136 * 65536
+    cbU = 116130; // 1.772 * 65536
+  } else {
+    // 与 shader 同公式：G 的 Kr 项乘 cv、Kb 项乘 cu。
+    final kr = matrix == 2 ? 0.2627 : 0.2126;
+    final kb = matrix == 2 ? 0.0593 : 0.0722;
+    final kg = 1.0 - kr - kb;
+    crV = (2 * (1 - kr) * 65536).round();
+    cgU = (-2 * (1 - kb) * kb / kg * 65536).round();
+    cgV = (-2 * (1 - kr) * kr / kg * 65536).round();
+    cbU = (2 * (1 - kb) * 65536).round();
+  }
   final out = Uint8List(outW * outH * 4);
   var j = 0;
   for (var y0 = 0; y0 < outH; y0++) {

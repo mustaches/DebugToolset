@@ -524,7 +524,13 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
           // 左键只做选中/连线/按钮，不再拖动画布。
           onTapUp: _onCanvasTapUp,
           child: ClipRect(
-            child: Stack(
+            // RepaintBoundary：把画布（网格+连线+节点）缓存为独立图层。
+            // 没有它时画布与状态栏/预览同处根图层，播放中每次发布（状
+            // 态栏文本、预览换帧）都会让整个 4K 场景显示列表重录（实测
+            // 栅格 18-21ms/帧——播放"丢帧"观感的真凶）；隔离后逐帧更
+            // 新只重绘自己的图层，画布层仅合成不重录。
+            child: RepaintBoundary(
+              child: Stack(
               clipBehavior: Clip.none,
               children: [
                 // (a) 深色背景 + 点阵（屏幕空间绘制）。
@@ -593,6 +599,7 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
                   ),
                 ),
               ],
+              ),
             ),
           ),
         ),

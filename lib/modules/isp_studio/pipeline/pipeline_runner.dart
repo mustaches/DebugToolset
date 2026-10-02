@@ -559,7 +559,12 @@ Future<Uint8List> runChainFrame(
               ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
                   maxValue: maxValue)
               : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
-                  maxValue: maxValue, ffmpegPath: _str(sp, 'ffmpegPath'));
+                  maxValue: maxValue,
+                  ffmpegPath: _str(sp, 'ffmpegPath'),
+                  // 预览 HDR/SDR 开关经链参数 '_toneMapHdr' 注入（状态层
+                  // _withHdrToneMapFlag）；缺省 true（映射）——导出链不带
+                  // 该键，恒映射。
+                  toneMapHdr: sp['_toneMapHdr'] != false);
       frame = _Frame(
         data: switch (outFormat) {
           'yuv' => rgbToYuv(rgb, maxValue: maxValue),
@@ -1082,10 +1087,10 @@ Future<Uint8List> runChainFrame(
         final w = frame.width;
         final h = frame.height;
         final max = frame.maxValue;
-        // 段数缺省 1，钳位到定义域 1..8。
+        // 段数缺省 1，钳位到定义域 1..24。
         var bandCount = _int(p, 'band_count');
         if (bandCount < 1) bandCount = 1;
-        if (bandCount > 8) bandCount = 8;
+        if (bandCount > 24) bandCount = 24;
         final mbSerial = _str(p, 'band_mode') == 'serial';
         // 段参数为拍平键 b{i}_*（不进参数 spec），缺键全部回退恒等默认。
         final mbBands = [

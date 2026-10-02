@@ -1,0 +1,60 @@
+{
+  "name": "视频播放流程",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "video_source",
+      "x": 590.0,
+      "y": 370.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\Sony 4K60p HDR Demo Video.MP4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "preview",
+      "x": 840.0,
+      "y": 370.0,
+      "width": 930.0,
+      "extraHeight": 632.0,
+      "name": "预览#1",
+      "params": {
+        "fps": 60,
+        "frameCount": 6270
+      }
+    },
+    {
+      "id": "n6",
+      "typeId": "audio_eq",
+      "x": 910.0,
+      "y": 1170.0,
+      "width": 800.0,
+      "extraHeight": 160.0,
+      "name": "音频EQ频谱#1",
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "id": "c3",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n2",
+      "toPort": "in"
+    },
+    {
+      "id": "c7",
+      "from": "n1",
+      "fromPort": "out_audio",
+      "to": "n6",
+      "toPort": "in"
+    }
+  ],
+  "groups": [],
+  "nextId": 8
+}

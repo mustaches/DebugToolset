@@ -1,0 +1,93 @@
+{
+  "name": "多段色彩均衡器",
+  "nodes": [
+    {
+      "id": "n8",
+      "typeId": "video_source",
+      "x": -690.0,
+      "y": -860.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "H:\\Surgery_video\\record-2024-09-26-12-03-24.mp4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n24",
+      "typeId": "video_output",
+      "x": 1430.0,
+      "y": -860.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "视频输出#1",
+      "params": {
+        "fps": 30,
+        "crf": 25,
+        "encoder": "auto",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\Video_out\\record-2025-12-03-10-04-21-0002-output.mp4",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n34",
+      "typeId": "multi_band_eq",
+      "x": -460.0,
+      "y": -860.0,
+      "width": 1858.08,
+      "extraHeight": 1600.0,
+      "name": "多段色彩均衡器#1",
+      "params": {
+        "bypass": false,
+        "band_count": 2,
+        "band_mode": "parallel",
+        "sel_band": 0,
+        "codegenMode": "lut_fixed",
+        "b0_h": 26.823529411764707,
+        "b1_h": 262.5882352941176,
+        "b1_dh": 96.49352414322794,
+        "b0_dh": 11.859423384746407,
+        "b0_q": 1.8,
+        "fps": 30,
+        "frameCount": 27000,
+        "b1_q": 3.495145631067961,
+        "b1_s": 0.6,
+        "b1_l": 0.9,
+        "b0_s": 1.0,
+        "b0_l": 1.0,
+        "b2_h": null,
+        "b2_q": null,
+        "b2_dh": null,
+        "b2_s": null
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c36",
+      "from": "n8",
+      "fromPort": "out_hsl",
+      "to": "n34",
+      "toPort": "in"
+    },
+    {
+      "id": "c37",
+      "from": "n34",
+      "fromPort": "out",
+      "to": "n24",
+      "toPort": "in_hsl"
+    }
+  ],
+  "groups": [
+    {
+      "id": "g41",
+      "name": "Multi_band_EQ",
+      "nodes": [
+        "n34"
+      ]
+    }
+  ],
+  "nextId": 42
+}

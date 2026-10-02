@@ -32,7 +32,14 @@
 static uint16_t mb_clamp_to(double v, int max_value) {
   if (v < 0.0) return 0;
   if (v > (double)max_value) return (uint16_t)max_value;
-  return (uint16_t)lround(v);
+  /* lround 快路径（界内 v ≥ 0）：floor(v+0.5) + 加法进位修正（t 恰为整
+   * 数且 v 严格小于中点 t-0.5 时退一格），与 lround(v) 逐位一致——
+   * libm lround 是函数调用，逐像素路径上占耗时大头（实测 4K ~64ms/帧）。 */
+  {
+    const double t = v + 0.5;
+    const int r = (int)t;
+    return (uint16_t)(t == (double)r && v < t - 0.5 ? r - 1 : r);
+  }
 }
 
 /** Dart double.clamp(lo, hi)（入参均非 NaN 的使用域内）。 */
@@ -152,14 +159,22 @@ int isp_multi_band_eq_lut_apply(const uint16_t *src, uint16_t *dst,
     return ISP_ERR_ARG;
   }
   if (w <= 0 || h <= 0 || max_value <= 0) return ISP_ERR_SIZE;
-  /* 与 Dart applyHslBandLuts 一致：3 次查表 + 2 次乘法 + 1 次取模。 */
+  /* 与 Dart applyHslBandLuts 一致：3 次查表 + 2 次乘法 + 色环回绕。
+   * 回绕用单次条件加减替代 % m：表项恒满足 |shift| ≤ max_value/2（dh
+   * ≤ ±180° 钳位，见 build_luts/mb_compose），hv ∈ [0, max_value]，与
+   * ((x % m) + m) % m 逐位一致——max_value 为运行时参数，% 退化为逐像
+   * 素整数除法，是单帧耗时大头。 */
   for (px = 0; px < px_count; px++) {
     const size_t i = px * 3u;
     int hv = (int)src[i];
     int h_new;
     if (hv > max_value) hv = max_value; /* 防御钳位（同色彩控制器） */
-    h_new = (hv + shift_lut[hv]) % m;
-    if (h_new < 0) h_new += m; /* Dart ((x % m) + m) % m 修正环绕 */
+    h_new = hv + shift_lut[hv];
+    if (h_new > max_value) {
+      h_new -= m;
+    } else if (h_new < 0) {
+      h_new += m;
+    }
     dst[i] = (uint16_t)h_new;
     dst[i + 1] = mb_clamp_to((double)src[i + 1] * s_mul_lut[hv], max_value);
     dst[i + 2] = mb_clamp_to((double)src[i + 2] * l_mul_lut[hv], max_value);
@@ -204,8 +219,14 @@ int isp_multi_band_eq_apply(const uint16_t *src, uint16_t *dst,
     if (hv > max_value) hv = max_value;
     mb_compose(hv, max_value, serial, band_count, bands, &shift, &s_mul,
                &l_mul);
-    h_new = (hv + (int)shift) % m;
-    if (h_new < 0) h_new += m;
+    /* 色环回绕：|shift| ≤ max_value/2（见 lut_apply 注），单次条件加减
+     * 与取模逐位一致。 */
+    h_new = hv + (int)shift;
+    if (h_new > max_value) {
+      h_new -= m;
+    } else if (h_new < 0) {
+      h_new += m;
+    }
     dst[base] = (uint16_t)h_new;
     dst[base + 1] = mb_clamp_to((double)src[base + 1] * s_mul, max_value);
     dst[base + 2] = mb_clamp_to((double)src[base + 2] * l_mul, max_value);

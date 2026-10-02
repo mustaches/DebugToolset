@@ -6,9 +6,14 @@
 library;
 
 import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
-/// 段数上限（卡片尺寸与 GPU uniform 数组约束，取色器「增加」到上限置灰）。
-const int kMultiBandEqMaxBands = 8;
+import '../pipeline/isp_kernels.dart';
+
+/// 段数上限：色环 360° 按 15° 等分（取色器「增加」到上限置灰；GPU
+/// uniform 数组 uBands[24×5] 与 C 侧 ISP_MULTI_BAND_EQ_MAX_BANDS 同步）。
+const int kMultiBandEqMaxBands = 24;
 
 /// 每段的拍平键后缀（`b{i}_<suffix>`）。
 const List<String> kMultiBandEqBandSuffixes = ['h', 'q', 'dh', 's', 'l'];
@@ -141,4 +146,67 @@ Map<String, Object?> decodeColorStyle(String jsonText,
     }
   }
   return next;
+}
+
+// ---- 取色器 Q 值自动评估 ----
+
+/// 相位突变阈值：相邻像素色相环差（°）超过该值即判定突变，停止计数。
+const double kBandQHueJumpDeg = 15.0;
+
+/// 低饱和阈值：饱和度低于该值的像素色相不稳定，视为相位突变。
+const double kBandQMinSaturation = 0.05;
+
+/// 取色器 Q 值自动评估：从 (px,py) 出发沿 8 方向统计色相连续平滑段，
+/// 相邻像素色相环差 > [kBandQHueJumpDeg] 或饱和度 < [kBandQMinSaturation]
+/// 视为相位突变停止计数；取最长段 d，Q = M/d（M = 图像在该方向的最大
+/// 长度：水平=宽、垂直=高、斜向=对角线长），钳位到滑块域 [0.5, 100]。
+/// 起始像素本身低饱和（色相无意义）时回退默认 2.0。
+/// [rgba] 为 RGBA8 像素（预览图 toByteData rawRgba 口径），色相/饱和度
+/// 经 [rgbToHsl]（maxValue: 255）计算，与点击取样同一量化口径。
+double estimateBandQ(ByteData rgba, int width, int height, int px, int py) {
+  final rgb = Uint16List(3);
+
+  /// (色相°, 饱和度 0..1)。
+  (double, double) hslAt(int x, int y) {
+    final off = (y * width + x) * 4;
+    rgb[0] = rgba.getUint8(off);
+    rgb[1] = rgba.getUint8(off + 1);
+    rgb[2] = rgba.getUint8(off + 2);
+    final hsl = rgbToHsl(rgb, maxValue: 255);
+    return (hsl[0] * 360.0 / 255, hsl[1] / 255.0);
+  }
+
+  final (h0, s0) = hslAt(px, py);
+  if (s0 < kBandQMinSaturation) return 2.0;
+
+  const dirs = [
+    (1, 0), (-1, 0), (0, 1), (0, -1), //
+    (1, 1), (1, -1), (-1, 1), (-1, -1),
+  ];
+  final diag = math.sqrt(width * width + height * height).roundToDouble();
+  var best = 1;
+  var bestM = width.toDouble();
+  for (final (dx, dy) in dirs) {
+    final m =
+        dx == 0 ? height.toDouble() : (dy == 0 ? width.toDouble() : diag);
+    var d = 1;
+    var prevH = h0;
+    var x = px + dx;
+    var y = py + dy;
+    while (x >= 0 && y >= 0 && x < width && y < height) {
+      final (h, s) = hslAt(x, y);
+      if (s < kBandQMinSaturation) break;
+      final dh = (h - prevH).abs();
+      if (math.min(dh, 360.0 - dh) > kBandQHueJumpDeg) break;
+      prevH = h;
+      d++;
+      x += dx;
+      y += dy;
+    }
+    if (d > best) {
+      best = d;
+      bestM = m;
+    }
+  }
+  return (bestM / best).clamp(0.5, 100.0).toDouble();
 }

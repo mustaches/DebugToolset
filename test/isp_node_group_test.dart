@@ -141,6 +141,60 @@ void main() {
       expect(IspGraph.fromJson(dangling).groups, isEmpty);
     });
 
+    test('多段色彩均衡器单节点编组随序列化往返保留', () {
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'EQ组'));
+
+      final restored = IspGraph.fromJson(graph.toJson());
+      expect(restored.groups.single.nodeIds, {eq});
+      expect(restored.groups.single.name, 'EQ组');
+
+      // 其他类型的单成员编组（旧数据/异常数据）仍丢弃。
+      final n2 = graph.addNode('histogram', 0, 0);
+      final json = graph.toJson();
+      (json['groups'] as List)
+          .add({'id': 'g9', 'name': '坏组', 'nodes': [n2]});
+      expect(IspGraph.fromJson(json).groups.single.nodeIds, {eq});
+    });
+
+    test('删除无关节点不解散均衡器单节点编组', () {
+      state.addNodeAt('multi_band_eq', const Offset(100, 100));
+      final eq = state.graph.nodes.keys.last;
+      state.addNodeAt('histogram', const Offset(400, 100));
+      final other = state.graph.nodes.keys.last;
+      state.selectNode(eq);
+      expect(state.canGroupSelectedNodes, isTrue);
+      state.groupSelectedNodes();
+      expect(state.graph.groups.single.nodeIds, {eq});
+
+      // 删除组外节点：单节点编组保持。
+      state.removeNode(other);
+      expect(state.graph.groups.single.nodeIds, {eq});
+
+      // 删除均衡器节点本身：编组解散。
+      state.removeNode(eq);
+      expect(state.graph.groups, isEmpty);
+    });
+
+    test('均衡器单节点编组随保存/打开 .ispflow 文件往返保留', () async {
+      final dir = await Directory.systemTemp.createTemp('isp_flow_eq_group_');
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}/t.ispflow';
+
+      state.addNodeAt('multi_band_eq', const Offset(100, 100));
+      final eq = state.graph.nodes.keys.last;
+      state.selectNode(eq);
+      state.groupSelectedNodes(name: 'EQ组');
+      await state.saveGraphToFile(path);
+
+      state.ungroup(state.graph.groups.single.id);
+      expect(state.graph.groups, isEmpty);
+      await state.importGraphFromFile(path);
+      expect(state.graph.groups.single.nodeIds, {eq});
+      expect(state.graph.groups.single.name, 'EQ组');
+    });
+
     test('编组默认名自动编号与重命名', () {      final ids = addThree();
       // 再加一个节点，使两个编组可以共存验证序号递增。
       state.addNodeAt('histogram', const Offset(700, 100));

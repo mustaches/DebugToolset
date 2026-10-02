@@ -10,7 +10,9 @@ import 'package:provider/provider.dart';
 import '../../../providers/isp_studio_state.dart';
 import '../models/explorer_reveal.dart';
 import '../models/isp_node.dart';
+import '../models/multi_band_eq_params.dart';
 import '../pipeline/levels_curve.dart';
+import '../pipeline/format_convert.dart' show hwEncoderDisplayName;
 import '../pipeline/pipeline_runner.dart';
 import 'node_widget.dart' show formatNodeRunTime;
 
@@ -121,14 +123,207 @@ class NodePropertyPanel extends StatelessWidget {
           style: const TextStyle(fontSize: 11, color: Colors.grey)),
       Divider(height: 24, color: Colors.grey.shade800),
       for (final spec in type.params)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: _editorFor(context, state, node, spec),
-        ),
+        // 多段色彩均衡器的 sel_band 不渲染裸数字输入，由下方段选择
+        // 下拉替代（选项随段数动态生成）；格式转换节点的 encoder 与
+        // outputRange 同理，由下方动态下拉替代（选项随硬件/输入探测
+        // 结果生成）。
+        if (!(node.typeId == 'multi_band_eq' && spec.key == 'sel_band') &&
+            !(node.typeId == 'format_converter' && spec.key == 'encoder') &&
+            !(node.typeId == 'format_converter' && spec.key == 'outputRange'))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _editorFor(context, state, node, spec),
+          ),
+      // 多段色彩均衡器：段选择下拉 + 选中段 5 项参数值（拍平键 b{i}_*
+      // 不进参数 spec，在此单独显示）。
+      if (node.typeId == 'multi_band_eq') ..._multiBandEqChildren(state, node),
+      // 格式转换：编码器下拉（auto/libx264 + 实测可用的硬件编码器）。
+      if (node.typeId == 'format_converter')
+        _formatConverterEncoderRow(state, node),
+      // 格式转换：输出动态范围下拉（选项随输入片源 HDR/SDR 探测过滤）。
+      if (node.typeId == 'format_converter')
+        _formatConverterOutputRangeRow(state, node),
       if (node.typeId == 'bayer_source' && state.totalFrames != null)
         Text('帧数: ${state.totalFrames}',
             style: const TextStyle(fontSize: 12, color: Colors.grey)),
     ];
+  }
+
+  /// 多段色彩均衡器：段选择下拉（取色器 1..N）+ 选中段 H中心/Q/ΔH/S/L
+  /// 五项数值编辑器（拍平键 b{i}_* 不进参数 spec，在此单独编辑；
+  /// 提交后写键并重跑预览，与滑条松手重跑一致）。
+  List<Widget> _multiBandEqChildren(IspStudioState state, IspNode node) {
+    final count = ((node.paramValues['band_count'] as num?)?.toInt() ?? 1)
+        .clamp(1, kMultiBandEqMaxBands);
+    final sel = ((node.paramValues['sel_band'] as num?)?.toInt() ?? 0)
+        .clamp(0, count - 1);
+    double v(String suffix, double fallback) =>
+        (node.paramValues['b${sel}_$suffix'] as num?)?.toDouble() ?? fallback;
+
+    Widget editRow(
+        String label, String suffix, double fallback, double min, double max) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: _labeled(
+          label,
+          _NumberField(
+            // key 带段号：切换选中段后输入框内容随之刷新。
+            key: ValueKey('${node.id}:b${sel}_$suffix'),
+            value: v(suffix, fallback),
+            isInt: false,
+            min: min,
+            max: max,
+            onCommit: (nv) {
+              state.setParam(node.id, 'b${sel}_$suffix', nv);
+              state.runPreview();
+            },
+          ),
+        ),
+      );
+    }
+
+    return [
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          children: [
+            Expanded(child: Text('选中段', style: _labelStyle)),
+            DropdownButton<int>(
+              value: sel,
+              isDense: true,
+              items: [
+                for (var i = 0; i < count; i++)
+                  DropdownMenuItem(
+                      value: i,
+                      child: Text('取色器 ${i + 1}',
+                          style: const TextStyle(fontSize: 12))),
+              ],
+              onChanged: (s) {
+                if (s == null) return;
+                state.setParam(node.id, 'sel_band', s);
+              },
+            ),
+          ],
+        ),
+      ),
+      editRow('H中心', 'h', 0.0, 0, 360),
+      editRow('Q', 'q', 2.0, 0.5, 100),
+      editRow('ΔH', 'dh', 0.0, -180, 180),
+      editRow('S', 's', 1.0, 0, 5),
+      editRow('L', 'l', 1.0, 0, 5),
+    ];
+  }
+
+  /// 格式转换节点：编码器下拉（auto/libx264 + 实测可用的硬件编码器，
+  /// 显示真实名称）。首次渲染时后台触发硬件探测（试编码验证，结果缓存
+  /// 在 state.hwEncoders）；探测中在下拉右侧显示「探测中…」。
+  Widget _formatConverterEncoderRow(IspStudioState state, IspNode node) {
+    final current = node.paramValues['encoder']?.toString() ?? 'auto';
+    final options = <String>['auto', 'libx264', ...state.hwEncoders];
+    // 旧档存了已消失的硬件 id 时追加一项原样显示，避免下拉空白。
+    if (!options.contains(current)) options.add(current);
+    // 不可在 build 里直接 await/notify：首帧渲染后再触发探测。
+    if (!state.hwEncoderProbing && state.hwEncoders.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        state.probeHwEncoders(
+            ffmpegPath: node.paramValues['ffmpegPath']?.toString() ??
+                'tools/ffmpeg/ffmpeg.exe');
+      });
+    }
+    String labelOf(String id) => switch (id) {
+          'auto' => '自动（硬件优先）',
+          'libx264' => 'CPU libx264',
+          _ => hwEncoderDisplayName(id),
+        };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Expanded(child: Text('编码器', style: _labelStyle)),
+          if (state.hwEncoderProbing)
+            const Padding(
+              padding: EdgeInsets.only(right: 6),
+              child:
+                  Text('探测中…', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ),
+          DropdownButton<String>(
+            value: current,
+            isDense: true,
+            items: [
+              for (final o in options)
+                DropdownMenuItem(
+                    value: o,
+                    child:
+                        Text(labelOf(o), style: const TextStyle(fontSize: 12))),
+            ],
+            onChanged: (v) {
+              if (v == null) return;
+              state.setParam(node.id, 'encoder', v);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 格式转换节点：输出动态范围下拉（auto/sdr[/hdr]），选项按输入片源
+  /// 探测结果过滤——SDR/未探测输入只给 auto/sdr（auto 即 SDR），HDR
+  /// 输入追加 hdr。行内左侧小字显示输入探测结果；首次渲染后台触发
+  /// 探测（state 按 inputFile 路径幂等，换片后自动重探）。
+  Widget _formatConverterOutputRangeRow(IspStudioState state, IspNode node) {
+    final transfer = state.formatConvertInputRange[node.id];
+    // 不可在 build 里直接 await/notify：首帧渲染后再触发探测。
+    if (transfer == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        state.probeFormatConvertInput(node.id);
+      });
+    }
+    final inputTag = switch (transfer) {
+      null => '未检测',
+      -1 => '探测失败',
+      1 => 'HDR(PQ)',
+      2 => 'HDR(HLG)',
+      _ => 'SDR',
+    };
+    final isHdrIn = transfer != null && transfer > 0;
+    final options =
+        isHdrIn ? const ['auto', 'sdr', 'hdr'] : const ['auto', 'sdr'];
+    var current = node.paramValues['outputRange']?.toString() ?? 'auto';
+    // 当前值被过滤掉（如换 SDR 片后残留 hdr）时回退显示 auto。
+    if (!options.contains(current)) current = 'auto';
+    String labelOf(String id) => switch (id) {
+          'auto' => '自动（跟随片源）',
+          'sdr' => 'SDR',
+          _ => 'HDR',
+        };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Expanded(child: Text('输出动态范围', style: _labelStyle)),
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: Text('输入: $inputTag',
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          ),
+          DropdownButton<String>(
+            value: current,
+            isDense: true,
+            items: [
+              for (final o in options)
+                DropdownMenuItem(
+                    value: o,
+                    child:
+                        Text(labelOf(o), style: const TextStyle(fontSize: 12))),
+            ],
+            onChanged: (v) {
+              if (v == null) return;
+              state.setParam(node.id, 'outputRange', v);
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _editorFor(BuildContext context, IspStudioState state, IspNode node,
@@ -355,6 +550,33 @@ class NodePropertyPanel extends StatelessWidget {
       );
       path = file?.path;
       if (path != null) _lastVideoDir = File(path).parent.path;
+    } else if (node.typeId == 'format_converter' && spec.key == 'inputFile') {
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(
+              label: 'WebM 视频',
+              extensions: ['webm', 'mkv', 'mp4', 'avi', 'mov']),
+        ],
+        initialDirectory: _videoInitialDir(node),
+      );
+      path = file?.path;
+      if (path != null) _lastVideoDir = File(path).parent.path;
+    } else if (node.typeId == 'video_health_check' &&
+        spec.key == 'inputFile') {
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(
+              label: '视频',
+              extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'ts', 'm2ts']),
+        ],
+        initialDirectory: _videoInitialDir(node),
+      );
+      path = file?.path;
+      if (path != null) _lastVideoDir = File(path).parent.path;
+    } else if (node.typeId == 'format_converter' &&
+        spec.key == 'outputFile') {
+      final loc = await getSaveLocation(suggestedName: 'output.mp4');
+      path = loc?.path;
     } else {
       final file = await openFile();
       path = file?.path;
