@@ -320,6 +320,47 @@ void main() {
       }
     });
 
+    test('走帧节拍跟随片源真实帧率：预览 fps 参数滞后不误导', () async {
+      // 依赖项目内置 ffmpeg；缺失时跳过。
+      if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
+      // 64x64 testsrc，60fps × 1s。模拟「先选文件后连预览」的建图顺序：
+      // autoFill 时预览尚不在下游，fps 参数留默认 30——走帧节拍仍须按
+      // 片源 60fps（pace ≈ 16667µs），不得按滞后参数半速播放。
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final tmp = File('${Directory.systemTemp.path}/isp_pace_$stamp.mp4');
+      final enc = await Process.run(File('tools/ffmpeg/ffmpeg.exe').absolute.path, [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=60:duration=1',
+        '-pix_fmt', 'yuv420p', tmp.path,
+      ]);
+      expect(enc.exitCode, 0);
+      try {
+        final state = IspStudioState.withDefaultGraph();
+        final prevId = state.graph.nodes.entries
+            .firstWhere((e) => e.value.typeId == 'preview')
+            .key;
+        // 摘掉默认链预览输入：autoFill 时预览不在源下游。
+        state.graph.disconnectInput(prevId, 'in');
+        final srcId = state.graph.addNode('video_source', 0, 0);
+        state.setParam(srcId, 'filePath', tmp.path);
+        await state.autoFillFromVideo(srcId);
+        expect(state.graph.nodes[prevId]!.paramValues['fps'], 30,
+            reason: '预览后接入时 autoFill 不应回填（参数留默认 30）');
+        expect(state.graph.connect(srcId, 'out_rgb', prevId, 'in'), isNull);
+
+        final playing = state.togglePlayback();
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        state.stopPlayback();
+        await playing;
+        // 节拍应收敛到片源 60fps（16667µs），而非参数 30fps（33333µs）。
+        expect(state.playbackPaceUs, greaterThan(0));
+        expect((state.playbackPaceUs - 16667).abs(), lessThan(2000),
+            reason: '走帧节拍应跟随片源 60fps（实测 ${state.playbackPaceUs}µs）');
+      } finally {
+        await deleteWithRetry(tmp);
+      }
+    });
+
     test('1080p 视频 + 双仪器播放实测（复现用户场景）', () async {
       // 依赖项目内置 ffmpeg；缺失时跳过。
       if (!await File('tools/ffmpeg/ffmpeg.exe').exists()) return;
@@ -444,19 +485,19 @@ void main() {
         await state.autoFillFromVideo(srcId);
 
         final playing = state.togglePlayback();
-        // 播放中示波器按 ~5Hz 节流刷新（busy 闸 + 200ms 限频）：轮询
-        // 等待两路示波器均被填充。
-        var filledDuringPlay = false;
-        for (var i = 0; i < 30; i++) {
+        // 播放中双联矢量示波器冻结不刷新（连线渲染是仪器池热点的教训，
+        // 连节流刷新也取消），停播时以最后一帧前后预览图补齐：播放期间
+        // 两路示波器保持为空，播放本身逐帧推进。
+        for (var i = 0; i < 10; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 200));
-          if (state.hslVectorscopes[eqId] != null &&
-              state.hslInputVectorscopes[eqId] != null) {
-            filledDuringPlay = true;
-            break;
-          }
+          if (state.playbackDisplayed > 0) break;
         }
-        expect(filledDuringPlay, isTrue,
-            reason: '播放中「调整后/调整前」矢量示波器应节流刷新填充');
+        expect(state.playbackDisplayed, greaterThan(0),
+            reason: '播放应逐帧推进');
+        expect(state.hslVectorscopes[eqId], isNull,
+            reason: '播放中「调整后」矢量示波器冻结不刷新');
+        expect(state.hslInputVectorscopes[eqId], isNull,
+            reason: '播放中「调整前」矢量示波器冻结不刷新');
         state.stopPlayback();
         await playing;
         // 停播时以最后一帧前后预览图补齐示波器（在 togglePlayback 收尾
@@ -509,11 +550,12 @@ void main() {
         state.frameTick.addListener(() => seen.add(state.previewFrame));
         await Future<void>.delayed(const Duration(milliseconds: 1500));
         expect(state.isPlaying, isTrue, reason: '无预览节点也应能播放');
-        // 播放中示波器按 ~5Hz 节流刷新：1.5s 后两路应已填充。
-        expect(state.hslVectorscopes[eqId], isNotNull,
-            reason: '播放中「调整后」矢量示波器应节流刷新填充');
-        expect(state.hslInputVectorscopes[eqId], isNotNull,
-            reason: '播放中「调整前」矢量示波器应节流刷新填充');
+        // 播放中双联矢量示波器冻结不刷新（连线渲染是仪器池热点的教训，
+        // 连节流刷新也取消），停播时以最后一帧前后预览图补齐。
+        expect(state.hslVectorscopes[eqId], isNull,
+            reason: '播放中「调整后」矢量示波器冻结不刷新');
+        expect(state.hslInputVectorscopes[eqId], isNull,
+            reason: '播放中「调整前」矢量示波器冻结不刷新');
         state.stopPlayback();
         await playing;
         // 停播时示波器以最后一帧补齐（togglePlayback 收尾内完成）。

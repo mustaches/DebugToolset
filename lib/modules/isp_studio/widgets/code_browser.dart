@@ -952,21 +952,29 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
       _terminalTarget = choice.target;
       _terminalText.clear();
     });
-    final files = await widget.filesLoader();
-    if (!mounted) return;
-    final runner = widget.compileRunner ?? compileGroupCFiles;
-    final result = await runner(
-      files,
-      choice.target,
-      topName: widget.topName,
-      compilerPath: choice.compilerPath.isEmpty ? null : choice.compilerPath,
-      onOutput: _appendTerminal,
-    );
-    if (!mounted) return;
-    setState(() {
-      _compiling = false;
-      _lastResult = result;
-    });
+    try {
+      final files = await widget.filesLoader();
+      if (!mounted) return;
+      final runner = widget.compileRunner ?? compileGroupCFiles;
+      final result = await runner(
+        files,
+        choice.target,
+        topName: widget.topName,
+        compilerPath: choice.compilerPath.isEmpty ? null : choice.compilerPath,
+        onOutput: _appendTerminal,
+      );
+      if (!mounted) return;
+      setState(() {
+        _compiling = false;
+        _lastResult = result;
+      });
+    } catch (e) {
+      // 兜底：生成/编译任何一步抛异常都写入终端并复位编译态，避免
+      // 界面停留在「编译中…」观感卡死（安装版读盘/建目录失败的教训）。
+      _appendTerminal('编译过程出错：$e\n');
+      if (!mounted) return;
+      setState(() => _compiling = false);
+    }
   }
 
   /// 点「运行验证（原尺寸/scale）」（[CodeCompileArea.winVerifyBuilder]
@@ -982,12 +990,19 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
       _lastResult = null;
       _terminalText.clear();
     });
-    final result = await builder(_appendTerminal, scaleDown: scaleDown);
-    if (!mounted) return;
-    setState(() {
-      _compiling = false;
-      _lastResult = result;
-    });
+    try {
+      final result = await builder(_appendTerminal, scaleDown: scaleDown);
+      if (!mounted) return;
+      setState(() {
+        _compiling = false;
+        _lastResult = result;
+      });
+    } catch (e) {
+      // 兜底：构建任何一步抛异常都写入终端并复位编译态（同 _startCompile）。
+      _appendTerminal('构建过程出错：$e\n');
+      if (!mounted) return;
+      setState(() => _compiling = false);
+    }
   }
 
   /// 工具栏：编译入口（带图标按钮，编译中转进度态并禁用）。

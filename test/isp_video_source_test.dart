@@ -19,6 +19,21 @@ const _sdr709Banner = '''
   Stream #0:0: Video: h264 (High), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 30 fps, 30 tbr, 15360 tbn
 ''';
 
+/// VUI 虚标片源 banner（record-2024-09-26 手术录像形态：avg 30 / tbr 60）。
+const _vuiLieBanner = '''
+  Stream #0:0(und): Video: hevc (Rext), yuv422p10le(tv, bt2020nc/bt2020/bt2020-12), 3840x2160, 16000 kb/s, SAR 1:1 DAR 16:9, 30 fps, 60 tbr, 3k tbn (default)
+''';
+
+VideoInfo _info({double fps = 30, double tbr = 0, String pixFmt = ''}) =>
+    VideoInfo(
+        width: 3840,
+        height: 2160,
+        fps: fps,
+        frameCount: 27000,
+        hasAudio: false,
+        tbr: tbr,
+        pixFmt: pixFmt);
+
 void main() {
   group('parseColorTransfer / parseColorMatrix', () {
     test('PQ（smpte2084）/ HLG（arib-std-b67）/ SDR 三类解析', () {
@@ -132,6 +147,24 @@ void main() {
               outHeight: 1080,
               isHdr: false),
           isNull);
+      // yuv420p 降采样（平面直连的显示自适应降档）：插 scale。
+      expect(
+          buildDecodeVf(
+              pixelFormat: 'yuv420p',
+              downsampleFactor: 2,
+              outWidth: 960,
+              outHeight: 540,
+              isHdr: false),
+          'scale=960:540');
+      expect(
+          buildDecodeVf(
+              pixelFormat: 'yuv420p',
+              downsampleFactor: 2,
+              outWidth: 960,
+              outHeight: 540,
+              isHdr: true),
+          // HDR 降档：先 scale 后 tonemap（计算量按面积缩）。
+          'scale=960:540,$kHdrTonemapFilter');
       expect(
           buildDecodeVf(
               pixelFormat: 'yuv444p',
@@ -200,6 +233,72 @@ void main() {
           contains('-vf'));
       expect(videoDecodeArgs(pixelFormat: 'yuv420p'),
           isNot(contains('-vf')));
+    });
+  });
+
+  group('parseTbr / videoPlaybackIssues（片源病灶检测）', () {
+    test('tbr 解析：有/无 tbr 字段', () {
+      expect(parseTbr(_vuiLieBanner), 60);
+      expect(parseTbr(_sdr709Banner), 30);
+      expect(parseTbr('Stream #0:0: Video: h264, 1920x1080'), 0);
+    });
+
+    test('pixFmt 解析：420/422 10bit', () {
+      expect(parsePixFmt(_vuiLieBanner), 'yuv422p10le');
+      expect(parsePixFmt(_sdr709Banner), 'yuv420p');
+      expect(parsePixFmt(_pqBanner), 'yuv420p10le');
+      expect(parsePixFmt('garbage'), '');
+    });
+
+    test('NVDEC 可硬解像素格式判定', () {
+      expect(hwDecodablePixFmt('yuv420p'), isTrue);
+      expect(hwDecodablePixFmt('yuv420p10le'), isTrue);
+      expect(hwDecodablePixFmt('yuv422p10le'), isFalse);
+      expect(hwDecodablePixFmt('yuv444p'), isFalse);
+      expect(hwDecodablePixFmt(''), isTrue); // 未知不误报
+    });
+
+    test('正常片源：无病灶', () {
+      expect(videoPlaybackIssues(_info(fps: 30, tbr: 30), softwareDecode: false),
+          isEmpty);
+      // tbr 未知（0）不误报。
+      expect(videoPlaybackIssues(_info(fps: 59.94), softwareDecode: false),
+          isEmpty);
+      // 偏差 ≤3% 不误报（29.97 vs 30）。
+      expect(videoPlaybackIssues(_info(fps: 30, tbr: 29.97), softwareDecode: false),
+          isEmpty);
+    });
+
+    test('VUI 虚标：报帧率标称异常并说明已按实际帧率播放', () {
+      final issues =
+          videoPlaybackIssues(_info(fps: 30, tbr: 60), softwareDecode: false);
+      expect(issues.length, 1);
+      expect(issues.single.$1, contains('VUI'));
+      expect(issues.single.$1, contains('60'));
+      expect(issues.single.$2, contains('实际帧率'));
+    });
+
+    test('软解回退：报无硬件解码支持', () {
+      final issues =
+          videoPlaybackIssues(_info(fps: 30, tbr: 30), softwareDecode: true);
+      expect(issues.length, 1);
+      expect(issues.single.$1, contains('软件解码'));
+    });
+
+    test('格式预判软解：yuv422p10le 超出 NVDEC（worker 不上报也报）', () {
+      final issues = videoPlaybackIssues(
+          _info(fps: 30, tbr: 30, pixFmt: 'yuv422p10le'),
+          softwareDecode: false);
+      expect(issues.length, 1);
+      expect(issues.single.$1, contains('软件解码'));
+      expect(issues.single.$1, contains('yuv422p10le'));
+    });
+
+    test('手术录像形态（虚标 + 4:2:2 软解）：两条病灶', () {
+      final issues = videoPlaybackIssues(
+          _info(fps: 30, tbr: 60, pixFmt: 'yuv422p10le'),
+          softwareDecode: false);
+      expect(issues.length, 2);
     });
   });
 

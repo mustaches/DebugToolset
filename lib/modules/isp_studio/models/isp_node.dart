@@ -2024,10 +2024,12 @@ abstract final class IspNodeRegistry {
           key: 'fps',
           label: '播放帧率',
           type: IspParamType.intNumber,
-          // 默认 30；视频源打开文件时自动填充为视频原生帧率。
+          // 默认 30；视频源打开文件时自动填充为视频原生帧率。视频播放
+          // 的走帧节拍实际以解码流权威帧率为准（togglePlayback），此
+          // 参数仅作非视频源（图片序列）的回退与代码变量。
           defaultValue: 30,
           min: 1,
-          max: 60,
+          max: 240,
         ),
         IspParamSpec(
           key: 'frameCount',

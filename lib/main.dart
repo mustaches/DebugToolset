@@ -103,6 +103,9 @@ final ispState = IspStudioState();
 final appState = AppState();
 
 void _installAutoplayDiag() {
+  // ISP_PRODTIMING=1：打印逐帧生产分段耗时（取流/打包馈源/出图）。
+  IspStudioState.debugPlaybackTiming =
+      Platform.environment['ISP_PRODTIMING'] == '1';
   final video = Platform.environment['ISP_AUTOPLAY'] ?? '';
   if (video.isEmpty) return;
   final logPath =
@@ -146,6 +149,7 @@ void _installAutoplayDiag() {
       // 乱序在此现形）。必须在 togglePlayback 之前注册：其 future 要
       // 等播放结束才完成。
       if (Platform.environment['ISP_AUTOHASH'] == '1') {
+        IspStudioState.debugAutohash = true;
         var lastF = -1;
         var dumped = false;
         Timer.periodic(const Duration(milliseconds: 5), (_) {

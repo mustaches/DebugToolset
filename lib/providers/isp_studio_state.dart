@@ -57,7 +57,8 @@ class PlanePreviewFrame {
   /// 0=YUV→RGB 彩色；1/2/3=Y/U/V 平面灰度。
   final int mode;
 
-  /// 逻辑图像尺寸（视频原始宽高）。
+  /// 逻辑图像尺寸（打包纹理对应的流输出宽高；平面直连显示自适应
+  /// 降档时为降档后的尺寸，shader 按它解包采样）。
   final int width;
   final int height;
 
@@ -1865,7 +1866,7 @@ class IspStudioState extends ChangeNotifier {
         playbackSrcTransfer = info.colorTransfer;
         notifyListeners();
       }
-      final fps = info.fps.round().clamp(1, 60);
+      final fps = info.fps.round().clamp(1, 240);
       var changed = false;
       for (final n in graph.nodes.values) {
         if (n.typeId != 'preview' && n.typeId != 'multi_band_eq') continue;
@@ -2491,8 +2492,8 @@ class IspStudioState extends ChangeNotifier {
   }
 
   /// 停播（暂停）时刷新多段色彩均衡器的双联矢量示波器：以最后一帧
-  /// 「调整后/调整前」预览图为馈源统计补齐（播放中已由
-  /// [_refreshEqScopesFromPlayback] 按 ~5Hz 节流刷新，此处落定最终帧）。
+  /// 「调整后/调整前」预览图为馈源统计（播放中冻结不刷新，停播补齐
+  /// 是唯一刷新时机）。
   /// 统计渲染与单次预览同口径（[_hslVectorscopeImage]；CPU 路径预览图
   /// 本就是 ≤480p 解码，GPU 链路径由该函数内部降采样到 ~240p）。
   Future<void> _refreshEqScopesFromPreviews(
@@ -4045,6 +4046,18 @@ class IspStudioState extends ChangeNotifier {
   /// 调试：打印播放生产各阶段耗时（基准测试用，默认关闭）。
   static bool debugPlaybackTiming = false;
 
+  /// 诊断：AUTOHASH 录屏对比实验需要逐帧上屏字节（main.dart 按
+  /// ISP_AUTOHASH 设置）；置位时平面直连播放保留 480p 馈源计算。
+  static bool debugAutohash = false;
+
+  /// 播放片源病灶（标题, 详细说明）列表：播放启动检测非空时填入并经
+  /// [playbackIssueTick] 通知视图弹窗（「视频的问题在哪里 + 已如何
+  /// 绕开」）；每文件每类问题每次运行只提示一次（[_warnedVideoIssues]
+  /// 去重）。检测逻辑为纯函数 videoPlaybackIssues（video_source.dart）。
+  List<(String, String)> playbackIssues = [];
+  final playbackIssueTick = ValueNotifier<int>(0);
+  final Set<String> _warnedVideoIssues = {};
+
   /// 帧缓存总字节数上限（超出则边算边播，不缓存）。
   static const int kPlaybackCacheBytes = 1600 * 1024 * 1024;
 
@@ -4242,18 +4255,48 @@ class IspStudioState extends ChangeNotifier {
           ? 'yuv420p'
           : (gpuChain ? 'yuv420p' : (yuvDirect ? 'yuv444p' : 'rgba'));
       // 播放形态标签（状态栏可见，现场确认走的哪条路径）。
-      final pathTag = gpuPlanes
+      var pathTag = gpuPlanes
           ? (videoDirect ? '平面直连' : '平面')
           : (videoDirect
               ? '直连RGBA'
               : (gpuChain ? 'GPU链' : 'CPU池'));
+      // 平面直连的显示自适应降档：上传纹理只需覆盖预览节点的物理
+      // 像素。4K 源全分辨率上传为 12.4MB/帧，引擎侧解码+上传实测
+      // 15-40ms——4K60 达不到原帧率的主因（1080p 上传 ~4ms 可满帧
+      // 率）。按最大预览节点宽 × DPR 选 2 的幂降档（纹理宽仍 ≥ 显
+      // 示宽，当前显示尺寸下无损）；节点拖大后重新播放自动升档。
+      // 仅平面直连（流只供显示）；YUV 处理链保持原生分辨率。
+      var planeFactor = 1;
+      if (gpuPlanes && videoDirect) {
+        var dpr = 1.0;
+        try {
+          dpr = ui.PlatformDispatcher.instance.views.firstOrNull
+                  ?.devicePixelRatio ??
+              1.0;
+        } catch (_) {}
+        var targetW = 0.0;
+        for (final id in validChains.keys) {
+          final nw = graph.nodes[id]?.width ?? 0;
+          if (nw > targetW) targetW = nw;
+        }
+        targetW *= dpr;
+        while (planeFactor < 8 &&
+            w % (planeFactor * 8) == 0 && // 降档后 outW 仍须 4 对齐（打包）
+            h % (planeFactor * 4) == 0 && // outH 仍须偶数
+            w ~/ (planeFactor * 2) >= targetW) {
+          planeFactor *= 2;
+        }
+        if (planeFactor > 1) pathTag = '$pathTag÷$planeFactor';
+      }
       // 视频源：从当前帧起顺序流式解码（内部前向缓冲，背压限速）。
-      // 全分辨率出帧：预览按原始尺寸播放，不做降采样。
+      // 平面直连可按显示尺寸降档出帧（planeFactor，上传纹理只需覆盖
+      // 预览节点的物理像素）；其余路径全分辨率出帧不做降采样。
       var stream = isVideo
           ? await VideoFrameStream.start(
               srcParams['filePath']?.toString() ?? '', frame,
               ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '',
               pixelFormat: pixelFormat,
+              maxWorkingHeight: planeFactor > 1 ? h ~/ planeFactor : 0,
               // 每包一帧，禁掉默认 CFR 补/丢帧：VUI 标称 60fps 的 30fps
               // 片源（如手术录像 HEVC Rext）默认会被 ffmpeg 逐帧复制
               // 成 60fps 交付，播放时每帧画面停 66ms 呈 15fps 卡顿观感。
@@ -4282,6 +4325,35 @@ class IspStudioState extends ChangeNotifier {
           await Future<void>.delayed(const Duration(milliseconds: 20));
         }
       }
+      // 片源病灶检测：有异常主动弹窗告知（问题在哪 + 已如何绕开）。
+      // 先等首帧落地（或流耗尽/超时）：软解回退的 ['swdec'] 上报先于
+      // 重试出帧——预读闸可能超时先放行，cuda 失败 + 软解起步 >1.5s
+      // 的源（如手术录像）在闸退出时标志未置，会漏报软解病灶。
+      if (isVideo && stream != null) {
+        final s = stream;
+        final issueWait = Stopwatch()..start();
+        while (!s.usedSoftwareDecode &&
+            s.bufferedCount == 0 &&
+            !s.isDrained &&
+            isPlaying &&
+            token == _runToken &&
+            issueWait.elapsedMilliseconds < 3000) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        final issues = videoPlaybackIssues(s.info,
+            softwareDecode: s.usedSoftwareDecode);
+        if (issues.isNotEmpty) {
+          final pathKey = srcParams['filePath']?.toString() ?? '';
+          final fresh = [
+            for (final i in issues)
+              if (_warnedVideoIssues.add('$pathKey|${i.$1}')) i,
+          ];
+          if (fresh.isNotEmpty && token == _runToken) {
+            playbackIssues = fresh;
+            playbackIssueTick.value++;
+          }
+        }
+      }
       // 音频回放（有音轨时）：ffmpeg 抽取 WAV + MCI 播放。
       final audio = MciAudioPlayer();
       var audioReady = false;
@@ -4297,9 +4369,19 @@ class IspStudioState extends ChangeNotifier {
           }
         } catch (_) {}
       }
-      final fps = (graph.nodes[firstEntry.key]!.paramValues['fps'] as num?)?.toInt() ?? 30;
+      // 走帧节拍以解码流的权威帧率为准（ffmpeg 解析，double 全精度）：
+      // 预览节点 fps 参数只在「设文件那一刻已在下游」时被自动填充——
+      // 先选文件后连预览（最简流程的常见建图顺序）参数留默认 30，60fps
+      // 片源被半速播放；自动填充/节拍/参数规格三处还有 60 上限（240fps
+      // 片源 1/4 速），29.97/59.94 也被取整。非视频源（图片序列）无流
+      // 信息，仍按预览节点参数。
+      final double fps = isVideo && stream!.info.fps > 0
+          ? stream.info.fps
+          : (graph.nodes[firstEntry.key]!.paramValues['fps'] as num?)
+                  ?.toDouble() ??
+              30;
       final frameDuration =
-          Duration(microseconds: (1000000 / fps.clamp(1, 60)).round());
+          Duration(microseconds: (1000000 / fps.clamp(1, 240)).round());
       // 视频源信息标签（状态栏随播放显示）：分辨率@帧率 + SDR/HDR +
       // 当前时间/总时长。静态部分循环前拼好，当前时间逐帧更新。
       String fmtClock(double sec) {
@@ -4388,6 +4470,8 @@ class IspStudioState extends ChangeNotifier {
                   srcParams['filePath']?.toString() ?? '', 0,
                   ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '',
                   pixelFormat: pixelFormat,
+                  // 与首播同口径的显示自适应降档。
+                  maxWorkingHeight: planeFactor > 1 ? h ~/ planeFactor : 0,
                   // 同首播：每包一帧，禁 CFR 复制（防 60fps VUI 片源
                   // 重复帧导致的 15fps 卡顿观感）。
                   passthrough: true,
@@ -4431,32 +4515,44 @@ class IspStudioState extends ChangeNotifier {
             }
             gpuStep = step;
             final frameData = bytes;
-            for (final e in planeModes.entries) {
-              if (e.value == 0) {
-                rgbaMap[e.key] = yuv420p8ToRgbaStep(frameData, workW, workH,
-                    step, limited: limited, matrix: matrix);
-                gpuPlaneDims[e.key] = (workW ~/ step, workH ~/ step);
-              } else {
-                // U/V chroma 平面（planeIdx = mode-1 = 1/2）半尺寸
-                // （w/2 × h/2），与 Y/彩色全尺寸不同，须记录真实宽高。
-                final planeIdx = e.value - 1;
-                rgbaMap[e.key] = yuv420pPlaneToRgbaStep(
-                    frameData, workW, workH, planeIdx, step, limited: limited);
-                final pw = planeIdx == 0 ? workW : workW >> 1;
-                final ph = planeIdx == 0 ? workH : workH >> 1;
-                gpuPlaneDims[e.key] = (pw ~/ step, ph ~/ step);
+            // 馈源的消费者：图像仪器刷新 / 均衡器附加区 / 暂停时仪器复用
+            // 帧 / AUTOHASH 诊断。最简直连流程（无图像仪器、无均衡器）
+            // 没有消费者——跳过 480p 逐像素转换每帧省 ~2ms UI 耗时
+            // （4K60 的 16.7ms 帧预算内这是能否满帧率的分水岭之一）。
+            final needFeeds = !videoDirect ||
+                allImageInstruments.isNotEmpty ||
+                eqNodes.isNotEmpty ||
+                debugAutohash;
+            if (needFeeds) {
+              for (final e in planeModes.entries) {
+                if (e.value == 0) {
+                  rgbaMap[e.key] = yuv420p8ToRgbaStep(frameData, workW,
+                      workH, step, limited: limited, matrix: matrix);
+                  gpuPlaneDims[e.key] = (workW ~/ step, workH ~/ step);
+                } else {
+                  // U/V chroma 平面（planeIdx = mode-1 = 1/2）半尺寸
+                  // （w/2 × h/2），与 Y/彩色全尺寸不同，须记录真实宽高。
+                  final planeIdx = e.value - 1;
+                  rgbaMap[e.key] = yuv420pPlaneToRgbaStep(frameData, workW,
+                      workH, planeIdx, step, limited: limited);
+                  final pw = planeIdx == 0 ? workW : workW >> 1;
+                  final ph = planeIdx == 0 ? workH : workH >> 1;
+                  gpuPlaneDims[e.key] = (pw ~/ step, ph ~/ step);
+                }
               }
             }
             primaryRgba = rgbaMap[firstEntry.key] ?? bytes;
 
+            final feedUs = prodSw.elapsedMicroseconds;
             final completer = Completer<ui.Image>();
             ui.decodeImageFromPixels(bytes, workW ~/ 4, workH * 3 ~/ 2,
                 ui.PixelFormat.rgba8888, completer.complete);
             images[''] = await completer.future; // 打包纹理（'' 非节点 id）
             if (debugPlaybackTiming) {
               // ignore: avoid_print
-              print('prod f=$f: 取流 $downUs us, GPU打包+仪器馈源 '
-                  '${prodSw.elapsedMicroseconds - downUs} us');
+              print('prod f=$f: 取流 $downUs us, 仪器馈源 '
+                  '${feedUs - downUs} us, 打包出图 '
+                  '${prodSw.elapsedMicroseconds - feedUs} us');
             }
           } else if (videoDirect && validChains.length == 1) {
             final completer = Completer<ui.Image>();
@@ -4500,9 +4596,7 @@ class IspStudioState extends ChangeNotifier {
             }
             // 多段色彩均衡器附加区馈源：eq 节点与其上游都在本次执行的链
             // 上时顺带捕获出图（'eqId' 调整后 / 'eqId#in' 调整前，GPU
-            // 驻留免回读）；矢量示波器播放中按 ~5Hz 节流刷新
-            // （_refreshEqScopesFromPlayback 需要像素时自行回读预览图），
-            // 不做逐帧端口回读。
+            // 驻留免回读）；矢量示波器播放中冻结不刷新，不做逐帧端口回读。
             final eqAssigned = <String>{};
             void eqAssign(List<String> ids, Map<String, String> caps) {
               for (final eq in eqNodes) {
@@ -4824,8 +4918,12 @@ class IspStudioState extends ChangeNotifier {
             final matrix = stream?.info.colorMatrix ?? 0;
             _retirePlanePacked();
             previewPlanes = {
+              // 逻辑尺寸须与打包纹理一致（流输出宽高）：平面直连降档
+              //（planeFactor>1）时 workW/workH 是降档后的尺寸，shader
+              // 按它解包采样；factor=1 时与源尺寸相同（行为不变）。
               for (final e in planeModes.entries)
-                e.key: PlanePreviewFrame(packed, e.value, w, h, limited, matrix),
+                e.key: PlanePreviewFrame(
+                    packed, e.value, workW, workH, limited, matrix),
             };
           } else {
             for (final entry in images.entries) {
@@ -4914,9 +5012,9 @@ class IspStudioState extends ChangeNotifier {
           _refreshInstrumentsFromFrame(
               rgbaMap, rgbaW, rgbaH, allImageInstruments, token,
               dims: gpuPlanes ? gpuPlaneDims : null);
-          // 多段均衡器矢量示波器随播放刷新（~5Hz 节流 + busy 闸，
-          // 不阻塞走帧；详见 _refreshEqScopesFromPlayback）。
-          if (eqNodes.isNotEmpty) _refreshEqScopesFromPlayback(eqNodes, token);
+          // 多段均衡器矢量示波器播放中冻结不刷新（连线渲染是仪器池
+          // 热点），停播时以最后一帧前后预览图统计补齐（见循环收尾处
+          // _refreshEqScopesFromPreviews）。
           // 音频仪器（电平/波形/EQ）随播放位置刷新（限频 ~15Hz）。
           _refreshAudioInstrumentsFromPlayback(f, token);
           if (isVideo && videoDirect && !gpuPlanes) {
@@ -4948,8 +5046,8 @@ class IspStudioState extends ChangeNotifier {
       // 暂停：刷新当前帧的仪器分析。
       if (token == _runToken) {
         await _runInstruments(previewFrame, token);
-        // 均衡器矢量示波器停播时再以最后一帧前后预览图统计补齐一次
-        //（播放中已按 ~5Hz 节流刷新，此处确保停在精确的最终帧口径）。
+        // 均衡器矢量示波器播放中冻结，停播时以最后一帧前后预览图
+        // 统计补齐（唯一刷新时机）。
         if (token == _runToken && eqNodes.isNotEmpty) {
           await _refreshEqScopesFromPreviews(eqNodes, token);
         }
@@ -5017,82 +5115,6 @@ class IspStudioState extends ChangeNotifier {
 
   /// 常驻仪器分析 isolate（随 state 生命周期，懒启动）。
   final InstrumentAnalyzer _instrumentAnalyzer = InstrumentAnalyzer();
-
-  /// 多段均衡器矢量示波器播放刷新的限频与重入闸（同 _instrumentBusy
-  /// 思路；连线渲染是仪器池热点，~5Hz 节流而非逐帧）。
-  bool _eqScopeBusy = false;
-  DateTime _lastEqScopeRefresh = DateTime.fromMillisecondsSinceEpoch(0);
-
-  /// 播放中刷新多段色彩均衡器的前后双联矢量示波器：以当前上屏帧的
-  /// 「调整后/调整前」馈源统计（优先 [_lastPlaybackRgba] 的
-  /// 'eqId'/'eqId#in' 条目——CPU worker 路径经 runParallel 前缀覆盖
-  /// 顺带捕获；GPU 链路径馈源是 GPU 驻留 ui.Image，回退 previewImages
-  /// 回读；GPU 平面模式条目按 [_lastPlaybackDims] 的真实平面尺寸喂
-  /// 数，缺失/尺寸不符跳过该次）。统计口径与停播补齐
-  /// [_refreshEqScopesFromPreviews] 一致（[_hslVectorscopeImage]：
-  /// ~240p 降采样 + 仪器池多核并行）。fire-and-forget + busy 闸，
-  /// 不阻塞走帧；刷新只走 instrumentTick（局部重建）。
-  void _refreshEqScopesFromPlayback(List<IspNode> eqNodes, int token) {
-    if (eqNodes.isEmpty || _eqScopeBusy) return;
-    final now = DateTime.now();
-    if (now.difference(_lastEqScopeRefresh) <
-        const Duration(milliseconds: 200)) {
-      return;
-    }
-    final rgbaMap = _lastPlaybackRgba;
-    if (rgbaMap == null) return;
-    _lastEqScopeRefresh = now;
-    _eqScopeBusy = true;
-    () async {
-      try {
-        for (final eq in eqNodes) {
-          for (final isIn in [false, true]) {
-            if (token != _runToken) return;
-            final key = isIn ? '${eq.id}#in' : eq.id;
-            Uint8List? rgba;
-            var w = 0, h = 0;
-            final entry = rgbaMap[key];
-            if (entry != null) {
-              final dim = _lastPlaybackDims?[key];
-              final ew = dim?.$1 ?? _lastPlaybackW;
-              final eh = dim?.$2 ?? _lastPlaybackH;
-              if (ew > 0 && eh > 0 && entry.length == ew * eh * 4) {
-                rgba = entry;
-                w = ew;
-                h = eh;
-              }
-            }
-            if (rgba == null) {
-              final img =
-                  isIn ? previewInputImages[eq.id] : previewImages[eq.id];
-              if (img == null) continue;
-              final bd = await img.toByteData();
-              if (bd == null) continue;
-              rgba = bd.buffer.asUint8List();
-              w = img.width;
-              h = img.height;
-            }
-            final scope = await _hslVectorscopeImage(rgba, w, h);
-            if (scope == null) continue;
-            if (token != _runToken) {
-              scope.dispose();
-              return;
-            }
-            if (isIn) {
-              hslInputVectorscopes.remove(eq.id)?.dispose();
-              hslInputVectorscopes[eq.id] = scope;
-            } else {
-              hslVectorscopes.remove(eq.id)?.dispose();
-              hslVectorscopes[eq.id] = scope;
-            }
-          }
-        }
-        if (token == _runToken) instrumentTick.value++;
-      } finally {
-        _eqScopeBusy = false;
-      }
-    }();
-  }
 
   /// 音频仪器播放刷新的限频与重入闸（同 _instrumentBusy 思路）。
   bool _audioInstrumentBusy = false;

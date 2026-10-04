@@ -56,6 +56,17 @@ class VideoInfo {
   /// （如 `yuv420p10le(tv, bt2020nc/bt2020/smpte2084)`）。
   final int colorTransfer;
 
+  /// 流内 VUI 标称帧率（横幅 tbr；0 = 未知）：与实际帧率（[fps]，avg）
+  /// 不一致即「VUI 虚标」——默认 CFR 解码会按 VUI 补/丢帧（30fps 实片
+  /// 标 60 会被逐帧复制成交付 60fps），播放病灶检测用。
+  final double tbr;
+
+  /// 交付前源像素格式（横幅 Video: 行的 pix_fmt，如 yuv420p/yuv422p10le；
+  /// 空串 = 解析失败）：NVDEC 只支持 4:2:0（见 [hwDecodablePixFmt]），
+  /// 4:2:2/4:4:4 等格式 ffmpeg 的 -hwaccel cuda 静默回退软解（仅告警
+  /// 不致命），播放病灶检测据此预判软解。
+  final String pixFmt;
+
   /// HDR 片源（PQ 或 HLG）：解码侧统一 tonemap 为 BT.709 SDR 8bit
   /// 交付（见 [kHdrTonemapFilter] 与 [buildDecodeVf]）。
   bool get isHdr => colorTransfer != 0;
@@ -69,6 +80,8 @@ class VideoInfo {
     this.fullRange = false,
     this.colorMatrix = 0,
     this.colorTransfer = 0,
+    this.tbr = 0,
+    this.pixFmt = '',
   });
 }
 
@@ -120,9 +133,75 @@ Future<VideoInfo> videoFileInfo(String path, {String ffmpegPath = ''}) async {
       hasAudio: RegExp(r'Stream.*Audio:').hasMatch(text),
       fullRange: fullRange,
       colorMatrix: matrix,
-      colorTransfer: transfer);
+      colorTransfer: transfer,
+      tbr: parseTbr(text),
+      pixFmt: parsePixFmt(text));
   _infoCache[key] = info;
   return info;
+}
+
+/// 从 `ffmpeg -i` 横幅解析流内 VUI 标称帧率（`... 60 tbr ...`）；
+/// 无 tbr 字段返回 0（未知）。与 avg fps 不一致即「VUI 虚标」。
+double parseTbr(String text) {
+  final m = RegExp(r'(\d+(?:\.\d+)?)\s*tbr').firstMatch(text);
+  return m != null ? double.parse(m.group(1)!) : 0;
+}
+
+/// 从 `ffmpeg -i` 横幅 Video: 行解析源像素格式（第一个 `, pixfmt(`
+/// 形态的 token，如 yuv420p/yuv422p10le）；解析失败返回空串。
+String parsePixFmt(String text) {
+  final m = RegExp(r'Video:.*?,\s*([a-z0-9]+)\(').firstMatch(text);
+  return m != null ? m.group(1)! : '';
+}
+
+/// NVDEC（cuda）可硬解的像素格式：仅 4:2:0 8/10/12bit。4:2:2/4:4:4/
+/// 高位深等格式用 `-hwaccel cuda` 解码时 ffmpeg 仅告警
+///（"Hardware is lacking required capabilities"）并**静默回退软解**
+/// ——硬解失败不是致命错误，解码 worker 的重试/上报不会触发，软解
+/// 病灶须按像素格式预判。空串（未知）不误报。
+bool hwDecodablePixFmt(String pixFmt) => switch (pixFmt) {
+      '' => true,
+      'yuv420p' ||
+      'nv12' ||
+      'yuvj420p' ||
+      'p010le' ||
+      'yuv420p10le' ||
+      'yuv420p12le' =>
+        true,
+      _ => false,
+    };
+
+/// 播放片源病灶检测（纯函数，便于单测）：返回（标题, 详细说明）列表，
+/// 播放启动时弹窗告知用户「视频的问题在哪里 + 应用已如何绕开」。
+/// 软解判定 = [softwareDecode]（worker 上报的硬解致命失败重试）或
+/// 源像素格式超出 NVDEC 能力（[hwDecodablePixFmt]，如 4:2:2/Rext——
+/// ffmpeg 对非致命硬解失败静默回退软解，worker 不会上报，须按格式
+/// 预判）。
+List<(String, String)> videoPlaybackIssues(VideoInfo info,
+    {required bool softwareDecode}) {
+  final issues = <(String, String)>[];
+  // VUI 虚标：tbr 与 avg fps 偏差 >3%（如 30fps 实片 VUI 标 60——
+  // record-2024-09-26 手术录像）。
+  if (info.tbr > 0 &&
+      info.fps > 0 &&
+      (info.tbr - info.fps).abs() / info.fps > 0.03) {
+    issues.add((
+      '帧率标称异常：VUI 标 ${info.tbr % 1 == 0 ? info.tbr.toInt() : info.tbr}fps，'
+          '实际 ${info.fps % 1 == 0 ? info.fps.toInt() : info.fps}fps',
+      '片源内的标称帧率（VUI）与实际帧间隔不符。默认解码会按标称值复制/'
+          '丢帧——画面卡顿或帧数翻倍。已改为逐包原样解码并按实际帧率 '
+          '${info.fps % 1 == 0 ? info.fps.toInt() : info.fps}fps 播放，显示流畅，无需处理。',
+    ));
+  }
+  if (softwareDecode || !hwDecodablePixFmt(info.pixFmt)) {
+    issues.add((
+      '无硬件解码支持（${info.pixFmt.isEmpty ? '源像素格式' : info.pixFmt}），'
+          '已回退软件解码',
+      '该片源的编码格式（如 4:2:2 / 10bit HEVC Rext）超出显卡硬解能力，'
+          '解码由 CPU 完成，占用较高属预期；播放本身不受影响。',
+    ));
+  }
+  return issues;
 }
 
 /// 从 `ffmpeg -i` 横幅解析 YUV→RGB 色彩矩阵：Video: 行含 `bt2020` →
@@ -185,7 +264,19 @@ String? buildDecodeVf({
     'yuv444p' => downsampleFactor > 1
         ? '${hdr}scale=$outWidth:$outHeight:out_range=pc'
         : '${hdr}scale=out_range=pc',
-    'yuv420p' => tm ? kHdrTonemapFilter : null,
+    // yuv420p 平面直出：无降采样时 SDR 零滤镜（解码器原生输出）。
+    // 降采样（平面直连的显示自适应降档）时插 scale；HDR 降档必须把
+    // scale 放在 tonemap 链之前——4K 全尺寸跑 zscale+tonemap 实测
+    // 仅 ~45-48fps（HDR 播放帧率不足的主因），先缩到出图尺寸再做
+    // 色调映射，计算量按面积缩（÷4 档 ÷16），解码成为唯一瓶颈。
+    // 代价：在 PQ/BT.2020 非线性域缩放（播放器惯例），与线性光
+    // 缩放有细微差异，仅影响降档预览；factor=1（大预览/导出）仍
+    // 走原全尺寸精确链。
+    'yuv420p' => downsampleFactor > 1
+        ? (tm
+            ? 'scale=$outWidth:$outHeight,$kHdrTonemapFilter'
+            : 'scale=$outWidth:$outHeight')
+        : (tm ? kHdrTonemapFilter : null),
     _ => downsampleFactor > 1
         ? '${hdr}scale=$outWidth:$outHeight'
         : (tm ? kHdrTonemapFilter : null),
@@ -483,7 +574,7 @@ class VideoFrameStream {
     }
     final ffmpeg = (await findFfmpeg(overridePath: ffmpegPath))!;
     var factor = 1;
-    if (maxWorkingHeight > 0 && pixelFormat != 'yuv420p') {
+    if (maxWorkingHeight > 0) {
       while (info.height ~/ (factor * 2) > 0 &&
           info.height ~/ factor > maxWorkingHeight) {
         factor *= 2;
@@ -511,6 +602,11 @@ class VideoFrameStream {
     return stream;
   }
 
+  /// 解码是否回退到了软件解码（cuda 硬解初始化失败后 worker 自动
+  /// 软解重试并经 ['swdec'] 消息上报）：播放病灶检测用——4:2:2/Rext
+  /// 等 NVDEC 不支持的格式恒为 true。
+  bool usedSoftwareDecode = false;
+
   void _onMessage(Object? msg) {
     if (msg is int) {
       // Windows 原生缓冲路径：指针 → 原生内存视图（零拷贝）
@@ -520,6 +616,9 @@ class VideoFrameStream {
       _frames.add(view);
     } else if (msg is TransferableTypedData) {
       _frames.add(msg.materialize().asUint8List());
+    } else if (msg is List && msg.isNotEmpty && msg[0] == 'swdec') {
+      usedSoftwareDecode = true;
+      return; // 通知类消息，不触动帧等待
     } else if (msg is List && msg.isNotEmpty && msg[0] == 'error') {
       _error = msg.length > 1 ? msg[1]?.toString() : '视频解码失败';
       _eof = true;
@@ -884,7 +983,9 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   var (sent, error) =
       useNativePipe ? await runPassWin(true) : await runPass(true);
   if (sent == 0 && error != null && !stopped) {
-    // 硬解初始化失败（无可用 GPU/驱动）：回退软件解码重试。
+    // 硬解初始化失败（无可用 GPU/驱动、4:2:2/Rext 等 NVDEC 不支持的
+    // 格式）：回退软件解码重试，并上报 UI（播放病灶提示用）。
+    cfg.uiPort.send(['swdec']);
     (sent, error) =
         useNativePipe ? await runPassWin(false) : await runPass(false);
   }

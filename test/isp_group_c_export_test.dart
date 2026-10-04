@@ -990,6 +990,10 @@ void main() {
       final topName = groupBlackBoxTopName(graph.groups.single);
       final hasScratch =
           (files['$topName.h'] ?? '').contains('void *scratch');
+      // 单节点 lut 独占阶段应走整行 <id>_row + omp 行域并行（守卫——否则
+      // 本用例走融合行核，失去对整行函数路径的校验意义）。
+      expect(files['$topName.c'], contains('_row(row_'));
+      expect(files['$topName.c'], contains('#pragma omp parallel for'));
 
       final result = await buildWinVerifyApp(files,
           topName: topName,

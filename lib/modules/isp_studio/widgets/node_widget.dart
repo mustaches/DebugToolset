@@ -4658,8 +4658,8 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     final hCenter = (node.paramValues['b${sel}_h'] as num?)?.toDouble() ?? 0;
     final q = (node.paramValues['b${sel}_q'] as num?)?.toDouble() ?? 2;
     final dh = (node.paramValues['b${sel}_dh'] as num?)?.toDouble() ?? 0;
-    // 播放中矢量示波器按 ~5Hz 节流刷新（_refreshEqScopesFromPlayback），
-    // 停播时以最后一帧补齐；取色悬停实时叠加在播放中同样可用。
+    // 播放中矢量示波器冻结不刷新，停播时以最后一帧补齐；
+    // 取色悬停实时叠加在播放中同样可用。
     // 取色悬停实时值优先：悬停时调整前示波器的色相线/Q 带跟随光标像素。
     final hoverLive = _armedBand != null && _hoverHueDeg != null;
     final leftH = hoverLive ? _hoverHueDeg! : hCenter;

@@ -49,6 +49,9 @@ typedef _CreateProcessD = int Function(
     ffi.Pointer<ffi.Uint8>);
 typedef _HandleIntN = ffi.Int32 Function(ffi.Uint64);
 typedef _HandleIntD = int Function(int);
+typedef _SetHandleInfoN = ffi.Int32 Function(
+    ffi.Uint64, ffi.Uint32, ffi.Uint32);
+typedef _SetHandleInfoD = int Function(int, int, int);
 typedef _WaitN = ffi.Uint32 Function(ffi.Uint64, ffi.Uint32);
 typedef _WaitD = int Function(int, int);
 typedef _TerminateN = ffi.Int32 Function(ffi.Uint64, ffi.Uint32);
@@ -64,6 +67,8 @@ final _createProcessW =
     _k32.lookupFunction<_CreateProcessN, _CreateProcessD>('CreateProcessW');
 final _closeHandle =
     _k32.lookupFunction<_HandleIntN, _HandleIntD>('CloseHandle');
+final _setHandleInformation = _k32
+    .lookupFunction<_SetHandleInfoN, _SetHandleInfoD>('SetHandleInformation');
 final _waitFor = _k32.lookupFunction<_WaitN, _WaitD>('WaitForSingleObject');
 final _terminate =
     _k32.lookupFunction<_TerminateN, _TerminateD>('TerminateProcess');
@@ -108,6 +113,14 @@ class FfmpegRawPipeWin {
     final writeH = writeP.value;
     pkgffi.calloc.free(readP);
     pkgffi.calloc.free(writeP);
+    // 关键：读端不可继承。SECURITY_ATTRIBUTES 置可继承只为让子进程
+    // 拿到写端；若读端也被子进程继承，父进程（应用）退出/被杀后
+    // 管道读端仍被 ffmpeg 自己持有——写端永远等不到「读取方关闭」，
+    // ffmpeg 写满管道缓冲后永久阻塞成孤儿进程（每个持有 NVDEC
+    // 会话与 ~90 个线程；多个孤儿耗尽 NVDEC 会话数，后续播放的
+    // cuda 硬解初始化失败退为软解，4K60 帧率崩落）。读端不可继承
+    // 后父进程一死管道即破，ffmpeg 写管道出错自行退出。
+    _setHandleInformation(_readH, 1, 0); // HANDLE_FLAG_INHERIT, 0
 
     // stderr → NUL（不占管道，不阻塞）
     final nulName = 'NUL'.toNativeUtf16().cast<ffi.Uint16>();

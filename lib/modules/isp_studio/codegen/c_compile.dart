@@ -555,6 +555,29 @@ String stubMainWinSource({
     for (i = 0; i < n * 3; i++) {
       g_rgb_dst[i] = (unsigned char)(g_out[i] * 255 / MAXV);
     }''';
+  // 融合装帧/解包（窗口模式管线工作线程）：与 packBody/unpackBody +
+  // fill_dib 同数学口径逐位一致，只省整帧中转（g_rgb_src/g_rgb_dst 与
+  // fill_dib 的 RGB↔BGR 换序）：rgb24/nv12 源一趟出 g_in + 原图 DIB，
+  // 解包直写 BGR 到处理后 DIB。px 为像素序（size_t），r/g/b 为已钳位
+  // int，d 为 DIB 行指针、x 为列。
+  final packFusedPx = inFormat == 'hsl'
+      ? '''isp_csc_rgb_to_hsl_px(r * MAXV / 255, g * MAXV / 255,
+                            b * MAXV / 255, MAXV, 1.0 / MAXV, in + px * 3);'''
+      : '''in[px * 3] = (uint16_t)(r * MAXV / 255);
+        in[px * 3 + 1] = (uint16_t)(g * MAXV / 255);
+        in[px * 3 + 2] = (uint16_t)(b * MAXV / 255);''';
+  final unpackFusedPx = outFormat == 'hsl'
+      ? '''{
+        int r, g, b;
+        isp_csc_hsl_to_rgb_px(out[px * 3], out[px * 3 + 1], out[px * 3 + 2],
+                              MAXV, 1.0 / MAXV, &r, &g, &b);
+        d[x * 3] = (unsigned char)(b * 255 / MAXV);
+        d[x * 3 + 1] = (unsigned char)(g * 255 / MAXV);
+        d[x * 3 + 2] = (unsigned char)(r * 255 / MAXV);
+      }'''
+      : '''d[x * 3] = (unsigned char)(out[px * 3 + 2] * 255 / MAXV);
+      d[x * 3 + 1] = (unsigned char)(out[px * 3 + 1] * 255 / MAXV);
+      d[x * 3 + 2] = (unsigned char)(out[px * 3] * 255 / MAXV);''';
   return '''/* Win32 可运行验证程序（自动生成，不随导出物分发）。
  * 并列模式（左原图/右处理后）与单视频模式（整幅单路，按钮/空格硬切）
  * 实时互切；底部进度条点击/拖动跳转（暂停中也可；按下/拖动走关键帧级
@@ -571,9 +594,22 @@ String stubMainWinSource({
  * 批模式 --frames N --dump-hash 输出每帧处理后 FNV-1a 哈希（机器对拍用）。
  * 控制条显示上一帧管线本体耗时（处理 Xms，不含读流/装帧/解包；分段
  * 均值口径见批模式收尾的 timing 行）。
- * 视频播放丢帧对齐墙钟：解码不跳读、处理/显示只做到期帧，运动速度
- * 即源帧率（kept 帧率随吞吐）；强缩小显示走 omp 盒滤波预缩小 +
- * COLORONCOLOR（替代每帧两路 HALFTONE，消除 4K 播放显示瓶颈）。
+ * 窗口模式为管线工作线程模型：工作线程独占解码流消费与处理（帧环取
+ * 帧+融合装帧 → 管线 → 融合解包 + 三缓冲 DIB 发布），UI 线程只绘制/
+ * 输入——旧形态 advance/draw 同在 UI 线程串行，4K60 窗口实测 kept 仅
+ * ~32fps（UI 线程每帧 ~25ms 工作超 16.7ms 预算 + SetTimer 17ms 节拍
+ * 双封顶，两组不同负载墙钟完全一致钉在 2×15.6ms 滴答）。走帧由工作
+ * 线程按墙钟到期驱动（高分辨率可等待定时器，不依赖 SetTimer 粒度），
+ * 丢帧对齐墙钟同旧口径：解码不跳读、落后超过 1 帧时中间帧只解码不处
+ * 理（帧间依赖使解码无法跳读），运动速度即源帧率（kept 帧率随吞吐）；
+ * 解码经读者线程 + RING_N 帧预读环与工作线程重叠，跳帧退化为环内丢
+ * 弃（不做转换/拷贝）；强缩小显示走 omp 盒滤波预缩小 + COLORONCOLOR
+ *（替代每帧两路 HALFTONE，消除 4K 播放显示瓶颈）。
+ * 融合装帧/解包（与 pack_input/unpack_output + fill_dib 逐位一致，
+ * 只省整帧中转搬运）：GPU 链 nv12 槽位一趟转 g_in + 原图 DIB（免
+ * rgb24 中转与 24MB 槽位拷贝）；软解/BMP/图案 rgb24 同趟出 g_in +
+ * DIB；解包 hsl/rgb 直写 BGR DIB（免 g_rgb_dst 中转）。批模式保持
+ * 旧四段路径（read/pack/run/unpack，哈希口径不变）。
  * OpenMP 线程数封顶 16（大核数机器上 vcomp 空转自旋会占满全机核），
  * ffmpeg 解码/滤镜线程封顶 FF_DEC_THREADS（默认 auto 按逻辑核数开
  * 线程，大核数机器上软解重载源会起上百个解码线程把内存带宽打满），
@@ -598,6 +634,12 @@ ${needCsc ? '\n#include "isp_csc_common.h" /* HSL 端口装帧/显示转换 */\n
 #define BAR_H 32
 #define PROG_H 14
 #define STATUS_H 22
+#define WM_APP_FRAME (WM_APP + 1) /* 管线工作线程 → UI：新帧已发布 */
+/* Win10 1803+ 高分辨率可等待定时器（旧 SDK 无此宏；创建失败回退事件等
+ * 待，见 wait_ms）。 */
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
 /* ffmpeg 解码（-threads）与滤镜（-filter_threads）线程封顶：默认 auto
  * 按逻辑核数开线程，112 核机上软解 4K Rext 会起上百个解码线程打满内
  * 存带宽（内存硬件处于边缘状态的机器因此被压出 WHEA 可更正错误风暴
@@ -607,25 +649,47 @@ ${needCsc ? '\n#include "isp_csc_common.h" /* HSL 端口装帧/显示转换 */\n
 static int g_w = DEFW, g_h = DEFH;
 static int g_frames = 120; /* 测试图案动画帧数（循环） */
 static unsigned char *g_rgb_src = NULL, *g_rgb_dst = NULL;
-static unsigned char *g_nv12 = NULL; /* GPU 链 nv12 交付帧缓冲（1.5B/px） */
-static int g_ff_nv12 = 0;            /* 当前解码流是否 nv12（GPU 链恒为 1） */
+static int g_ff_nv12 = 0; /* 当前解码流是否 nv12（GPU 链恒为 1，帧环槽位
+                             只用前 1.5B/px；消费时转 rgb24） */
 static uint16_t *g_in = NULL, *g_out = NULL;
 static void *g_scratch = NULL;
 static size_t g_scratch_bytes = 0;
 static int g_frame = 0;
 static int g_single_mode = 0;    /* 0=并列 1=单视频 */
 static int g_show_processed = 1; /* 单视频当前路：0=原图 1=处理后 */
-static int g_playing = 1;
+static volatile int g_playing = 1; /* UI 写、管线工作线程读 */
 static DWORD g_proc_ms = 0; /* 上一帧管线 {TOP}_run 本体耗时（控制条显示） */
 /* ---- 进度条拖动（播放/暂停中均可，不改变播放状态）---- */
-static int g_dragging = 0;       /* 拖动中（SetCapture 跟踪鼠标） */
+static volatile int g_dragging = 0; /* 拖动中（SetCapture 跟踪鼠标；UI 写、
+                                       管线工作线程读——拖动期间工作线程暂
+                                       停走帧，见 pipe_worker） */
 static double g_drag_frac = 0.0; /* 拖动中的显示位置（未节流，即时跟随） */
 static int g_drag_moved = 0;     /* 本次拖动移动过（纯点击松开不重复 seek） */
 static DWORD g_last_seek = 0;    /* 图案/BMP 拖动跳帧节流（~150ms/次；
                                     视频拖动由预览工作线程天然限速） */
 static CRITICAL_SECTION g_prev_cs; /* 预览 DIB 读写锁（预览工作线程 ↔
                                       绘制互斥；WinMain 初始化） */
-static HBITMAP g_dib_src = NULL, g_dib_dst = NULL;
+/* ---- 帧三缓冲（管线工作线程写 / UI 线程读，SPSC 免锁免撕裂）----
+ * 下标恒为 {0,1,2} 的排列：worker 写 g_pb_write，完成后与 g_pb_ready
+ * 原子交换发布；UI 绘制前与 g_pb_show 原子交换认领最新。worker 写的
+ * 永远不是 UI 正显示的那组。 */
+#define PBUF_N 3
+static HBITMAP g_pb_src[PBUF_N], g_pb_dst[PBUF_N];
+static unsigned char *g_pb_src_bits[PBUF_N], *g_pb_dst_bits[PBUF_N];
+static volatile LONG g_pb_ready = 0; /* 最新完成帧下标 */
+static LONG g_pb_show = 1;           /* UI 私有：当前显示下标 */
+static LONG g_pb_write = 2;          /* worker 私有：写入下标 */
+/* ---- 管线工作线程（WinMain 启动，WM_DESTROY 汇合）---- */
+static HWND g_hwnd_main = NULL;
+static HANDLE g_pipe_thread = NULL;
+static HANDLE g_pipe_evt = NULL;   /* 手复事件：seek/暂停恢复/拖动状态/退出 */
+static HANDLE g_hires_timer = NULL; /* 高分辨率可等待定时器（可空，见
+                                       wait_ms） */
+static volatile int g_pipe_quit = 0;
+static CRITICAL_SECTION g_stream_cs; /* 解码流句柄互斥（管线工作线程 ↔
+                                        子进程预览回退路径；WinMain 初始化） */
+static volatile LONG g_seek_seq = 0;    /* seek 请求序号（post_seek 递增） */
+static volatile double g_seek_frac = 0.0; /* seek 请求位置（先于序号写） */
 
 /* 实时帧率统计：最近 1s 上屏时间戳环形缓冲。 */
 static DWORD g_ftimes[128];
@@ -788,11 +852,12 @@ static HBITMAP g_dib_prev = NULL;
 static unsigned char *g_dib_prev_bits = NULL;
 static char g_av_dir[MAX_PATH] = ""; /* --avdir：libav* DLL 目录 */
 
+/* 预读环前向声明（定义在 read_exact/nv12_to_rgb709 之后，见 ff_next_frame
+ * 前的「解码预读环」段）。 */
+static int ring_start(void);
+static void ring_stop(void);
+
 static void ff_kill(void) {
-  if (g_ff_rd != NULL) {
-    CloseHandle(g_ff_rd);
-    g_ff_rd = NULL;
-  }
   if (g_ff_pi_valid) {
     TerminateProcess(g_ff_pi.hProcess, 0);
     /* 等进程真正退出再返回：进度条拖动会连续快速重建解码流，旧 ffmpeg
@@ -803,6 +868,14 @@ static void ff_kill(void) {
     CloseHandle(g_ff_pi.hThread);
     g_ff_pi_valid = 0;
   }
+  /* 先终止子进程（管道断裂使读者线程阻塞的 ReadFile 出错返回）、停读
+   * 者线程，最后才关读端句柄——避免读者阻塞在 ReadFile 期间句柄被关
+   *（句柄关闭与在途 I/O 并发是未定义行为）。 */
+  ring_stop();
+  if (g_ff_rd != NULL) {
+    CloseHandle(g_ff_rd);
+    g_ff_rd = NULL;
+  }
 }
 
 /* 以 -ss start 起解码流；返回 0 成功。[preview] 为拖动预览形态：恒软解
@@ -811,7 +884,7 @@ static void ff_kill(void) {
  *（-noaccurate_seek，不解码 GOP 前向帧）。4K VP9 源实测 ~0.5s/次
  *（进程重启 + 单帧软解），比完整 seek + 管线处理（~1s+）快一倍以上；
  * 拖动预览的真瓶颈是子进程模式本身，播放器级顺滑需常驻解码器。
- *（见 seek_preview/seek_to_frac）。 */
+ *（见 seek_preview/worker_seek）。 */
 static int ff_spawn_ex(double start_sec, int preview) {
   SECURITY_ATTRIBUTES sa;
   HANDLE rd = NULL, wr = NULL, nul = NULL;
@@ -819,11 +892,12 @@ static int ff_spawn_ex(double start_sec, int preview) {
   char cmd[MAX_PATH * 2 + 256];
   char ss[48];
   /* 匿名管道默认缓冲仅 ~4KB：4K 帧 24MB 会被切成数千次小块读写（每次
-   * 都伴随 ffmpeg 进程上下文切换），实测 500ms+/帧的元凶。GPU 解码链
-   *（CPU 侧仅 hwdownload 拷贝，负载轻）缓冲开 6 帧做解码预读，与管线/
-   * 显示重叠；软解自身吃满 FF_DEC_THREADS 个核，深缓冲只会让 ffmpeg
-   * 解码线程与管线 OpenMP 线程持续争抢（实测 run 段墙钟放大近 4 倍），
-   * 保持 2 帧——ffmpeg 填满即阻塞，自然让出核给管线。下限 1MB，上限
+   * 都伴随 ffmpeg 进程上下文切换），实测 500ms+/帧的元凶。解码预读的
+   * 主力是读者线程 + 帧环（见「解码预读环」），管道缓冲只平滑读者线
+   * 程的消费突发：GPU 解码链（CPU 侧仅 hwdownload 拷贝，负载轻）开 6
+   * 帧；软解自身吃满 FF_DEC_THREADS 个核，深缓冲只会让 ffmpeg 解码线
+   * 程与管线 OpenMP 线程持续争抢（实测 run 段墙钟放大近 4 倍），保持
+   * 2 帧——ffmpeg 填满即阻塞，自然让出核给管线。下限 1MB，上限
    * 64MB。 */
   /* GPU 链交付 nv12（每像素 1.5 字节，实测 ~111fps；rgb24 每像素 3 字节
    * 只有 ~57fps——4K 原生播放交付瓶颈），软解/预览保持 rgb24（批模式哈
@@ -908,6 +982,12 @@ static int ff_spawn_ex(double start_sec, int preview) {
   g_ff_rd = rd;
   g_video_eof = 0;
   g_pos = start_sec;
+  /* 主流解码起预读读者线程（解码与处理/显示重叠，见「解码预读环」）；
+   * 预览单帧流不起（拖动高频重建进程，读者线程只服务连续播放/批模式）。 */
+  if (!preview && ring_start() != 0) {
+    ff_kill();
+    return 1;
+  }
   return 0;
 }
 
@@ -960,24 +1040,247 @@ static void nv12_to_rgb709(const unsigned char *nv, unsigned char *rgb,
   }
 }
 
-/* 读下一帧到 g_rgb_src（g_ff_nv12 时先读 nv12 再转换）：0 成功，-1
- * EOF/失败。 */
-static int ff_next_frame(void) {
-  if (g_ff_nv12) {
-    if (read_exact(g_nv12, (size_t)g_w * g_h * 3 / 2) != 0) return -1;
-    nv12_to_rgb709(g_nv12, g_rgb_src, g_w, g_h);
-  } else if (read_exact(g_rgb_src, (size_t)g_w * g_h * 3) != 0) {
+/* ---- 融合装帧/解包（窗口模式管线工作线程）----
+ * 与 pack_input/unpack_output + fill_dib 同数学口径逐位一致，只省整帧
+ * 中转（g_rgb_src/g_rgb_dst 物化与 fill_dib 的 RGB↔BGR 换序）：4K 下
+ * 整帧内存搬运从 ~156MB/帧降到 ~84MB/帧。批模式不用（保持旧四段路径，
+ * 哈希口径不变）。 */
+
+/* rgb24 源（软解槽位/BMP/图案）一趟出 g_in + 原图 DIB（BGR）。 */
+static void pack_fused_rgb24(const unsigned char *rgb, uint16_t *in,
+                             unsigned char *dib, int w, int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    const unsigned char *s = rgb + (size_t)y * (size_t)w * 3u;
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x < w; x++) {
+      const int r = s[x * 3], g = s[x * 3 + 1], b = s[x * 3 + 2];
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      d[x * 3] = (unsigned char)b;
+      d[x * 3 + 1] = (unsigned char)g;
+      d[x * 3 + 2] = (unsigned char)r;
+      $packFusedPx
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}
+
+/* GPU 链 nv12 源一趟出 g_in + 原图 DIB：nv12→rgb Q8 定点（与
+ * nv12_to_rgb709 同式）→ 钳位字节 → 装帧（与 pack 同口径）。旧路径的
+ * rows = h & ~1 末行缺口在此一并补齐（视频恒偶数行，仅影响奇高 BMP
+ * 级边角）。 */
+static void pack_fused_nv12(const unsigned char *nv, uint16_t *in,
+                            unsigned char *dib, int w, int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    const unsigned char *yp = nv + (size_t)y * (size_t)w;
+    const unsigned char *uv =
+        nv + (size_t)w * (size_t)h + (size_t)(y >> 1) * (size_t)w;
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x < w; x += 2) {
+      const int u = uv[x] - 128, v = uv[x + 1] - 128;
+      int k;
+      for (k = 0; k < 2 && x + k < w; k++) {
+        const int yy = yp[x + k] - 16;
+        const int rq = (298 * yy + 459 * v + 128) >> 8;
+        const int gq = (298 * yy - 55 * u - 136 * v + 128) >> 8;
+        const int bq = (298 * yy + 541 * u + 128) >> 8;
+        const int r = rq < 0 ? 0 : (rq > 255 ? 255 : rq);
+        const int g = gq < 0 ? 0 : (gq > 255 ? 255 : gq);
+        const int b = bq < 0 ? 0 : (bq > 255 ? 255 : bq);
+        const size_t px = (size_t)y * (size_t)w + (size_t)(x + k);
+        d[(x + k) * 3] = (unsigned char)b;
+        d[(x + k) * 3 + 1] = (unsigned char)g;
+        d[(x + k) * 3 + 2] = (unsigned char)r;
+        $packFusedPx
+      }
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}
+
+/* 融合解包：g_out 直写 BGR 到处理后 DIB（免 g_rgb_dst 中转）。 */
+static void unpack_fused(const uint16_t *out, unsigned char *dib, int w,
+                         int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x < w; x++) {
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      $unpackFusedPx
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}
+
+/* ---- 解码预读环（读者线程 + RING_N 帧环形缓冲）----
+ * UI 线程同步读管道的旧形态下，ffmpeg 子进程只有几帧管道缓冲：UI 处理/
+ * 显示期间子进程被管道写满阻塞，解码交付退化为与处理串行，追赶期的跳
+ * 帧读又被解码速度节流（实测 4K60 源窗口模式仅 ~1fps（GPU 链）/~8fps
+ *（软解），而纯解码交付能力实测 200~390fps——瓶颈 100% 在同步耦合）。
+ * 读者线程持续 drain 管道入环，解码与处理/显示/跳帧完全重叠；丢帧保速
+ * 的跳帧退化为环内丢弃（跳过 nv12 转换/拷贝）。
+ * 槽位按 rgb24 最大尺寸分配一次（GPU 链只用前 1.5B/px），spawn 复用；
+ * 消费槽位在转换/拷贝完成前经 g_r_held 扣留，不归还读者覆写。 */
+#define RING_N 4
+static unsigned char *g_ring[RING_N];
+static int g_r_head = 0, g_r_count = 0, g_r_held = 0;
+static int g_r_eof = 0, g_r_quit = 0;
+static CRITICAL_SECTION g_r_cs;
+static CONDITION_VARIABLE g_r_has_data, g_r_has_room;
+static HANDLE g_r_thread = NULL;
+
+static DWORD WINAPI ring_reader(LPVOID p) {
+  const size_t fb =
+      g_ff_nv12 ? (size_t)g_w * g_h * 3 / 2 : (size_t)g_w * g_h * 3;
+  (void)p;
+  for (;;) {
+    int slot;
+    EnterCriticalSection(&g_r_cs);
+    while (g_r_count + g_r_held >= RING_N && !g_r_quit) {
+      SleepConditionVariableCS(&g_r_has_room, &g_r_cs, INFINITE);
+    }
+    if (g_r_quit) {
+      LeaveCriticalSection(&g_r_cs);
+      return 0;
+    }
+    slot = (g_r_head + g_r_count) % RING_N;
+    LeaveCriticalSection(&g_r_cs);
+    /* 阻塞读在锁外进行：EOF/子进程终止（ff_kill）时 read_exact 返回 -1。 */
+    if (read_exact(g_ring[slot], fb) != 0) {
+      EnterCriticalSection(&g_r_cs);
+      g_r_eof = 1;
+      WakeAllConditionVariable(&g_r_has_data);
+      LeaveCriticalSection(&g_r_cs);
+      return 0;
+    }
+    EnterCriticalSection(&g_r_cs);
+    g_r_count++;
+    WakeConditionVariable(&g_r_has_data);
+    LeaveCriticalSection(&g_r_cs);
+  }
+}
+
+/* 起读者线程（主流 spawn 成功后调用；槽位首次分配、随后 spawn 复用）。 */
+static int ring_start(void) {
+  int i;
+  for (i = 0; i < RING_N; i++) {
+    if (g_ring[i] == NULL) {
+      g_ring[i] = (unsigned char *)malloc((size_t)g_w * g_h * 3);
+      if (g_ring[i] == NULL) return 1;
+    }
+  }
+  g_r_head = g_r_count = g_r_held = 0;
+  g_r_eof = g_r_quit = 0;
+  g_r_thread = CreateThread(NULL, 0, ring_reader, NULL, 0, NULL);
+  return g_r_thread == NULL;
+}
+
+/* 停读者线程（ff_kill 在子进程终止后调用：管道断裂使阻塞的 ReadFile 出
+ * 错返回，quit 标志双保险；槽位保留复用）。 */
+static void ring_stop(void) {
+  if (g_r_thread != NULL) {
+    EnterCriticalSection(&g_r_cs);
+    g_r_quit = 1;
+    WakeAllConditionVariable(&g_r_has_data);
+    WakeAllConditionVariable(&g_r_has_room);
+    LeaveCriticalSection(&g_r_cs);
+    WaitForSingleObject(g_r_thread, 5000);
+    CloseHandle(g_r_thread);
+    g_r_thread = NULL;
+  }
+}
+
+/* 从帧环取一帧：[drop] 为 1 仅丢弃（丢帧保速的跳帧，不做 nv12 转换/拷
+ * 贝），为 0 交付到 g_rgb_src（GPU 链 nv12→rgb24 omp 转换）：0 成功，
+ * -1 EOF/失败。g_pos 每取一帧推进 1/fps（丢弃帧同样推进，与旧口径一致）。 */
+static int ring_take(int drop) {
+  int slot;
+  EnterCriticalSection(&g_r_cs);
+  while (g_r_count == 0 && !g_r_eof) {
+    SleepConditionVariableCS(&g_r_has_data, &g_r_cs, INFINITE);
+  }
+  if (g_r_count == 0) {
+    LeaveCriticalSection(&g_r_cs);
     return -1;
+  }
+  slot = g_r_head;
+  g_r_head = (g_r_head + 1) % RING_N;
+  g_r_count--;
+  if (drop) {
+    /* 丢弃帧不读槽位内容，立即归还读者。 */
+    WakeConditionVariable(&g_r_has_room);
+    LeaveCriticalSection(&g_r_cs);
+  } else {
+    /* 消费槽位扣留至转换/拷贝完成（锁外进行），再归还读者。 */
+    g_r_held = 1;
+    LeaveCriticalSection(&g_r_cs);
+    if (g_ff_nv12) {
+      nv12_to_rgb709(g_ring[slot], g_rgb_src, g_w, g_h);
+    } else {
+      memcpy(g_rgb_src, g_ring[slot], (size_t)g_w * g_h * 3);
+    }
+    EnterCriticalSection(&g_r_cs);
+    g_r_held = 0;
+    WakeConditionVariable(&g_r_has_room);
+    LeaveCriticalSection(&g_r_cs);
   }
   g_pos += 1.0 / g_vfps;
   return 0;
 }
 
-/* 只解码不处理地跳过 n 帧（丢帧对齐墙钟用）：0 成功，-1 EOF/失败。 */
+/* 读下一帧到 g_rgb_src（帧环消费；g_ff_nv12 时槽位为 nv12、消费时转
+ * rgb24）：0 成功，-1 EOF/失败。 */
+static int ff_next_frame(void) {
+  return ring_take(0);
+}
+
+/* 只解码不处理地跳过 n 帧（丢帧对齐墙钟用：环内丢弃，不做转换/拷贝）：
+ * 0 成功，-1 EOF/失败。 */
 static int skip_frames(int n) {
   while (n-- > 0) {
-    if (ff_next_frame() != 0) return -1;
+    if (ring_take(1) != 0) return -1;
   }
+  return 0;
+}
+
+/* 帧环取一帧并融合装帧（g_in + 原图 DIB，免 g_rgb_src 整帧中转；nv12
+ * 槽位同趟 Q8 转换，rgb24 槽位直接读免 24MB 拷贝）：0 成功，-1 EOF/失
+ * 败。锁/扣留纪律与 ring_take 一致。 */
+static int worker_take_and_pack(unsigned char *dib) {
+  int slot;
+  EnterCriticalSection(&g_r_cs);
+  while (g_r_count == 0 && !g_r_eof) {
+    SleepConditionVariableCS(&g_r_has_data, &g_r_cs, INFINITE);
+  }
+  if (g_r_count == 0) {
+    LeaveCriticalSection(&g_r_cs);
+    return -1;
+  }
+  slot = g_r_head;
+  g_r_head = (g_r_head + 1) % RING_N;
+  g_r_count--;
+  g_r_held = 1;
+  LeaveCriticalSection(&g_r_cs);
+  if (g_ff_nv12) {
+    pack_fused_nv12(g_ring[slot], g_in, dib, g_w, g_h);
+  } else {
+    pack_fused_rgb24(g_ring[slot], g_in, dib, g_w, g_h);
+  }
+  EnterCriticalSection(&g_r_cs);
+  g_r_held = 0;
+  WakeConditionVariable(&g_r_has_room);
+  LeaveCriticalSection(&g_r_cs);
+  g_pos += 1.0 / g_vfps;
   return 0;
 }
 
@@ -1111,15 +1414,224 @@ static int process_frame(int f) {
   return 0;
 }
 
+/* ---- 管线工作线程（窗口模式）----
+ * 独占解码流消费与处理：帧环取帧+融合装帧 → 管线 → 融合解包 → 三缓冲
+ * 发布 → PostMessage 通知 UI。走帧按墙钟到期驱动（高分辨率可等待定时
+ * 器），丢帧保速/EOF 循环重播口径与旧 UI 线程 advance 一致。 */
+
+/* 高分辨率等待 ms（可到期的走帧等待；g_pipe_evt 上的 seek/暂停/退出可
+ * 提前唤醒——唤醒后由调用方循环重检标志）。高分辨率定时器不可用时回退
+ * 事件超时等待（系统滴答粒度，仅旧 OS）。 */
+static void wait_ms(double ms) {
+  if (ms <= 0.0 || g_pipe_evt == NULL) return;
+  if (g_hires_timer != NULL) {
+    LARGE_INTEGER t;
+    HANDLE h[2];
+    t.QuadPart = (LONGLONG)(-ms * 10000.0); /* 相对，100ns */
+    if (SetWaitableTimer(g_hires_timer, &t, 0, NULL, NULL, 0)) {
+      h[0] = g_hires_timer;
+      h[1] = g_pipe_evt;
+      WaitForMultipleObjects(2, h, FALSE, INFINITE);
+      return;
+    }
+  }
+  WaitForSingleObject(g_pipe_evt, (DWORD)(ms + 0.5));
+}
+
+/* 窗口模式处理一帧：取帧+融合装帧（g_in+原图 DIB）→ 管线 → 融合解包
+ *（处理后 DIB）。0 成功，1 失败，2 视频 EOF。计时口径：pack 段为取帧+
+ * 装帧一体（旧 read+pack 合并）。 */
+static int proc_one(int f, unsigned char *srcDib, unsigned char *dstDib) {
+  DWORD t;
+  if (g_video) {
+    t = GetTickCount();
+    if (worker_take_and_pack(srcDib) != 0) return 2;
+    g_t_pack += GetTickCount() - t;
+  } else if (g_bmp_count > 0) {
+    t = GetTickCount();
+    if (!load_bmp(g_bmp_files[f % g_bmp_count])) return 1;
+    pack_fused_rgb24(g_rgb_src, g_in, srcDib, g_w, g_h);
+    g_t_pack += GetTickCount() - t;
+  } else {
+    t = GetTickCount();
+    gen_pattern(f);
+    pack_fused_rgb24(g_rgb_src, g_in, srcDib, g_w, g_h);
+    g_t_pack += GetTickCount() - t;
+  }
+  t = GetTickCount();
+  if (${topName}_run(g_in, g_w, g_h, MAXV, g_out${hasScratch ? ', g_scratch,\n                     g_scratch_bytes' : ''}) != ISP_OK) {
+    return 1;
+  }
+  g_t_run += GetTickCount() - t;
+  g_proc_ms = GetTickCount() - t;
+  t = GetTickCount();
+  unpack_fused(g_out, dstDib, g_w, g_h);
+  g_t_unpack += GetTickCount() - t;
+  return 0;
+}
+
+/* 处理一帧并发布到三缓冲 + 通知 UI（0 成功；返回值同 proc_one）。 */
+static int proc_publish(int f) {
+  const int rc =
+      proc_one(f, g_pb_src_bits[g_pb_write], g_pb_dst_bits[g_pb_write]);
+  if (rc != 0) return rc;
+  /* 发布：写缓冲与 ready 原子交换（SPSC 三缓冲：worker 写的永远不是
+   * UI 正显示的那组，免锁免撕裂）。 */
+  g_pb_write = InterlockedExchange(&g_pb_ready, g_pb_write);
+  mark_frame();
+  PostMessage(g_hwnd_main, WM_APP_FRAME, 0, 0);
+  return 0;
+}
+
+/* 处理/上屏一个到期帧（g_stream_cs 持有；含丢帧保速与 EOF 循环重播，
+ * 口径与旧 advance 一致）：0 成功，1 失败。 */
+static int step_frame(void) {
+  int rc;
+  if (!g_video) g_frame = (g_frame + 1) % (g_frames > 0 ? g_frames : 1);
+  if (g_video && g_vfps > 0.0) {
+    /* 丢帧对齐墙钟（按原始帧率播放）：落后超过 1 帧时中间帧只解码不
+     * 处理（帧间依赖使解码无法跳读），处理/显示只做到期帧。 */
+    const int due =
+        g_frame0 + (int)((double)(GetTickCount() - g_wall0) * g_vfps / 1000.0);
+    const int behind = due - g_frame;
+    if (behind > 1) {
+      if (skip_frames(behind - 1) != 0) {
+        /* EOF：循环重播并复位墙钟。 */
+        if (ff_spawn(0.0) != 0) return 1;
+        g_frame = 0;
+        g_frame0 = 0;
+        g_wall0 = GetTickCount();
+      } else {
+        g_frame += behind - 1;
+      }
+    }
+  }
+  rc = proc_publish(g_frame);
+  if (rc == 2) {
+    /* 视频 EOF：循环重播并复位墙钟（拖动/seek 打断的流不计——调用方
+     * 在事件循环里优先处理 seek/拖动，见 pipe_worker）。 */
+    if (ff_spawn(0.0) == 0) {
+      g_frame = 0;
+      g_frame0 = 0;
+      g_wall0 = GetTickCount();
+      rc = proc_publish(0);
+    }
+  }
+  if (rc != 0) return 1;
+  if (g_video) g_frame++;
+  return 0;
+}
+
+/* 工作线程内执行的 seek（进度条落定 / 图案·BMP 拖动跳帧）：重建流 +
+ * 处理 + 发布。视频 seek 失败不回放到开头（保持当前画面），口径同旧
+ * seek_to_frac。 */
+static void worker_seek(double frac) {
+  if (frac < 0.0) frac = 0.0;
+  if (frac > 1.0) frac = 1.0;
+  if (g_video && g_duration > 0.0) {
+    if (ff_spawn(frac * g_duration) == 0) {
+      if (proc_publish(0) == 0) {
+        /* 已处理 seek 后首帧：播放墙钟自此对齐（丢帧保速见 step_frame）。 */
+        g_frame = 1;
+        g_frame0 = 1;
+        g_wall0 = GetTickCount();
+      }
+    }
+  } else if (!g_video && g_frames > 1) {
+    proc_publish((int)(frac * (g_frames - 1)));
+  }
+}
+
+static DWORD WINAPI pipe_worker(LPVOID p) {
+  int was_paused = 0;
+  LONG seen_seek = 0;
+  (void)p;
+  for (;;) {
+    ResetEvent(g_pipe_evt);
+    if (g_pipe_quit) break;
+    /* seek 请求优先（落定/非视频拖动跳帧；UI 经 post_seek 异步投递）。 */
+    {
+      const LONG s = InterlockedCompareExchange(&g_seek_seq, 0, 0);
+      if (s != seen_seek) {
+        seen_seek = s;
+        EnterCriticalSection(&g_stream_cs);
+        if (!g_pipe_quit) worker_seek(g_seek_frac);
+        LeaveCriticalSection(&g_stream_cs);
+        was_paused = 0;
+        continue;
+      }
+    }
+    if (g_pipe_quit) break;
+    /* 暂停/拖动中挂起（事件唤醒）。拖动期间主流可能已被预览流替换
+     *（子进程回退路径），不得消费；HAVE_AV 路径按设计同样冻结右侧处
+     * 理后画面。 */
+    if (!g_playing || g_dragging) {
+      was_paused = 1;
+      WaitForSingleObject(g_pipe_evt, INFINITE);
+      continue;
+    }
+    if (was_paused) {
+      /* 恢复播放：复位墙钟对齐（从当前帧继续按源帧率计速）。 */
+      was_paused = 0;
+      g_frame0 = g_frame;
+      g_wall0 = GetTickCount();
+    }
+    if (g_video && g_vfps > 0.0) {
+      /* 未到期：高分辨率等到期（事件可提前唤醒）。 */
+      const double dueMs = (double)g_wall0 +
+                           (double)(g_frame - g_frame0) * 1000.0 / g_vfps;
+      const double waitMs = dueMs - (double)GetTickCount();
+      if (waitMs > 1.0) {
+        wait_ms(waitMs);
+        continue;
+      }
+    }
+    {
+      int rc;
+      const DWORD t0 = GetTickCount();
+      EnterCriticalSection(&g_stream_cs);
+      if (g_pipe_quit) {
+        LeaveCriticalSection(&g_stream_cs);
+        break;
+      }
+      rc = step_frame();
+      LeaveCriticalSection(&g_stream_cs);
+      if (rc != 0 && !g_pipe_quit) {
+        /* 失败停播（画面保持；拖动/seek 竞态导致的流断裂不计——那
+         * 些路径由 seek 请求重建）。 */
+        if (!g_dragging &&
+            InterlockedCompareExchange(&g_seek_seq, 0, 0) == seen_seek) {
+          g_playing = 0;
+        }
+        PostMessage(g_hwnd_main, WM_APP_FRAME, 0, 0);
+      }
+      if (!g_video) {
+        /* 图案/BMP：30ms 走帧节奏（旧 SetTimer 口径）。 */
+        const double el = (double)(GetTickCount() - t0);
+        if (el < 30.0) wait_ms(30.0 - el);
+      }
+    }
+  }
+  return 0;
+}
+
+/* UI 投递 seek 请求（进度条落定 / 图案·BMP 拖动跳帧）：工作线程认领
+ * 后重建流 + 处理 + 发布（UI 不阻塞；位置先于序号写，worker 见新序
+ * 号必见新位置）。 */
+static void post_seek(double frac) {
+  g_seek_frac = frac;
+  InterlockedIncrement(&g_seek_seq);
+  SetEvent(g_pipe_evt);
+}
+
 static int alloc_all(void) {
   g_scratch_bytes = ${hasScratch ? '(size_t)${macro}_SCRATCH_BYTES(g_w, g_h, MAXV)' : '0'};
   g_rgb_src = (unsigned char *)malloc((size_t)g_w * g_h * 3);
   g_rgb_dst = (unsigned char *)malloc((size_t)g_w * g_h * 3);
-  g_nv12 = (unsigned char *)malloc((size_t)g_w * g_h * 3 / 2);
   g_in = (uint16_t *)malloc((size_t)g_w * g_h * 3 * sizeof(uint16_t));
   g_out = (uint16_t *)malloc((size_t)g_w * g_h * 3 * sizeof(uint16_t));
   g_scratch = malloc(g_scratch_bytes > 0 ? g_scratch_bytes : 1);
-  return g_rgb_src && g_rgb_dst && g_nv12 && g_in && g_out && g_scratch;
+  return g_rgb_src && g_rgb_dst && g_in && g_out && g_scratch;
 }
 
 /* ---- 批模式：--frames N --dump-hash ---- */
@@ -1153,10 +1665,9 @@ static int batch_run(int frames) {
   return 0;
 }
 
-/* ---- DIB 显示缓冲（24bpp 自上而下，BGR）：DIB 段只在装帧时创建一次，
- * 逐帧原地重写像素（每帧 CreateDIBSection/DeleteObject 的 GDI 对象
- * 分配是帧率大坑）。---- */
-static unsigned char *g_dib_src_bits = NULL, *g_dib_dst_bits = NULL;
+/* ---- DIB 显示缓冲（24bpp 自上而下，BGR）：三缓冲 DIB 段只在装帧时
+ * 创建一次（每帧 CreateDIBSection/DeleteObject 的 GDI 对象分配是帧率
+ * 大坑），工作线程写后缓冲、原子交换发布（见 proc_publish）。---- */
 
 static void fill_dib(unsigned char *bits, const unsigned char *rgb, int w,
                      int h) {
@@ -1177,8 +1688,9 @@ static void fill_dib(unsigned char *bits, const unsigned char *rgb, int w,
   }
 }
 
-static int alloc_dibs(void) {
+static int alloc_pbufs(void) {
   BITMAPINFO bi;
+  int i;
   memset(&bi, 0, sizeof(bi));
   bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
   bi.bmiHeader.biWidth = g_w;
@@ -1186,19 +1698,17 @@ static int alloc_dibs(void) {
   bi.bmiHeader.biPlanes = 1;
   bi.bmiHeader.biBitCount = 24;
   bi.bmiHeader.biCompression = BI_RGB;
-  g_dib_src =
-      CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, (void **)&g_dib_src_bits,
-                       NULL, 0);
-  g_dib_dst =
-      CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, (void **)&g_dib_dst_bits,
-                       NULL, 0);
-  return g_dib_src != NULL && g_dib_dst != NULL && g_dib_src_bits != NULL &&
-         g_dib_dst_bits != NULL;
-}
-
-static void update_dibs(void) {
-  fill_dib(g_dib_src_bits, g_rgb_src, g_w, g_h);
-  fill_dib(g_dib_dst_bits, g_rgb_dst, g_w, g_h);
+  for (i = 0; i < PBUF_N; i++) {
+    g_pb_src[i] = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS,
+                                   (void **)&g_pb_src_bits[i], NULL, 0);
+    g_pb_dst[i] = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS,
+                                   (void **)&g_pb_dst_bits[i], NULL, 0);
+    if (g_pb_src[i] == NULL || g_pb_dst[i] == NULL ||
+        g_pb_src_bits[i] == NULL || g_pb_dst_bits[i] == NULL) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 /* 预览 DIB/缓冲（尺寸随视频确定，首次拖动预览时创建）。 */
@@ -1726,6 +2236,9 @@ static void draw(HDC dc, const RECT *client) {
   HBRUSH progFg = CreateSolidBrush(RGB(33, 150, 243));
   wchar_t text[160];
   double frac = 0.0;
+  /* 认领最新完成帧（工作线程三缓冲发布；拖动中工作线程暂停，ready 不
+   * 变，右侧处理后画面自然冻结）。 */
+  g_pb_show = InterlockedExchange(&g_pb_ready, g_pb_show);
   FillRect(mem, client, black);
   FillRect(mem, &barR, bar);
   draw_button(mem, &BTN_MODE, g_single_mode ? L"模式: 单视频" : L"模式: 并列",
@@ -1755,8 +2268,11 @@ static void draw(HDC dc, const RECT *client) {
                     g_prev_h);
       LeaveCriticalSection(&g_prev_cs);
     } else {
-      blit_dib(mem, g_show_processed ? g_dib_dst : g_dib_src,
-             g_show_processed ? g_dib_dst_bits : g_dib_src_bits, &dst);
+      blit_dib(mem,
+               g_show_processed ? g_pb_dst[g_pb_show] : g_pb_src[g_pb_show],
+               g_show_processed ? g_pb_dst_bits[g_pb_show]
+                                : g_pb_src_bits[g_pb_show],
+               &dst);
     }
   } else {
     const int halfW = area.right / 2;
@@ -1769,9 +2285,9 @@ static void draw(HDC dc, const RECT *client) {
                     g_prev_h);
       LeaveCriticalSection(&g_prev_cs);
     } else {
-      blit_dib(mem, g_dib_src, g_dib_src_bits, &l);
+      blit_dib(mem, g_pb_src[g_pb_show], g_pb_src_bits[g_pb_show], &l);
     }
-    blit_dib(mem, g_dib_dst, g_dib_dst_bits, &rr);
+    blit_dib(mem, g_pb_dst[g_pb_show], g_pb_dst_bits[g_pb_show], &rr);
     if (g_dragging && g_video) dim_rect(mem, &rr);
     {
       HBRUSH divb = CreateSolidBrush(RGB(90, 90, 90));
@@ -1828,83 +2344,6 @@ static void draw(HDC dc, const RECT *client) {
   DeleteObject(progBg);
   DeleteObject(progFg);
   DeleteObject(bar);
-}
-
-static void advance(HWND hwnd) {
-  int rc;
-  if (!g_video) g_frame = (g_frame + 1) % (g_frames > 0 ? g_frames : 1);
-  if (g_video && g_vfps > 0.0) {
-    /* 丢帧对齐墙钟（按原始帧率播放）：落后超过 1 帧时中间帧只解码不
-     * 处理（帧间依赖使解码无法跳读），处理/显示只做到期帧——运动速度
-     * 即源帧率，显示帧率随吞吐（状态栏 fps 为处理到的帧率）。 */
-    const int due =
-        g_frame0 + (int)((double)(GetTickCount() - g_wall0) * g_vfps / 1000.0);
-    const int behind = due - g_frame;
-    if (behind > 1) {
-      if (skip_frames(behind - 1) != 0) {
-        /* EOF：循环重播并复位墙钟。 */
-        if (ff_spawn(0.0) != 0) {
-          g_playing = 0;
-          InvalidateRect(hwnd, NULL, FALSE);
-          return;
-        }
-        g_frame = 0;
-        g_frame0 = 0;
-        g_wall0 = GetTickCount();
-      } else {
-        g_frame += behind - 1;
-      }
-    }
-  }
-  rc = process_frame(g_frame);
-  if (rc == 2) {
-    /* 视频 EOF：循环重播并复位墙钟。 */
-    if (ff_spawn(0.0) == 0) {
-      g_frame = 0;
-      g_frame0 = 0;
-      g_wall0 = GetTickCount();
-      rc = process_frame(g_frame);
-    }
-  }
-  if (rc != 0) {
-    g_playing = 0;
-    InvalidateRect(hwnd, NULL, FALSE);
-    return;
-  }
-  if (g_video) g_frame++;
-  update_dibs();
-  mark_frame();
-  InvalidateRect(hwnd, NULL, FALSE);
-}
-
-/* 跳转到 frac（0..1）：视频按 -ss 重启流并抽一帧，图案/BMP 按帧号。
- * 进度条松开/点击落定走此（播放/暂停中均生效，不改变播放状态）。
- * 视频首帧读取失败时不回放到开头（advance 的 EOF 循环重播只服务于
- * 自然播完；seek 失败保持当前画面）。 */
-static void seek_to_frac(HWND hwnd, double frac) {
-  if (frac < 0.0) frac = 0.0;
-  if (frac > 1.0) frac = 1.0;
-  if (g_video && g_duration > 0.0) {
-    if (ff_spawn(frac * g_duration) == 0) {
-      const int rc = process_frame(0);
-      if (rc == 0) {
-        update_dibs();
-        mark_frame();
-      }
-      /* 已处理 seek 后首帧：播放墙钟自此对齐（丢帧保速见 advance）。 */
-      g_frame = 1;
-      g_frame0 = 1;
-      g_wall0 = GetTickCount();
-      InvalidateRect(hwnd, NULL, FALSE);
-    }
-  } else if (!g_video && g_frames > 1) {
-    g_frame = (int)(frac * (g_frames - 1));
-    if (process_frame(g_frame) == 0) {
-      update_dibs();
-      mark_frame();
-    }
-    InvalidateRect(hwnd, NULL, FALSE);
-  }
 }
 
 /* ---- 拖动预览工作线程池 ----
@@ -1982,8 +2421,16 @@ static DWORD WINAPI preview_worker(void *arg) {
         }
       } else
 #endif
-      if (seek_preview(f) == 0) {
-        prev_publish(c, f, g_prev_buf);
+      {
+        /* 子进程回退预览与管线工作线程共享解码流句柄（ff_spawn_ex 会
+         * 重建主流），互斥防并发（HAVE_AV 路径实例独立，无需锁）。 */
+        int src;
+        EnterCriticalSection(&g_stream_cs);
+        src = seek_preview(f);
+        LeaveCriticalSection(&g_stream_cs);
+        if (src == 0) {
+          prev_publish(c, f, g_prev_buf);
+        }
       }
       InterlockedDecrement(&g_prev_nbusy);
       c = 0;
@@ -2014,14 +2461,11 @@ static void preview_pool_start(HWND hwnd) {
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
   case WM_CREATE:
-    /* 定时走帧：视频按探测帧率，图案/BMP 固定 30ms。 */
-    SetTimer(hwnd, 1,
-             g_video ? (UINT)(1000.0 / g_vfps + 0.5) : 30, NULL);
+    /* 走帧由管线工作线程驱动（WinMain 启动），UI 不定时不走帧。 */
     return 0;
-  case WM_TIMER:
-    /* 拖动期间主解码流已被预览流替换：暂停走帧（防止误读 EOF 触发
-     * 循环回放），松开时 seek_to_frac 重建主流。 */
-    if (g_playing && !g_dragging) advance(hwnd);
+  case WM_APP_FRAME:
+    /* 工作线程发布了新帧（三缓冲 ready 已换）：重绘时认领。 */
+    InvalidateRect(hwnd, NULL, FALSE);
     return 0;
   case WM_KEYDOWN:
     if (wp == VK_SPACE && g_single_mode) {
@@ -2043,11 +2487,9 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       InvalidateRect(hwnd, NULL, FALSE);
     } else if (hit(&BTN_PLAY, x, y)) {
       g_playing = !g_playing;
-      /* 恢复播放时复位墙钟对齐（从当前帧继续按源帧率计速）。 */
-      if (g_playing) {
-        g_frame0 = g_frame;
-        g_wall0 = GetTickCount();
-      }
+      /* 唤醒工作线程（恢复播放的墙钟复位由工作线程做，见
+       * pipe_worker 的 was_paused）。 */
+      SetEvent(g_pipe_evt);
       InvalidateRect(hwnd, NULL, FALSE);
     } else if (y >= cr.bottom - PROG_H - STATUS_H &&
                y < cr.bottom - STATUS_H) {
@@ -2057,13 +2499,15 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       g_dragging = 1;
       g_drag_moved = 0;
       SetCapture(hwnd);
+      SetEvent(g_pipe_evt); /* 工作线程尽快暂停走帧（见 pipe_worker） */
       g_drag_frac = (double)x / (cr.right > 0 ? cr.right : 1);
       if (g_video && g_duration > 0.0) {
         if (g_prev_buf == NULL) alloc_prev();
         preview_pool_start(hwnd);
         prev_post(g_drag_frac);
       } else {
-        seek_to_frac(hwnd, g_drag_frac);
+        /* 图案/BMP：投递精确跳帧请求（工作线程处理，UI 不阻塞）。 */
+        post_seek(g_drag_frac);
         g_last_seek = GetTickCount();
       }
       InvalidateRect(hwnd, NULL, FALSE);
@@ -2082,7 +2526,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (g_video && g_duration > 0.0) {
         prev_post(g_drag_frac); /* worker 只认领最新序号 */
       } else if (GetTickCount() - g_last_seek >= 150) {
-        seek_to_frac(hwnd, g_drag_frac);
+        post_seek(g_drag_frac);
         g_last_seek = GetTickCount();
       }
       InvalidateRect(hwnd, NULL, FALSE);
@@ -2100,15 +2544,16 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
        * 比画面；按下/拖动只是关键帧级预览）；图案/BMP 拖过才需要落定
        *（纯点击在按下时已是精确跳帧，不重复）。 */
       if (g_video) {
-        /* 封锁新认领并等在途解码完成（≤ 单次解码时长），防止与落定
-         * 的 ff_kill/ff_spawn 争用解码流句柄。 */
+        /* 封锁新认领并等在途解码完成（≤ 单次解码时长），落定重建在
+         * 管线工作线程上做（post_seek 异步投递，g_stream_cs 与在途
+         * 子进程预览互斥）。 */
         EnterCriticalSection(&g_claim_cs);
         g_prev_disp = g_prev_seq;
         LeaveCriticalSection(&g_claim_cs);
         while (g_prev_nbusy > 0) Sleep(5);
-        seek_to_frac(hwnd, (double)x / (cr.right > 0 ? cr.right : 1));
+        post_seek((double)x / (cr.right > 0 ? cr.right : 1));
       } else if (g_drag_moved) {
-        seek_to_frac(hwnd, (double)x / (cr.right > 0 ? cr.right : 1));
+        post_seek((double)x / (cr.right > 0 ? cr.right : 1));
       }
       InvalidateRect(hwnd, NULL, FALSE);
     }
@@ -2116,6 +2561,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   }
   case WM_CAPTURECHANGED:
     g_dragging = 0;
+    SetEvent(g_pipe_evt); /* 工作线程重估拖动/暂停状态 */
     return 0;
   case WM_PAINT: {
     PAINTSTRUCT ps;
@@ -2127,7 +2573,15 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return 0;
   }
   case WM_DESTROY:
-    KillTimer(hwnd, 1);
+    /* 先汇合管线工作线程（事件唤醒 + 等退出），再停预览线程/释放资
+     * 源——工作线程可能正持有 g_stream_cs 处理或阻塞在帧环等待。 */
+    g_pipe_quit = 1;
+    SetEvent(g_pipe_evt);
+    if (g_pipe_thread != NULL) {
+      WaitForSingleObject(g_pipe_thread, 10000);
+      CloseHandle(g_pipe_thread);
+      g_pipe_thread = NULL;
+    }
     if (g_prev_nthreads > 0) {
       int i;
       g_prev_quit = 1;
@@ -2179,6 +2633,17 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
   SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
   InitializeCriticalSection(&g_prev_cs); /* 预览 DIB 读写锁（拖动预览） */
   InitializeCriticalSection(&g_claim_cs); /* 预览请求/认领锁（同上） */
+  InitializeCriticalSection(&g_r_cs); /* 解码预读环（读者线程 ↔ 消费） */
+  InitializeCriticalSection(&g_stream_cs); /* 解码流句柄（管线工作线程 ↔
+                                              子进程预览回退） */
+  InitializeConditionVariable(&g_r_has_data);
+  InitializeConditionVariable(&g_r_has_room);
+  g_pipe_evt = CreateEvent(NULL, TRUE, FALSE, NULL); /* 手复：seek/暂停/
+                                                        拖动/退出唤醒 */
+  /* Win10 1803+ 高分辨率可等待定时器（走帧到期等待；创建失败回退事件
+   * 超时等待，见 wait_ms）。 */
+  g_hires_timer = CreateWaitableTimerExW(
+      NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
 
   /* 命令行：--frames N / --dump-hash / --bmp <路径> /
    * --video <路径> --ffmpeg <ffmpeg路径> [--scale WxH] [--swdec] */
@@ -2244,7 +2709,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
     return batch_run(frames >= 0 ? frames : (g_video ? 0x7fffffff : g_frames));
   }
   if (!alloc_all()) return 2;
-  if (!alloc_dibs()) return 2;
+  if (!alloc_pbufs()) return 2;
 #if HAVE_AV
   /* 内嵌解码器：加载 libav* DLL 并解析符号表（解码器实例由预览工作
    * 线程池按需各自打开；失败回退子进程预览）。 */
@@ -2252,28 +2717,29 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
 #endif
   if (g_video) {
     /* GPU 解码链自动探测：先按 CUDA 起流读首帧；读不到（硬解初始化
-     * 失败，如 Rext 4:2:2 NVDEC 不支持）回退软解重起流再试。 */
+     * 失败，如 Rext 4:2:2 NVDEC 不支持）回退软解重起流再试。首帧处
+     * 理并发布到三缓冲（窗口未建时 PostMessage 空目标静默失败，
+     * WM_PAINT 时经 ready 认领）。 */
     int rc;
     if (g_hw) {
-      rc = ff_spawn(0.0) == 0 ? process_frame(0) : 2;
+      rc = ff_spawn(0.0) == 0 ? proc_publish(0) : 2;
       if (rc != 0) {
         g_hw = 0;
-        rc = ff_spawn(0.0) == 0 ? process_frame(0) : 2;
+        rc = ff_spawn(0.0) == 0 ? proc_publish(0) : 2;
       }
     } else {
-      rc = ff_spawn(0.0) == 0 ? process_frame(0) : 2;
+      rc = ff_spawn(0.0) == 0 ? proc_publish(0) : 2;
     }
     if (rc != 0) return 1;
-  } else if (process_frame(0) != 0) {
+  } else if (proc_publish(0) != 0) {
     return 1;
   }
-  /* 播放墙钟起点：首帧已处理（丢帧保速对齐，见 advance）。 */
+  /* 播放墙钟起点：首帧已处理（丢帧保速对齐，见 step_frame）。 */
   if (g_video) {
     g_frame = 1;
     g_frame0 = 1;
     g_wall0 = GetTickCount();
   }
-  update_dibs();
 
   memset(&wc, 0, sizeof(wc));
   wc.lpfnWndProc = wnd_proc;
@@ -2290,8 +2756,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
                        wr.bottom - wr.top, NULL, NULL, hInst, NULL);
   ShowWindow(hwnd, nShow);
   UpdateWindow(hwnd);
-  /* 提高系统定时器分辨率：否则 SetTimer 最小粒度 ~15.6ms，60fps
-   * 走帧不可达。进程退出前配对恢复。 */
+  /* 启动管线工作线程：解码消费/处理/三缓冲发布全在工作线程，UI 只
+   * 绘制与输入（创建失败退化为静态首帧，不影响查看）。 */
+  g_hwnd_main = hwnd;
+  g_pipe_thread = CreateThread(NULL, 0, pipe_worker, NULL, 0, NULL);
+  /* 提高系统定时器分辨率（wait_ms 回退路径与短 Sleep 的粒度；走帧主
+   * 路径用高分辨率可等待定时器，见 pipe_worker）。进程退出前配对恢复。 */
   timeBeginPeriod(1);
   while (GetMessage(&msg, NULL, 0, 0)) {
     TranslateMessage(&msg);
@@ -2685,10 +3155,13 @@ Future<CCompileResult> compileGroupCFiles(
 /// Win32 可运行验证程序的构建入口（X86/MSVC 专用）：文件集 + 生成的
 /// main_win.c（[stubMainWinSource]）→ `scratch/cc_win_check/` 下 cl 链接
 /// （追加 user32.lib gdi32.lib）出 `{topName}_win.exe`。固定产物目录
-/// （非系统临时目录），构建成功后用户可直接双击运行。
+/// （非系统临时目录），构建成功后用户可直接双击运行；工作目录不可写时
+/// （安装版）自动回退 `%LOCALAPPDATA%\DebugToolSet\cc_win_check\`。
 /// [inFormat]/[outFormat] 为编组外部输入/输出帧格式（'rgb'/'hsl'）；
-/// 需要 HSL 转换且文件集中没有 isp_csc_common.h 时，从
-/// `lib/modules/isp_studio/c_ref/` 读盘注入（工作目录相对路径）。
+/// 需要 HSL 转换且文件集中没有 isp_csc_common.h 时，优先用
+/// [cscCommonHeader]（调用方经 rootBundle 注入，安装版无 lib/ 目录）；
+/// 缺省时从 `lib/modules/isp_studio/c_ref/` 读盘注入（工作目录相对路径，
+/// 测试/开发环境行为）。
 /// [hasScratch] 透传 [stubMainWinSource]（黑盒无 scratch 参数的形态）。
 /// [maxValue] 为管线量化域（编组位深推导，见 lutDomainMaxOf）：LUT 模式
 /// 节点的查表快路径要求运行时 max_value 与烘焙域一致，缺省 255。
@@ -2699,6 +3172,7 @@ Future<CCompileResult> buildWinVerifyApp(
   String outFormat = 'rgb',
   bool hasScratch = true,
   int maxValue = 255,
+  String? cscCommonHeader,
   String? compilerPath,
   void Function(String chunk)? onOutput,
 }) async {
@@ -2729,7 +3203,10 @@ Future<CCompileResult> buildWinVerifyApp(
 
   // 固定产物目录（重建前清空，避免旧 obj/exe 混入；目录被运行中的
   // 验证程序占用时（exe 文件锁）改用带时间戳的备用目录，不打扰用户
-  // 正在运行的窗口）。
+  // 正在运行的窗口）。优先 工作目录/scratch/cc_win_check（开发机行为
+  // 不变）；创建抛 FileSystemException 时（安装到 Program Files 后
+  // 普通用户对工作目录不可写）回退 %LOCALAPPDATA%\DebugToolSet\
+  // cc_win_check（无 LOCALAPPDATA 再用系统临时目录）。
   var workDir =
       Directory('${Directory.current.path}/scratch/cc_win_check');
   if (workDir.existsSync()) {
@@ -2741,13 +3218,23 @@ Future<CCompileResult> buildWinVerifyApp(
       emit('固定产物目录被运行中的验证程序占用，改用 ${workDir.path}\n');
     }
   }
-  await workDir.create(recursive: true);
+  try {
+    await workDir.create(recursive: true);
+  } on FileSystemException {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    workDir = Directory(localAppData != null
+        ? '$localAppData\\DebugToolSet\\cc_win_check'
+        : '${Directory.systemTemp.path}/cc_win_check');
+    await workDir.create(recursive: true);
+    emit('工作目录不可写，产物目录改用 ${workDir.path}\n');
+  }
   final allFiles = Map<String, String>.of(files);
   final needCsc = inFormat == 'hsl' || outFormat == 'hsl';
   if (needCsc && !allFiles.containsKey('isp_csc_common.h')) {
-    allFiles['isp_csc_common.h'] = await File(
-            '${Directory.current.path}/lib/modules/isp_studio/c_ref/isp_csc_common.h')
-        .readAsString();
+    allFiles['isp_csc_common.h'] = cscCommonHeader ??
+        await File(
+                '${Directory.current.path}/lib/modules/isp_studio/c_ref/isp_csc_common.h')
+            .readAsString();
   }
   allFiles['main_win.c'] = stubMainWinSource(
       topName: topName,

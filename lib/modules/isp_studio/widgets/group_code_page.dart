@@ -26,6 +26,7 @@ import '../codegen/group_c_export_bb.dart';
 import '../codegen/group_c_plan.dart' show lutDomainMaxOf;
 import '../models/isp_graph.dart';
 import '../pipeline/c_def_index.dart';
+import '../pipeline/node_c_code.dart' show loadCRefFile;
 import '../pipeline/video_source.dart';
 import 'code_browser.dart';
 
@@ -282,12 +283,19 @@ class _GroupCodePageState extends State<GroupCodePage> {
       {required bool scaleDown}) async {
     final launchArgs =
         await _verifyLaunchArgs(state, group, scaleDown: scaleDown);
+    final needCsc = inFormat == 'hsl' || outFormat == 'hsl';
     final result = await buildWinVerifyApp(files,
         topName: _topName(group),
         inFormat: inFormat,
         outFormat: outFormat,
         hasScratch: hasScratch,
         maxValue: _verifyMaxValue(state, group),
+        // HSL 转换头经资产包注入（rootBundle，开发/安装版一致）；
+        // c_compile.dart 是纯 Dart 不能用 rootBundle，参数缺省时
+        // 保留磁盘回退（测试/开发环境行为不变）。
+        cscCommonHeader: needCsc && !files.containsKey('isp_csc_common.h')
+            ? await loadCRefFile('isp_csc_common.h')
+            : null,
         onOutput: onOutput);
     if (result.success && result.artifactPath != null) {
       unawaited(
@@ -474,14 +482,14 @@ class _GroupCodePageState extends State<GroupCodePage> {
                           outFormat: extOut.single.format,
                           hasScratch: hasScratch,
                           maxValue: _verifyMaxValue(state, group)),
-                      // HSL 转换头（文件集缺失时从 c_ref 读盘注入，与
-                      // buildWinVerifyApp 同口径）。
+                      // HSL 转换头（文件集缺失时经资产包注入，与
+                      // buildWinVerifyApp 同口径；rootBundle 开发/安装版
+                      // 一致，安装版无 lib/ 目录可读盘）。
                       if ((extIn.single.format == 'hsl' ||
                               extOut.single.format == 'hsl') &&
                           !files.containsKey('isp_csc_common.h'))
-                        'isp_csc_common.h': await File(
-                                '${Directory.current.path}/lib/modules/isp_studio/c_ref/isp_csc_common.h')
-                            .readAsString(),
+                        'isp_csc_common.h':
+                            await loadCRefFile('isp_csc_common.h'),
                     },
                   },
               topName: _topName(group),

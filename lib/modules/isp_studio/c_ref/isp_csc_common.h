@@ -65,11 +65,15 @@
 
 /**
  * @brief Dart double.round() 等价：四舍五入，恰为 .5 时远离零取整。
- * （Dart 的 round 是 half-away-from-zero，与 C 的 lround 语义相同，
- *   此处用 floor 显式实现，避免依赖平台 lround 的可用性。）
+ * （Dart 的 round 是 half-away-from-zero，与 C 的 lround 语义相同。）
+ *
+ * 实现用 double→int64 截断而非 floor()：非负浮点的截断取整与 floor
+ * 逐位一致（|v| 远小于 2^62，无溢出；C99 截断向零），x64 上编译为单条
+ * cvttsd2si，避免逐像素路径上的 floor libm 调用（装帧/解包每像素 3 次，
+ * 是 4K HSL 转换吞吐大头的教训）。
  */
 static inline int64_t isp_csc_dround(double v) {
-  return v >= 0.0 ? (int64_t)floor(v + 0.5) : -(int64_t)floor(-v + 0.5);
+  return v >= 0.0 ? (int64_t)(v + 0.5) : -(int64_t)(-v + 0.5);
 }
 
 /**
@@ -137,8 +141,12 @@ static inline void isp_csc_rgb_to_hsl_px(int ri, int gi, int bi, int max_value,
   if (d > 0) {
     s = l > 0.5 ? d / (2.0 - mx - mn) : d / (mx + mn);
     if (mx == r) {
-      /* Dart：((g - b) / d) % 6，欧几里得取模，结果 ∈ [0, 6) */
-      h = isp_csc_euclid_mod((g - b) / d, 6.0);
+      /* Dart：((g - b) / d) % 6，欧几里得取模，结果 ∈ [0, 6)。
+       * 快路径：mx == r 时 |g - b| ≤ mx - mn = d，故商 ∈ [-1, 1] ⊂ (-6, 6)，
+       * fmod(t, 6) 恒为 t（IEEE fmod 精确），条件加 6 与 euclid_mod 逐位
+       * 一致，省去逐像素 fmod libm 调用（-0.0 走 else 与 fmod 同为 -0.0）。 */
+      const double t = (g - b) / d;
+      h = t < 0.0 ? t + 6.0 : t;
     } else if (mx == g) {
       h = (b - r) / d + 2.0;
     } else {
@@ -165,8 +173,14 @@ static inline void isp_csc_rgb_to_hsl_px(int ri, int gi, int bi, int max_value,
 static inline void isp_csc_hsl_to_rgb_px(int hv, int sv, int lv, int max_value,
                                          double inv, int *ri, int *gi, int *bi) {
   /* Dart：(hsl[i] * inv) % 1.0 —— H = max_value 时归一化恰为 1.0，
-   * % 1.0 后环绕回 0.0（色环 360° ≡ 0°），此处逐位复刻。 */
-  const double h = isp_csc_euclid_mod(hv * inv, 1.0);
+   * % 1.0 后环绕回 0.0（色环 360° ≡ 0°），此处逐位复刻。
+   * 快路径：hv ∈ [0, 2·max_value) 时 hv*inv ∈ [0, 2)，fmod(x, 1) == x≥1 ?
+   * x-1 : x（fmod 精确、x-1 由 Sterbenz 引理精确），与 euclid_mod 逐位
+   * 一致，省去逐像素 fmod libm 调用；越界（异常输入）回退原路径。 */
+  double h = hv * inv;
+  if (h >= 1.0) {
+    h = h < 2.0 ? h - 1.0 : isp_csc_euclid_mod(h, 1.0);
+  }
   const double s = sv * inv;
   const double l = lv * inv;
   double r, g, b;

@@ -1484,6 +1484,10 @@ ${cF64Table(sMulLut)}
 static const double ${id}_l_mul_lut[${n + 1}] = {
 ${cF64Table(lMulLut)}
 };''');
+      // 整行函数（标量）：仅当本节点独占一个零延迟阶段时被 top .c 调用
+      //（见 group_c_export_bb 阶段发射特判，含 omp 行域并行）；其余形态
+      // 走融合行核，两者逐位一致。
+      s.addFileDecl('${id}_row', _lutRowFn(ctx.ident, n));
     } else {
       s.useHelper('bb_clamp_q14');
       s.addFileDecl('${id}_s_mul_q14', '''
@@ -1693,6 +1697,48 @@ static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
         ? bb_clamp_q14(in[(size_t)x * 3u + 2u], ${id}_l_mul_q14[hv],
                        max_value)
         : bb_clamp_to((double)in[(size_t)x * 3u + 2u] * l_mul, max_value);
+  }
+}''';
+}
+
+/// lut 整行函数源码（[id] 前缀，烘焙域 [n]）：标量（FP64 三表查表 +
+/// bb_clamp_to 乘加），与融合行核逐位一致；量化域失配整行走 compose
+/// 回退（与融合行核同口径）。面向 PC/验证程序的多核行域并行（top 层
+/// omp pragma）；嵌入式无 FP64 SIMD 的定点场景用 lut_fixed（Q14 +
+/// NEON 行核）。
+String _lutRowFn(String id, int n) {
+  return '''
+/* multi_band_eq lut 整行函数（标量，与融合行核逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x;
+  for (x = 0; x < w; x++) {
+    /* 标量路径（含量化域失配的 compose 回退），与融合行核逐位一致。 */
+    int hv = in[(size_t)x * 3u + 0u];
+    int32_t shift;
+    double s_mul = 1.0, l_mul = 1.0;
+    if (hv > max_value) hv = max_value;
+    if (max_value == $n) {
+      shift = ${id}_shift_lut[hv];
+      s_mul = ${id}_s_mul_lut[hv];
+      l_mul = ${id}_l_mul_lut[hv];
+    } else {
+      ${id}_compose(hv, max_value, &shift, &s_mul, &l_mul);
+    }
+    {
+      int hnew = hv + shift;
+      if (hnew > max_value) {
+        hnew -= (max_value + 1);
+      } else if (hnew < 0) {
+        hnew += (max_value + 1);
+      }
+      out[(size_t)x * 3u + 0u] = (uint16_t)hnew;
+    }
+    out[(size_t)x * 3u + 1u] =
+        bb_clamp_to((double)in[(size_t)x * 3u + 1u] * s_mul, max_value);
+    out[(size_t)x * 3u + 2u] =
+        bb_clamp_to((double)in[(size_t)x * 3u + 2u] * l_mul, max_value);
   }
 }''';
 }

@@ -106,37 +106,40 @@ class IspStudioView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<IspStudioState>();
-    return Column(
-      children: [
-        _buildToolbar(context, state),
-        const IspEditorTabBar(),
-        Expanded(
-          // IndexedStack 保持流程图画布状态（缩放/平移/选中）不丢。
-          child: IndexedStack(
-            index: state.activeTab,
-            children: [
-              Row(
-                children: [
-                  IspNodePalette(
-                      onPickCenter: () => _pickCenter(context, state)),
-                  const Expanded(child: IspNodeCanvas()),
-                  const NodePropertyPanel(),
-                ],
-              ),
-              for (final tab in state.openCodeTabs)
-                tab.startsWith('group:')
-                    ? GroupCodePage(
-                        key: ValueKey(tab), groupId: tab.substring(6))
-                    : tab.startsWith('gbb:')
-                        ? GroupCodePage(
-                            key: ValueKey(tab),
-                            groupId: tab.substring(4),
-                            blackBox: true)
-                        : NodeCodePage(key: ValueKey(tab), nodeId: tab),
-            ],
+    return _PlaybackIssueListener(
+      state: state,
+      child: Column(
+        children: [
+          _buildToolbar(context, state),
+          const IspEditorTabBar(),
+          Expanded(
+            // IndexedStack 保持流程图画布状态（缩放/平移/选中）不丢。
+            child: IndexedStack(
+              index: state.activeTab,
+              children: [
+                Row(
+                  children: [
+                    IspNodePalette(
+                        onPickCenter: () => _pickCenter(context, state)),
+                    const Expanded(child: IspNodeCanvas()),
+                    const NodePropertyPanel(),
+                  ],
+                ),
+                for (final tab in state.openCodeTabs)
+                  tab.startsWith('group:')
+                      ? GroupCodePage(
+                          key: ValueKey(tab), groupId: tab.substring(6))
+                      : tab.startsWith('gbb:')
+                          ? GroupCodePage(
+                              key: ValueKey(tab),
+                              groupId: tab.substring(4),
+                              blackBox: true)
+                          : NodeCodePage(key: ValueKey(tab), nodeId: tab),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -345,4 +348,90 @@ class IspStudioView extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 片源病灶弹窗监听：播放启动检测出片源异常（VUI 帧率虚标、无硬解
+/// 回退软解等，见 videoPlaybackIssues）时 state.playbackIssueTick 递增，
+/// 此处弹对话框逐条说明「问题在哪 + 应用已如何绕开」。state 侧已按
+/// 文件+问题类型去重（每次运行只提示一次）。
+class _PlaybackIssueListener extends StatefulWidget {
+  final IspStudioState state;
+  final Widget child;
+
+  const _PlaybackIssueListener({required this.state, required this.child});
+
+  @override
+  State<_PlaybackIssueListener> createState() =>
+      _PlaybackIssueListenerState();
+}
+
+class _PlaybackIssueListenerState extends State<_PlaybackIssueListener> {
+  @override
+  void initState() {
+    super.initState();
+    widget.state.playbackIssueTick.addListener(_onTick);
+  }
+
+  @override
+  void dispose() {
+    widget.state.playbackIssueTick.removeListener(_onTick);
+    super.dispose();
+  }
+
+  void _onTick() {
+    // 播放循环内触发：等本帧构建完再弹窗。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final issues = widget.state.playbackIssues;
+      if (issues.isEmpty) return;
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Color(0xFFE0A030), size: 20),
+              SizedBox(width: 8),
+              Text('片源问题提示'),
+            ],
+          ),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final (title, detail) in issues) ...[
+                  Text(title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 4),
+                  Text(detail,
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.white70)),
+                  const SizedBox(height: 12),
+                ],
+                const Text('以上问题应用已自动处理，不影响正常播放。',
+                    style: TextStyle(fontSize: 12, color: Colors.white38)),
+                SizedBox(height: 6),
+                const Text(
+                    '如需完整体检（帧率三角一致性、时间戳、关键帧间隔、'
+                    '交付帧数对比、冻结帧等），可在左侧节点箱 TOOLS 分类'
+                    '添加「视频健康检查」节点，对片源做快速检查。',
+                    style: TextStyle(fontSize: 12, color: Colors.white38)),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
