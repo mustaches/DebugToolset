@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
 import '../codegen/group_c_target.dart';
+import '../codegen/ip_target.dart';
 
 /// 多标签栏：首标签为节点流程图（标题用工程名，默认图显示「缺省流程」），
 /// 其后为已打开的节点/编组代码标签（标题为节点名/编组名，可关闭）。
@@ -34,7 +35,9 @@ class IspEditorTabBar extends StatelessWidget {
             _EditorTab(
               icon: tab.startsWith('group:') || tab.startsWith('gbb:')
                   ? Icons.account_tree
-                  : Icons.code,
+                  : tab.startsWith('gip:')
+                      ? Icons.memory
+                      : Icons.code,
               title: _tabTitle(state, tab),
               tooltip: '$tab — 只读代码',
               active: state.activeTab == i + 1,
@@ -61,6 +64,25 @@ class IspEditorTabBar extends StatelessWidget {
       );
     }
 
+    // 解析 `@<vendor>` 后缀（IP 标签 key 约定）。
+    (String, IpVendor?) splitVendor(String rest) {
+      final at = rest.indexOf('@');
+      if (at < 0) return (rest, null);
+      return (
+        rest.substring(0, at),
+        IpVendor.values.asNameMap()[rest.substring(at + 1)]
+      );
+    }
+
+    if (tab.startsWith('gip:')) {
+      final (groupId, vendor) = splitVendor(tab.substring(4));
+      for (final g in state.graph.groups) {
+        if (g.id == groupId) {
+          return '${g.name}·IP${vendor == null ? '' : '·${vendor.shortName}'}';
+        }
+      }
+      return '编组 IP';
+    }
     if (tab.startsWith('gbb:')) {
       final (groupId, target) = splitTarget(tab.substring(4));
       for (final g in state.graph.groups) {

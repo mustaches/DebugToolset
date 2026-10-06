@@ -13,6 +13,7 @@ import 'package:path/path.dart' as p;
 
 import '../modules/isp_studio/models/isp_align_mode.dart';
 import '../modules/isp_studio/codegen/group_c_target.dart';
+import '../modules/isp_studio/codegen/ip_target.dart';
 import '../modules/isp_studio/models/isp_graph.dart';
 import '../modules/isp_studio/models/isp_node.dart';
 import '../modules/isp_studio/pipeline/audio_analysis.dart';
@@ -263,6 +264,23 @@ class IspStudioState extends ChangeNotifier {
       {GroupCTarget target = GroupCTarget.cortexA53_55}) {
     if (!graph.groups.any((g) => g.id == groupId)) return;
     final key = 'gbb:$groupId@${target.name}';
+    final i = openCodeTabs.indexOf(key);
+    if (i >= 0) {
+      activeTab = i + 1;
+    } else {
+      openCodeTabs.add(key);
+      activeTab = openCodeTabs.length;
+    }
+    notifyListeners();
+  }
+
+  /// 打开编组 Verilog IP 标签页（key 前缀 'gip:'，带 `@<vendor>` 后缀；
+  /// 同一编组可同开多家厂商 IP 标签页）。[options] 为本页的生成选项
+  ///（厂商/位宽/行宽），同时缓存到 [sessionIpGenOptions]。
+  void openGroupIpTab(String groupId, IpGenOptions options) {
+    if (!graph.groups.any((g) => g.id == groupId)) return;
+    sessionIpGenOptions[groupId] = options;
+    final key = 'gip:$groupId@${options.vendor.name}';
     final i = openCodeTabs.indexOf(key);
     if (i >= 0) {
       activeTab = i + 1;
@@ -1551,8 +1569,10 @@ class IspStudioState extends ChangeNotifier {
       for (final key in [...openCodeTabs]) {
         if (key == 'group:$groupId' ||
             key == 'gbb:$groupId' ||
+            key == 'gip:$groupId' ||
             key.startsWith('group:$groupId@') ||
-            key.startsWith('gbb:$groupId@')) {
+            key.startsWith('gbb:$groupId@') ||
+            key.startsWith('gip:$groupId@')) {
           closeCodeTab(key);
         }
       }

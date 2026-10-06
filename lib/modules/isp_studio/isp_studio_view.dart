@@ -7,10 +7,12 @@ import 'package:provider/provider.dart';
 
 import '../../providers/isp_studio_state.dart';
 import 'codegen/group_c_target.dart';
+import 'codegen/ip_target.dart';
 import 'models/isp_align_mode.dart';
 import 'models/isp_node.dart';
 import 'widgets/editor_tab_bar.dart';
 import 'widgets/group_code_page.dart';
+import 'widgets/ip_generator_page.dart';
 import 'widgets/node_canvas.dart';
 import 'widgets/node_code_page.dart';
 import 'widgets/node_layout.dart';
@@ -31,6 +33,14 @@ GroupCTarget _groupTabTarget(String rest) {
   if (at < 0) return GroupCTarget.cortexA53_55;
   return GroupCTarget.values.asNameMap()[rest.substring(at + 1)] ??
       GroupCTarget.cortexA53_55;
+}
+
+/// IP 标签 key 后缀解析：FPGA 厂商（无/未知后缀回退通用）。
+IpVendor _ipTabVendor(String rest) {
+  final at = rest.indexOf('@');
+  if (at < 0) return IpVendor.generic;
+  return IpVendor.values.asNameMap()[rest.substring(at + 1)] ??
+      IpVendor.generic;
 }
 
 /// ISP Studio 模块根视图：工具栏 + 标签栏 + 标签页（流程图 / 节点代码）+ 状态栏。
@@ -153,7 +163,17 @@ class IspStudioView extends StatelessWidget {
                               groupId: _groupTabId(tab.substring(4)),
                               target: _groupTabTarget(tab.substring(4)),
                               blackBox: true)
-                          : NodeCodePage(key: ValueKey(tab), nodeId: tab),
+                          : tab.startsWith('gip:')
+                              ? IpGeneratorPage(
+                                  key: ValueKey(tab),
+                                  groupId: _groupTabId(tab.substring(4)),
+                                  options:
+                                      sessionIpGenOptions[_groupTabId(
+                                              tab.substring(4))] ??
+                                          IpGenOptions(
+                                              vendor:
+                                                  _ipTabVendor(tab.substring(4))))
+                              : NodeCodePage(key: ValueKey(tab), nodeId: tab),
               ],
             ),
           ),

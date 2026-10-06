@@ -11,10 +11,13 @@ import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
 import '../codegen/group_c_target.dart';
+import '../codegen/ip_target.dart';
+import '../codegen/ip_validate.dart';
 import '../models/isp_graph.dart';
 import '../models/isp_node.dart';
 import 'connection_painter.dart';
 import 'group_code_page.dart';
+import 'ip_gen_dialog.dart';
 import 'node_layout.dart';
 import 'node_widget.dart';
 
@@ -360,6 +363,9 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
         if (groupId != null)
           const PopupMenuItem(
               value: 'viewBBCode', height: 32, child: Text('查看黑盒子C代码')),
+        if (groupId != null)
+          const PopupMenuItem(
+              value: 'viewIp', height: 32, child: Text('生成Verilog IP')),
         // 分组：代码查看 / 编组管理
         if (groupId != null) const PopupMenuDivider(height: 8),
         if (groupId != null)
@@ -382,6 +388,8 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
         _pickGroupCTarget(globalPos).then((t) {
           if (t != null && mounted) _viewGroupBlackBoxCode(state, groupId, t);
         });
+      } else if (v == 'viewIp' && groupId != null) {
+        _viewGroupIpCode(state, groupId);
       } else if (v == 'rename' && groupId != null) {
         showIspGroupRenameDialog(context, state, groupId);
       } else if (v == 'ungroup' && groupId != null) {
@@ -421,6 +429,38 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
       return;
     }
     state.openGroupBlackBoxCodeTab(groupId, target: target);
+  }
+
+  /// 编组「生成Verilog IP」：先按 IP 白名单校验（不过弹错误），再弹生成
+  /// 选项对话框选厂商/参数，确定后打开 IP 标签页。与 C 代码不同——IP
+  /// 不走原位级联选 CPU，走对话框（除厂商外还有位宽/行宽等参数）。
+  Future<void> _viewGroupIpCode(IspStudioState state, String groupId) async {
+    final group = state.graph.groups.firstWhere((g) => g.id == groupId);
+    final error = validateGroupIpExport(state.graph, group);
+    if (error != null) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF2E2E2E),
+          title: const Text('无法生成Verilog IP',
+              style: TextStyle(color: Colors.white, fontSize: 14)),
+          content: Text(error,
+              style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('知道了')),
+          ],
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    final options = await showIpGenDialog(context,
+        initial: sessionIpGenOptions[groupId]);
+    if (options == null || !mounted) return;
+    state.openGroupIpTab(groupId, options);
   }
 
   @override
