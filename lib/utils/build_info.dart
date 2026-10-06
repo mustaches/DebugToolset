@@ -7,7 +7,8 @@ import 'package:flutter/foundation.dart';
 /// Flutter SDK 与 Dart 版本来自 flutter tool 构建时自动注入的
 /// dart-define（FLUTTER_VERSION / FLUTTER_DART_VERSION 等），
 /// 打包后的二进制中同样可用；编译环境（CMake 生成器，即 VS 版本）
-/// 只能在开发机上从 build/windows/x64/CMakeCache.txt 解析得到。
+/// 经 rebuild.bat 传入的 --dart-define=CMAKE_GENERATOR 烘焙，
+/// 未烘焙时回退为开发机上运行时解析 build/windows/x64/CMakeCache.txt。
 class BuildInfo {
   final String appVersion;
   final String buildNumber;
@@ -43,15 +44,31 @@ String? parseCmakeGenerator(String cmakeCacheText) {
   return (value == null || value.isEmpty) ? null : value;
 }
 
-/// 读取开发机上的 CMake 生成器标识；非开发环境（打包机器）返回 null。
+/// 构建时经 --dart-define=CMAKE_GENERATOR=... 烘焙进二进制的 CMake 生成器
+///（rebuild.bat 调用 scripts/cmake_generator.dart 自动注入；直接
+/// flutter build 时为空）。打包后的二进制中同样可用。
+const String _bakedCmakeGenerator = String.fromEnvironment('CMAKE_GENERATOR');
+
+/// 综合烘焙值与 CMakeCache 文本解析编译环境标识：烘焙值优先
+///（安装版无 build/ 目录时仍可用），其次开发机上运行时读取的缓存。
+String? resolveCmakeGenerator({String? baked, String? cmakeCacheText}) {
+  if (baked != null && baked.isNotEmpty) return baked;
+  if (cmakeCacheText == null) return null;
+  return parseCmakeGenerator(cmakeCacheText);
+}
+
+/// 解析 CMake 生成器标识；构建时烘焙值优先，缺失时回退读取开发机上的
+/// CMakeCache.txt，两者都没有（如手工 flutter build 的打包机器）返回 null。
 Future<String?> loadCmakeGenerator() async {
+  String? cacheText;
   try {
     final file = File('build/windows/x64/CMakeCache.txt');
-    if (!file.existsSync()) return null;
-    return parseCmakeGenerator(await file.readAsString());
+    if (file.existsSync()) cacheText = await file.readAsString();
   } catch (_) {
-    return null;
+    // 忽略读取失败，继续走烘焙值
   }
+  return resolveCmakeGenerator(
+      baked: _bakedCmakeGenerator, cmakeCacheText: cacheText);
 }
 
 String _shortRevision(String rev) =>

@@ -87,3 +87,8 @@ Linux_setup/Output/
 
 # scratch 下的二进制产物（dll）
 /scratch/*.dll
+
+# 随安装包分发的 Icarus Verilog / Surfer 二进制（约 62MB，不入库；缺失时从
+# C:\iverilog 与 C:\surfer 重新拷入 tools/ 即可，详见 tools/README.md）
+/tools/iverilog/
+/tools/surfer/

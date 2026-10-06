@@ -37,6 +37,9 @@ OutputDir=G:\DebugToolSet\Windows_setup\Output
 OutputBaseFilename=DebugToolset_setup
 SetupIconFile=G:\DebugToolSet\windows\runner\resources\app_icon.ico
 SolidCompression=yes
+; 多核并行压缩：LZMA2 分块并行（默认仅 1 个块线程）。16 块线程 × 匹配查找双线程
+; 约占用 32 核；内存约 16×(6MB+11.5×8MB 字典) ≈ 1.6GB
+LZMANumBlockThreads=16
 WizardStyle=modern dynamic
 
 [Languages]
