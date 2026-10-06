@@ -11,6 +11,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
@@ -163,6 +164,8 @@ class IspNodeWidget extends StatelessWidget {
                     _buildMultiplierOffsets(state),
                   if (type.typeId == 'adder') _buildAdderBalance(state),
                   if (type.typeId == 'mux4') _buildMux4Select(state),
+                  if (type.typeId == 'video_source')
+                    _buildVideoSourceExtra(state),
                   if (type.typeId == 'preview') _buildPreviewExtra(state),
                   if (type.typeId == 'hsl_debugger')
                     _buildHslDebugExtra(state),
@@ -955,6 +958,57 @@ class IspNodeWidget extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// 视频源节点附加区（单行源信息）：未运行/非当前帧序源时显示视频
+  /// 文件名；本节点是当前帧序（previewFrame/totalFrames）的源且帧率
+  /// 已知时显示「当前时间/总时长」（与预览控制条时间文本同口径）。
+  /// 逐帧刷新走 [IspStudioState.frameTick]，只有本行重建。
+  Widget _buildVideoSourceExtra(IspStudioState state) {
+    return ValueListenableBuilder<int>(
+      valueListenable: state.frameTick,
+      builder: (context, tick, child) {
+        final total = state.totalFrames ?? 1;
+        final isSrc = state.previewSrcNodeId == node.id;
+        final showTime = isSrc && total > 1 && state.playbackSrcFps > 0;
+        final String text;
+        if (showTime) {
+          text = playbackTimeText(state, total);
+        } else {
+          final path = node.paramValues['filePath']?.toString() ?? '';
+          text = path.isEmpty ? '未选择视频文件' : p.basename(path);
+        }
+        // 时间形态：黑底白字大字（播放器 OSD 风格）；文件名形态保持
+        // 灰色小字。行高 40 与时间大字匹配（nodeHeight 同步 +40）。
+        return SizedBox(
+          height: 40,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: showTime
+                ? Container(
+                    width: double.infinity,
+                    color: Colors.black,
+                    alignment: Alignment.center,
+                    child: Text(text,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'Consolas',
+                          fontFamilyFallback: ['monospace'],
+                          fontSize: 30,
+                          color: Colors.white,
+                        )),
+                  )
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(text,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            const TextStyle(fontSize: 10, color: Colors.grey)),
+                  ),
+          ),
+        );
+      },
     );
   }
 
@@ -2620,8 +2674,9 @@ class _FormatConvertConsoleState extends State<_FormatConvertConsole> {
   }
 }
 
-/// 播放控制条时间文本：已播放/总时长（mm:ss/mm:ss），按
-/// [IspStudioState.playbackSrcFps] 换算（视频源播放时由播放循环填入）。
+/// 播放控制条时间文本：当前时间/总时长（mm:ss/mm:ss），按
+/// [IspStudioState.playbackSrcFps] 换算（视频源单次预览运行与播放时
+/// 都会填入）。预览控制条与视频源节点时间行共用。
 String playbackTimeText(IspStudioState state, int total) {
   String fmt(double sec) {
     final s = sec.isFinite && sec > 0 ? sec.floor() : 0;

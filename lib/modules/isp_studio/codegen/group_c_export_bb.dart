@@ -29,6 +29,7 @@ import '../models/isp_node.dart';
 import '../pipeline/node_c_code.dart';
 import 'c_ident.dart';
 import 'group_c_export.dart';
+import 'group_c_target.dart';
 import 'node_c_gen.dart';
 import 'node_c_stream.dart';
 import 'stream_plan.dart';
@@ -118,6 +119,7 @@ Future<Map<String, String>> buildGroupBlackBoxCFiles(
   IspNodeGroup group, {
   Future<String> Function(String path)? readFile,
   DateTime? genTime,
+  GroupCTarget target = GroupCTarget.cortexA53_55,
 }) async {
   genTime ??= DateTime.now();
   final plan = planGroupC(graph, group);
@@ -129,7 +131,7 @@ Future<Map<String, String>> buildGroupBlackBoxCFiles(
   final s = StreamKernelCtx();
   final stageCodes = <String>[
     for (var k = 0; k < stream.stages.length; k++)
-      _emitStage(s, graph, stream, k),
+      _emitStage(s, graph, stream, k, target),
   ];
 
   // ---- run() 形参 ----
@@ -204,7 +206,7 @@ Future<Map<String, String>> buildGroupBlackBoxCFiles(
           '  /* 尾部冲刷：窗口阶段输出滞后其延迟行数，底部延迟行在此补齐。 */',
           '  for (y = h; y < h + ${stream.maxDelay}; y++) {',
           for (var k = 0; k < stream.stages.length; k++)
-            if (stream.stages[k].delay > 0) _emitStage(s, graph, stream, k),
+            if (stream.stages[k].delay > 0) _emitStage(s, graph, stream, k, target),
           '  }',
         ]
       : <String>[];
@@ -245,36 +247,38 @@ int ${topName}_run(${runParams.join(', ')});
 ''';
 
   // ---- top .c ----
-  // lut/lut_fixed 单节点独占（唯一阶段且满足 [_lutRowNodeId]）：y 循环加
-  // OpenMP 行域并行。两种行核均为逐像素独立运算（lut_fixed int16/Q14
-  // 整数；lut FP64 查表+乘加，无跨像素归约/滑窗累加），与线程数无关逐位
-  // 一致——A55 四核配 -fopenmp 即多核，不开 omp 自动串行；MSVC /openmp 的
-  // 对拍同口径（跨行归约/滑窗类 FP 编组仍不加此 pragma，见先前 omp 轮
-  // 廓 FP 差异教训）。
-  final lutRowParallel = stream.stages.length == 1 &&
-      _lutRowNodeId(
-              graph, stream, stream.stages.single, stream.stages.single.delay) !=
+  // OpenMP 行域并行的安全条件：y 循环无跨迭代共享可写状态。scratch 行缓冲
+  // （扇出/窗口输入/延迟 FIFO 物化流，含 rows=1 的扇出单行缓冲）在 y 循环
+  // 外声明、被多行共享，并行会竞态，故仅当无任何行缓冲（单线性点操作链，
+  // 无扇出/汇合/窗口）时并行；gamma LUT 只读、外部输入/输出按行偏移寻址，
+  // 均无竞态。内层 for-x 的计数变量 x 在 top 声明，需 private(x)（整行
+  // <id>_row 单节点独占阶段无 x 变量，则不加）。
+  final rowParallel = stream.lineBuffers.isEmpty;
+  final rowKernelParallel = rowParallel &&
+      stream.stages.length == 1 &&
+      _rowNodeId(graph, stream, stream.stages.single,
+              stream.stages.single.delay, target) !=
           null;
   final topC = '''
 #include "$topName.h"
 
 #include <math.h>
 #include <string.h>
-${helpers.isEmpty ? '' : '\n$helpers\n'}${s.fileDecls.isEmpty ? '' : '\n${s.fileDecls.join('\n\n')}\n'}
+${s.cscSseUsed ? '#include "isp_csc_sse.h" /* x86 FP64 HSL 行核双像素快路径（逐位一致） */\n' : ''}${helpers.isEmpty ? '' : '\n$helpers\n'}${s.fileDecls.isEmpty ? '' : '\n${s.fileDecls.join('\n\n')}\n'}
 int ${topName}_run(${runParams.join(', ')}) {
-  /* lut/lut_fixed 单节点独占时阶段整行走 <id>_row，top 层无 x 循环——
+  /* 单节点独占且类型有整行行核时阶段整行走 <id>_row，top 层无 x 循环——
    * 条件声明避免 GCC -Wunused-variable。 */
-  int y${lutRowParallel ? '' : ', x'};
+  int y${rowKernelParallel ? '' : ', x'};
 ${stream.needsScratch ? '''  if (scratch == NULL ||
       scratch_bytes < ${macro}_SCRATCH_BYTES(w, h, max_value)) {
     return ISP_ERR_SIZE;
   }
 ${carve.join('\n')}
-''' : ''}${gammaBuild.isEmpty ? '' : '${gammaBuild.join('\n')}\n'}${s.prelude.isEmpty ? '' : '${s.prelude.map((l) => '  $l').join('\n')}\n'}${lutRowParallel ? '''#if defined(_OPENMP)
-  /* lut/lut_fixed 单节点行核：行间独立、逐像素独立运算（整数或 FP64 查
-   * 表+乘加，无跨像素归约），行域并行与串行逐位一致（omp 开关随编译选
-   * 项；不开 omp 自动串行）。 */
-#pragma omp parallel for
+''' : ''}${gammaBuild.isEmpty ? '' : '${gammaBuild.join('\n')}\n'}${s.prelude.isEmpty ? '' : '${s.prelude.map((l) => '  $l').join('\n')}\n'}${rowParallel ? '''#if defined(_OPENMP)
+  /* 单线性点操作链（无行缓冲）：逐像素独立点运算、行间无依赖，行域并行
+   * 与串行逐位一致（omp 开关随编译选项；不开 omp 自动串行）。x 计数变量
+   * 在 top 声明，private(x) 令其线程私有；整行 <id>_row 变体无 x 变量。 */
+#pragma omp parallel for${rowKernelParallel ? '' : ' private(x)'}
 #endif
 ''' : ''}  for (y = 0; y < h; y++) {
 ${rowDecls.join('\n')}
@@ -286,8 +290,8 @@ ${flushCodes.join('\n')}
 
   // ---- 收集生成物 ----
   final files = <String, String>{
-    '$topName.h': _bbDoc(group, genTime) + topH,
-    '$topName.c': _bbDoc(group, genTime) + topC,
+    '$topName.h': _bbDoc(group, genTime, target) + topH,
+    '$topName.c': _bbDoc(group, genTime, target) + topC,
   };
   // isp_common.h/.c：基础内联工具与 Bayer 相位（黑盒像素数学自含，
   // 不拷贝其它 c_ref 算法文件）。读取失败静默跳过（与整帧版一致）。
@@ -298,38 +302,130 @@ ${flushCodes.join('\n')}
       // 与 exportCRefFiles 一致：单个文件失败不中断其余文件。
     }
   }
+  // x86 FP64 HSL 行核依赖（仅当登记了 hsl2rgb/rgb2hsl 行核时附带）。
+  if (s.cscSseUsed) {
+    for (final f in const ['isp_csc_sse.h', 'isp_csc_common.h']) {
+      try {
+        files[f] = await loadCRefFile(f, readFile: readFile);
+      } catch (_) {
+        // 同上：单个文件失败不中断其余文件。
+      }
+    }
+  }
+  // 目标微架构说明（加速宏定义 + 实现方案），随代码一并导出。
+  files[target.microDocName] = buildTargetCodeMicroDoc(target, blackBox: true);
   return files;
 }
 
-/// lut/lut_fixed 单节点独占阶段的节点 id（不满足条件返回 null）：零延
-/// 迟、单节点链、无窗口、外部输入、单一外部输出、codegenMode=lut 或
-/// lut_fixed。命中时阶段整行走 `<id>_row`（lut_fixed 为 NEON/标量双变
-/// 体，lut 为标量），且 top 层 y 循环可加 OpenMP 行域并行（逐像素独立
-/// 运算逐位一致）。
-String? _lutRowNodeId(IspGraph graph, GroupStreamPlan stream,
-    StreamStage stage, int delay) {
+/// 有整行行核的单节点独占阶段的节点 id（不满足条件返回 null）：零延迟、
+/// 单节点链、无窗口、外部输入、单一外部输出、类型+参数有整行 `<id>_row`
+///（NEON/SSE2 + 标量双变体随导出目标分叉，或纯标量）。命中时阶段整行
+/// 走 `<id>_row`，且 top 层 y 循环可加 OpenMP 行域并行（逐像素独立运算
+/// 逐位一致）。
+String? _rowNodeId(IspGraph graph, GroupStreamPlan stream,
+    StreamStage stage, int delay, GroupCTarget target) {
   if (delay != 0 || stage.chain.length != 1) return null;
   final plan = stream.plan;
   final nid = stage.chain.single;
   final member = plan.members[nid]!;
-  final inSrc = stream.inputSrcs['$nid:in'];
-  final mode = member.paramValues['codegenMode'];
-  if (member.typeId != 'multi_band_eq' ||
-      (mode != 'lut_fixed' && mode != 'lut') ||
-      stream.windowInfos[nid] != null ||
+  // 输入端口取 wrapper 实际端口名（mono 形态为 'in_mono' 而非 'in'）。
+  final inPort = plan.wrappers[nid]!.inputs.single.name;
+  final inSrc = stream.inputSrcs['$nid:$inPort'];
+  if (stream.windowInfos[nid] != null ||
       inSrc == null ||
       inSrc.ext == null ||
       stage.targets.length != 1 ||
       stage.targets.single.extOutput == null) {
     return null;
   }
-  return nid;
+  // 类型 + 参数的行核可用性（与 node_c_stream 行核发射器的登记口径一致：
+  // 发射器按同一组参数登记 `<id>_row` 文件级声明）。
+  final mode = member.paramValues['codegenMode'];
+  if (member.typeId == 'multi_band_eq') {
+    return (mode == 'lut_fixed' || mode == 'lut') ? nid : null;
+  }
+  if (member.typeId == 'csc_rgb2yuv') {
+    if (member.paramValues['bypass'] == true) return null;
+    if ('${member.paramValues['standard'] ?? ''}' == 'bt709') return null;
+    if ('${member.paramValues['range'] ?? ''}' == 'limited') return null;
+    return nid;
+  }
+  if (member.typeId == 'csc_yuv2rgb') {
+    if (member.paramValues['bypass'] == true) return null;
+    return nid;
+  }
+  if (member.typeId == 'csc_hsl2rgb' || member.typeId == 'csc_rgb2hsl') {
+    // x86 专属 FP64 SSE2 双像素行核（与行核发射器登记口径一致；ARM 无
+    // FP64 SIMD 不登记）。
+    if (member.paramValues['bypass'] == true) return null;
+    if (!target.isX86) return null;
+    return nid;
+  }
+  if (member.typeId == 'white_balance') {
+    // LUT 模式 + 非恒等 + 非 bypass（与行核发射器登记口径一致）。
+    if (whiteBalanceRowGains(member.paramValues) == null) return null;
+    return nid;
+  }
+  if (member.typeId == 'ccm') {
+    // 非 bypass、非恒等、全部 Q20 系数 |m| ≤ INT32_MAX（与行核发射器
+    // 登记口径一致）。
+    if (member.paramValues['bypass'] == true) return null;
+    final (m, isIdentity) = ccmMatrixOf(member.paramValues);
+    if (isIdentity) return null;
+    if (!m.every((v) => v.abs() <= 2147483647)) return null;
+    return nid;
+  }
+  if (member.typeId == 'levels_curves') {
+    if (!levelsRowOk(member.paramValues)) return null;
+    return nid;
+  }
+  if (member.typeId == 'color_temp_adjuster') {
+    // LUT 模式 + 增益非全 1（与行核发射器登记口径一致）。
+    if (colorTempRowGains(member.paramValues) == null) return null;
+    return nid;
+  }
+  if (member.typeId == 'pseudo_color') {
+    // LUT 模式 + 非 bypass（与行核发射器登记口径一致）。
+    if (!pseudoColorRowOk(member.paramValues)) return null;
+    return nid;
+  }
+  if (member.typeId == 'highlight') {
+    // highlight(clip) LUT 模式 + 1 通道输入（RAW 'in' / 'in_mono'，与行核
+    // 发射器登记口径一致）。
+    if (!highlightClipRowOk(member.paramValues)) return null;
+    if (member.paramValues['mode'] != 'clip') return null;
+    if (inSrc.channels != 1) return null;
+    return nid;
+  }
+  if (member.typeId == 'gamma') {
+    // gamma 恒登记行核（16 位 RGB → 8 位 RGBA，LUT 运行期构建）；无参数
+    // 条件，bypass 亦退化为默认参数。
+    return nid;
+  }
+  if (member.typeId == 'sat_bright_adjuster') {
+    // rgb 形态 x86 专属 FP64 双像素（与行核发射器登记口径一致）。
+    if (satBrightRowOk(member.paramValues, target.isX86) == null) return null;
+    return nid;
+  }
+  if (member.typeId == 'black_level') {
+    // Bayer 形态 x86 专属 FP64 双像素（与行核发射器登记口径一致）。
+    if (!blackLevelRowOk(member.paramValues, target.isX86)) return null;
+    return nid;
+  }
+  if (member.typeId == 'color_controller') {
+    // LUT 模式 x86 专属（H int32 + S/L FP64 双像素，与行核发射器登记
+    // 口径一致）。
+    if (!colorControllerRowOk(member.paramValues, target.isX86)) return null;
+    return nid;
+  }
+  return null;
 }
 
 /// 发射一个行循环阶段：窗口预备（派生行/窗口行指针）→ 融合链逐节点
-/// 行核 → 写物化目标（行 y-D，环形槽取模）。
-String _emitStage(
-    StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream, int k) {
+/// 行核 → 写物化目标（行 y-D，环形槽取模）。[target] 贯通导出目标 CPU
+///（lut_fixed 行核 SIMD 变体选择）。
+String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
+    int k, GroupCTarget target) {
   final plan = stream.plan;
   final stage = stream.stages[k];
   final d = stage.delay;
@@ -396,17 +492,25 @@ String _emitStage(
     if (wi != null) _emitWindowPreamble(b, s, stream, id, wi, ind);
   }
 
-  // ---- lut/lut_fixed 单节点独占阶段：整行走 ${id}_row（lut_fixed 为
-  // NEON/标量双变体，lut 为标量），跳过逐像素融合循环（条件见
-  // [_lutRowNodeId]）。----
+  // ---- 有整行行核的单节点独占阶段：整行走 ${id}_row（NEON/SSE2 + 标量
+  // 双变体随导出目标分叉），跳过逐像素融合循环（条件见 [_rowNodeId]）。----
   String? fixedRowCall;
   {
-    final nid = _lutRowNodeId(graph, stream, stage, d);
+    final nid = _rowNodeId(graph, stream, stage, d, target);
     if (nid != null) {
       final ident = streamNodeCtx(graph, plan, nid).ident;
-      final inExt = stream.inputSrcs['$nid:in']!.ext!;
+      final inPort = plan.wrappers[nid]!.inputs.single.name;
+      final inExt = stream.inputSrcs['$nid:$inPort']!.ext!;
+      final typeId = plan.members[nid]!.typeId;
+      // 形参特判：gamma 行核带运行期 LUT 指针（top 层 scratch carve 声明，
+      // 同作用域可直接传）；black_level 行核带 y（Bayer 相位随行奇偶交替）。
+      final extra = typeId == 'gamma'
+          ? ', ${ident}_lut'
+          : typeId == 'black_level'
+              ? ', y'
+              : '';
       fixedRowCall =
-          '${ident}_row(row_${inExt.name}, row_${stage.targets.single.extOutput!.name}, w, max_value)';
+          '${ident}_row(row_${inExt.name}, row_${stage.targets.single.extOutput!.name}, w, max_value$extra)';
     }
   }
 
@@ -420,7 +524,8 @@ String _emitStage(
       inputs[cp.name] =
           _srcExprs(stream, stream.inputSrcs['$id:${cp.name}']!, values, d);
     }
-    emitStreamRowKernel(s, streamNodeCtx(graph, plan, id), inputs);
+    emitStreamRowKernel(s, streamNodeCtx(graph, plan, id, target: target),
+        inputs);
     b.writeln('$ind  $fixedRowCall;');
     if (d > 0) b.writeln('    }');
     return b.toString();
@@ -445,8 +550,8 @@ String _emitStage(
       inputs[cp.name] =
           _srcExprs(stream, stream.inputSrcs['$id:${cp.name}']!, values, d);
     }
-    final (lines, outs) =
-        emitStreamRowKernel(s, streamNodeCtx(graph, plan, id), inputs);
+    final (lines, outs) = emitStreamRowKernel(
+        s, streamNodeCtx(graph, plan, id, target: target), inputs);
     for (final line in lines) {
       b.writeln('$ind    $line');
     }
@@ -707,9 +812,10 @@ Future<GroupCExportResult> exportGroupBlackBoxCCode(
   String dir, {
   Future<String> Function(String path)? readFile,
   DateTime? genTime,
+  GroupCTarget target = GroupCTarget.cortexA53_55,
 }) async {
   final files = await buildGroupBlackBoxCFiles(graph, group,
-      readFile: readFile, genTime: genTime);
+      readFile: readFile, genTime: genTime, target: target);
   final written = <String>[];
   for (final e in files.entries) {
     await File('$dir/${e.key}').writeAsString(e.value);
@@ -718,7 +824,7 @@ Future<GroupCExportResult> exportGroupBlackBoxCCode(
   return GroupCExportResult(written, groupBlackBoxTopName(group));
 }
 
-String _bbDoc(IspNodeGroup group, DateTime genTime) => '''
+String _bbDoc(IspNodeGroup group, DateTime genTime, GroupCTarget target) => '''
 /* 本文件由 DebugToolSet ISP Studio 自动生成：编组「${group.name}」的
  * 黑盒子（行级流水）ISP pipeline。语义说明：
  * - 行级流水：中间结果不存整帧；连续点对点链融合进同一行循环，
@@ -730,6 +836,7 @@ String _bbDoc(IspNodeGroup group, DateTime genTime) => '''
  * - mux4 未选中支路为死路：与 Dart 预览一致裁剪，不生成其上游计算；
  * - combiner 未连接的通道输入填缺省常量（YUV 的 U/V 为 max_value>>1，
  *   其余 0，与 c_ref NULL 缺省语义一致）。
+${target.headerBlock().join('\n')}
  * 生成时间：${_fmtGenTime(genTime)}
  */
 ''';

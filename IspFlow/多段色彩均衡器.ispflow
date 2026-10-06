@@ -2,20 +2,6 @@
   "name": "多段色彩均衡器",
   "nodes": [
     {
-      "id": "n8",
-      "typeId": "video_source",
-      "x": -690.0,
-      "y": -860.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "Video#1",
-      "params": {
-        "filePath": "H:\\Surgery_video\\record-2024-09-26-12-03-24.mp4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
-      }
-    },
-    {
       "id": "n24",
       "typeId": "video_output",
       "x": 1430.0,
@@ -24,7 +10,7 @@
       "extraHeight": 160.0,
       "name": "视频输出#1",
       "params": {
-        "fps": 30,
+        "fps": 60,
         "crf": 25,
         "encoder": "auto",
         "filePath": "G:\\DebugToolSet\\IspFlow\\Video_out\\record-2025-12-03-10-04-21-0002-output.mp4",
@@ -50,8 +36,8 @@
         "b1_dh": 96.49352414322794,
         "b0_dh": 11.859423384746407,
         "b0_q": 1.8,
-        "fps": 30,
-        "frameCount": 27000,
+        "fps": 60,
+        "frameCount": 6270,
         "b1_q": 3.495145631067961,
         "b1_s": 0.6,
         "b1_l": 0.9,
@@ -60,24 +46,39 @@
         "b2_h": null,
         "b2_q": null,
         "b2_dh": null,
-        "b2_s": null
+        "b2_s": null,
+        "style_name": "脂肪增强.colorstyle"
+      }
+    },
+    {
+      "id": "n44",
+      "typeId": "video_source",
+      "x": -750.0,
+      "y": -860.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\Sony 4K60p SDR Demo Video.MP4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
     }
   ],
   "connections": [
-    {
-      "id": "c36",
-      "from": "n8",
-      "fromPort": "out_hsl",
-      "to": "n34",
-      "toPort": "in"
-    },
     {
       "id": "c37",
       "from": "n34",
       "fromPort": "out",
       "to": "n24",
       "toPort": "in_hsl"
+    },
+    {
+      "id": "c45",
+      "from": "n44",
+      "fromPort": "out_hsl",
+      "to": "n34",
+      "toPort": "in"
     }
   ],
   "groups": [
@@ -89,5 +90,5 @@
       ]
     }
   ],
-  "nextId": 42
+  "nextId": 46
 }

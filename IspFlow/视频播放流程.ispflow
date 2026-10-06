@@ -2,20 +2,6 @@
   "name": "视频播放流程",
   "nodes": [
     {
-      "id": "n1",
-      "typeId": "video_source",
-      "x": 590.0,
-      "y": 370.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "Video#1",
-      "params": {
-        "filePath": "G:\\DebugToolSet\\4k60VRec\\Sony 4K60p HDR Demo Video.MP4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
-      }
-    },
-    {
       "id": "n2",
       "typeId": "preview",
       "x": 840.0,
@@ -37,24 +23,38 @@
       "extraHeight": 160.0,
       "name": "音频EQ频谱#1",
       "params": {}
+    },
+    {
+      "id": "n8",
+      "typeId": "video_source",
+      "x": 520.0,
+      "y": 370.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "D:\\DebugToolSet\\4k60VRec\\Sony 4K60p HDR Demo Video.MP4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
     }
   ],
   "connections": [
     {
-      "id": "c3",
-      "from": "n1",
+      "id": "c9",
+      "from": "n8",
       "fromPort": "out_rgb",
       "to": "n2",
       "toPort": "in"
     },
     {
-      "id": "c7",
-      "from": "n1",
+      "id": "c10",
+      "from": "n8",
       "fromPort": "out_audio",
       "to": "n6",
       "toPort": "in"
     }
   ],
   "groups": [],
-  "nextId": 8
+  "nextId": 11
 }

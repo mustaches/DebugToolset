@@ -106,6 +106,13 @@ void _installAutoplayDiag() {
   // ISP_PRODTIMING=1：打印逐帧生产分段耗时（取流/打包馈源/出图）。
   IspStudioState.debugPlaybackTiming =
       Platform.environment['ISP_PRODTIMING'] == '1';
+  // ISP_DECHW=1/0：强制播放起步解码模式为硬解/软解（HDR 解码模式
+  // 自适应切换的验证入口；不设则按片源启发式起步）。
+  final decHw = Platform.environment['ISP_DECHW'];
+  if (decHw != null) IspStudioState.debugForceHwDecode = decHw == '1';
+  // ISP_PLANEF=N：强制平面直连降档因子（播放路径/欠产自适应验证用）。
+  final planeF = int.tryParse(Platform.environment['ISP_PLANEF'] ?? '');
+  if (planeF != null) IspStudioState.debugPlaneFactor = planeF;
   final video = Platform.environment['ISP_AUTOPLAY'] ?? '';
   if (video.isEmpty) return;
   final logPath =

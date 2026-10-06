@@ -596,9 +596,9 @@ void main() {
     expect(state.openCodeTabs, isEmpty);
 
     state.openGroupCodeTab(groupId);
-    expect(state.openCodeTabs, ['group:$groupId']);
+    expect(state.openCodeTabs, ['group:$groupId@cortexA53_55']);
     expect(state.activeTab, 1);
-    // 重复打开只激活不重复添加。
+    // 重复打开（同目标）只激活不重复添加。
     state.openGroupCodeTab(groupId);
     expect(state.openCodeTabs.length, 1);
 

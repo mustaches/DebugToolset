@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
+import '../codegen/group_c_target.dart';
 import '../models/isp_graph.dart';
 import '../models/isp_node.dart';
 import 'connection_painter.dart';
@@ -335,7 +336,8 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
 
   /// 编组右键菜单：多选时点中选中节点提供「编组」；点中已编组节点
   /// 或编组框内任意位置提供「查看C代码」「查看黑盒子C代码」（行级
-  /// 流水变体）「更改编组名」「取消编组」。
+  /// 流水变体；两者选中后原位级联选择目标 CPU，见 _pickGroupCTarget）
+  /// 「更改编组名」「取消编组」。
   /// 其余情况不弹菜单（保留右键拖动平移画布）。
   void _showNodeGroupMenu(
       IspStudioState state, String nodeId, Offset globalPos) {
@@ -373,9 +375,13 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
         // 弹命名对话框（默认「编组#N」）后编组。
         showIspGroupNamingDialog(context, state);
       } else if (v == 'viewCode' && groupId != null) {
-        _viewGroupCode(state, groupId);
+        _pickGroupCTarget(globalPos).then((t) {
+          if (t != null && mounted) _viewGroupCode(state, groupId, t);
+        });
       } else if (v == 'viewBBCode' && groupId != null) {
-        _viewGroupBlackBoxCode(state, groupId);
+        _pickGroupCTarget(globalPos).then((t) {
+          if (t != null && mounted) _viewGroupBlackBoxCode(state, groupId, t);
+        });
       } else if (v == 'rename' && groupId != null) {
         showIspGroupRenameDialog(context, state, groupId);
       } else if (v == 'ungroup' && groupId != null) {
@@ -384,23 +390,37 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
     });
   }
 
+  /// 在原位弹目标 CPU 选择菜单（6 个目标；取消返回 null）。
+  Future<GroupCTarget?> _pickGroupCTarget(Offset globalPos) {
+    return showMenu<GroupCTarget>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
+      items: [
+        for (final t in GroupCTarget.values)
+          PopupMenuItem(value: t, height: 32, child: Text(t.displayName)),
+      ],
+    );
+  }
+
   /// 编组「查看代码」：校验不过弹错误对话框；通过则打开编组代码标签页。
-  Future<void> _viewGroupCode(IspStudioState state, String groupId) async {
+  Future<void> _viewGroupCode(IspStudioState state, String groupId,
+      GroupCTarget target) async {
     final group = state.graph.groups.firstWhere((g) => g.id == groupId);
     if (!await ensureGroupCExportable(context, state.graph, group)) return;
-    state.openGroupCodeTab(groupId);
+    state.openGroupCodeTab(groupId, target: target);
   }
 
   /// 编组「查看黑盒子C代码」（行级流水变体）：校验口径更严（统计/跨帧/
   /// 窗口类节点暂不支持），通过则打开黑盒代码标签页。
   Future<void> _viewGroupBlackBoxCode(
-      IspStudioState state, String groupId) async {
+      IspStudioState state, String groupId, GroupCTarget target) async {
     final group = state.graph.groups.firstWhere((g) => g.id == groupId);
     if (!await ensureGroupCExportable(context, state.graph, group,
         blackBox: true)) {
       return;
     }
-    state.openGroupBlackBoxCodeTab(groupId);
+    state.openGroupBlackBoxCodeTab(groupId, target: target);
   }
 
   @override

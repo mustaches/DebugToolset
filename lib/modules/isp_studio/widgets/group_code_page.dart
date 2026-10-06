@@ -23,7 +23,7 @@ import '../../text_editor/utils/syntax_highlighter.dart';
 import '../codegen/c_compile.dart';
 import '../codegen/group_c_export.dart';
 import '../codegen/group_c_export_bb.dart';
-import '../codegen/group_c_plan.dart' show lutDomainMaxOf;
+import '../codegen/group_c_target.dart';
 import '../models/isp_graph.dart';
 import '../pipeline/c_def_index.dart';
 import '../pipeline/node_c_code.dart' show loadCRefFile;
@@ -59,15 +59,18 @@ Future<bool> ensureGroupCExportable(
 
 /// 编组导出 C 代码：选择目录 → 生成写盘 → SnackBar 提示（须已校验，
 /// 见 [ensureGroupCExportable]）。[blackBox] 为 true 时导出黑盒变体。
+/// [target] 为导出目标 CPU（文件头注释块与 lut_fixed 行核 SIMD 变体）。
 Future<void> exportGroupCCodeInteractive(
     BuildContext context, IspStudioState state, IspNodeGroup group,
-    {bool blackBox = false}) async {
+    {bool blackBox = false,
+    GroupCTarget target = GroupCTarget.cortexA53_55}) async {
   final dir = await getDirectoryPath();
   if (dir == null || !context.mounted) return;
   try {
     final result = blackBox
-        ? await exportGroupBlackBoxCCode(state.graph, group, dir)
-        : await exportGroupCCode(state.graph, group, dir);
+        ? await exportGroupBlackBoxCCode(state.graph, group, dir,
+            target: target)
+        : await exportGroupCCode(state.graph, group, dir, target: target);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -93,6 +96,9 @@ class GroupCodePage extends StatefulWidget {
   /// group_c_export_bb 口径。
   final bool blackBox;
 
+  /// 导出目标 CPU（生成物头注释块与 lut_fixed 行核 SIMD 变体随其分叉）。
+  final GroupCTarget target;
+
   /// 编译执行器注入点（测试替换为假实现；缺省为 compileGroupCFiles）。
   final GroupCompileRunner? compileRunner;
 
@@ -105,6 +111,7 @@ class GroupCodePage extends StatefulWidget {
       {super.key,
       required this.groupId,
       this.blackBox = false,
+      this.target = GroupCTarget.cortexA53_55,
       this.compileRunner,
       this.filesBuilder});
 
@@ -173,9 +180,11 @@ class _GroupCodePageState extends State<GroupCodePage> {
     // 节点参数/连线改动后页面即随之刷新。
     return FutureBuilder<Map<String, String>>(
       future: (widget.filesBuilder ??
-              (widget.blackBox
-                  ? buildGroupBlackBoxCFiles
-                  : buildGroupCFiles))(state.graph, group),
+          (widget.blackBox
+              ? (g, gr) =>
+                  buildGroupBlackBoxCFiles(g, gr, target: widget.target)
+              : (g, gr) =>
+                  buildGroupCFiles(g, gr, target: widget.target)))(state.graph, group),
       initialData: _files,
       builder: (context, snapshot) {
         final files = snapshot.data;
@@ -234,6 +243,12 @@ class _GroupCodePageState extends State<GroupCodePage> {
           Text(
             widget.blackBox ? '编组·黑盒' : '编组',
             style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const SizedBox(width: 6),
+          // 目标 CPU 徽标（生成物随其分叉，见 group_c_target.dart）。
+          Text(
+            widget.target.displayName,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF4EC9B0)),
           ),
           const Spacer(),
           const Icon(Icons.lock_outline, size: 12, color: Colors.grey),
@@ -296,13 +311,33 @@ class _GroupCodePageState extends State<GroupCodePage> {
         cscCommonHeader: needCsc && !files.containsKey('isp_csc_common.h')
             ? await loadCRefFile('isp_csc_common.h')
             : null,
+        cscSseHeader: needCsc && !files.containsKey('isp_csc_sse.h')
+            ? await loadCRefFile('isp_csc_sse.h')
+            : null,
         onOutput: onOutput);
     if (result.success && result.artifactPath != null) {
-      unawaited(
-          Process.start(result.artifactPath!, launchArgs));
+      // 同名编组的旧验证实例先结束：每个实例独占数百 MB 帧缓冲 + 数十
+      // 个 omp 线程 + 一个 ffmpeg 解码子进程，反复改参重建验证多实例叠
+      // 加会把整机内存/带宽耗尽可能死机。
+      final top = _topName(group);
+      final oldPid = _verifyPids[top];
+      if (oldPid != null) {
+        _verifyPids.remove(top);
+        Process.killPid(oldPid);
+      }
+      final proc = await Process.start(result.artifactPath!, launchArgs);
+      _verifyPids[top] = proc.pid;
+      unawaited(proc.exitCode.then((_) {
+        if (_verifyPids[top] == proc.pid) _verifyPids.remove(top);
+      }));
     }
     return result;
   }
+
+  /// 各编组（top 名）最近启动的验证程序 PID：同名编组重建验证时先结
+  /// 束旧实例（见 _buildAndRunWinVerify）。静态表：代码页随编组切换销
+  /// 毁/重建，实例字段会丢。
+  static final Map<String, int> _verifyPids = {};
 
   /// 验证程序的管线量化域（lutDomainMaxOf，沿编组成员上游位深推导）：
   /// LUT 模式节点的查表快路径要求运行时 max_value 与烘焙域一致，否则
@@ -353,16 +388,25 @@ class _GroupCodePageState extends State<GroupCodePage> {
             f.path.contains('avcodec-') && f.path.endsWith('.dll'))) {
       args.addAll(['--avdir', avDir.absolute.path]);
     }
-    // --scale 降档（解码时缩放，四段耗时同比缩小）；图片源尺寸适中不处理。
-    if (scaleDown && node.typeId == 'video_source') {
+    // 视频源探测一次：HDR 判定（--hdr）与 --scale 降档共用；图片源尺寸
+    // 适中不处理。
+    if (node.typeId == 'video_source') {
       try {
         final info = await videoFileInfo(path, ffmpegPath: ffmpeg);
-        var sw = info.width, sh = info.height;
-        while (sw > 1280) {
-          sw ~/= 2;
-          sh ~/= 2;
+        // HDR（BT.2020 PQ/HLG）片源：验证程序解码链前置 zscale+tonemap
+        // 映射为 BT.709 SDR 交付，与应用内播放/导出同口径（否则 BT.2020
+        // 帧按 SDR 直解上屏发灰发暗）。预览 HDR/SDR 切换选 SDR 直解时
+        // 同样直通到验证程序（不加 --hdr）。
+        if (info.isHdr && state.hdrToneMapEnabled) args.add('--hdr');
+        // --scale 降档（解码时缩放，四段耗时同比缩小）。
+        if (scaleDown) {
+          var sw = info.width, sh = info.height;
+          while (sw > 1280) {
+            sw ~/= 2;
+            sh ~/= 2;
+          }
+          if (sw < info.width) args.addAll(['--scale', '${sw}x$sh']);
         }
-        if (sw < info.width) args.addAll(['--scale', '${sw}x$sh']);
       } catch (_) {}
     }
     return args;
@@ -454,7 +498,7 @@ class _GroupCodePageState extends State<GroupCodePage> {
                       blackBox: widget.blackBox)) {
                     if (!ctx.mounted) return;
                     await exportGroupCCodeInteractive(ctx, state, group,
-                        blackBox: widget.blackBox);
+                        blackBox: widget.blackBox, target: widget.target);
                   }
                 },
               ),
@@ -490,6 +534,11 @@ class _GroupCodePageState extends State<GroupCodePage> {
                           !files.containsKey('isp_csc_common.h'))
                         'isp_csc_common.h':
                             await loadCRefFile('isp_csc_common.h'),
+                      // HSL 装帧/解包 SSE2 快路径头（同上口径注入）。
+                      if ((extIn.single.format == 'hsl' ||
+                              extOut.single.format == 'hsl') &&
+                          !files.containsKey('isp_csc_sse.h'))
+                        'isp_csc_sse.h': await loadCRefFile('isp_csc_sse.h'),
                     },
                   },
               topName: _topName(group),

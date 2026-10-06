@@ -37,6 +37,7 @@ import '../pipeline/color_temp.dart';
 import '../pipeline/isp_kernels.dart';
 import '../pipeline/levels_curve.dart';
 import 'group_c_plan.dart';
+import 'group_c_target.dart';
 import 'node_c_gen.dart';
 
 /// 行核发射结果：[lines] 为 for-x 循环体内的语句（不含缩进，发射层统一
@@ -77,6 +78,9 @@ class StreamKernelCtx {
   /// （已含 Bypass 退化）；发射层据此生成 scratch LUT 区与构建循环。
   final Map<String, (double, double, double)> gammaLuts = {};
 
+  /// x86 FP64 HSL 行核已登记（top .c 需附带 isp_csc_sse.h 及其依赖头）。
+  bool cscSseUsed = false;
+
   /// 分配 for-x 循环体内唯一的局部变量名。
   String freshVar() => 'v${_seq++}';
 
@@ -108,7 +112,9 @@ class StreamKernelCtx {
 
 /// 重建节点生成上下文（与 GroupCPlan 规划时同一口径：活动输入端口格式
 /// 由 wrapper 端口列表 + 类型端口类型推导，lutDomainMax 沿图重算）。
-CNodeGenCtx streamNodeCtx(IspGraph graph, GroupCPlan plan, String nodeId) {
+/// [target] 贯通导出目标 CPU（lut_fixed 行核 SIMD 变体选择）。
+CNodeGenCtx streamNodeCtx(IspGraph graph, GroupCPlan plan, String nodeId,
+    {GroupCTarget target = GroupCTarget.cortexA53_55}) {
   final n = plan.members[nodeId]!;
   final type = IspNodeRegistry.byId(n.typeId)!;
   return CNodeGenCtx(
@@ -121,6 +127,7 @@ CNodeGenCtx streamNodeCtx(IspGraph graph, GroupCPlan plan, String nodeId) {
             cFrameFormatOfPort(type.inputPort(cp.name)?.type ?? IspPortType.mono),
     },
     lutDomainMax: lutDomainMaxOf(graph, n),
+    target: target,
   );
 }
 
@@ -181,10 +188,10 @@ static double bb_clamp01(double v) {
  * >> 14)。乘子生成期按 round(mul × 2^14) 烘焙，与 FP64 (double)in × mul
  * 再 round 的偏差 ≤1 LSB（仅当 FP64 乘积距 .5 边界小于 in/2^15 时可能
  * 差 1）。int64 乘积防溢出（uint16 输入 × 5×2^14 超出 int32）；面向无
- * FP64 SIMD 的嵌入式核（A55 NEON 仅 FP32，FP64 只能标量 FPU）。NEON 行
- * 核（lut_fixed 行函数）内的同款计算为 32 位通道：q ≥ 2^14（mul ≥ 1）
- * 且 in 超域时结果必钳到 max_value，先钳位输入与之等价（向量比较选
- * 择，无分支）。 */
+ * FP64 SIMD 的嵌入式核（A55 NEON 仅 FP32，FP64 只能标量 FPU）。NEON/
+ * SSE2 行核（lut_fixed 行函数）内的同款计算为 32 位通道：q ≥ 2^14
+ * （mul ≥ 1）且 in 超域时结果必钳到 max_value，先钳位输入与之等价
+ * （向量比较选择，无分支）。 */
 static uint16_t bb_clamp_q14(int in_v, int32_t q, int max_value) {
   const int64_t r = ((int64_t)in_v * q + 8192) >> 14;
   if (r < 0) return 0;
@@ -461,6 +468,84 @@ StreamKernelResult _alias(List<String> ie, String outPort) =>
 /// round 半值远离零，无钳位）。LUT 模式（codegenMode=lut）：压缩表生成
 /// 期烘焙（Dart highlightClipLut，域 0..lutDomainMax），max_value 一致
 /// 走查表（isp_highlight_clip_lut_apply 语义），不一致回退直算。
+/// highlight(clip) 整行行核可用性（与 [_kHighlightClip] 同口径）：非
+/// bypass、LUT 模式。
+bool highlightClipRowOk(Map<String, dynamic> params) {
+  if (params['bypass'] == true) return false;
+  return params['codegenMode'] == 'lut';
+}
+
+/// highlight(clip) LUT 模式整行函数源码（[id] 前缀，烘焙域 [n]）：NEON/
+/// SSE2 + 标量双变体（随导出目标分叉）。mono 1 通道输入输出；域匹配
+/// （max_value == n）走 SIMD gather 查 clip 表；域失配标量回退（膝点
+/// 压缩直算），与融合行核逐位一致。
+String _highlightClipRowFn(String id, int n, double knee, GroupCTarget target) {
+  final scalarTail = '''
+  const double kp_ = ${cNum(knee)} * (double)max_value;
+  const double range_ = (double)max_value - kp_;
+  for (; x < w; x++) {
+    out[x] = (max_value == $n)
+        ? ${id}_clip_lut[in[x]]
+        : (uint16_t)((range_ <= 0.0 || (double)in[x] <= kp_)
+            ? in[x]
+            : (uint16_t)round(kp_ + ((double)in[x] - kp_) * range_ /
+                                        (range_ + (double)in[x] - kp_)));
+  }
+}''';
+  if (target.isX86) {
+    return '''
+/* highlight clip LUT 模式整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value == $n) {
+    for (; x + 8 <= w; x += 8) {
+      const __m128i pv = _mm_loadu_si128((const __m128i *)(in + (size_t)x));
+      uint16_t t_[8], l_[8];
+      int k;
+      _mm_storeu_si128((__m128i *)t_, pv);
+      for (k = 0; k < 8; k++) {
+        l_[k] = ${id}_clip_lut[t_[k]];
+      }
+      _mm_storeu_si128((__m128i *)(out + (size_t)x),
+                       _mm_loadu_si128((const __m128i *)l_));
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* highlight clip LUT 模式整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value == $n) {
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：mono VLD1 → 标量 gather 查表 → VST1。 */
+      const uint16x8_t pv = vld1q_u16(in + (size_t)x);
+      uint16_t t_[8], l_[8];
+      int k;
+      vst1q_u16(t_, pv);
+      for (k = 0; k < 8; k++) {
+        l_[k] = ${id}_clip_lut[t_[k]];
+      }
+      vst1q_u16(out + (size_t)x, vld1q_u16(l_));
+    }
+  }
+#endif
+$scalarTail''';
+}
+
 StreamKernelResult _kHighlightClip(
     StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
   final mono = _isMonoPath(ctx);
@@ -479,6 +564,12 @@ StreamKernelResult _kHighlightClip(
 static const uint16_t ${ctx.ident}_clip_lut[${n + 1}] = {
 ${cU16Table(lut)}
 };''');
+    // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉）：仅 1 通道输入
+    // （RAW 'in' 或 'in_mono'）登记；仅单节点独占阶段被调用。
+    if (ie.length == 1) {
+      s.addFileDecl('${ctx.ident}_row',
+          _highlightClipRowFn(ctx.ident, n, knee, ctx.target));
+    }
   }
   final kp = s.freshVar();
   final range = s.freshVar();
@@ -519,6 +610,56 @@ String _activePort(CNodeGenCtx ctx, List<String> candidates) {
 /// black_level：Bayer 2x2 四相位 / mono 统一偏移扣除。
 /// 出处：isp_black_level.c isp_black_level_apply（第二步逐像素循环）/
 /// isp_black_level_apply_mono；v <= 0 截零、四舍五入写回（不截顶）。
+/// black_level（Bayer 四相位形态）x86 专属 FP64 整行函数源码（[id] 前缀）：
+/// SSE2 双像素（相位偏移随 x 奇偶交替——同行两相位由 (y&1) 选出烘焙表
+/// `<id>_off` 的一对常量；v ≤ 0 截零、v > 0 取 floor(v+0.5) 四舍五入写回，
+/// 与融合行核逐位一致）。行核带 y 形参（相位高半部），top 层调用点特判。
+/// ARM 目标不登记（NEON 无 FP64 SIMD）。
+String _blackLevelRowFn(String id, GroupCTarget target) {
+  assert(target.isX86);
+  final scalarTail = '''
+  for (; x < w; x++) {
+    const double v_ =
+        (double)in[x] - ${id}_off[((y & 1) << 1) | (x & 1)];
+    out[x] = (v_ <= 0.0) ? (uint16_t)0 : (uint16_t)(long)round(v_);
+  }
+}''';
+  return '''
+/* black_level 整行函数（x86 专属：FP64 SSE2 双像素快路径，与标量逐位
+ * 一致；仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) ||           \\
+    defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value, int y) {
+  int x = 0;
+  (void)max_value;
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) ||           \\
+    defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  {
+    const int ph = (y & 1) << 1;
+    /* 同行两像素的相位偏移：x 偶 → ph|0、x 奇 → ph|1（Bayer 2x2 循环）。 */
+    const __m128d offv = _mm_set_pd(${id}_off[ph | 1], ${id}_off[ph | 0]);
+    const __m128d zero = _mm_setzero_pd();
+    const __m128d half = _mm_set1_pd(0.5);
+    for (; x + 2 <= w; x += 2) {
+      const __m128d vv = _mm_sub_pd(
+          _mm_cvtepi32_pd(
+              _mm_set_epi32(0, 0, (int)in[(size_t)x + 1u], (int)in[(size_t)x])),
+          offv);
+      /* v ≤ 0 截零；否则 floor(v+0.5)（cvttpd 向零截断，v > 0 时与
+       * round 同值）。 */
+      const __m128i ri = _mm_cvttpd_epi32(
+          _mm_andnot_pd(_mm_cmple_pd(vv, zero), _mm_add_pd(vv, half)));
+      out[(size_t)x + 0u] = (uint16_t)_mm_cvtsi128_si32(ri);
+      out[(size_t)x + 1u] = (uint16_t)_mm_cvtsi128_si32(_mm_srli_si128(ri, 4));
+    }
+  }
+#endif
+$scalarTail''';
+}
+
 StreamKernelResult _kBlackLevel(
     StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
   final mono = _isMonoPath(ctx);
@@ -561,6 +702,12 @@ StreamKernelResult _kBlackLevel(
 static const double ${ctx.ident}_off[4] = {
   ${off.map(cNum).join(', ')},
 };''');
+    // Bayer 形态 x86 专属整行行核（FP64 SSE2 双像素，行核带 y 形参——
+    // 相位偏移随行奇偶交替；仅单节点独占阶段被调用，见 group_c_export_bb
+    // 阶段发射特判）。
+    if (ctx.target.isX86) {
+      s.addFileDecl('${ctx.ident}_row', _blackLevelRowFn(ctx.ident, ctx.target));
+    }
     offExpr = '${ctx.ident}_off[((${s.rowVar} & 1) << 1) | (x & 1)]';
   }
   final v = s.freshVar();
@@ -643,6 +790,10 @@ static const uint16_t ${ctx.ident}_$name[${n + 1}] = {
 ${cU16Table(lut)}
 };''');
     }
+    // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单节点独占阶段
+    // 被调用，见 group_c_export_bb 阶段发射特判）。
+    s.addFileDecl('${ctx.ident}_row',
+        _whiteBalanceLutRowFn(ctx.ident, n, rGain, bGain, ctx.target));
   }
   final lines = <String>[];
   String mapCh(String expr, String lutName, double gain) {
@@ -662,14 +813,124 @@ ${cU16Table(lut)}
   );
 }
 
-/// ccm：3x3 色彩校正矩阵（Q20 定点乘加）。出处：isp_ccm.c
-/// isp_ccm_apply。定点系数 m[i] = (matrix[i] * 2^20).round() 与单位矩阵
-/// 判定在生成期完成（同一表达式，逐位一致）；单位矩阵时 c_ref 早退直通。
-StreamKernelResult _kCcm(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
-  final ie = _in(inputs, 'in');
-  if (ctx.boolParam('bypass')) return _alias(ie, 'out');
-  final raw = ctx.param('matrix');
+/// white_balance 整行行核可用性（与 [_kWhiteBalance] 同口径）：非 bypass、
+/// 非恒等（rGain/bGain 全 1）、codegenMode=lut。不可用返回 null，否则返回
+/// 归一化后的 (rGain, bGain)。
+(double, double)? whiteBalanceRowGains(Map<String, dynamic> params) {
+  if (params['bypass'] == true) return null;
+  var rGain = (params['rGain'] as num?)?.toDouble() ?? 0.0;
+  if (rGain <= 0) rGain = 1.0;
+  var bGain = (params['bGain'] as num?)?.toDouble() ?? 0.0;
+  if (bGain <= 0) bGain = 1.0;
+  if (rGain == 1.0 && bGain == 1.0) return null;
+  if (params['codegenMode'] != 'lut') return null;
+  return (rGain, bGain);
+}
+
+/// white_balance（LUT 模式）整行函数源码（[id] 前缀，烘焙域 [n]）：
+/// NEON/SSE2 + 标量双变体（随导出目标分叉）。域匹配（max_value == n）
+/// 走 SIMD gather（lut_r/lut_b 查表 + G 恒等）；域失配标量回退
+/// bb_clamp_i64(llround(v×gain))，与融合行核逐位一致。
+String _whiteBalanceLutRowFn(
+    String id, int n, double rGain, double bGain, GroupCTarget target) {
+  final scalarTail = '''
+  for (; x < w; x++) {
+    out[(size_t)x * 3u + 0u] = (max_value == $n)
+        ? ${id}_lut_r[in[(size_t)x * 3u + 0u]]
+        : bb_clamp_i64(llround((double)in[(size_t)x * 3u + 0u] * ${cNum(rGain)}), max_value);
+    out[(size_t)x * 3u + 1u] = in[(size_t)x * 3u + 1u];
+    out[(size_t)x * 3u + 2u] = (max_value == $n)
+        ? ${id}_lut_b[in[(size_t)x * 3u + 2u]]
+        : bb_clamp_i64(llround((double)in[(size_t)x * 3u + 2u] * ${cNum(bGain)}), max_value);
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    final deint =
+        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
+    final reint =
+        _sse2Reinterleave3('lrv', 'gv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    return '''
+/* white_balance LUT 模式整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value == $n) {
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+$deint      uint16_t r_[8], b_[8], lr_[8], lb_[8];
+      int k;
+      _mm_storeu_si128((__m128i *)r_, rv);
+      _mm_storeu_si128((__m128i *)b_, bv);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut_r[r_[k]];
+        lb_[k] = ${id}_lut_b[b_[k]];
+      }
+      const __m128i lrv = _mm_loadu_si128((const __m128i *)lr_);
+      const __m128i lbv = _mm_loadu_si128((const __m128i *)lb_);
+$reint      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* white_balance LUT 模式整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value == $n) {
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → R/B 标量 gather 查表 → G 恒等 →
+       * VST3 重交织。 */
+      const uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      uint16_t r_[8], b_[8], lr_[8], lb_[8];
+      int k;
+      vst1q_u16(r_, px.val[0]);
+      vst1q_u16(b_, px.val[2]);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut_r[r_[k]];
+        lb_[k] = ${id}_lut_b[b_[k]];
+      }
+      uint16x8x3_t opx;
+      opx.val[0] = vld1q_u16(lr_);
+      opx.val[1] = px.val[1];
+      opx.val[2] = vld1q_u16(lb_);
+      vst3q_u16(out + (size_t)x * 3u, opx);
+    }
+  }
+#endif
+$scalarTail''';
+}
+
+/// ccm 行核可用性解析：返回 (Q20 系数 m, 是否恒等)。与 [_kCcm] 同口径
+///（matrix 解析 + 单位矩阵判定 + bypass 由调用方检查）。
+(List<int>, bool) ccmMatrixOf(Map<String, dynamic> params) {
+  final raw = params['matrix'];
   final values = [
     for (var i = 0; i < 9; i++)
       raw is List && i < raw.length
@@ -684,6 +945,217 @@ StreamKernelResult _kCcm(
       break;
     }
   }
+  return (m, isIdentity);
+}
+
+/// ccm（Q20 定点矩阵）整行函数源码（[id] 前缀）：NEON/SSE2 + 标量双变体
+/// （随导出目标分叉），与融合行核（bb_clamp_i64 直算）逐位一致。
+/// 域保证：max_value ≤ 32767 且输入在域内（≤ max_value）走 SIMD（int32
+/// 系数 × int32 像素 → int64 累加，|Σ| ≤ 3×2^31×32767 < 2^48；>>20 后
+/// |值| ≤ 2^28 收窄回 int32 再钳位——AArch32 无 64 位比较）；其余走标量
+/// int64（与融合行核同口径）。SSE2 无 64 位算术右移，用 +2^63 偏置 →
+/// 逻辑右移 → 减偏置还原（|Σ+524288| < 2^48，偏置不环绕）。
+String _ccmRowFn(String id, List<int> m, GroupCTarget target) {
+  final scalarTail = '''
+  for (; x < w; x++) {
+    const int r = in[(size_t)x * 3u + 0u];
+    const int g = in[(size_t)x * 3u + 1u];
+    const int b = in[(size_t)x * 3u + 2u];
+    out[(size_t)x * 3u + 0u] = bb_clamp_i64((${id}_m[0] * (int64_t)r + ${id}_m[1] * (int64_t)g + ${id}_m[2] * (int64_t)b + 524288) >> 20, max_value);
+    out[(size_t)x * 3u + 1u] = bb_clamp_i64((${id}_m[3] * (int64_t)r + ${id}_m[4] * (int64_t)g + ${id}_m[5] * (int64_t)b + 524288) >> 20, max_value);
+    out[(size_t)x * 3u + 2u] = bb_clamp_i64((${id}_m[6] * (int64_t)r + ${id}_m[7] * (int64_t)g + ${id}_m[8] * (int64_t)b + 524288) >> 20, max_value);
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    final deint =
+        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
+    final reint =
+        _sse2Reinterleave3('o0v', 'o1v', 'o2v', 'o0', 'o1', 'o2').join('\n');
+    final StringBuffer body = StringBuffer();
+    body.writeln('      /* 每通道：mul_epu32 int64 积（负系数取 |m| 乘再 sub 取负——'
+        'mul_epu32 的 64 位积对负系数多出 r×2^32 项，非有符号积；仅低 32'
+        '位相乘语义下可忽略，64 位累加必须显式取负）→ add_epi64 累加 →'
+        '+524288 → 2^63 偏置还原算术 >>20 → 提取低 32 位组回 4 lane →'
+        'int32 钳位 → lo/hi 打包为 8×int16。 */');
+    String term(String src, String splat, int mv) => mv >= 0
+        ? '_mm_mul_epu32($src, $splat)'
+        : '_mm_sub_epi64(vzero64, _mm_mul_epu32($src, $splat))';
+    for (var c = 0; c < 3; c++) {
+      final coeffs = [m[3 * c], m[3 * c + 1], m[3 * c + 2]];
+      body.writeln('      {');
+      for (final side in ['l', 'h']) {
+        for (final sub in ['0', '1']) {
+          final rSrc = sub == '0' ? 'r$side' : '_mm_srli_epi64(r$side, 32)';
+          final gSrc = sub == '0' ? 'g$side' : '_mm_srli_epi64(g$side, 32)';
+          final bSrc = sub == '0' ? 'b$side' : '_mm_srli_epi64(b$side, 32)';
+          body.writeln(
+              '        __m128i a$c$side$sub = ${term(rSrc, 'vc${c}r', coeffs[0])};');
+          body.writeln(
+              '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, ${term(gSrc, 'vc${c}g', coeffs[1])});');
+          body.writeln(
+              '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, ${term(bSrc, 'vc${c}b', coeffs[2])});');
+          body.writeln(
+              '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, vhalf64);');
+          body.writeln(
+              '        a$c$side$sub = _mm_sub_epi64(_mm_srli_epi64(_mm_add_epi64(a$c$side$sub, vbias64), 20), vbias64s);');
+        }
+        body.writeln(
+            '        o$c$side = _mm_unpacklo_epi32(_mm_shuffle_epi32(a$c${side}0, _MM_SHUFFLE(2, 0, 2, 0)), _mm_shuffle_epi32(a$c${side}1, _MM_SHUFFLE(2, 0, 2, 0)));');
+      }
+      body.writeln('      }');
+    }
+    final clamps = StringBuffer();
+    for (var c = 0; c < 3; c++) {
+      for (final side in ['l', 'h']) {
+        for (final line in _sse2Clamp032('o$c$side', 'vmax32', 'vzero32')) {
+          clamps.writeln('      ${line.replaceAll('\n', '\n      ')}');
+        }
+      }
+    }
+    final packs = StringBuffer();
+    for (var c = 0; c < 3; c++) {
+      packs.writeln('      o${c}v = _mm_packs_epi32(o${c}l, o${c}h);');
+    }
+    return '''
+/* ccm（Q20 定点矩阵）整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value <= 32767) {
+    /* 系数按 |m| splat（负系数由 term 以 sub_epi64 取负）。 */
+    const __m128i vc0r = _mm_set1_epi32(${m[0].abs()});
+    const __m128i vc0g = _mm_set1_epi32(${m[1].abs()});
+    const __m128i vc0b = _mm_set1_epi32(${m[2].abs()});
+    const __m128i vc1r = _mm_set1_epi32(${m[3].abs()});
+    const __m128i vc1g = _mm_set1_epi32(${m[4].abs()});
+    const __m128i vc1b = _mm_set1_epi32(${m[5].abs()});
+    const __m128i vc2r = _mm_set1_epi32(${m[6].abs()});
+    const __m128i vc2g = _mm_set1_epi32(${m[7].abs()});
+    const __m128i vc2b = _mm_set1_epi32(${m[8].abs()});
+    const __m128i vhalf64 = _mm_set_epi32(0, 524288, 0, 524288);
+    /* 2^63 偏置（int64 算术右移还原用，无 _mm_srai_epi64）。 */
+    const __m128i vbias64 = _mm_set_epi32(0x80000000, 0, 0x80000000, 0);
+    const __m128i vbias64s = _mm_srli_epi64(vbias64, 20);
+    const __m128i vmax32 = _mm_set1_epi32(max_value);
+    const __m128i vzero32 = _mm_setzero_si128();
+    const __m128i vzero64 = _mm_setzero_si128();
+    const __m128i vzero16 = _mm_setzero_si128();
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+$deint      const __m128i rl = _mm_unpacklo_epi16(rv, vzero16);
+      const __m128i rh = _mm_unpackhi_epi16(rv, vzero16);
+      const __m128i gl = _mm_unpacklo_epi16(gv, vzero16);
+      const __m128i gh = _mm_unpackhi_epi16(gv, vzero16);
+      const __m128i bl = _mm_unpacklo_epi16(bv, vzero16);
+      const __m128i bh = _mm_unpackhi_epi16(bv, vzero16);
+      __m128i o0l, o0h, o1l, o1h, o2l, o2h, o0v, o1v, o2v;
+${body.toString()}$clamps${packs.toString()}      /* 重交织写回（R/G/B → 连续 3 通道）。 */
+$reint      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  final neonBody = StringBuffer();
+  neonBody.writeln('      /* 每通道：vmull_n/vmlal_n int64 累加 → +524288 →');
+  neonBody.writeln('       * >>20（vshrq_n_s64 算术）→ vmovn 收窄 int32 → [0,max]');
+  neonBody.writeln('       * 钳位（AArch32 无 64 位比较，钳位在 32 位域）。 */');
+  for (var c = 0; c < 3; c++) {
+    neonBody.writeln('      {');
+    for (final side in ['l', 'h']) {
+      for (final sub in ['0', '1']) {
+        final get = sub == '0' ? 'vget_low_s32' : 'vget_high_s32';
+        neonBody.writeln(
+            '        int64x2_t a$side$sub = vmull_n_s32($get(r$side), c${c}r);');
+        neonBody.writeln(
+            '        a$side$sub = vmlal_n_s32(a$side$sub, $get(g$side), c${c}g);');
+        neonBody.writeln(
+            '        a$side$sub = vmlal_n_s32(a$side$sub, $get(b$side), c${c}b);');
+        neonBody.writeln(
+            '        a$side$sub = vshrq_n_s64(vaddq_s64(a$side$sub, vhalf64), 20);');
+      }
+      neonBody.writeln(
+          '        o$c$side = vcombine_s32(vmovn_s64(a${side}0), vmovn_s64(a${side}1));');
+      neonBody.writeln(
+          '        o$c$side = vmaxq_s32(vminq_s32(o$c$side, vmax32), vzero32);');
+    }
+    neonBody.writeln('      }');
+  }
+  return '''
+/* ccm（Q20 定点矩阵）整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value <= 32767) {
+    const int32_t c0r = ${m[0]};
+    const int32_t c0g = ${m[1]};
+    const int32_t c0b = ${m[2]};
+    const int32_t c1r = ${m[3]};
+    const int32_t c1g = ${m[4]};
+    const int32_t c1b = ${m[5]};
+    const int32_t c2r = ${m[6]};
+    const int32_t c2g = ${m[7]};
+    const int32_t c2b = ${m[8]};
+    const int64x2_t vhalf64 = vdupq_n_s64(524288);
+    const int32x4_t vmax32 = vdupq_n_s32(max_value);
+    const int32x4_t vzero32 = vdupq_n_s32(0);
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → int64 累加（见上）→ vmovn 窄化 → VST3。 */
+      const uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      const int32x4_t rl = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[0])));
+      const int32x4_t rh = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[0])));
+      const int32x4_t gl = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[1])));
+      const int32x4_t gh = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[1])));
+      const int32x4_t bl = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[2])));
+      const int32x4_t bh = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[2])));
+      int32x4_t o0l, o0h, o1l, o1h, o2l, o2h;
+${neonBody.toString()}      uint16x8x3_t opx;
+      opx.val[0] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(o0l)),
+                                vmovn_u32(vreinterpretq_u32_s32(o0h)));
+      opx.val[1] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(o1l)),
+                                vmovn_u32(vreinterpretq_u32_s32(o1h)));
+      opx.val[2] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(o2l)),
+                                vmovn_u32(vreinterpretq_u32_s32(o2h)));
+      vst3q_u16(out + (size_t)x * 3u, opx);
+    }
+  }
+#endif
+$scalarTail''';
+}
+
+/// ccm：3x3 色彩校正矩阵（Q20 定点乘加）。出处：isp_ccm.c
+/// isp_ccm_apply。定点系数 m[i] = (matrix[i] * 2^20).round() 与单位矩阵
+/// 判定在生成期完成（同一表达式，逐位一致）；单位矩阵时 c_ref 早退直通。
+StreamKernelResult _kCcm(
+    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  final ie = _in(inputs, 'in');
+  if (ctx.boolParam('bypass')) return _alias(ie, 'out');
+  final (m, isIdentity) = ccmMatrixOf(ctx.node.paramValues);
   if (isIdentity) return _alias(ie, 'out'); // c_ref 定点恒等早退
   s.useHelper('bb_clamp_i64');
   s.addFileDecl('${ctx.ident}_m', '''
@@ -692,6 +1164,12 @@ StreamKernelResult _kCcm(
 static const int64_t ${ctx.ident}_m[9] = {
   ${m.join(', ')},
 };''');
+  // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉）：仅当全部系数可
+  // 放入 int32（|m| ≤ 2^31-1，SIMD 系数上限）时登记；仅单节点独占阶段
+  // 被调用，见 group_c_export_bb 阶段发射特判。
+  if (m.every((v) => v.abs() <= 2147483647)) {
+    s.addFileDecl('${ctx.ident}_row', _ccmRowFn(ctx.ident, m, ctx.target));
+  }
   final id = ctx.ident;
   final lines = <String>[];
   final outs = <String>[];
@@ -705,6 +1183,126 @@ static const int64_t ${ctx.ident}_m[9] = {
     outs.add(o);
   }
   return (lines, {'out': outs});
+}
+
+/// gamma 整行函数源码（[id] 前缀）：NEON/SSE2 + 标量双变体（随导出目标
+/// 分叉）。16 位交织 RGB → 8 位 RGBA：输入只钳上界（与融合行核同口径）
+/// 后查运行期色调映射 LUT（top 层 scratch 构建，形参传入），alpha 恒
+/// 255；SIMD 解交织 → 钳位 → gather → 4 通道字节重交织，与融合行核
+/// 逐位一致。
+String _gammaRowFn(String id, GroupCTarget target) {
+  final scalarTail = '''
+  for (; x < w; x++) {
+    out[(size_t)x * 4u + 0u] =
+        lut[in[(size_t)x * 3u + 0u] > max_value ? max_value : in[(size_t)x * 3u + 0u]];
+    out[(size_t)x * 4u + 1u] =
+        lut[in[(size_t)x * 3u + 1u] > max_value ? max_value : in[(size_t)x * 3u + 1u]];
+    out[(size_t)x * 4u + 2u] =
+        lut[in[(size_t)x * 3u + 2u] > max_value ? max_value : in[(size_t)x * 3u + 2u]];
+    out[(size_t)x * 4u + 3u] = 255;
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    final deint =
+        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
+    return '''
+/* gamma 整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint8_t *out, int w,
+                      int max_value, const uint8_t *lut) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  {
+    /* 输入钳上界：min_epu16 经 subs/sub 模拟（SSE2 无 min_epu16）。 */
+    const __m128i vmax16 = _mm_set1_epi16((short)max_value);
+    const __m128i a255 = _mm_set1_epi8((char)255);
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+$deint      const __m128i rc = _mm_sub_epi16(rv, _mm_subs_epu16(rv, vmax16));
+      const __m128i gc = _mm_sub_epi16(gv, _mm_subs_epu16(gv, vmax16));
+      const __m128i bc = _mm_sub_epi16(bv, _mm_subs_epu16(bv, vmax16));
+      uint16_t r_[8], g_[8], b_[8];
+      uint8_t lr_[8], lg_[8], lb_[8];
+      int k;
+      _mm_storeu_si128((__m128i *)r_, rc);
+      _mm_storeu_si128((__m128i *)g_, gc);
+      _mm_storeu_si128((__m128i *)b_, bc);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = lut[r_[k]];
+        lg_[k] = lut[g_[k]];
+        lb_[k] = lut[b_[k]];
+      }
+      /* 4 通道字节重交织（无 pshufb：unpacklo_epi8 两对 → unpack_epi16
+       * 两半 → 2×16B 存储，恰为 8 像素 × 4 通道）。 */
+      const __m128i rv8 = _mm_loadl_epi64((const __m128i *)lr_);
+      const __m128i gv8 = _mm_loadl_epi64((const __m128i *)lg_);
+      const __m128i bv8 = _mm_loadl_epi64((const __m128i *)lb_);
+      const __m128i rg = _mm_unpacklo_epi8(rv8, gv8);
+      const __m128i ba = _mm_unpacklo_epi8(bv8, a255);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 4u),
+                       _mm_unpacklo_epi16(rg, ba));
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 4u + 16u),
+                       _mm_unpackhi_epi16(rg, ba));
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* gamma 整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint8_t *out, int w,
+                      int max_value, const uint8_t *lut) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  {
+    const uint16x8_t vmaxv = vdupq_n_u16((uint16_t)max_value);
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → 钳上界 → 标量 gather 查表 → VST4（RGBA）。 */
+      uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      uint16_t r_[8], g_[8], b_[8];
+      uint8_t lr_[8], lg_[8], lb_[8];
+      int k;
+      px.val[0] = vminq_u16(px.val[0], vmaxv);
+      px.val[1] = vminq_u16(px.val[1], vmaxv);
+      px.val[2] = vminq_u16(px.val[2], vmaxv);
+      vst1q_u16(r_, px.val[0]);
+      vst1q_u16(g_, px.val[1]);
+      vst1q_u16(b_, px.val[2]);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = lut[r_[k]];
+        lg_[k] = lut[g_[k]];
+        lb_[k] = lut[b_[k]];
+      }
+      uint8x8x4_t opx;
+      opx.val[0] = vld1_u8(lr_);
+      opx.val[1] = vld1_u8(lg_);
+      opx.val[2] = vld1_u8(lb_);
+      opx.val[3] = vdup_n_u8(255);
+      vst4_u8(out + (size_t)x * 4u, opx);
+    }
+  }
+#endif
+$scalarTail''';
 }
 
 /// gamma：16 位交织 RGB → 8 位 RGBA 色调映射（链尾物化点）。
@@ -726,6 +1324,11 @@ StreamKernelResult _kGamma(
     ct = 1.0;
   }
   s.gammaLuts[ctx.ident] = (g, br, ct);
+  // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；16 位 RGB → 8 位
+  // RGBA，LUT 由 top 层 scratch 构建经形参传入）；仅单节点独占阶段被
+  // 调用，见 group_c_export_bb 阶段发射特判（gamma 行核调用带 LUT 指针
+  // 形参）。
+  s.addFileDecl('${ctx.ident}_row', _gammaRowFn(ctx.ident, ctx.target));
   final vars = [for (var c = 0; c < 3; c++) s.freshVar()];
   return (
     [
@@ -851,15 +1454,598 @@ StreamKernelResult _kCscRgb2Yuv(
     lines.add('const uint16_t $o = isp_clamp_u16($e, max_value);');
     outs.add(o);
   }
+  // BT.601 全范围：登记整行行核（NEON/SSE2/标量双变体，随导出目标分叉；
+  // 仅单节点独占阶段被调用，见 group_c_export_bb 阶段发射特判）。
+  if (!bt709 && !limited) {
+    s.addFileDecl('${id}_row', _cscRgb2YuvRowFn(id, ctx.target));
+  }
   return (lines, {'out': outs});
 }
 
-/// 其余 5 个 CSC 变体：单像素公式复刻（出处：isp_csc_<变体>.c 主循环 +
-/// isp_csc_common.h 单像素工具；yuv2hsl/hsl2yuv 为单遍融合两段中转）。
+// ---------------------------------------------------------------------------
+// 整行 SIMD 行核共享发射工具（SSE2：解/重交织 + 32 位乘 + 钳位）
+// ---------------------------------------------------------------------------
+
+/// SSE2 三通道解交织语句（8 像素 3×16 位连续加载 → 三个 16 位通道向量）。
+/// 输入 [i0]/[i1]/[i2] 为 3 个 `__m128i`（in+x*3 处 48 字节的连续 3 次
+/// loadu）；输出语句声明 [o0]/[o1]/[o2]（通道 0/1/2 各 8 lane，与
+/// 像素 0..7 一一对应）。复用固定掩码 `lm0..lm7`（调用方在循环外声明）。
+List<String> _sse2Deinterleave3(
+    String i0, String i1, String i2, String o0, String o1, String o2) {
+  return [
+    'const __m128i $o0 = _mm_or_si128(',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128($i0, lm0),',
+    '                     _mm_and_si128(_mm_srli_si128($i0, 4), lm1)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i0, 8), lm2),',
+    '                     _mm_and_si128(_mm_slli_si128($i1, 4), lm3))),',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128($i1, lm4),',
+    '                     _mm_and_si128(_mm_srli_si128($i1, 4), lm5)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i2, 8), lm6),',
+    '                     _mm_and_si128(_mm_slli_si128($i2, 4), lm7))));',
+    'const __m128i $o1 = _mm_or_si128(',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i0, 2), lm0),',
+    '                     _mm_and_si128(_mm_srli_si128($i0, 6), lm1)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i0, 10), lm2),',
+    '                     _mm_and_si128(_mm_slli_si128($i1, 2), lm3))),',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i1, 2), lm4),',
+    '                     _mm_and_si128(_mm_slli_si128($i2, 10), lm5)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i2, 6), lm6),',
+    '                     _mm_and_si128(_mm_slli_si128($i2, 2), lm7))));',
+    'const __m128i $o2 = _mm_or_si128(',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i0, 4), lm0),',
+    '                     _mm_and_si128(_mm_srli_si128($i0, 8), lm1)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i1, 4), lm2),',
+    '                     _mm_and_si128($i1, lm3))),',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i1, 4), lm4),',
+    '                     _mm_and_si128(_mm_slli_si128($i2, 8), lm5)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i2, 4), lm6),',
+    '                     _mm_and_si128($i2, lm7))));',
+  ];
+}
+
+/// SSE2 三通道重交织语句（三个 16 位通道向量 → 48 字节连续写出的 3 个
+/// `__m128i`）。输出语句声明 [o0]/[o1]/[o2]；复用固定掩码 `lm0..lm7`。
+List<String> _sse2Reinterleave3(
+    String i0, String i1, String i2, String o0, String o1, String o2) {
+  return [
+    'const __m128i $o0 = _mm_or_si128(',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128($i0, lm0),',
+    '                     _mm_and_si128(_mm_slli_si128($i1, 2), lm1)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i2, 4), lm2),',
+    '                     _mm_and_si128(_mm_slli_si128($i0, 4), lm3))),',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i1, 6), lm4),',
+    '                     _mm_and_si128(_mm_slli_si128($i2, 8), lm5)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i0, 8), lm6),',
+    '                     _mm_and_si128(_mm_slli_si128($i1, 10), lm7))));',
+    'const __m128i $o1 = _mm_or_si128(',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i2, 4), lm0),',
+    '                     _mm_and_si128(_mm_srli_si128($i0, 4), lm1)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i1, 2), lm2),',
+    '                     _mm_and_si128($i2, lm3))),',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128($i0, lm4),',
+    '                     _mm_and_si128(_mm_slli_si128($i1, 2), lm5)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_slli_si128($i2, 4), lm6),',
+    '                     _mm_and_si128(_mm_slli_si128($i0, 4), lm7))));',
+    'const __m128i $o2 = _mm_or_si128(',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i1, 10), lm0),',
+    '                     _mm_and_si128(_mm_srli_si128($i2, 8), lm1)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i0, 8), lm2),',
+    '                     _mm_and_si128(_mm_srli_si128($i1, 6), lm3))),',
+    '    _mm_or_si128(',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i2, 4), lm4),',
+    '                     _mm_and_si128(_mm_srli_si128($i0, 4), lm5)),',
+    '        _mm_or_si128(_mm_and_si128(_mm_srli_si128($i1, 2), lm6),',
+    '                     _mm_and_si128($i2, lm7))));',
+  ];
+}
+
+/// SSE2 有符号 32 位低乘（无 `_mm_mullo_epi32`）：`mul_epu32` 偶/奇 lane
+/// 双趟取积低 32 位重组，与 NEON `vmulq_s32` 低 32 位同、与标量 int32
+/// 乘截断逐位一致。返回 C 表达式（输入 [a]/[b] 为 `__m128i` int32）。
+String _sse2Mullo32(String a, String b) {
+  return '_mm_unpacklo_epi32(\n'
+      '        _mm_shuffle_epi32(_mm_mul_epu32(($a), ($b)),\n'
+      '                          _MM_SHUFFLE(2, 0, 2, 0)),\n'
+      '        _mm_shuffle_epi32(\n'
+      '            _mm_mul_epu32(_mm_srli_epi64(($a), 32),\n'
+      '                          _mm_srli_epi64(($b), 32)),\n'
+      '            _MM_SHUFFLE(2, 0, 2, 0)))';
+}
+
+/// SSE2 int32 钳位 [0, max] 语句（无 `_mm_max_epi32`：比较 + 掩码选择）。
+/// 返回修改 [v] 的两行语句。
+List<String> _sse2Clamp032(String v, String vmax32, String vzero32) {
+  return [
+    '{ const __m128i gt_ = _mm_cmpgt_epi32($v, $vmax32);\n'
+        '  $v = _mm_or_si128(_mm_and_si128(gt_, $vmax32),\n'
+        '                    _mm_andnot_si128(gt_, $v)); }',
+    '$v = _mm_andnot_si128(_mm_cmpgt_epi32($vzero32, $v), $v);',
+  ];
+}
+
+/// csc_rgb2yuv（BT.601 全范围）整行函数源码（[id] 前缀）：NEON/SSE2 +
+/// 标量双变体（随导出目标分叉），与融合行核逐位一致。
+/// 域保证：输入在域内（≤ max_value）且 max_value ≤ 32767 时走 SIMD
+/// （int16 通道 + int32 累加精确，|Σ系数|×max_value = 65536×32767 <
+/// INT32_MAX）；其余（16 位域）走标量 int64（与融合行核同口径）。
+String _cscRgb2YuvRowFn(String id, GroupCTarget target) {
+  final scalarTail = '''
+  for (; x < w; x++) {
+    const int r = in[(size_t)x * 3u + 0u];
+    const int g = in[(size_t)x * 3u + 1u];
+    const int b = in[(size_t)x * 3u + 2u];
+    const int y = (int)(((int64_t)19595 * r + (int64_t)38470 * g +
+                         (int64_t)7471 * b + 32768) >> 16);
+    const int u = (int)(((int64_t)-11058 * r + (int64_t)-21710 * g +
+                         (int64_t)32768 * b + 32768) >> 16) +
+                  (max_value >> 1);
+    const int v = (int)(((int64_t)32768 * r + (int64_t)-27439 * g +
+                         (int64_t)-5329 * b + 32768) >> 16) +
+                  (max_value >> 1);
+    out[(size_t)x * 3u + 0u] = isp_clamp_u16(y, max_value);
+    out[(size_t)x * 3u + 1u] = isp_clamp_u16(u, max_value);
+    out[(size_t)x * 3u + 2u] = isp_clamp_u16(v, max_value);
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    // 三通道各一次 mullo + 累加 + 舍入移位 + 钳位（lo/hi 各 4 lane）。
+    final StringBuffer body = StringBuffer();
+    for (final (label, half) in [
+      ('Y', false),
+      ('U', true),
+      ('V', true),
+    ]) {
+      body.writeln('      /* $label：mullo×系数三通道累加 + 32768 → >>16'
+          '${half ? ' → +half' : ''} → [0,max] 钳位。 */');
+      body.writeln('      __m128i ${label.toLowerCase()}l, ${label.toLowerCase()}h;');
+      body.writeln('      {');
+      body.writeln('        const __m128i rl_ = _mm_unpacklo_epi16(rv, vzero16);');
+      body.writeln('        const __m128i rh_ = _mm_unpackhi_epi16(rv, vzero16);');
+      body.writeln('        const __m128i gl_ = _mm_unpacklo_epi16(gv, vzero16);');
+      body.writeln('        const __m128i gh_ = _mm_unpackhi_epi16(gv, vzero16);');
+      body.writeln('        const __m128i bl_ = _mm_unpacklo_epi16(bv, vzero16);');
+      body.writeln('        const __m128i bh_ = _mm_unpackhi_epi16(bv, vzero16);');
+      body.writeln(
+          '        ${label.toLowerCase()}l = ${_sse2Mullo32('rl_', 'vc${label}r')};');
+      body.writeln(
+          '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, ${_sse2Mullo32('gl_', 'vc${label}g')});');
+      body.writeln(
+          '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, ${_sse2Mullo32('bl_', 'vc${label}b')});');
+      body.writeln(
+          '        ${label.toLowerCase()}h = ${_sse2Mullo32('rh_', 'vc${label}r')};');
+      body.writeln(
+          '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, ${_sse2Mullo32('gh_', 'vc${label}g')});');
+      body.writeln(
+          '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, ${_sse2Mullo32('bh_', 'vc${label}b')});');
+      body.writeln(
+          '        ${label.toLowerCase()}l = _mm_srai_epi32(_mm_add_epi32(${label.toLowerCase()}l, vhalf32), 16);');
+      body.writeln(
+          '        ${label.toLowerCase()}h = _mm_srai_epi32(_mm_add_epi32(${label.toLowerCase()}h, vhalf32), 16);');
+      if (half) {
+        body.writeln(
+            '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, vh16v);');
+        body.writeln(
+            '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, vh16v);');
+      }
+      for (final l in ['l', 'h']) {
+        for (final line in _sse2Clamp032('${label.toLowerCase()}$l', 'vmax32', 'vzero32')) {
+          body.writeln('        ${line.replaceAll('\n', '\n        ')}');
+        }
+      }
+      // lo/hi 两个 int32 半区打包为 8×int16 全通道（值 [0, max] ≤ 32767，
+      // packs 有符号饱和不触发）。
+      body.writeln(
+          '        ${label.toLowerCase()}l = _mm_packs_epi32(${label.toLowerCase()}l, ${label.toLowerCase()}h);');
+      body.writeln('      }');
+    }
+    final deint =
+        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
+    final reint =
+        _sse2Reinterleave3('yl', 'ul', 'vl', 'o0', 'o1', 'o2').join('\n');
+    return '''
+/* csc_rgb2yuv 整行函数（BT.601 全范围；SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value <= 32767) {
+    const __m128i vcYr = _mm_set1_epi32(19595);
+    const __m128i vcYg = _mm_set1_epi32(38470);
+    const __m128i vcYb = _mm_set1_epi32(7471);
+    const __m128i vcUr = _mm_set1_epi32(-11058);
+    const __m128i vcUg = _mm_set1_epi32(-21710);
+    const __m128i vcUb = _mm_set1_epi32(32768);
+    const __m128i vcVr = _mm_set1_epi32(32768);
+    const __m128i vcVg = _mm_set1_epi32(-27439);
+    const __m128i vcVb = _mm_set1_epi32(-5329);
+    const __m128i vhalf32 = _mm_set1_epi32(32768);
+    const __m128i vh16v = _mm_set1_epi32(max_value >> 1);
+    const __m128i vmax32 = _mm_set1_epi32(max_value);
+    const __m128i vzero32 = _mm_setzero_si128();
+    const __m128i vzero16 = _mm_setzero_si128();
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+$deint${body.toString()}      /* 重交织写回（Y/U/V → 连续 3 通道，与解交织互逆）。 */
+$reint      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* csc_rgb2yuv 整行函数（BT.601 全范围；NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value <= 32767) {
+    /* 系数 32768（cuB/cvR）超 int16，统一走 int32 系数 + vmulq/vmlaq：
+     * 单个乘积 |c|×r ≤ 32768×32767 < INT32_MAX，三通道累加 |Σ| ≤
+     * 65536×32767 < INT32_MAX，与标量 int64 逐位一致。 */
+    const int32x4_t vcYr = vdupq_n_s32(19595);
+    const int32x4_t vcYg = vdupq_n_s32(38470);
+    const int32x4_t vcYb = vdupq_n_s32(7471);
+    const int32x4_t vcUr = vdupq_n_s32(-11058);
+    const int32x4_t vcUg = vdupq_n_s32(-21710);
+    const int32x4_t vcUb = vdupq_n_s32(32768);
+    const int32x4_t vcVr = vdupq_n_s32(32768);
+    const int32x4_t vcVg = vdupq_n_s32(-27439);
+    const int32x4_t vcVb = vdupq_n_s32(-5329);
+    const int32x4_t vhalf32 = vdupq_n_s32(32768);
+    const int32x4_t vh16 = vdupq_n_s32(max_value >> 1);
+    const int32x4_t vmax32 = vdupq_n_s32(max_value);
+    const int32x4_t vzero32 = vdupq_n_s32(0);
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → uint16 零扩展 int32 → vmulq/vmlaq 有符号
+       * 累加 → +32768 舍入 → >>16 →（U/V）+half → [0,max] 钳位 →
+       * vmovn 窄化 → VST3 重交织。 */
+      const uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      const int32x4_t rl = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[0])));
+      const int32x4_t rh = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[0])));
+      const int32x4_t gl = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[1])));
+      const int32x4_t gh = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[1])));
+      const int32x4_t bl = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[2])));
+      const int32x4_t bh = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[2])));
+      int32x4_t yl = vmulq_s32(rl, vcYr);
+      yl = vmlaq_s32(yl, gl, vcYg);
+      yl = vmlaq_s32(yl, bl, vcYb);
+      yl = vshrq_n_s32(vaddq_s32(yl, vhalf32), 16);
+      yl = vmaxq_s32(vminq_s32(yl, vmax32), vzero32);
+      int32x4_t yh = vmulq_s32(rh, vcYr);
+      yh = vmlaq_s32(yh, gh, vcYg);
+      yh = vmlaq_s32(yh, bh, vcYb);
+      yh = vshrq_n_s32(vaddq_s32(yh, vhalf32), 16);
+      yh = vmaxq_s32(vminq_s32(yh, vmax32), vzero32);
+      int32x4_t ul = vmulq_s32(rl, vcUr);
+      ul = vmlaq_s32(ul, gl, vcUg);
+      ul = vmlaq_s32(ul, bl, vcUb);
+      ul = vaddq_s32(vshrq_n_s32(vaddq_s32(ul, vhalf32), 16), vh16);
+      ul = vmaxq_s32(vminq_s32(ul, vmax32), vzero32);
+      int32x4_t uh = vmulq_s32(rh, vcUr);
+      uh = vmlaq_s32(uh, gh, vcUg);
+      uh = vmlaq_s32(uh, bh, vcUb);
+      uh = vaddq_s32(vshrq_n_s32(vaddq_s32(uh, vhalf32), 16), vh16);
+      uh = vmaxq_s32(vminq_s32(uh, vmax32), vzero32);
+      int32x4_t vl = vmulq_s32(rl, vcVr);
+      vl = vmlaq_s32(vl, gl, vcVg);
+      vl = vmlaq_s32(vl, bl, vcVb);
+      vl = vaddq_s32(vshrq_n_s32(vaddq_s32(vl, vhalf32), 16), vh16);
+      vl = vmaxq_s32(vminq_s32(vl, vmax32), vzero32);
+      int32x4_t vh = vmulq_s32(rh, vcVr);
+      vh = vmlaq_s32(vh, gh, vcVg);
+      vh = vmlaq_s32(vh, bh, vcVb);
+      vh = vaddq_s32(vshrq_n_s32(vaddq_s32(vh, vhalf32), 16), vh16);
+      vh = vmaxq_s32(vminq_s32(vh, vmax32), vzero32);
+      uint16x8x3_t opx;
+      opx.val[0] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(yl)),
+                                vmovn_u32(vreinterpretq_u32_s32(yh)));
+      opx.val[1] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(ul)),
+                                vmovn_u32(vreinterpretq_u32_s32(uh)));
+      opx.val[2] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(vl)),
+                                vmovn_u32(vreinterpretq_u32_s32(vh)));
+      vst3q_u16(out + (size_t)x * 3u, opx);
+    }
+  }
+#endif
+$scalarTail''';
+}
+
+/// csc_yuv2rgb 整行函数源码（[id] 前缀）：NEON/SSE2 + 标量双变体（随导出
+/// 目标分叉），与融合行核（bb_yuv_to_rgb_px）逐位一致。
+/// 域保证同 [_cscRgb2YuvRowFn]：max_value ≤ 32767 走 SIMD（u'/v' =
+/// 通道值 - half ∈ [-16384, 16384]，单乘积 ≤ 116130×16384 < INT32_MAX）；
+/// 注意标量的结合序：各通道先 (Σ coeff×src + 32768)>>16 **再**加 y。
+String _cscYuv2RgbRowFn(String id, GroupCTarget target) {
+  final scalarTail = '''
+  for (; x < w; x++) {
+    /* 标量路径：与融合行核同一 helper（bb_yuv_to_rgb_px），逐位一致。 */
+    int rgb_[3];
+    bb_yuv_to_rgb_px(in[(size_t)x * 3u + 0u], in[(size_t)x * 3u + 1u],
+                     in[(size_t)x * 3u + 2u], max_value >> 1, max_value,
+                     rgb_, rgb_ + 1, rgb_ + 2);
+    out[(size_t)x * 3u + 0u] = (uint16_t)rgb_[0];
+    out[(size_t)x * 3u + 1u] = (uint16_t)rgb_[1];
+    out[(size_t)x * 3u + 2u] = (uint16_t)rgb_[2];
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    final deint =
+        _sse2Deinterleave3('i0', 'i1', 'i2', 'yv', 'uv', 'vv').join('\n');
+    final reint =
+        _sse2Reinterleave3('rl', 'gl', 'bl', 'o0', 'o1', 'o2').join('\n');
+    return '''
+/* csc_yuv2rgb 整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value <= 32767) {
+    const __m128i vcRv = _mm_set1_epi32(91881);
+    const __m128i vcGu = _mm_set1_epi32(-22553);
+    const __m128i vcGv = _mm_set1_epi32(-46801);
+    const __m128i vcBu = _mm_set1_epi32(116130);
+    const __m128i vhalf32 = _mm_set1_epi32(32768);
+    const __m128i vh16v = _mm_set1_epi32(max_value >> 1);
+    const __m128i vmax32 = _mm_set1_epi32(max_value);
+    const __m128i vzero32 = _mm_setzero_si128();
+    const __m128i vzero16 = _mm_setzero_si128();
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+$deint      /* y/u/v → int32；u'/v' 减半程。 */
+      const __m128i yl_ = _mm_unpacklo_epi16(yv, vzero16);
+      const __m128i yh_ = _mm_unpackhi_epi16(yv, vzero16);
+      const __m128i ul_ = _mm_sub_epi32(_mm_unpacklo_epi16(uv, vzero16), vh16v);
+      const __m128i uh_ = _mm_sub_epi32(_mm_unpackhi_epi16(uv, vzero16), vh16v);
+      const __m128i vl_ = _mm_sub_epi32(_mm_unpacklo_epi16(vv, vzero16), vh16v);
+      const __m128i vh_ = _mm_sub_epi32(_mm_unpackhi_epi16(vv, vzero16), vh16v);
+      /* 各通道：(Σ coeff×src + 32768)>>16 再加 y（结合序同标量），
+       * [0,max] 钳位后打包为 8×int16。 */
+      __m128i rl, rh, gl, gh, bl, bh;
+      rl = _mm_srai_epi32(
+          _mm_add_epi32(${_sse2Mullo32('vl_', 'vcRv')}, vhalf32), 16);
+      rl = _mm_add_epi32(yl_, rl);
+      rh = _mm_srai_epi32(
+          _mm_add_epi32(${_sse2Mullo32('vh_', 'vcRv')}, vhalf32), 16);
+      rh = _mm_add_epi32(yh_, rh);
+      gl = _mm_add_epi32(${_sse2Mullo32('ul_', 'vcGu')},
+                         ${_sse2Mullo32('vl_', 'vcGv')});
+      gl = _mm_srai_epi32(_mm_add_epi32(gl, vhalf32), 16);
+      gl = _mm_add_epi32(yl_, gl);
+      gh = _mm_add_epi32(${_sse2Mullo32('uh_', 'vcGu')},
+                         ${_sse2Mullo32('vh_', 'vcGv')});
+      gh = _mm_srai_epi32(_mm_add_epi32(gh, vhalf32), 16);
+      gh = _mm_add_epi32(yh_, gh);
+      bl = _mm_srai_epi32(
+          _mm_add_epi32(${_sse2Mullo32('ul_', 'vcBu')}, vhalf32), 16);
+      bl = _mm_add_epi32(yl_, bl);
+      bh = _mm_srai_epi32(
+          _mm_add_epi32(${_sse2Mullo32('uh_', 'vcBu')}, vhalf32), 16);
+      bh = _mm_add_epi32(yh_, bh);
+${[
+  for (final v in ['rl', 'rh', 'gl', 'gh', 'bl', 'bh'])
+    ..._sse2Clamp032(v, 'vmax32', 'vzero32'),
+].map((l) => '      $l').join('\n')}
+      rl = _mm_packs_epi32(rl, rh);
+      gl = _mm_packs_epi32(gl, gh);
+      bl = _mm_packs_epi32(bl, bh);
+      /* 重交织写回（R/G/B → 连续 3 通道）。 */
+$reint      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* csc_yuv2rgb 整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value <= 32767) {
+    /* int32 系数（91881/116130 超 int16）+ vmulq/vmlaq；u'/v' = 通道值
+     * - half ∈ [-16384, 16384]，单乘积 ≤ 116130×16384 < INT32_MAX。 */
+    const int32x4_t vcRv = vdupq_n_s32(91881);
+    const int32x4_t vcGu = vdupq_n_s32(-22553);
+    const int32x4_t vcGv = vdupq_n_s32(-46801);
+    const int32x4_t vcBu = vdupq_n_s32(116130);
+    const int32x4_t vhalf32 = vdupq_n_s32(32768);
+    const int32x4_t vh16 = vdupq_n_s32(max_value >> 1);
+    const int32x4_t vmax32 = vdupq_n_s32(max_value);
+    const int32x4_t vzero32 = vdupq_n_s32(0);
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → u'/v' 减半程 → 逐项 vmulq/vmlaq → 单通道
+       * (term+32768)>>16 后加 y → [0,max] 钳位 → vmovn 窄化 → VST3。 */
+      const uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      const int32x4_t yl = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[0])));
+      const int32x4_t yh = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[0])));
+      const int32x4_t ul = vsubq_s32(vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[1]))), vh16);
+      const int32x4_t uh = vsubq_s32(vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[1]))), vh16);
+      const int32x4_t vl = vsubq_s32(vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(px.val[2]))), vh16);
+      const int32x4_t vh = vsubq_s32(vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(px.val[2]))), vh16);
+      int32x4_t rl = vshrq_n_s32(vaddq_s32(vmulq_s32(vl, vcRv), vhalf32), 16);
+      rl = vmaxq_s32(vminq_s32(vaddq_s32(yl, rl), vmax32), vzero32);
+      int32x4_t rh = vshrq_n_s32(vaddq_s32(vmulq_s32(vh, vcRv), vhalf32), 16);
+      rh = vmaxq_s32(vminq_s32(vaddq_s32(yh, rh), vmax32), vzero32);
+      int32x4_t gl = vmulq_s32(ul, vcGu);
+      gl = vmlaq_s32(gl, vl, vcGv);
+      gl = vshrq_n_s32(vaddq_s32(gl, vhalf32), 16);
+      gl = vmaxq_s32(vminq_s32(vaddq_s32(yl, gl), vmax32), vzero32);
+      int32x4_t gh = vmulq_s32(uh, vcGu);
+      gh = vmlaq_s32(gh, vh, vcGv);
+      gh = vshrq_n_s32(vaddq_s32(gh, vhalf32), 16);
+      gh = vmaxq_s32(vminq_s32(vaddq_s32(yh, gh), vmax32), vzero32);
+      int32x4_t bl = vshrq_n_s32(vaddq_s32(vmulq_s32(ul, vcBu), vhalf32), 16);
+      bl = vmaxq_s32(vminq_s32(vaddq_s32(yl, bl), vmax32), vzero32);
+      int32x4_t bh = vshrq_n_s32(vaddq_s32(vmulq_s32(uh, vcBu), vhalf32), 16);
+      bh = vmaxq_s32(vminq_s32(vaddq_s32(yh, bh), vmax32), vzero32);
+      uint16x8x3_t opx;
+      opx.val[0] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(rl)),
+                                vmovn_u32(vreinterpretq_u32_s32(rh)));
+      opx.val[1] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(gl)),
+                                vmovn_u32(vreinterpretq_u32_s32(gh)));
+      opx.val[2] = vcombine_u16(vmovn_u32(vreinterpretq_u32_s32(bl)),
+                                vmovn_u32(vreinterpretq_u32_s32(bh)));
+      vst3q_u16(out + (size_t)x * 3u, opx);
+    }
+  }
+#endif
+$scalarTail''';
+}
+
+/// x86 专属 FP64 HSL 整行函数源码（[id] 前缀，[variant] 为 'hsl2rgb' /
+/// 'rgb2hsl'）：SSE2 双像素调用 isp_csc_sse.h 的逐位等价实现（与标量
+/// bb_hsl_to_rgb_px / bb_rgb_to_hsl_px 同一出处，数据相关分支改为双分支
+/// 都算 + 掩码选择、混合分母后单除法；全量 256^3 穷举对拍见
+/// test/isp_csc_sse_test.dart 的 csc_sse_selfcheck）。标量尾与融合行核
+/// 逐位一致。ARM 目标不登记（NEON 无 FP64 SIMD，融合行核标量即为最优）。
+String _cscHslRgbRowFn(String id, String variant, GroupCTarget target) {
+  assert(target.isX86);
+  final scalarTail = variant == 'hsl2rgb'
+      ? '''
+  for (; x < w; x++) {
+    int a[3];
+    bb_hsl_to_rgb_px((int)in[(size_t)x * 3u + 0u], (int)in[(size_t)x * 3u + 1u],
+                     (int)in[(size_t)x * 3u + 2u], max_value, 1.0 / max_value,
+                     a, a + 1, a + 2);
+    out[(size_t)x * 3u + 0u] = (uint16_t)a[0];
+    out[(size_t)x * 3u + 1u] = (uint16_t)a[1];
+    out[(size_t)x * 3u + 2u] = (uint16_t)a[2];
+  }
+}'''
+      : '''
+  for (; x < w; x++) {
+    uint16_t a[3];
+    bb_rgb_to_hsl_px((int)in[(size_t)x * 3u + 0u], (int)in[(size_t)x * 3u + 1u],
+                     (int)in[(size_t)x * 3u + 2u], max_value, 1.0 / max_value, a);
+    out[(size_t)x * 3u + 0u] = a[0];
+    out[(size_t)x * 3u + 1u] = a[1];
+    out[(size_t)x * 3u + 2u] = a[2];
+  }
+}''';
+  final String simdBody;
+  if (variant == 'hsl2rgb') {
+    simdBody = '''
+    for (; x + 2 <= w; x += 2) {
+      int rgb[6];
+      isp_csc_hsl2_to_rgb6((int)in[(size_t)x * 3u + 0u],
+                           (int)in[(size_t)x * 3u + 1u],
+                           (int)in[(size_t)x * 3u + 2u],
+                           (int)in[(size_t)x * 3u + 3u],
+                           (int)in[(size_t)x * 3u + 4u],
+                           (int)in[(size_t)x * 3u + 5u], max_value, inv, rgb);
+      out[(size_t)x * 3u + 0u] = (uint16_t)rgb[0];
+      out[(size_t)x * 3u + 1u] = (uint16_t)rgb[1];
+      out[(size_t)x * 3u + 2u] = (uint16_t)rgb[2];
+      out[(size_t)x * 3u + 3u] = (uint16_t)rgb[3];
+      out[(size_t)x * 3u + 4u] = (uint16_t)rgb[4];
+      out[(size_t)x * 3u + 5u] = (uint16_t)rgb[5];
+    }''';
+  } else {
+    simdBody = '''
+    for (; x + 2 <= w; x += 2) {
+      uint16_t hsl[6];
+      isp_csc_rgb2_to_hsl6((int)in[(size_t)x * 3u + 0u],
+                           (int)in[(size_t)x * 3u + 1u],
+                           (int)in[(size_t)x * 3u + 2u],
+                           (int)in[(size_t)x * 3u + 3u],
+                           (int)in[(size_t)x * 3u + 4u],
+                           (int)in[(size_t)x * 3u + 5u], max_value, inv, hsl);
+      out[(size_t)x * 3u + 0u] = hsl[0];
+      out[(size_t)x * 3u + 1u] = hsl[1];
+      out[(size_t)x * 3u + 2u] = hsl[2];
+      out[(size_t)x * 3u + 3u] = hsl[3];
+      out[(size_t)x * 3u + 4u] = hsl[4];
+      out[(size_t)x * 3u + 5u] = hsl[5];
+    }''';
+  }
+  return '''
+/* csc $variant 整行函数（x86 专属：FP64 SSE2 双像素快路径，与标量
+ * 逐位一致；仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) ||           \\
+    defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  {
+    const double inv = 1.0 / max_value;
+$simdBody  }
+#endif
+$scalarTail''';
+}
 StreamKernelResult _kCscOne(StreamKernelCtx s, CNodeGenCtx ctx,
     Map<String, List<String>?> inputs, String variant) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
+  // yuv2rgb：登记整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单
+  // 节点独占阶段被调用，见 group_c_export_bb 阶段发射特判）。
+  if (variant == 'yuv2rgb') {
+    s.addFileDecl('${ctx.ident}_row', _cscYuv2RgbRowFn(ctx.ident, ctx.target));
+  }
+  // hsl2rgb/rgb2hsl：x86 专属整行行核（FP64 SSE2 双像素快路径，复用
+  // isp_csc_sse.h 的逐位等价实现——与 bb_* 标量 helper 同一出处；ARM
+  // 无 FP64 SIMD，保持融合行核标量）。
+  if (ctx.target.isX86 && (variant == 'hsl2rgb' || variant == 'rgb2hsl')) {
+    s.addFileDecl('${ctx.ident}_row',
+        _cscHslRgbRowFn(ctx.ident, variant, ctx.target));
+    s.cscSseUsed = true;
+  }
   final lines = <String>[];
   final outs = _emitCscPx(s, variant, ie, lines);
   return (lines, {'out': outs});
@@ -955,6 +2141,107 @@ StreamKernelResult _kYuvDebugger(
 
 /// sat_bright_adjuster：RGB/YUV/HSL 三域饱和度/亮度。出处：isp_adjust.c
 /// isp_adjust_sat_bright（RGB 域 BT.601 全范围亮度保亮度混合）。
+/// sat_bright 整行行核可用性（与 [_kSatBright] 同口径）：非 bypass、非恒等
+/// （sat/bright 全 1）、x86 目标（FP64 SSE2 双像素）。单节点组活动端口恒
+/// 为首端口 'in'（rgb），yuv/hsl 形态不可达。可用返回 (sat, bright)。
+(double, double)? satBrightRowOk(Map<String, dynamic> params, bool isX86) {
+  if (params['bypass'] == true) return null;
+  if (!isX86) return null;
+  final type = IspNodeRegistry.byId('sat_bright_adjuster')!;
+  double p(String key) {
+    final v = params.containsKey(key)
+        ? params[key]
+        : type.params.firstWhere((s) => s.key == key).defaultValue;
+    return (v as num?)?.toDouble() ?? 0.0;
+  }
+
+  final sat = p('sat_gain');
+  final bright = p('bright_gain');
+  if (sat == 1.0 && bright == 1.0) return null;
+  return (sat, bright);
+}
+
+/// black_level 整行行核可用性（与 [_kBlackLevel] 同口径）：非 bypass、
+/// x86 目标（FP64 SSE2 双像素）。单节点组活动端口恒为首端口 'in'
+/// （bayer 1 通道），恒为四相位表形态。
+bool blackLevelRowOk(Map<String, dynamic> params, bool isX86) {
+  if (params['bypass'] == true) return false;
+  return isX86;
+}
+
+/// sat_bright（rgb 形态）x86 专属 FP64 整行函数源码（[id] 前缀）：SSE2
+/// 双像素（亮度加权插值 + 双增益，运算结合序同融合行核；钳位复用
+/// isp_csc_sse.h 的 isp_csc_clamp2，与 bb_clamp_to 逐位一致）。标量尾与
+/// 融合行核逐位一致。ARM 目标不登记（NEON 无 FP64 SIMD）。
+String _satBrightRgbRowFn(String id, double sat, double bright,
+    GroupCTarget target) {
+  assert(target.isX86);
+  final scalarTail = '''
+  for (; x < w; x++) {
+    const int r_ = in[(size_t)x * 3u + 0u];
+    const int g_ = in[(size_t)x * 3u + 1u];
+    const int b_ = in[(size_t)x * 3u + 2u];
+    const double y_ = 0.299 * r_ + 0.587 * g_ + 0.114 * b_;
+    out[(size_t)x * 3u + 0u] = bb_clamp_to((y_ + (r_ - y_) * ${cNum(sat)}) * ${cNum(bright)}, max_value);
+    out[(size_t)x * 3u + 1u] = bb_clamp_to((y_ + (g_ - y_) * ${cNum(sat)}) * ${cNum(bright)}, max_value);
+    out[(size_t)x * 3u + 2u] = bb_clamp_to((y_ + (b_ - y_) * ${cNum(sat)}) * ${cNum(bright)}, max_value);
+  }
+}''';
+  return '''
+/* sat_bright（rgb）整行函数（x86 专属：FP64 SSE2 双像素快路径，与标量
+ * 逐位一致；仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) ||           \\
+    defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  {
+    const __m128d c299 = _mm_set1_pd(0.299);
+    const __m128d c587 = _mm_set1_pd(0.587);
+    const __m128d c114 = _mm_set1_pd(0.114);
+    const __m128d satv = _mm_set1_pd(${cNum(sat)});
+    const __m128d briv = _mm_set1_pd(${cNum(bright)});
+    const __m128d maxd = _mm_set1_pd((double)max_value);
+    for (; x + 2 <= w; x += 2) {
+      const __m128d rv = _mm_cvtepi32_pd(
+          _mm_set_epi32(0, 0, (int)in[(size_t)x * 3u + 3u],
+                        (int)in[(size_t)x * 3u + 0u]));
+      const __m128d gv = _mm_cvtepi32_pd(
+          _mm_set_epi32(0, 0, (int)in[(size_t)x * 3u + 4u],
+                        (int)in[(size_t)x * 3u + 1u]));
+      const __m128d bv = _mm_cvtepi32_pd(
+          _mm_set_epi32(0, 0, (int)in[(size_t)x * 3u + 5u],
+                        (int)in[(size_t)x * 3u + 2u]));
+      const __m128d yv = _mm_add_pd(
+          _mm_add_pd(_mm_mul_pd(c299, rv), _mm_mul_pd(c587, gv)),
+          _mm_mul_pd(c114, bv));
+      const __m128i ri = isp_csc_clamp2(
+          _mm_mul_pd(_mm_add_pd(yv, _mm_mul_pd(_mm_sub_pd(rv, yv), satv)),
+                     briv),
+          maxd);
+      const __m128i gi = isp_csc_clamp2(
+          _mm_mul_pd(_mm_add_pd(yv, _mm_mul_pd(_mm_sub_pd(gv, yv), satv)),
+                     briv),
+          maxd);
+      const __m128i bi = isp_csc_clamp2(
+          _mm_mul_pd(_mm_add_pd(yv, _mm_mul_pd(_mm_sub_pd(bv, yv), satv)),
+                     briv),
+          maxd);
+      out[(size_t)x * 3u + 0u] = (uint16_t)_mm_cvtsi128_si32(ri);
+      out[(size_t)x * 3u + 1u] = (uint16_t)_mm_cvtsi128_si32(gi);
+      out[(size_t)x * 3u + 2u] = (uint16_t)_mm_cvtsi128_si32(bi);
+      out[(size_t)x * 3u + 3u] =
+          (uint16_t)_mm_cvtsi128_si32(_mm_srli_si128(ri, 4));
+      out[(size_t)x * 3u + 4u] =
+          (uint16_t)_mm_cvtsi128_si32(_mm_srli_si128(gi, 4));
+      out[(size_t)x * 3u + 5u] =
+          (uint16_t)_mm_cvtsi128_si32(_mm_srli_si128(bi, 4));
+    }
+  }
+#endif
+$scalarTail''';
+}
+
 StreamKernelResult _kSatBright(
     StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
   final inPort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl']);
@@ -970,6 +2257,14 @@ StreamKernelResult _kSatBright(
   final bright = ctx.doubleParam('bright_gain');
   if (sat == 1.0 && bright == 1.0) return _alias(ie, outPort);
   s.useHelper('bb_clamp_to');
+  // rgb 形态 x86 专属整行行核（FP64 SSE2 双像素；yuv/hsl 形态单节点组
+  // 不可达——活动端口恒为首端口 'in'，与 bright_contrast 同理）。复用
+  // isp_csc_sse.h 的 isp_csc_clamp2（与 bb_clamp_to 逐位一致）。
+  if (ctx.target.isX86 && fmt == 'rgb') {
+    s.addFileDecl('${ctx.ident}_row',
+        _satBrightRgbRowFn(ctx.ident, sat, bright, ctx.target));
+    s.cscSseUsed = true;
+  }
   final lines = <String>[];
   final outs = <String>[];
   switch (fmt) {
@@ -1093,6 +2388,118 @@ ${cU16Table(lut)}
   return (lines, {outPort: outs});
 }
 
+/// levels_curves 整行行核可用性（与 [_kLevelsCurves] 同口径）：非 bypass、
+/// 非恒等曲线（恒等时直通不烘焙表）。
+bool levelsRowOk(Map<String, dynamic> params) {
+  if (params['bypass'] == true) return false;
+  final points = levelsPointsFromParam(params['points']);
+  final mode = levelsCurveModeFromParam(params['curveMode']?.toString() ?? '');
+  final gamma = (params['gamma'] as num?)?.toDouble() ?? 0.0;
+  final identity = mode == LevelsCurveMode.gamma
+      ? gamma == 1.0
+      : levelsCurveIsIdentity(points);
+  return !identity;
+}
+
+/// levels_curves 整行函数源码（[id] 前缀）：NEON/SSE2 + 标量双变体（随导出
+/// 目标分叉），与融合行核（bb_levels_apply）逐位一致。
+/// 域匹配（max_value == 4095）走 SIMD gather（三通道同一 4096 级 LUT）；
+/// 域失配标量回退（线性缩放往返，与融合行核同口径）。
+String _levelsRowFn(String id, GroupCTarget target) {
+  final scalarTail = '''
+  for (; x < w; x++) {
+    out[(size_t)x * 3u + 0u] = bb_levels_apply(${id}_lut, in[(size_t)x * 3u + 0u], max_value);
+    out[(size_t)x * 3u + 1u] = bb_levels_apply(${id}_lut, in[(size_t)x * 3u + 1u], max_value);
+    out[(size_t)x * 3u + 2u] = bb_levels_apply(${id}_lut, in[(size_t)x * 3u + 2u], max_value);
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    final deint =
+        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
+    final reint =
+        _sse2Reinterleave3('lrv', 'lgv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    return '''
+/* levels_curves 整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value == 4095) {
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+$deint      uint16_t r_[8], g_[8], b_[8], lr_[8], lg_[8], lb_[8];
+      int k;
+      _mm_storeu_si128((__m128i *)r_, rv);
+      _mm_storeu_si128((__m128i *)g_, gv);
+      _mm_storeu_si128((__m128i *)b_, bv);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut[r_[k]];
+        lg_[k] = ${id}_lut[g_[k]];
+        lb_[k] = ${id}_lut[b_[k]];
+      }
+      const __m128i lrv = _mm_loadu_si128((const __m128i *)lr_);
+      const __m128i lgv = _mm_loadu_si128((const __m128i *)lg_);
+      const __m128i lbv = _mm_loadu_si128((const __m128i *)lb_);
+$reint      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* levels_curves 整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value == 4095) {
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → 三通道标量 gather 查表 → VST3 重交织。 */
+      const uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      uint16_t r_[8], g_[8], b_[8], lr_[8], lg_[8], lb_[8];
+      int k;
+      vst1q_u16(r_, px.val[0]);
+      vst1q_u16(g_, px.val[1]);
+      vst1q_u16(b_, px.val[2]);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut[r_[k]];
+        lg_[k] = ${id}_lut[g_[k]];
+        lb_[k] = ${id}_lut[b_[k]];
+      }
+      uint16x8x3_t opx;
+      opx.val[0] = vld1q_u16(lr_);
+      opx.val[1] = vld1q_u16(lg_);
+      opx.val[2] = vld1q_u16(lb_);
+      vst3q_u16(out + (size_t)x * 3u, opx);
+    }
+  }
+#endif
+$scalarTail''';
+}
+
 /// levels_curves：RGB 域传递函数（4096 级 LUT 生成期烘焙，Dart
 /// levelsCurveLut 与节点图表同一求值口径）。出处：isp_levels.c
 /// isp_levels_apply_rgb（单点版见 bb_levels_apply）。恒等曲线生成期判定
@@ -1117,6 +2524,10 @@ StreamKernelResult _kLevelsCurves(
 static const uint16_t ${ctx.ident}_lut[4096] = {
 ${cU16Table(lut)}
 };''');
+  // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单节点独占阶段
+  // 被调用，见 group_c_export_bb 阶段发射特判）。登记在 LUT 表之后——
+  // 行核函数体引用该表，须先声明。
+  s.addFileDecl('${ctx.ident}_row', _levelsRowFn(ctx.ident, ctx.target));
   final lines = <String>[];
   final outs = <String>[];
   for (var c = 0; c < 3; c++) {
@@ -1213,6 +2624,123 @@ StreamKernelResult _kColorBalance(
   return (lines, {outPort: outs});
 }
 
+/// color_temp 整行行核可用性（与 [_kColorTemp] 同口径）：LUT 模式且增益
+/// 非全 1（全 1 时 LUT 为恒等，无行核收益）。返回 gains 或 null。
+List<double>? colorTempRowGains(Map<String, dynamic> params) {
+  if (params['codegenMode'] != 'lut') return null;
+  final gains = colorTempGains(
+      (params['temperature'] as num?)?.toDouble() ?? 0.0,
+      (params['measured_cct'] as num?)?.toInt() ?? 0);
+  if (gains.every((g) => g == 1.0)) return null;
+  return gains;
+}
+
+/// color_temp（LUT 模式）整行函数源码（[id] 前缀，烘焙域 [n]）：
+/// NEON/SSE2 + 标量双变体（随导出目标分叉）。域匹配（max_value == n）
+/// 走 SIMD gather（三通道各自 lut_r/lut_g/lut_b 查表）；域失配标量回退
+/// bb_clamp_to(v×gain)，与融合行核逐位一致。
+String _colorTempLutRowFn(
+    String id, int n, List<double> gains, GroupCTarget target) {
+  final scalarTail = '''
+  for (; x < w; x++) {
+    out[(size_t)x * 3u + 0u] = (max_value == $n)
+        ? ${id}_lut_r[in[(size_t)x * 3u + 0u]]
+        : bb_clamp_to((double)in[(size_t)x * 3u + 0u] * ${cNum(gains[0])}, max_value);
+    out[(size_t)x * 3u + 1u] = (max_value == $n)
+        ? ${id}_lut_g[in[(size_t)x * 3u + 1u]]
+        : bb_clamp_to((double)in[(size_t)x * 3u + 1u] * ${cNum(gains[1])}, max_value);
+    out[(size_t)x * 3u + 2u] = (max_value == $n)
+        ? ${id}_lut_b[in[(size_t)x * 3u + 2u]]
+        : bb_clamp_to((double)in[(size_t)x * 3u + 2u] * ${cNum(gains[2])}, max_value);
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    final deint =
+        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
+    final reint =
+        _sse2Reinterleave3('lrv', 'lgv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    return '''
+/* color_temp LUT 模式整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value == $n) {
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+$deint      uint16_t r_[8], g_[8], b_[8], lr_[8], lg_[8], lb_[8];
+      int k;
+      _mm_storeu_si128((__m128i *)r_, rv);
+      _mm_storeu_si128((__m128i *)g_, gv);
+      _mm_storeu_si128((__m128i *)b_, bv);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut_r[r_[k]];
+        lg_[k] = ${id}_lut_g[g_[k]];
+        lb_[k] = ${id}_lut_b[b_[k]];
+      }
+      const __m128i lrv = _mm_loadu_si128((const __m128i *)lr_);
+      const __m128i lgv = _mm_loadu_si128((const __m128i *)lg_);
+      const __m128i lbv = _mm_loadu_si128((const __m128i *)lb_);
+$reint      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* color_temp LUT 模式整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value == $n) {
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：VLD3 解交织 → 三通道标量 gather 查表 → VST3 重交织。 */
+      const uint16x8x3_t px = vld3q_u16(in + (size_t)x * 3u);
+      uint16_t r_[8], g_[8], b_[8], lr_[8], lg_[8], lb_[8];
+      int k;
+      vst1q_u16(r_, px.val[0]);
+      vst1q_u16(g_, px.val[1]);
+      vst1q_u16(b_, px.val[2]);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut_r[r_[k]];
+        lg_[k] = ${id}_lut_g[g_[k]];
+        lb_[k] = ${id}_lut_b[b_[k]];
+      }
+      uint16x8x3_t opx;
+      opx.val[0] = vld1q_u16(lr_);
+      opx.val[1] = vld1q_u16(lg_);
+      opx.val[2] = vld1q_u16(lb_);
+      vst3q_u16(out + (size_t)x * 3u, opx);
+    }
+  }
+#endif
+$scalarTail''';
+}
+
 /// color_temp_adjuster：von Kries 对角增益 + 三通道增益施加（非 Process
 /// 类，无 Bypass）。增益在生成期经 Dart colorTempGains 算出烘焙（与 C
 /// isp_color_temp_gains 有既有 tol=0 对拍，增益值一致；measured_cct 缺失
@@ -1241,6 +2769,13 @@ static const uint16_t ${ctx.ident}_$name[${n + 1}] = {
 ${cU16Table(adjustGainLut(gains[c], n))}
 };''');
     }
+    // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单节点独占阶段
+    // 被调用，见 group_c_export_bb 阶段发射特判）。登记在三表之后——
+    // 行核函数体引用这些表，须先声明。
+    if (!gains.every((g) => g == 1.0)) {
+      s.addFileDecl('${ctx.ident}_row',
+          _colorTempLutRowFn(ctx.ident, n, gains, ctx.target));
+    }
   }
   final lines = <String>[];
   final outs = <String>[];
@@ -1261,6 +2796,128 @@ ${cU16Table(adjustGainLut(gains[c], n))}
 /// LUT 模式（codegenMode=lut）：H 域三表生成期烘焙（Dart hslBandLuts），
 /// max_value 一致走查表（isp_color_controller_lut_apply 语义），不一致
 /// 回退直算（行内三元）。
+/// color_controller 整行行核可用性（与 [_kColorController] 同口径）：非
+/// bypass、非恒等（h_shift=0 且 s/l 增益为 1）、LUT 模式、x86 目标（H 域
+/// int32 + S/L FP64 双像素 SIMD；ARM 无 FP64 SIMD，保持融合行核 + omp）。
+bool colorControllerRowOk(Map<String, dynamic> params, bool isX86) {
+  if (params['bypass'] == true) return false;
+  if (!isX86) return false;
+  if (params['codegenMode'] != 'lut') return false;
+  final type = IspNodeRegistry.byId('color_controller')!;
+  double p(String key) {
+    final v = params.containsKey(key)
+        ? params[key]
+        : type.params.firstWhere((s) => s.key == key).defaultValue;
+    return (v as num?)?.toDouble() ?? 0.0;
+  }
+
+  final hs = p('h_shift');
+  final sg = p('s_gain');
+  final lg = p('l_gain');
+  if (hs == 0.0 && sg == 1.0 && lg == 1.0) return false;
+  return true;
+}
+
+/// color_controller（LUT 模式）x86 专属整行函数源码（[id] 前缀，烘焙域
+/// [n]）：SSE2 双像素。域匹配（max_value == n）走 SIMD——H 通道 int32
+/// gather 偏移 + 条件回绕（|shift| ≤ max/2 至多一次，先后两条件与标量
+/// else-if 逐位一致）；S/L 通道 FP64 gather 乘子 + isp_csc_clamp2（与
+/// bb_clamp_to 逐位一致）。域失配标量回退直算（含 exp 高斯权重），与
+/// 融合行核逐位一致。ARM 目标不登记（NEON 无 FP64 SIMD）。
+String _colorControllerRowFn(String id, int n, double hc, double q, double hs,
+    double sg, double lg, GroupCTarget target) {
+  assert(target.isX86);
+  final sigma = 45.0 / q;
+  final scalarTail = '''
+  for (; x < w; x++) {
+    int hv_ = (int)in[(size_t)x * 3u + 0u];
+    if (hv_ > max_value) hv_ = max_value;
+    const double hd_ = (double)hv_ * 360.0 / (double)max_value;
+    double d_ = fabs(hd_ - ${cNum(hc)});
+    d_ = fmod(d_, 360.0);
+    if (d_ > 180.0) d_ = 360.0 - d_;
+    const double x_ = d_ / ${cNum(sigma)};
+    const double w_ = exp(-0.5 * x_ * x_);
+    const int shift_ = (max_value == $n)
+        ? ${id}_shift_lut[hv_]
+        : (int)lround(${cNum(hs)} * w_ / 360.0 * (double)max_value);
+    int hnew_ = hv_ + shift_;
+    if (hnew_ > max_value) hnew_ -= (max_value + 1);
+    else if (hnew_ < 0) hnew_ += (max_value + 1);
+    out[(size_t)x * 3u + 0u] = (uint16_t)hnew_;
+    out[(size_t)x * 3u + 1u] = bb_clamp_to(
+        (double)in[(size_t)x * 3u + 1u] *
+            ((max_value == $n)
+                ? ${id}_s_mul_lut[hv_]
+                : (1.0 + (${cNum(sg)} - 1.0) * w_)),
+        max_value);
+    out[(size_t)x * 3u + 2u] = bb_clamp_to(
+        (double)in[(size_t)x * 3u + 2u] *
+            ((max_value == $n)
+                ? ${id}_l_mul_lut[hv_]
+                : (1.0 + (${cNum(lg)} - 1.0) * w_)),
+        max_value);
+  }
+}''';
+  return '''
+/* color_controller LUT 模式整行函数（x86 专属：H 域 int32 + S/L FP64
+ * SSE2 双像素快路径，与标量逐位一致；仅单节点独占阶段被调用，见
+ * top .c 阶段发射）。 */
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) ||           \\
+    defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value == $n) {
+    const __m128i vmax32 = _mm_set1_epi32(max_value);
+    const __m128i vmp1 = _mm_set1_epi32(max_value + 1);
+    const __m128i vzero32 = _mm_setzero_si128();
+    const __m128d maxd = _mm_set1_pd((double)max_value);
+    for (; x + 2 <= w; x += 2) {
+      const int hv0 =
+          (int)in[(size_t)x * 3u + 0u] > max_value ? max_value : (int)in[(size_t)x * 3u + 0u];
+      const int hv1 =
+          (int)in[(size_t)x * 3u + 3u] > max_value ? max_value : (int)in[(size_t)x * 3u + 3u];
+      /* H：int32 双像素 gather 偏移 → 加法 → 条件回绕（先减后加，与标量
+       * else-if 逐位一致——首条件命中后回绕值 ≥ 0，次条件恒不触发）。 */
+      __m128i hnew = _mm_add_epi32(
+          _mm_set_epi32(0, 0, hv1, hv0),
+          _mm_set_epi32(0, 0, (int)${id}_shift_lut[hv1],
+                        (int)${id}_shift_lut[hv0]));
+      hnew = _mm_sub_epi32(
+          hnew, _mm_and_si128(_mm_cmpgt_epi32(hnew, vmax32), vmp1));
+      hnew = _mm_add_epi32(
+          hnew, _mm_and_si128(_mm_cmpgt_epi32(vzero32, hnew), vmp1));
+      /* S/L：FP64 双像素 gather 乘子 → 乘 → isp_csc_clamp2 钳位。 */
+      const __m128d sv = _mm_cvtepi32_pd(
+          _mm_set_epi32(0, 0, (int)in[(size_t)x * 3u + 4u],
+                        (int)in[(size_t)x * 3u + 1u]));
+      const __m128d lv = _mm_cvtepi32_pd(
+          _mm_set_epi32(0, 0, (int)in[(size_t)x * 3u + 5u],
+                        (int)in[(size_t)x * 3u + 2u]));
+      const __m128i si = isp_csc_clamp2(
+          _mm_mul_pd(sv,
+                     _mm_set_pd(${id}_s_mul_lut[hv1], ${id}_s_mul_lut[hv0])),
+          maxd);
+      const __m128i li = isp_csc_clamp2(
+          _mm_mul_pd(lv,
+                     _mm_set_pd(${id}_l_mul_lut[hv1], ${id}_l_mul_lut[hv0])),
+          maxd);
+      out[(size_t)x * 3u + 0u] = (uint16_t)_mm_cvtsi128_si32(hnew);
+      out[(size_t)x * 3u + 1u] = (uint16_t)_mm_cvtsi128_si32(si);
+      out[(size_t)x * 3u + 2u] = (uint16_t)_mm_cvtsi128_si32(li);
+      out[(size_t)x * 3u + 3u] =
+          (uint16_t)_mm_cvtsi128_si32(_mm_srli_si128(hnew, 4));
+      out[(size_t)x * 3u + 4u] =
+          (uint16_t)_mm_cvtsi128_si32(_mm_srli_si128(si, 4));
+      out[(size_t)x * 3u + 5u] =
+          (uint16_t)_mm_cvtsi128_si32(_mm_srli_si128(li, 4));
+    }
+  }
+#endif
+$scalarTail''';
+}
+
 StreamKernelResult _kColorController(
     StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
   final ie = _in(inputs, 'in');
@@ -1298,6 +2955,15 @@ ${cF64Table(sMulLut)}
 static const double ${ctx.ident}_l_mul_lut[${n + 1}] = {
 ${cF64Table(lMulLut)}
 };''');
+    // 整行行核（x86 专属：H int32 + S/L FP64 SSE2 双像素，复用
+    // isp_csc_sse.h 的 isp_csc_clamp2；仅单节点独占阶段被调用）。登记在
+    // 三表之后——行核函数体引用这些表，须先声明。
+    if (ctx.target.isX86) {
+      s.addFileDecl(
+          '${ctx.ident}_row',
+          _colorControllerRowFn(ctx.ident, n, hc, q, hs, sg, lg, ctx.target));
+      s.cscSseUsed = true;
+    }
   }
   final n = ctx.lutDomainMax;
   final id = ctx.ident;
@@ -1501,10 +3167,11 @@ ${cI32Table(Int32List.fromList([for (final v in sMulLut) (v * 16384.0).round()])
 static const int32_t ${id}_l_mul_q14[${n + 1}] = {
 ${cI32Table(Int32List.fromList([for (final v in lMulLut) (v * 16384.0).round()]))}
 };''');
-      // 整行函数（NEON/标量双变体，逐位一致）：仅当本节点独占一个零延迟
-      // 阶段时被 top .c 调用（见 group_c_export_bb 阶段发射特判）；其余
-      // 形态走融合行核（逐像素标量），两者逐位一致。
-      s.addFileDecl('${id}_row', _lutFixedRowFn(ctx.ident, n));
+      // 整行函数（ARM NEON / x86 SSE2 + 标量双变体，随导出目标 CPU 分叉，
+      // 逐位一致）：仅当本节点独占一个零延迟阶段时被 top .c 调用（见
+      // group_c_export_bb 阶段发射特判）；其余形态走融合行核（逐像素标量），
+      // 两者逐位一致。
+      s.addFileDecl('${id}_row', _lutFixedRowFn(ctx.ident, n, ctx.target));
     }
   }
 
@@ -1565,20 +3232,317 @@ ${cI32Table(Int32List.fromList([for (final v in lMulLut) (v * 16384.0).round()])
 // 荧光 mono 域（逐像素子集）
 // ---------------------------------------------------------------------------
 
-/// lut_fixed 整行函数源码（[id] 前缀，烘焙域 [n]）：NEON（VLD3 解交织 +
-/// int16 通道 H 回绕 + 32 位通道 Q14 乘加）与标量双变体，逐位一致；
-/// 量化域失配整行走标量 compose 回退（与融合行核同口径）。
-String _lutFixedRowFn(String id, int n) {
+/// lut_fixed 整行函数源码（[id] 前缀，烘焙域 [n]）：按导出目标 [target]
+/// 分叉 SIMD 变体——ARM 目标为 NEON（守卫 `__ARM_NEON || __ARM_NEON__`，
+/// 后者覆盖 A32/34/35 的 AArch32 gcc），x86 目标为 SSE2（守卫
+/// `__SSE2__ / _M_X64 / _M_IX86_FP>=2`）；两变体与标量逐位一致；量化域
+/// 失配整行走标量 compose 回退（与融合行核同口径）。
+String _lutFixedRowFn(String id, int n, GroupCTarget target) {
+  // 标量路径（含量化域失配的 compose 回退）：两目标共用，与融合行核逐位
+  // 一致。
+  final scalarTail = '''
+  for (; x < w; x++) {
+    /* 标量路径（含量化域失配的 compose 回退），与融合行核逐位一致。 */
+    int hv = in[(size_t)x * 3u + 0u];
+    int32_t shift;
+    double s_mul = 1.0, l_mul = 1.0;
+    if (hv > max_value) hv = max_value;
+    if (max_value == $n) {
+      shift = ${id}_shift_lut[hv];
+    } else {
+      ${id}_compose(hv, max_value, &shift, &s_mul, &l_mul);
+    }
+    {
+      int hnew = hv + shift;
+      if (hnew > max_value) {
+        hnew -= (max_value + 1);
+      } else if (hnew < 0) {
+        hnew += (max_value + 1);
+      }
+      out[(size_t)x * 3u + 0u] = (uint16_t)hnew;
+    }
+    out[(size_t)x * 3u + 1u] = (max_value == $n)
+        ? bb_clamp_q14(in[(size_t)x * 3u + 1u], ${id}_s_mul_q14[hv],
+                       max_value)
+        : bb_clamp_to((double)in[(size_t)x * 3u + 1u] * s_mul, max_value);
+    out[(size_t)x * 3u + 2u] = (max_value == $n)
+        ? bb_clamp_q14(in[(size_t)x * 3u + 2u], ${id}_l_mul_q14[hv],
+                       max_value)
+        : bb_clamp_to((double)in[(size_t)x * 3u + 2u] * l_mul, max_value);
+  }
+}''';
+  if (target.isX86) {
+    return '''
+/* multi_band_eq lut_fixed 整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value == $n) {
+    const int m = max_value + 1;
+    const __m128i vmax16 = _mm_set1_epi16((short)max_value);
+    const __m128i vm16 = _mm_set1_epi16((short)m);
+    const __m128i vzero16 = _mm_setzero_si128();
+    const __m128i vmax32 = _mm_set1_epi32(max_value);
+    const __m128i vhalf = _mm_set1_epi32(8192);
+    /* q ≥ 2^14 判定：SSE2 无 cmpge，cmpgt(q, 16383) 等价。 */
+    const __m128i vq14m1 = _mm_set1_epi32(16383);
+    const __m128i vzero32 = _mm_setzero_si128();
+    /* u32→u16 窄化打包偏置：packs_epi32 为带符号饱和（值域已钳 [0, max]
+     * 可能超 32767），先移偏到 [-2^15, 2^15) 打包再加回，与 NEON vmovn
+     * 截断逐位一致。 */
+    const __m128i vbias32 = _mm_set1_epi32(0x8000);
+    /* 0x8000 的 16 位形态（-32768，避免 MSVC C4310 常量截断警告）。 */
+    const __m128i vbias16 = _mm_set1_epi16(-32768);
+    /* 单 16 位 lane 掩码（解/重交织按位提取通道用）。 */
+    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);
+    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);
+    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);
+    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);
+    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);
+    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);
+    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);
+    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：and/字节移位/or 解交织（SSE2 无 VLD3/pshufb）→ 通道标量
+       * gather（SSE2 无 gather 指令）→ 向量回绕/乘加 → 重交织写回。 */
+      const __m128i i0 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u));
+      const __m128i i1 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 8u));
+      const __m128i i2 =
+          _mm_loadu_si128((const __m128i *)(in + (size_t)x * 3u + 16u));
+      /* H：i0 lanes 0/3/6，i1 lanes 1/4/7，i2 lanes 2/5。 */
+      const __m128i hvv = _mm_or_si128(
+          _mm_or_si128(
+              _mm_or_si128(_mm_and_si128(i0, lm0),
+                           _mm_and_si128(_mm_srli_si128(i0, 4), lm1)),
+              _mm_or_si128(_mm_and_si128(_mm_srli_si128(i0, 8), lm2),
+                           _mm_and_si128(_mm_slli_si128(i1, 4), lm3))),
+          _mm_or_si128(
+              _mm_or_si128(_mm_and_si128(i1, lm4),
+                           _mm_and_si128(_mm_srli_si128(i1, 4), lm5)),
+              _mm_or_si128(_mm_and_si128(_mm_slli_si128(i2, 8), lm6),
+                           _mm_and_si128(_mm_slli_si128(i2, 4), lm7))));
+      /* S：i0 lanes 1/4/7，i1 lanes 2/5，i2 lanes 0/3/6。 */
+      const __m128i sv = _mm_or_si128(
+          _mm_or_si128(
+              _mm_or_si128(_mm_and_si128(_mm_srli_si128(i0, 2), lm0),
+                           _mm_and_si128(_mm_srli_si128(i0, 6), lm1)),
+              _mm_or_si128(_mm_and_si128(_mm_srli_si128(i0, 10), lm2),
+                           _mm_and_si128(_mm_slli_si128(i1, 2), lm3))),
+          _mm_or_si128(
+              _mm_or_si128(_mm_and_si128(_mm_srli_si128(i1, 2), lm4),
+                           _mm_and_si128(_mm_slli_si128(i2, 10), lm5)),
+              _mm_or_si128(_mm_and_si128(_mm_slli_si128(i2, 6), lm6),
+                           _mm_and_si128(_mm_slli_si128(i2, 2), lm7))));
+      /* L：i0 lanes 2/5，i1 lanes 0/3/6，i2 lanes 1/4/7。 */
+      const __m128i lv = _mm_or_si128(
+          _mm_or_si128(
+              _mm_or_si128(_mm_and_si128(_mm_srli_si128(i0, 4), lm0),
+                           _mm_and_si128(_mm_srli_si128(i0, 8), lm1)),
+              _mm_or_si128(_mm_and_si128(_mm_slli_si128(i1, 4), lm2),
+                           _mm_and_si128(i1, lm3))),
+          _mm_or_si128(
+              _mm_or_si128(_mm_and_si128(_mm_srli_si128(i1, 4), lm4),
+                           _mm_and_si128(_mm_slli_si128(i2, 8), lm5)),
+              _mm_or_si128(_mm_and_si128(_mm_slli_si128(i2, 4), lm6),
+                           _mm_and_si128(i2, lm7))));
+      uint16_t h[8];
+      int16_t sh[8];
+      int32_t qs[8], ql[8];
+      int k;
+      _mm_storeu_si128((__m128i *)h, hvv);
+      for (k = 0; k < 8; k++) {
+        int hvc = h[k];
+        if (hvc > max_value) hvc = max_value;
+        h[k] = (uint16_t)hvc;
+        sh[k] = ${id}_shift_lut[hvc];
+        qs[k] = ${id}_s_mul_q14[hvc];
+        ql[k] = ${id}_l_mul_q14[hvc];
+      }
+      /* H：int16 通道单次条件回绕（|shift| ≤ max/2 恒成立）。 */
+      __m128i hnew = _mm_add_epi16(_mm_loadu_si128((const __m128i *)h),
+                                   _mm_loadu_si128((const __m128i *)sh));
+      {
+        const __m128i gt = _mm_cmpgt_epi16(hnew, vmax16);
+        hnew = _mm_or_si128(_mm_and_si128(gt, _mm_sub_epi16(hnew, vm16)),
+                            _mm_andnot_si128(gt, hnew));
+      }
+      {
+        const __m128i lt = _mm_cmpgt_epi16(vzero16, hnew);
+        hnew = _mm_or_si128(_mm_and_si128(lt, _mm_add_epi16(hnew, vm16)),
+                            _mm_andnot_si128(lt, hnew));
+      }
+      /* S/L：bb_clamp_q14 同口径——q ≥ 2^14 且超域先钳输入（与先乘加
+       * 后钳位结果一致），32 位乘加（SSE2 无 _mm_mullo_epi32：
+       * _mm_mul_epu32 偶/奇 lane 双趟取积低 32 位重组，与 NEON
+       * vmulq_s32 低 32 位同）、移位、[0, max] 钳位、窄化打包。 */
+      __m128i so, lo;
+      {
+        const __m128i q0 = _mm_loadu_si128((const __m128i *)qs);
+        const __m128i q1 = _mm_loadu_si128((const __m128i *)(qs + 4));
+        __m128i a0 = _mm_unpacklo_epi16(sv, vzero16);
+        __m128i a1 = _mm_unpackhi_epi16(sv, vzero16);
+        __m128i r0, r1;
+        {
+          const __m128i mk0 = _mm_and_si128(_mm_cmpgt_epi32(a0, vmax32),
+                                            _mm_cmpgt_epi32(q0, vq14m1));
+          const __m128i mk1 = _mm_and_si128(_mm_cmpgt_epi32(a1, vmax32),
+                                            _mm_cmpgt_epi32(q1, vq14m1));
+          a0 = _mm_or_si128(_mm_and_si128(mk0, vmax32),
+                            _mm_andnot_si128(mk0, a0));
+          a1 = _mm_or_si128(_mm_and_si128(mk1, vmax32),
+                            _mm_andnot_si128(mk1, a1));
+        }
+        r0 = _mm_srai_epi32(
+            _mm_add_epi32(
+                _mm_unpacklo_epi32(
+                    _mm_shuffle_epi32(_mm_mul_epu32(a0, q0),
+                                      _MM_SHUFFLE(2, 0, 2, 0)),
+                    _mm_shuffle_epi32(
+                        _mm_mul_epu32(_mm_srli_epi64(a0, 32),
+                                      _mm_srli_epi64(q0, 32)),
+                        _MM_SHUFFLE(2, 0, 2, 0))),
+                vhalf),
+            14);
+        r1 = _mm_srai_epi32(
+            _mm_add_epi32(
+                _mm_unpacklo_epi32(
+                    _mm_shuffle_epi32(_mm_mul_epu32(a1, q1),
+                                      _MM_SHUFFLE(2, 0, 2, 0)),
+                    _mm_shuffle_epi32(
+                        _mm_mul_epu32(_mm_srli_epi64(a1, 32),
+                                      _mm_srli_epi64(q1, 32)),
+                        _MM_SHUFFLE(2, 0, 2, 0))),
+                vhalf),
+            14);
+        {
+          const __m128i gt0 = _mm_cmpgt_epi32(r0, vmax32);
+          const __m128i gt1 = _mm_cmpgt_epi32(r1, vmax32);
+          r0 = _mm_or_si128(_mm_and_si128(gt0, vmax32),
+                            _mm_andnot_si128(gt0, r0));
+          r1 = _mm_or_si128(_mm_and_si128(gt1, vmax32),
+                            _mm_andnot_si128(gt1, r1));
+          r0 = _mm_andnot_si128(_mm_cmpgt_epi32(vzero32, r0), r0);
+          r1 = _mm_andnot_si128(_mm_cmpgt_epi32(vzero32, r1), r1);
+        }
+        so = _mm_add_epi16(
+            _mm_packs_epi32(_mm_sub_epi32(r0, vbias32),
+                            _mm_sub_epi32(r1, vbias32)),
+            vbias16);
+      }
+      {
+        const __m128i q0 = _mm_loadu_si128((const __m128i *)ql);
+        const __m128i q1 = _mm_loadu_si128((const __m128i *)(ql + 4));
+        __m128i a0 = _mm_unpacklo_epi16(lv, vzero16);
+        __m128i a1 = _mm_unpackhi_epi16(lv, vzero16);
+        __m128i r0, r1;
+        {
+          const __m128i mk0 = _mm_and_si128(_mm_cmpgt_epi32(a0, vmax32),
+                                            _mm_cmpgt_epi32(q0, vq14m1));
+          const __m128i mk1 = _mm_and_si128(_mm_cmpgt_epi32(a1, vmax32),
+                                            _mm_cmpgt_epi32(q1, vq14m1));
+          a0 = _mm_or_si128(_mm_and_si128(mk0, vmax32),
+                            _mm_andnot_si128(mk0, a0));
+          a1 = _mm_or_si128(_mm_and_si128(mk1, vmax32),
+                            _mm_andnot_si128(mk1, a1));
+        }
+        r0 = _mm_srai_epi32(
+            _mm_add_epi32(
+                _mm_unpacklo_epi32(
+                    _mm_shuffle_epi32(_mm_mul_epu32(a0, q0),
+                                      _MM_SHUFFLE(2, 0, 2, 0)),
+                    _mm_shuffle_epi32(
+                        _mm_mul_epu32(_mm_srli_epi64(a0, 32),
+                                      _mm_srli_epi64(q0, 32)),
+                        _MM_SHUFFLE(2, 0, 2, 0))),
+                vhalf),
+            14);
+        r1 = _mm_srai_epi32(
+            _mm_add_epi32(
+                _mm_unpacklo_epi32(
+                    _mm_shuffle_epi32(_mm_mul_epu32(a1, q1),
+                                      _MM_SHUFFLE(2, 0, 2, 0)),
+                    _mm_shuffle_epi32(
+                        _mm_mul_epu32(_mm_srli_epi64(a1, 32),
+                                      _mm_srli_epi64(q1, 32)),
+                        _MM_SHUFFLE(2, 0, 2, 0))),
+                vhalf),
+            14);
+        {
+          const __m128i gt0 = _mm_cmpgt_epi32(r0, vmax32);
+          const __m128i gt1 = _mm_cmpgt_epi32(r1, vmax32);
+          r0 = _mm_or_si128(_mm_and_si128(gt0, vmax32),
+                            _mm_andnot_si128(gt0, r0));
+          r1 = _mm_or_si128(_mm_and_si128(gt1, vmax32),
+                            _mm_andnot_si128(gt1, r1));
+          r0 = _mm_andnot_si128(_mm_cmpgt_epi32(vzero32, r0), r0);
+          r1 = _mm_andnot_si128(_mm_cmpgt_epi32(vzero32, r1), r1);
+        }
+        lo = _mm_add_epi16(
+            _mm_packs_epi32(_mm_sub_epi32(r0, vbias32),
+                            _mm_sub_epi32(r1, vbias32)),
+            vbias16);
+      }
+      {
+        /* 重交织写回（H/S/L → 连续 3 通道，与解交织互逆）。 */
+        const __m128i o0 = _mm_or_si128(
+            _mm_or_si128(
+                _mm_or_si128(_mm_and_si128(hnew, lm0),
+                             _mm_and_si128(_mm_slli_si128(so, 2), lm1)),
+                _mm_or_si128(_mm_and_si128(_mm_slli_si128(lo, 4), lm2),
+                             _mm_and_si128(_mm_slli_si128(hnew, 4), lm3))),
+            _mm_or_si128(
+                _mm_or_si128(_mm_and_si128(_mm_slli_si128(so, 6), lm4),
+                             _mm_and_si128(_mm_slli_si128(lo, 8), lm5)),
+                _mm_or_si128(_mm_and_si128(_mm_slli_si128(hnew, 8), lm6),
+                             _mm_and_si128(_mm_slli_si128(so, 10), lm7))));
+        const __m128i o1 = _mm_or_si128(
+            _mm_or_si128(
+                _mm_or_si128(_mm_and_si128(_mm_srli_si128(lo, 4), lm0),
+                             _mm_and_si128(_mm_srli_si128(hnew, 4), lm1)),
+                _mm_or_si128(_mm_and_si128(_mm_srli_si128(so, 2), lm2),
+                             _mm_and_si128(lo, lm3))),
+            _mm_or_si128(
+                _mm_or_si128(_mm_and_si128(hnew, lm4),
+                             _mm_and_si128(_mm_slli_si128(so, 2), lm5)),
+                _mm_or_si128(_mm_and_si128(_mm_slli_si128(lo, 4), lm6),
+                             _mm_and_si128(_mm_slli_si128(hnew, 4), lm7))));
+        const __m128i o2 = _mm_or_si128(
+            _mm_or_si128(
+                _mm_or_si128(_mm_and_si128(_mm_srli_si128(so, 10), lm0),
+                             _mm_and_si128(_mm_srli_si128(lo, 8), lm1)),
+                _mm_or_si128(_mm_and_si128(_mm_srli_si128(hnew, 8), lm2),
+                             _mm_and_si128(_mm_srli_si128(so, 6), lm3))),
+            _mm_or_si128(
+                _mm_or_si128(_mm_and_si128(_mm_srli_si128(lo, 4), lm4),
+                             _mm_and_si128(_mm_srli_si128(hnew, 4), lm5)),
+                _mm_or_si128(_mm_and_si128(_mm_srli_si128(so, 2), lm6),
+                             _mm_and_si128(lo, lm7))));
+        _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+        _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+        _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+      }
+    }
+  }
+#endif
+$scalarTail''';
+  }
   return '''
 /* multi_band_eq lut_fixed 整行函数（NEON/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #endif
 static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
                       int max_value) {
   int x = 0;
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
   if (max_value == $n) {
     const int m = max_value + 1;
     const int16x8_t vmax16 = vdupq_n_s16((int16_t)max_value);
@@ -1669,43 +3633,14 @@ static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
     }
   }
 #endif
-  for (; x < w; x++) {
-    /* 标量路径（含量化域失配的 compose 回退），与融合行核逐位一致。 */
-    int hv = in[(size_t)x * 3u + 0u];
-    int32_t shift;
-    double s_mul = 1.0, l_mul = 1.0;
-    if (hv > max_value) hv = max_value;
-    if (max_value == $n) {
-      shift = ${id}_shift_lut[hv];
-    } else {
-      ${id}_compose(hv, max_value, &shift, &s_mul, &l_mul);
-    }
-    {
-      int hnew = hv + shift;
-      if (hnew > max_value) {
-        hnew -= (max_value + 1);
-      } else if (hnew < 0) {
-        hnew += (max_value + 1);
-      }
-      out[(size_t)x * 3u + 0u] = (uint16_t)hnew;
-    }
-    out[(size_t)x * 3u + 1u] = (max_value == $n)
-        ? bb_clamp_q14(in[(size_t)x * 3u + 1u], ${id}_s_mul_q14[hv],
-                       max_value)
-        : bb_clamp_to((double)in[(size_t)x * 3u + 1u] * s_mul, max_value);
-    out[(size_t)x * 3u + 2u] = (max_value == $n)
-        ? bb_clamp_q14(in[(size_t)x * 3u + 2u], ${id}_l_mul_q14[hv],
-                       max_value)
-        : bb_clamp_to((double)in[(size_t)x * 3u + 2u] * l_mul, max_value);
-  }
-}''';
+$scalarTail''';
 }
 
 /// lut 整行函数源码（[id] 前缀，烘焙域 [n]）：标量（FP64 三表查表 +
 /// bb_clamp_to 乘加），与融合行核逐位一致；量化域失配整行走 compose
 /// 回退（与融合行核同口径）。面向 PC/验证程序的多核行域并行（top 层
 /// omp pragma）；嵌入式无 FP64 SIMD 的定点场景用 lut_fixed（Q14 +
-/// NEON 行核）。
+/// NEON/SSE2 行核，随导出目标分叉）。
 String _lutRowFn(String id, int n) {
   return '''
 /* multi_band_eq lut 整行函数（标量，与融合行核逐位一致；
@@ -1776,6 +3711,115 @@ StreamKernelResult _kFluoroLeak(
 /// 复制到三通道，与整帧版一致）。LUT 模式（codegenMode=lut）：三通道
 /// 色表生成期烘焙（Dart pseudoColorLuts），max_value 一致走查表
 /// （isp_fluoro_pseudo_color_lut_apply 语义），不一致回退直算。
+/// pseudo_color 整行行核可用性（与 [_kPseudoColor] 同口径）：非 bypass、
+/// LUT 模式。
+bool pseudoColorRowOk(Map<String, dynamic> params) {
+  if (params['bypass'] == true) return false;
+  return params['codegenMode'] == 'lut';
+}
+
+/// pseudo_color（LUT 模式）整行函数源码（[id] 前缀，烘焙域 [n]）：
+/// NEON/SSE2 + 标量双变体（随导出目标分叉）。mono 1 通道输入 → RGB 三
+/// 通道输出；域匹配（max_value == n）走 SIMD gather（同一索引查三张色表）；
+/// 域失配标量回退（t 钳位后按色表直算），与融合行核逐位一致。
+String _pseudoColorRowFn(
+    String id, int n, double gain, String colormap, GroupCTarget target) {
+  final (re, ge, be) = switch (colormap) {
+    'magenta' => ('t_', '0.0', 't_'),
+    'hot' => (
+        'ISP_MIN(3.0 * t_, 1.0)',
+        'bb_clamp01(3.0 * t_ - 1.0)',
+        'bb_clamp01(3.0 * t_ - 2.0)',
+      ),
+    _ => ('0.0', 't_', '0.0'), // green（ICG 荧光惯例；未知值同兜底）
+  };
+  final scalarTail = '''
+  for (; x < w; x++) {
+    const double t_ = bb_clamp01((double)in[x] * ${cNum(gain)} * (1.0 / max_value));
+    out[(size_t)x * 3u + 0u] = (max_value == $n)
+        ? ${id}_lut_r[in[x]] : bb_clamp_to($re * max_value, max_value);
+    out[(size_t)x * 3u + 1u] = (max_value == $n)
+        ? ${id}_lut_g[in[x]] : bb_clamp_to($ge * max_value, max_value);
+    out[(size_t)x * 3u + 2u] = (max_value == $n)
+        ? ${id}_lut_b[in[x]] : bb_clamp_to($be * max_value, max_value);
+  }
+}''';
+  if (target.isX86) {
+    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
+        '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
+        '    const __m128i lm4 = _mm_setr_epi16(0, 0, 0, 0, -1, 0, 0, 0);\n'
+        '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
+        '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
+        '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
+    final reint =
+        _sse2Reinterleave3('lrv', 'lgv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    return '''
+/* pseudo_color LUT 模式整行函数（SSE2/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+  if (max_value == $n) {
+$masks    for (; x + 8 <= w; x += 8) {
+      const __m128i pv = _mm_loadu_si128((const __m128i *)(in + (size_t)x));
+      uint16_t t_[8], lr_[8], lg_[8], lb_[8];
+      int k;
+      _mm_storeu_si128((__m128i *)t_, pv);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut_r[t_[k]];
+        lg_[k] = ${id}_lut_g[t_[k]];
+        lb_[k] = ${id}_lut_b[t_[k]];
+      }
+      const __m128i lrv = _mm_loadu_si128((const __m128i *)lr_);
+      const __m128i lgv = _mm_loadu_si128((const __m128i *)lg_);
+      const __m128i lbv = _mm_loadu_si128((const __m128i *)lb_);
+$reint      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u), o0);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 8u), o1);
+      _mm_storeu_si128((__m128i *)(out + (size_t)x * 3u + 16u), o2);
+    }
+  }
+#endif
+$scalarTail''';
+  }
+  return '''
+/* pseudo_color LUT 模式整行函数（NEON/标量双变体，逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if (max_value == $n) {
+    for (; x + 8 <= w; x += 8) {
+      /* 8 像素：mono VLD1 → 标量 gather 查三张色表 → VST3 重交织。 */
+      const uint16x8_t pv = vld1q_u16(in + (size_t)x);
+      uint16_t t_[8], lr_[8], lg_[8], lb_[8];
+      int k;
+      vst1q_u16(t_, pv);
+      for (k = 0; k < 8; k++) {
+        lr_[k] = ${id}_lut_r[t_[k]];
+        lg_[k] = ${id}_lut_g[t_[k]];
+        lb_[k] = ${id}_lut_b[t_[k]];
+      }
+      uint16x8x3_t opx;
+      opx.val[0] = vld1q_u16(lr_);
+      opx.val[1] = vld1q_u16(lg_);
+      opx.val[2] = vld1q_u16(lb_);
+      vst3q_u16(out + (size_t)x * 3u, opx);
+    }
+  }
+#endif
+$scalarTail''';
+}
+
 StreamKernelResult _kPseudoColor(
     StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
   final ie = _in(inputs, 'in_mono');
@@ -1800,6 +3844,10 @@ static const uint16_t ${ctx.ident}_$name[${n + 1}] = {
 ${cU16Table(lut)}
 };''');
     }
+    // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单节点独占阶段
+    // 被调用，见 group_c_export_bb 阶段发射特判）。登记在三表之后。
+    s.addFileDecl('${ctx.ident}_row', _pseudoColorRowFn(
+        ctx.ident, n, gain, ctx.strParam('colormap'), ctx.target));
   }
   // 直算路径（LUT 回退分支同用）：t 钳位 [0,1] 后按烘焙色表映射。
   final t = s.freshVar();

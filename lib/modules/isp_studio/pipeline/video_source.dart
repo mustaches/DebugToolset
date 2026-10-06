@@ -980,9 +980,15 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   final useNativePipe =
       bool.fromEnvironment('NATIVE_PIPE', defaultValue: true) &&
           FfmpegRawPipeWin.supported;
-  var (sent, error) =
-      useNativePipe ? await runPassWin(true) : await runPass(true);
-  if (sent == 0 && error != null && !stopped) {
+  // 首趟解码模式由调用方经 cfg.hwaccel 决定（非空 = 硬解优先，空串 =
+  // 直接软解）：HDR tonemap 等 CPU 滤镜链场景软硬解哪个快因机型而
+  // 异，由播放侧起步启发式 + 产能自适应切换选择（isp_studio_state
+  // .dart 的 switchDecodeMode），worker 不替调用方做主张。
+  final firstHwaccel = cfg.hwaccel.isNotEmpty;
+  var (sent, error) = useNativePipe
+      ? await runPassWin(firstHwaccel)
+      : await runPass(firstHwaccel);
+  if (sent == 0 && error != null && !stopped && firstHwaccel) {
     // 硬解初始化失败（无可用 GPU/驱动、4:2:2/Rext 等 NVDEC 不支持的
     // 格式）：回退软件解码重试，并上报 UI（播放病灶提示用）。
     cfg.uiPort.send(['swdec']);

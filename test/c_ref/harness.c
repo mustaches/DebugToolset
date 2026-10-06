@@ -70,6 +70,7 @@ int op_csc_yuv2rgb(CaseIO *io);
 int op_csc_yuv2hsl(CaseIO *io);
 int op_csc_hsl2rgb(CaseIO *io);
 int op_csc_hsl2yuv(CaseIO *io);
+int op_csc_sse_selfcheck(CaseIO *io);
 /* harness_adjust.c */
 int op_adjust_hsl(CaseIO *io);
 int op_adjust_rgb(CaseIO *io);
@@ -156,6 +157,7 @@ static const OpEntry kOpTable[] = {
     {"csc_yuv2hsl", op_csc_yuv2hsl},
     {"csc_hsl2rgb", op_csc_hsl2rgb},
     {"csc_hsl2yuv", op_csc_hsl2yuv},
+    {"csc_sse_selfcheck", op_csc_sse_selfcheck},
     {"adjust_hsl", op_adjust_hsl},
     {"adjust_rgb", op_adjust_rgb},
     {"adjust_lut3_apply", op_adjust_lut3_apply},

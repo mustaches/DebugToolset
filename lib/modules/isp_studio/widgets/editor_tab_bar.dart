@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
+import '../codegen/group_c_target.dart';
 
 /// 多标签栏：首标签为节点流程图（标题用工程名，默认图显示「缺省流程」），
 /// 其后为已打开的节点/编组代码标签（标题为节点名/编组名，可关闭）。
@@ -46,20 +47,35 @@ class IspEditorTabBar extends StatelessWidget {
   }
 
   /// 代码标签标题：节点标签为节点实例名（节点已删除时退化为 id）；
-  /// 编组标签（`'group:<id>'` 前缀）为编组名；黑盒标签（`'gbb:<id>'`
-  /// 前缀）为「编组名·黑盒」（编组已解散时均退化为通用名）。
+  /// 编组标签（`'group:<id>@<target>'` 前缀）为「编组名·目标短名」；
+  /// 黑盒标签（`'gbb:<id>@<target>'` 前缀）为「编组名·黑盒·目标短名」
+  ///（编组已解散时均退化为通用名；无 @ 后缀的旧 key 不带目标短名）。
   static String _tabTitle(IspStudioState state, String tab) {
+    // 解析 `@<target>` 后缀（见 isp_studio_state 的标签 key 约定）。
+    (String, GroupCTarget?) splitTarget(String rest) {
+      final at = rest.indexOf('@');
+      if (at < 0) return (rest, null);
+      return (
+        rest.substring(0, at),
+        GroupCTarget.values.asNameMap()[rest.substring(at + 1)]
+      );
+    }
+
     if (tab.startsWith('gbb:')) {
-      final groupId = tab.substring(4);
+      final (groupId, target) = splitTarget(tab.substring(4));
       for (final g in state.graph.groups) {
-        if (g.id == groupId) return '${g.name}·黑盒';
+        if (g.id == groupId) {
+          return '${g.name}·黑盒${target == null ? '' : '·${target.tabShort}'}';
+        }
       }
       return '编组黑盒代码';
     }
     if (tab.startsWith('group:')) {
-      final groupId = tab.substring(6);
+      final (groupId, target) = splitTarget(tab.substring(6));
       for (final g in state.graph.groups) {
-        if (g.id == groupId) return g.name;
+        if (g.id == groupId) {
+          return '${g.name}${target == null ? '' : '·${target.tabShort}'}';
+        }
       }
       return '编组代码';
     }

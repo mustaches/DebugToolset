@@ -56,8 +56,7 @@ void main() {
       expect(validateGroupCExport(graph, graph.groups.single), isNotNull);
     });
 
-    test('单节点编组：仅多段色彩均衡器放行（等效多个色彩控制器混叠）',
-        () async {
+    test('单节点编组：多段色彩均衡器与整行行核类型放行，其余拒绝', () async {
       final graph = IspGraph();
       final eq = graph.addNode('multi_band_eq', 0, 0);
       graph.nodes[eq]!.name = 'mb';
@@ -71,9 +70,15 @@ void main() {
           'isp_pipeline_eq.h', 'isp_pipeline_eq.c',
           'isp_multi_band_eq.h', 'isp_multi_band_eq.c']));
 
-      // 其它类型单节点仍拒绝。
+      // 有整行行核的类型（csc_rgb2yuv）同样放行。
+      final graph3 = IspGraph();
+      final csc = graph3.addNode('csc_rgb2yuv', 0, 0);
+      graph3.groups.add(IspNodeGroup('g1', {csc}, name: 'c2y'));
+      expect(validateGroupCExport(graph3, graph3.groups.single), isNull);
+
+      // 其它类型单节点仍拒绝（rgb_debugger 无整行行核）。
       final graph2 = IspGraph();
-      final g = graph2.addNode('gamma', 0, 0);
+      final g = graph2.addNode('rgb_debugger', 0, 0);
       graph2.groups.add(IspNodeGroup('g1', {g}, name: 'g'));
       expect(validateGroupCExport(graph2, graph2.groups.single),
           contains('不足'));
@@ -143,6 +148,10 @@ void main() {
       ]) {
         expect(map.containsKey(f), isTrue, reason: f);
       }
+      // 微架构说明随整帧版一并导出，且注明「整帧版为标量参考实现」。
+      expect(map.containsKey('cortex_a53_55_code_micro.md'), isTrue);
+      expect(map['cortex_a53_55_code_micro.md'],
+          contains('整帧版'));
 
       // 生成的 .h/.c（节点封装 + top 层）顶部带自动生成块注释与生成时间；
       // c_ref 算法参考文件原样拷贝，不含自动生成注释。
@@ -152,6 +161,9 @@ void main() {
         expect(map[f], contains('生成时间：2026-01-02 03:04:05'), reason: f);
       }
       for (final f in map.keys.skip(8)) {
+        // 微架构说明 .md 是生成物（含「自动生成」），c_ref 算法文件原样
+        // 拷贝（不含）。
+        if (f.endsWith('.md')) continue;
         expect(map[f], isNot(contains('自动生成')), reason: f);
       }
 

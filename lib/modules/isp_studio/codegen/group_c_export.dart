@@ -29,6 +29,7 @@ import '../models/isp_node.dart';
 import '../pipeline/node_c_code.dart';
 import 'c_ident.dart';
 import 'group_c_plan.dart';
+import 'group_c_target.dart';
 import 'node_c_gen.dart';
 
 export 'group_c_plan.dart'
@@ -39,9 +40,11 @@ String? validateGroupCExport(IspGraph graph, IspNodeGroup group) {
   final members = [
     for (final id in group.nodeIds) ?graph.nodes[id],
   ];
-  // 例外：多段色彩均衡器允许单节点编组（等效多个色彩控制器混叠）。
+  // 例外：多段色彩均衡器（等效多个色彩控制器混叠）与有整行行核的类型
+  // 允许单节点编组（见 group_c_target.dart kSingleNodeGroupTypeIds）。
   if (members.length < 2 &&
-      !(members.length == 1 && members.first.typeId == 'multi_band_eq')) {
+      !(members.length == 1 &&
+          kSingleNodeGroupTypeIds.contains(members.first.typeId))) {
     return '编组成员不足 2 个节点';
   }
   final unsupported = <String>[];
@@ -104,6 +107,7 @@ Future<Map<String, String>> buildGroupCFiles(
   IspNodeGroup group, {
   Future<String> Function(String path)? readFile,
   DateTime? genTime,
+  GroupCTarget target = GroupCTarget.cortexA53_55,
 }) async {
   genTime ??= DateTime.now();
   final plan = planGroupC(graph, group);
@@ -245,8 +249,8 @@ ${calls.join('\n')}
     files['${w.fileName}.h'] = _fileDoc(group, members[id]!, genTime) + w.header;
     files['${w.fileName}.c'] = _fileDoc(group, members[id]!, genTime) + w.source;
   }
-  files['$topName.h'] = _topDoc(group, genTime) + topH;
-  files['$topName.c'] = _topDoc(group, genTime) + topC;
+  files['$topName.h'] = _topDoc(group, genTime, target) + topH;
+  files['$topName.c'] = _topDoc(group, genTime, target) + topC;
 
   // c_ref 并集：各封装算法头的 .h/.c + isp_common.h/.c（无对应 .c 的
   // 头文件读取失败，静默跳过）。
@@ -266,6 +270,8 @@ ${calls.join('\n')}
       // 与 exportCRefFiles 一致：单个文件失败不中断其余文件。
     }
   }
+  // 目标微架构说明（加速宏定义 + 实现方案），随代码一并导出。
+  files[target.microDocName] = buildTargetCodeMicroDoc(target, blackBox: false);
   return files;
 }
 
@@ -278,9 +284,10 @@ Future<GroupCExportResult> exportGroupCCode(
   String dir, {
   Future<String> Function(String path)? readFile,
   DateTime? genTime,
+  GroupCTarget target = GroupCTarget.cortexA53_55,
 }) async {
-  final files =
-      await buildGroupCFiles(graph, group, readFile: readFile, genTime: genTime);
+  final files = await buildGroupCFiles(graph, group,
+      readFile: readFile, genTime: genTime, target: target);
   final written = <String>[];
   for (final e in files.entries) {
     await File('$dir/${e.key}').writeAsString(e.value);
@@ -303,7 +310,7 @@ String _fileDoc(IspNodeGroup group, IspNode node, DateTime genTime) => '''
  */
 ''';
 
-String _topDoc(IspNodeGroup group, DateTime genTime) => '''
+String _topDoc(IspNodeGroup group, DateTime genTime, GroupCTarget target) => '''
 /* 本文件由 DebugToolSet ISP Studio 自动生成：编组「${group.name}」的
  * top 层 ISP pipeline。语义说明：
  * - gamma 节点的组内下游直接使用 gamma 的输入帧（gamma 不改输入）；
@@ -311,6 +318,7 @@ String _topDoc(IspNodeGroup group, DateTime genTime) => '''
  *   缓冲（见 group_c_export.dart 裁剪说明）；
  * - fluoro_temporal 的 history 在 scratch 起始的持久区，跨帧保留；
  * - combiner 未连接的通道输入为 NULL（c_ref 内部填缺省值）。
+${target.headerBlock().join('\n')}
  * 生成时间：${_fmtGenTime(genTime)}
  */
 ''';

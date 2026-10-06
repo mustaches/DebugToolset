@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/isp_studio_state.dart';
+import 'codegen/group_c_target.dart';
 import 'models/isp_align_mode.dart';
 import 'models/isp_node.dart';
 import 'widgets/editor_tab_bar.dart';
@@ -16,6 +17,21 @@ import 'widgets/node_layout.dart';
 import 'widgets/node_palette.dart';
 import 'widgets/node_property_panel.dart';
 import 'widgets/run_progress_dialog.dart';
+
+/// 编组标签 key 后缀（`'group:<id>@<target>'`/`'gbb:<id>@<target>'`）解析：
+/// 编组 id（无 @ 后缀时整段为 id，兼容旧 key）。
+String _groupTabId(String rest) {
+  final at = rest.indexOf('@');
+  return at < 0 ? rest : rest.substring(0, at);
+}
+
+/// 编组标签 key 后缀解析：目标 CPU（无/未知后缀回退默认目标）。
+GroupCTarget _groupTabTarget(String rest) {
+  final at = rest.indexOf('@');
+  if (at < 0) return GroupCTarget.cortexA53_55;
+  return GroupCTarget.values.asNameMap()[rest.substring(at + 1)] ??
+      GroupCTarget.cortexA53_55;
+}
 
 /// ISP Studio 模块根视图：工具栏 + 标签栏 + 标签页（流程图 / 节点代码）+ 状态栏。
 class IspStudioView extends StatelessWidget {
@@ -128,11 +144,14 @@ class IspStudioView extends StatelessWidget {
                 for (final tab in state.openCodeTabs)
                   tab.startsWith('group:')
                       ? GroupCodePage(
-                          key: ValueKey(tab), groupId: tab.substring(6))
+                          key: ValueKey(tab),
+                          groupId: _groupTabId(tab.substring(6)),
+                          target: _groupTabTarget(tab.substring(6)))
                       : tab.startsWith('gbb:')
                           ? GroupCodePage(
                               key: ValueKey(tab),
-                              groupId: tab.substring(4),
+                              groupId: _groupTabId(tab.substring(4)),
+                              target: _groupTabTarget(tab.substring(4)),
                               blackBox: true)
                           : NodeCodePage(key: ValueKey(tab), nodeId: tab),
               ],

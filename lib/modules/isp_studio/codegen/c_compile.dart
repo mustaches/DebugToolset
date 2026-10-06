@@ -501,7 +501,8 @@ void _exit(int status) { (void)status; for (;;) { } }
 /// - 播放内置测试图案动画（整数运算，Dart 侧可逐位复刻，供对拍）；
 ///   `--bmp <文件|目录>` 覆盖为 24bpp BMP 单图/序列；
 /// - 并列模式（左原图/右处理后）与单视频模式（整幅单路）实时互切；
-///   单视频模式按钮/空格在 原图⇄处理后 间硬切；
+///   单视频模式的 原图/处理后 按钮为按住对比（按下显示处理后、松开
+///   回退原图），空格仍硬切；
 /// - 批模式 `--frames N --dump-hash`：不开窗逐帧跑管线，输出处理后帧的
 ///   FNV-1a 哈希（机器对拍用）；
 /// - 帧格式 [inFormat]/[outFormat] 仅支持 'rgb'/'hsl'（HSL 端口经
@@ -523,13 +524,22 @@ String stubMainWinSource({
   final needCsc = inFormat == 'hsl' || outFormat == 'hsl';
   // 输入装帧（RGB888 → 管线输入帧格式，先按量化域 MAXV 缩放——MAXV=255
   // 时为恒等直通；LUT 模式节点的查表快路径要求运行时 max_value 与烘焙
-  // 域一致，故 MAXV 随编组位深传入而非硬编码 255）。OpenMP 逐像素并行
-  //（4K 单线程的 HSL 逐像素转换实测 ~650ms/帧，是批模式吞吐大头；逐像
-  // 素独立，并行结果与串行逐位一致）。
+  // 域一致，故 MAXV 随编组位深传入而非硬编码 255）。OpenMP 逐像素并行；
+  // HSL 端口成对走 isp_csc_sse.h 的 SSE2 双像素快路径（与标量逐位一致，
+  // 全量对拍见 test/isp_csc_sse_test.dart；尾部单像素回退标量）——标量
+  // FP64 逐像素转换 4K omp16 实测 ~15/17ms/帧，是窗口模式播放帧率瓶颈，
+  // SSE2 后 ~6/8ms（逐像素独立，并行/成对结果与串行逐位一致）。
   final packBody = inFormat == 'hsl'
       ? '''
 #pragma omp parallel for
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
+      const unsigned char *sp = g_rgb_src + (size_t)i * 6;
+      isp_csc_rgb2_to_hsl6(
+          sp[0] * MAXV / 255, sp[1] * MAXV / 255, sp[2] * MAXV / 255,
+          sp[3] * MAXV / 255, sp[4] * MAXV / 255, sp[5] * MAXV / 255,
+          MAXV, 1.0 / MAXV, g_in + (size_t)i * 6);
+    }
+    for (i = n & ~1; i < n; i++) {
       const int r = g_rgb_src[i * 3] * MAXV / 255;
       const int g = g_rgb_src[i * 3 + 1] * MAXV / 255;
       const int b = g_rgb_src[i * 3 + 2] * MAXV / 255;
@@ -539,11 +549,23 @@ String stubMainWinSource({
     for (i = 0; i < n * 3; i++) {
       g_in[i] = (uint16_t)(g_rgb_src[i] * MAXV / 255);
     }''';
-  // 输出解包（管线输出帧格式 → RGB888 显示帧）。
+  // 输出解包（管线输出帧格式 → RGB888 显示帧）。HSL 端口同走 SSE2 快路径。
   final unpackBody = outFormat == 'hsl'
       ? '''
 #pragma omp parallel for
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
+      int o[6];
+      isp_csc_hsl2_to_rgb6(g_out[i * 6], g_out[i * 6 + 1], g_out[i * 6 + 2],
+                           g_out[i * 6 + 3], g_out[i * 6 + 4],
+                           g_out[i * 6 + 5], MAXV, 1.0 / MAXV, o);
+      g_rgb_dst[i * 6] = (unsigned char)(o[0] * 255 / MAXV);
+      g_rgb_dst[i * 6 + 1] = (unsigned char)(o[1] * 255 / MAXV);
+      g_rgb_dst[i * 6 + 2] = (unsigned char)(o[2] * 255 / MAXV);
+      g_rgb_dst[i * 6 + 3] = (unsigned char)(o[3] * 255 / MAXV);
+      g_rgb_dst[i * 6 + 4] = (unsigned char)(o[4] * 255 / MAXV);
+      g_rgb_dst[i * 6 + 5] = (unsigned char)(o[5] * 255 / MAXV);
+    }
+    for (i = n & ~1; i < n; i++) {
       int r, g, b;
       isp_csc_hsl_to_rgb_px(g_out[i * 3], g_out[i * 3 + 1], g_out[i * 3 + 2],
                             MAXV, 1.0 / MAXV, &r, &g, &b);
@@ -556,30 +578,222 @@ String stubMainWinSource({
       g_rgb_dst[i] = (unsigned char)(g_out[i] * 255 / MAXV);
     }''';
   // 融合装帧/解包（窗口模式管线工作线程）：与 packBody/unpackBody +
-  // fill_dib 同数学口径逐位一致，只省整帧中转（g_rgb_src/g_rgb_dst 与
+  // fill_dib 同数学口径逐位一致，只省整帧中转（g_rgb_src/g_rgb_dst 物化与
   // fill_dib 的 RGB↔BGR 换序）：rgb24/nv12 源一趟出 g_in + 原图 DIB，
   // 解包直写 BGR 到处理后 DIB。px 为像素序（size_t），r/g/b 为已钳位
-  // int，d 为 DIB 行指针、x 为列。
-  final packFusedPx = inFormat == 'hsl'
-      ? '''isp_csc_rgb_to_hsl_px(r * MAXV / 255, g * MAXV / 255,
-                            b * MAXV / 255, MAXV, 1.0 / MAXV, in + px * 3);'''
-      : '''in[px * 3] = (uint16_t)(r * MAXV / 255);
+  // int，d 为 DIB 行指针、x 为列。HSL 端口成对走 SSE2 快路径（同
+  // packBody 注释），rgb 端口为整数直装。
+  final packFusedRgb24Fn = inFormat == 'hsl'
+      ? '''/* rgb24 源（软解槽位/BMP/图案）一趟出 g_in + 原图 DIB（BGR）。 */
+static void pack_fused_rgb24(const unsigned char *rgb, uint16_t *in,
+                             unsigned char *dib, int w, int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    const unsigned char *s = rgb + (size_t)y * (size_t)w * 3u;
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x + 1 < w; x += 2) {
+      const int r0 = s[x * 3], g0 = s[x * 3 + 1], b0 = s[x * 3 + 2];
+      const int r1 = s[x * 3 + 3], g1 = s[x * 3 + 4], b1 = s[x * 3 + 5];
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      d[x * 3] = (unsigned char)b0;
+      d[x * 3 + 1] = (unsigned char)g0;
+      d[x * 3 + 2] = (unsigned char)r0;
+      d[x * 3 + 3] = (unsigned char)b1;
+      d[x * 3 + 4] = (unsigned char)g1;
+      d[x * 3 + 5] = (unsigned char)r1;
+      isp_csc_rgb2_to_hsl6(r0 * MAXV / 255, g0 * MAXV / 255,
+                           b0 * MAXV / 255, r1 * MAXV / 255,
+                           g1 * MAXV / 255, b1 * MAXV / 255,
+                           MAXV, 1.0 / MAXV, in + px * 3);
+    }
+    if (x < w) {
+      const int r = s[x * 3], g = s[x * 3 + 1], b = s[x * 3 + 2];
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      d[x * 3] = (unsigned char)b;
+      d[x * 3 + 1] = (unsigned char)g;
+      d[x * 3 + 2] = (unsigned char)r;
+      isp_csc_rgb_to_hsl_px(r * MAXV / 255, g * MAXV / 255,
+                            b * MAXV / 255, MAXV, 1.0 / MAXV, in + px * 3);
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}'''
+      : '''/* rgb24 源（软解槽位/BMP/图案）一趟出 g_in + 原图 DIB（BGR）。 */
+static void pack_fused_rgb24(const unsigned char *rgb, uint16_t *in,
+                             unsigned char *dib, int w, int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    const unsigned char *s = rgb + (size_t)y * (size_t)w * 3u;
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x < w; x++) {
+      const int r = s[x * 3], g = s[x * 3 + 1], b = s[x * 3 + 2];
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      d[x * 3] = (unsigned char)b;
+      d[x * 3 + 1] = (unsigned char)g;
+      d[x * 3 + 2] = (unsigned char)r;
+      in[px * 3] = (uint16_t)(r * MAXV / 255);
+      in[px * 3 + 1] = (uint16_t)(g * MAXV / 255);
+      in[px * 3 + 2] = (uint16_t)(b * MAXV / 255);
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}''';
+  final packFusedNv12Fn = inFormat == 'hsl'
+      ? '''/* GPU 链 nv12 源一趟出 g_in + 原图 DIB：nv12→rgb Q8 定点 8 像素 SSE2
+ *（isp_csc_nv12_rgb8，与标量逐位一致）→ HSL 成对 SSE2 快路径；尾部不足
+ * 8 像素回退原标量路径（视频恒 8 的倍数宽，仅兜底）。 */
+static void pack_fused_nv12(const unsigned char *nv, uint16_t *in,
+                            unsigned char *dib, int w, int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    const unsigned char *yp = nv + (size_t)y * (size_t)w;
+    const unsigned char *uv =
+        nv + (size_t)w * (size_t)h + (size_t)(y >> 1) * (size_t)w;
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x + 8 <= w; x += 8) {
+      unsigned char rb[8], gb[8], bb[8];
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      int k;
+      isp_csc_nv12_rgb8(yp + x, uv + x, rb, gb, bb);
+      for (k = 0; k < 8; k++) {
+        d[(x + k) * 3] = bb[k];
+        d[(x + k) * 3 + 1] = gb[k];
+        d[(x + k) * 3 + 2] = rb[k];
+      }
+      for (k = 0; k < 8; k += 2) {
+        isp_csc_rgb2_to_hsl6(rb[k] * MAXV / 255, gb[k] * MAXV / 255,
+                             bb[k] * MAXV / 255, rb[k + 1] * MAXV / 255,
+                             gb[k + 1] * MAXV / 255, bb[k + 1] * MAXV / 255,
+                             MAXV, 1.0 / MAXV, in + (px + (size_t)k) * 3);
+      }
+    }
+    for (; x < w; x += 2) {
+      const int u = uv[x] - 128, v = uv[x + 1] - 128;
+      int k;
+      for (k = 0; k < 2 && x + k < w; k++) {
+        const int yy = yp[x + k] - 16;
+        const int rq = (298 * yy + 459 * v + 128) >> 8;
+        const int gq = (298 * yy - 55 * u - 136 * v + 128) >> 8;
+        const int bq = (298 * yy + 541 * u + 128) >> 8;
+        const int r = rq < 0 ? 0 : (rq > 255 ? 255 : rq);
+        const int g = gq < 0 ? 0 : (gq > 255 ? 255 : gq);
+        const int b = bq < 0 ? 0 : (bq > 255 ? 255 : bq);
+        const size_t px = (size_t)y * (size_t)w + (size_t)(x + k);
+        d[(x + k) * 3] = (unsigned char)b;
+        d[(x + k) * 3 + 1] = (unsigned char)g;
+        d[(x + k) * 3 + 2] = (unsigned char)r;
+        isp_csc_rgb_to_hsl_px(r * MAXV / 255, g * MAXV / 255,
+                              b * MAXV / 255, MAXV, 1.0 / MAXV,
+                              in + px * 3);
+      }
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}'''
+      : '''/* GPU 链 nv12 源一趟出 g_in + 原图 DIB：nv12→rgb Q8 定点（与
+ * nv12_to_rgb709 同式）→ 钳位字节 → 装帧（与 pack 同口径）。旧路径的
+ * rows = h & ~1 末行缺口在此一并补齐（视频恒偶数行，仅影响奇高 BMP
+ * 级边角）。 */
+static void pack_fused_nv12(const unsigned char *nv, uint16_t *in,
+                            unsigned char *dib, int w, int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    const unsigned char *yp = nv + (size_t)y * (size_t)w;
+    const unsigned char *uv =
+        nv + (size_t)w * (size_t)h + (size_t)(y >> 1) * (size_t)w;
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x < w; x += 2) {
+      const int u = uv[x] - 128, v = uv[x + 1] - 128;
+      int k;
+      for (k = 0; k < 2 && x + k < w; k++) {
+        const int yy = yp[x + k] - 16;
+        const int rq = (298 * yy + 459 * v + 128) >> 8;
+        const int gq = (298 * yy - 55 * u - 136 * v + 128) >> 8;
+        const int bq = (298 * yy + 541 * u + 128) >> 8;
+        const int r = rq < 0 ? 0 : (rq > 255 ? 255 : rq);
+        const int g = gq < 0 ? 0 : (gq > 255 ? 255 : gq);
+        const int b = bq < 0 ? 0 : (bq > 255 ? 255 : bq);
+        const size_t px = (size_t)y * (size_t)w + (size_t)(x + k);
+        d[(x + k) * 3] = (unsigned char)b;
+        d[(x + k) * 3 + 1] = (unsigned char)g;
+        d[(x + k) * 3 + 2] = (unsigned char)r;
+        in[px * 3] = (uint16_t)(r * MAXV / 255);
         in[px * 3 + 1] = (uint16_t)(g * MAXV / 255);
-        in[px * 3 + 2] = (uint16_t)(b * MAXV / 255);''';
-  final unpackFusedPx = outFormat == 'hsl'
-      ? '''{
-        int r, g, b;
-        isp_csc_hsl_to_rgb_px(out[px * 3], out[px * 3 + 1], out[px * 3 + 2],
-                              MAXV, 1.0 / MAXV, &r, &g, &b);
-        d[x * 3] = (unsigned char)(b * 255 / MAXV);
-        d[x * 3 + 1] = (unsigned char)(g * 255 / MAXV);
-        d[x * 3 + 2] = (unsigned char)(r * 255 / MAXV);
-      }'''
-      : '''d[x * 3] = (unsigned char)(out[px * 3 + 2] * 255 / MAXV);
+        in[px * 3 + 2] = (uint16_t)(b * MAXV / 255);
+      }
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}''';
+  final unpackFusedFn = outFormat == 'hsl'
+      ? '''/* 融合解包：g_out 直写 BGR 到处理后 DIB（免 g_rgb_dst 中转；HSL
+ * 成对走 SSE2 快路径，尾部单像素回退标量）。 */
+static void unpack_fused(const uint16_t *out, unsigned char *dib, int w,
+                         int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x + 1 < w; x += 2) {
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      int o[6];
+      isp_csc_hsl2_to_rgb6(out[px * 3], out[px * 3 + 1], out[px * 3 + 2],
+                           out[px * 3 + 3], out[px * 3 + 4],
+                           out[px * 3 + 5], MAXV, 1.0 / MAXV, o);
+      d[x * 3] = (unsigned char)(o[2] * 255 / MAXV);
+      d[x * 3 + 1] = (unsigned char)(o[1] * 255 / MAXV);
+      d[x * 3 + 2] = (unsigned char)(o[0] * 255 / MAXV);
+      d[x * 3 + 3] = (unsigned char)(o[5] * 255 / MAXV);
+      d[x * 3 + 4] = (unsigned char)(o[4] * 255 / MAXV);
+      d[x * 3 + 5] = (unsigned char)(o[3] * 255 / MAXV);
+    }
+    if (x < w) {
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      int r, g, b;
+      isp_csc_hsl_to_rgb_px(out[px * 3], out[px * 3 + 1], out[px * 3 + 2],
+                            MAXV, 1.0 / MAXV, &r, &g, &b);
+      d[x * 3] = (unsigned char)(b * 255 / MAXV);
+      d[x * 3 + 1] = (unsigned char)(g * 255 / MAXV);
+      d[x * 3 + 2] = (unsigned char)(r * 255 / MAXV);
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}'''
+      : '''/* 融合解包：g_out 直写 BGR 到处理后 DIB（免 g_rgb_dst 中转）。 */
+static void unpack_fused(const uint16_t *out, unsigned char *dib, int w,
+                         int h) {
+  const int sstride = (w * 3 + 3) & ~3;
+  int y;
+#pragma omp parallel for
+  for (y = 0; y < h; y++) {
+    unsigned char *d = dib + (size_t)y * (size_t)sstride;
+    int x;
+    for (x = 0; x < w; x++) {
+      const size_t px = (size_t)y * (size_t)w + (size_t)x;
+      d[x * 3] = (unsigned char)(out[px * 3 + 2] * 255 / MAXV);
       d[x * 3 + 1] = (unsigned char)(out[px * 3 + 1] * 255 / MAXV);
-      d[x * 3 + 2] = (unsigned char)(out[px * 3] * 255 / MAXV);''';
+      d[x * 3 + 2] = (unsigned char)(out[px * 3] * 255 / MAXV);
+    }
+    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
+  }
+}''';
   return '''/* Win32 可运行验证程序（自动生成，不随导出物分发）。
- * 并列模式（左原图/右处理后）与单视频模式（整幅单路，按钮/空格硬切）
+ * 并列模式（左原图/右处理后）与单视频模式（整幅单路，按钮按住显示
+ * 处理后、松开回退原图；空格硬切）
  * 实时互切；底部进度条点击/拖动跳转（暂停中也可；按下/拖动走关键帧级
  * 低分辨率直显预览——预览工作线程解码（内嵌 libav 常驻解码器优先，回退
  * 子进程单帧），UI 只投递最新位置故快速拖动不卡；并列模式只换左侧画面、
@@ -590,7 +804,9 @@ String stubMainWinSource({
  * 24bpp BMP 序列次之；皆无则内置测试图案。
  * 窗口模式视频解码优先尝试 CUDA 硬解链（NVDEC 解码 + scale_cuda GPU
  * 缩放，首帧读取失败自动回退软解，状态栏标注 GPU/SW，--swdec 强制
- * 软解）；批模式恒软解。
+ * 软解）；批模式恒软解。--hdr 标记 BT.2020 PQ/HLG 片源：解码链前置
+ * zscale+tonemap(hable) 映射为 BT.709 SDR 8bit 交付（与应用内播放/
+ * 导出同口径，tonemap 只运行于 CPU 帧故 HDR 恒走软解链）。
  * 批模式 --frames N --dump-hash 输出每帧处理后 FNV-1a 哈希（机器对拍用）。
  * 控制条显示上一帧管线本体耗时（处理 Xms，不含读流/装帧/解包；分段
  * 均值口径见批模式收尾的 timing 行）。
@@ -610,10 +826,15 @@ String stubMainWinSource({
  * rgb24 中转与 24MB 槽位拷贝）；软解/BMP/图案 rgb24 同趟出 g_in +
  * DIB；解包 hsl/rgb 直写 BGR DIB（免 g_rgb_dst 中转）。批模式保持
  * 旧四段路径（read/pack/run/unpack，哈希口径不变）。
- * OpenMP 线程数封顶 16（大核数机器上 vcomp 空转自旋会占满全机核），
- * ffmpeg 解码/滤镜线程封顶 FF_DEC_THREADS（默认 auto 按逻辑核数开
- * 线程，大核数机器上软解重载源会起上百个解码线程把内存带宽打满），
- * 进程与 ffmpeg 子进程低于普通优先级（软解重载源不拖垮桌面）。
+ * OpenMP 线程数封顶 48（核数-2；大核数机器上 vcomp 空转自旋会占满
+ * 全机核），ffmpeg 解码/滤镜线程封顶 FF_DEC_THREADS（默认 auto 按
+ * 逻辑核数开线程，大核数机器上软解重载源会起上百个解码线程把内存
+ * 带宽打满），进程与 ffmpeg 子进程低于普通优先级（软解重载源不拖
+ * 垮桌面）。线程数封顶不限占空比：lut 类编组原尺寸验证持续全核满
+ * 载（4K 每帧 ~260MB 内存流量）曾把内存/散热边缘状态的机器压出
+ * WHEA 风暴乃至硬挂起——pipe_worker 内另有负载调节器，忙占比持续
+ * 超载时每帧后强制插入空闲（牺牲播放帧率换整机存活，帧内容与批
+ * 模式哈希口径不受影响）。
  */
 #include "$topName.h"
 
@@ -627,7 +848,7 @@ String stubMainWinSource({
 #include <windows.h>
 #include <timeapi.h> /* timeBeginPeriod：把系统定时器分辨率提到 1ms，
                         否则 60fps 走帧不可达（默认 ~15.6ms 粒度） */
-${needCsc ? '\n#include "isp_csc_common.h" /* HSL 端口装帧/显示转换 */\n' : ''}
+${needCsc ? '\n#include "isp_csc_common.h" /* HSL 端口装帧/显示转换 */\n#include "isp_csc_sse.h"     /* HSL 装帧/解包 SSE2 双像素快路径（逐位一致） */\n' : ''}
 #define DEFW 640
 #define DEFH 360
 #define MAXV $maxValue
@@ -656,7 +877,10 @@ static void *g_scratch = NULL;
 static size_t g_scratch_bytes = 0;
 static int g_frame = 0;
 static int g_single_mode = 0;    /* 0=并列 1=单视频 */
-static int g_show_processed = 1; /* 单视频当前路：0=原图 1=处理后 */
+static int g_show_processed = 0; /* 单视频当前路：0=原图 1=处理后（按钮
+                                    按住对比：按下 1、松开回 0；空格硬切） */
+static int g_src_hold = 0; /* 原图/处理后 按钮按住中（SetCapture 保证拖出
+                              窗口也能收到松开） */
 static volatile int g_playing = 1; /* UI 写、管线工作线程读 */
 static DWORD g_proc_ms = 0; /* 上一帧管线 {TOP}_run 本体耗时（控制条显示） */
 /* ---- 进度条拖动（播放/暂停中均可，不改变播放状态）---- */
@@ -694,6 +918,18 @@ static volatile double g_seek_frac = 0.0; /* seek 请求位置（先于序号写
 /* 实时帧率统计：最近 1s 上屏时间戳环形缓冲。 */
 static DWORD g_ftimes[128];
 static int g_fti = 0, g_ftn = 0;
+
+/* ---- 负载调节器（防整机重载死机）----
+ * 线程数封顶不限占空比：lut 类编组原尺寸验证会持续全核满载（4K 每帧
+ * ~260MB 内存流量、48 omp 线程 + ffmpeg 解码），内存/散热处于边缘状
+ * 态的机器曾被压出 WHEA 可更正错误风暴乃至硬挂起。此处由 pipe_worker
+ * 按 ~2s 滑窗统计忙/闲占比：实测帧均忙时超过帧预算 75%（管线跟不上原
+ * 速、丢帧解码也在全速跑）时每帧后强制插入空闲，把忙占比压到 ~65%；
+ * 负载回落（实测忙时低于预算 50%，连续两窗）自动解除。只降低播放帧
+ * 率，不影响帧内容；批模式（--frames/--dump-hash）不经过此路径，哈
+ * 希对拍口径不变。 */
+static double g_idle_accum_ms = 0.0; /* wait_ms 实际空闲累计（调节器统计） */
+static double g_throttle_ms = 0.0;   /* 每帧后强制空闲 ms（0=未节流） */
 
 static void mark_frame(void) {
   g_ftimes[g_fti] = GetTickCount();
@@ -844,6 +1080,12 @@ static int g_native_w = 0, g_native_h = 0;
  * 缩放），首帧读取失败自动回退 0=软解；--swdec 强制软解；批模式恒软解
  *（GPU 解码/缩放与软解像素不逐位一致，对拍哈希须可复现）。 */
 static int g_hw = 1;
+/* --hdr：片源为 BT.2020 PQ/HLG（HDR），解码 -vf 前置 zscale+tonemap
+ *（hable）链映射为 BT.709 SDR 8bit 交付（与应用内播放/导出的
+ * kHdrTonemapFilter 同口径；不加该参数时 BT.2020 帧按 SDR 直解上屏
+ * 发灰发暗）。tonemap 滤镜只运行于 CPU 帧，故 HDR 恒走软解链（禁用
+ * CUDA 链；应用内 HDR 同样保持软解）。 */
+static int g_hdr = 0;
 
 /* ---- 拖动预览（关键帧低分辨率直显）---- */
 static int g_prev_w = 0, g_prev_h = 0;   /* 预览尺寸：宽 ≤640 等比 */
@@ -889,7 +1131,7 @@ static int ff_spawn_ex(double start_sec, int preview) {
   SECURITY_ATTRIBUTES sa;
   HANDLE rd = NULL, wr = NULL, nul = NULL;
   STARTUPINFOA si;
-  char cmd[MAX_PATH * 2 + 256];
+  char cmd[MAX_PATH * 3 + 512]; /* HDR tonemap 链使 -vf 段显著变长 */
   char ss[48];
   /* 匿名管道默认缓冲仅 ~4KB：4K 帧 24MB 会被切成数千次小块读写（每次
    * 都伴随 ffmpeg 进程上下文切换），实测 500ms+/帧的元凶。解码预读的
@@ -901,11 +1143,12 @@ static int ff_spawn_ex(double start_sec, int preview) {
    * 64MB。 */
   /* GPU 链交付 nv12（每像素 1.5 字节，实测 ~111fps；rgb24 每像素 3 字节
    * 只有 ~57fps——4K 原生播放交付瓶颈），软解/预览保持 rgb24（批模式哈
-   * 希口径）。 */
+   * 希口径）。HDR（--hdr）禁用 GPU 链：tonemap 滤镜只运行于 CPU 帧。 */
+  const int use_hw = !preview && g_hw && !g_hdr;
   const size_t npix =
       (size_t)(preview ? g_prev_w : g_w) * (size_t)(preview ? g_prev_h : g_h);
-  const size_t frame_bytes = (!preview && g_hw) ? npix * 3 / 2 : npix * 3;
-  size_t want = frame_bytes * (preview ? 2 : (g_hw ? 6 : 2));
+  const size_t frame_bytes = use_hw ? npix * 3 / 2 : npix * 3;
+  size_t want = frame_bytes * (preview ? 2 : (use_hw ? 6 : 2));
   DWORD pipeBuf;
   if (want < (size_t)(1 << 20)) want = (size_t)(1 << 20);
   if (want > (size_t)(64 << 20)) want = (size_t)(64 << 20);
@@ -935,11 +1178,11 @@ static int ff_spawn_ex(double start_sec, int preview) {
     ss[0] = '\\0';
   }
   {
-    char vf[MAX_PATH + 160];
+    char vf[MAX_PATH + 384];
     if (preview) {
       _snprintf(vf, sizeof(vf), "-i \\"%s\\" -vf scale=%d:%d -frames:v 1 ",
                 g_video_path, g_prev_w, g_prev_h);
-    } else if (g_hw) {
+    } else if (use_hw) {
       /* GPU 链：NVDEC 硬解 + scale_cuda GPU 缩放到工作尺寸（兼 10→8bit
        * 转 nv12——直接 hwdownload,format=nv12 对 10bit 流会配置失败）。
        * -vf 参数含逗号必须加引号。Rext 4:2:2 等 NVDEC 不支持的格式无帧
@@ -949,6 +1192,25 @@ static int ff_spawn_ex(double start_sec, int preview) {
                 "-vf \\"scale_cuda=%d:%d:format=nv12,hwdownload,"
                 "format=nv12\\" ",
                 g_video_path, g_w, g_h);
+    } else if (g_hdr) {
+      /* HDR 软解链：zscale 线性化（npl=100）→ hable tonemap → 重标定
+       * BT.709 SDR tv → yuv420p 8bit（应用 kHdrTonemapFilter 同口径）。
+       * --scale 降档时先缩放再映射（应用降档链同口径：映射计算量按面
+       * 积缩）。 */
+      if (g_scale_w > 0) {
+        _snprintf(vf, sizeof(vf),
+                  "-i \\"%s\\" -vf \\"scale=%d:%d,"
+                  "zscale=transfer=linear:npl=100,tonemap=hable:desat=0,"
+                  "zscale=transfer=bt709:primaries=bt709:matrix=bt709:"
+                  "range=tv,format=yuv420p\\" ",
+                  g_video_path, g_scale_w, g_scale_h);
+      } else {
+        _snprintf(vf, sizeof(vf),
+                  "-i \\"%s\\" -vf \\"zscale=transfer=linear:npl=100,"
+                  "tonemap=hable:desat=0,zscale=transfer=bt709:primaries="
+                  "bt709:matrix=bt709:range=tv,format=yuv420p\\" ",
+                  g_video_path);
+      }
     } else if (g_scale_w > 0) {
       /* 输出侧缩放滤镜（-s 放 -i 前是采集设备输入选项，语义错误）。 */
       _snprintf(vf, sizeof(vf), "-i \\"%s\\" -vf scale=%d:%d ",
@@ -961,9 +1223,9 @@ static int ff_spawn_ex(double start_sec, int preview) {
               "-threads %d -filter_threads %d %s%s"
               "-f rawvideo -pix_fmt %s -",
               g_ff_exe, FF_DEC_THREADS, FF_DEC_THREADS, ss, vf,
-              (!preview && g_hw) ? "nv12" : "rgb24");
+              use_hw ? "nv12" : "rgb24");
     /* GPU 链出 nv12 由本进程 omp 转 BT.709（见 ff_next_frame）。 */
-    g_ff_nv12 = !preview && g_hw;
+    g_ff_nv12 = use_hw;
   }
   /* BELOW_NORMAL：软解重载源（8K/Rext 4:2:2）时 ffmpeg 解码线程（已
    * 封顶 FF_DEC_THREADS）持续满载，低优先级保证桌面/系统保持响应。
@@ -1046,81 +1308,11 @@ static void nv12_to_rgb709(const unsigned char *nv, unsigned char *rgb,
  * 整帧内存搬运从 ~156MB/帧降到 ~84MB/帧。批模式不用（保持旧四段路径，
  * 哈希口径不变）。 */
 
-/* rgb24 源（软解槽位/BMP/图案）一趟出 g_in + 原图 DIB（BGR）。 */
-static void pack_fused_rgb24(const unsigned char *rgb, uint16_t *in,
-                             unsigned char *dib, int w, int h) {
-  const int sstride = (w * 3 + 3) & ~3;
-  int y;
-#pragma omp parallel for
-  for (y = 0; y < h; y++) {
-    const unsigned char *s = rgb + (size_t)y * (size_t)w * 3u;
-    unsigned char *d = dib + (size_t)y * (size_t)sstride;
-    int x;
-    for (x = 0; x < w; x++) {
-      const int r = s[x * 3], g = s[x * 3 + 1], b = s[x * 3 + 2];
-      const size_t px = (size_t)y * (size_t)w + (size_t)x;
-      d[x * 3] = (unsigned char)b;
-      d[x * 3 + 1] = (unsigned char)g;
-      d[x * 3 + 2] = (unsigned char)r;
-      $packFusedPx
-    }
-    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
-  }
-}
+$packFusedRgb24Fn
 
-/* GPU 链 nv12 源一趟出 g_in + 原图 DIB：nv12→rgb Q8 定点（与
- * nv12_to_rgb709 同式）→ 钳位字节 → 装帧（与 pack 同口径）。旧路径的
- * rows = h & ~1 末行缺口在此一并补齐（视频恒偶数行，仅影响奇高 BMP
- * 级边角）。 */
-static void pack_fused_nv12(const unsigned char *nv, uint16_t *in,
-                            unsigned char *dib, int w, int h) {
-  const int sstride = (w * 3 + 3) & ~3;
-  int y;
-#pragma omp parallel for
-  for (y = 0; y < h; y++) {
-    const unsigned char *yp = nv + (size_t)y * (size_t)w;
-    const unsigned char *uv =
-        nv + (size_t)w * (size_t)h + (size_t)(y >> 1) * (size_t)w;
-    unsigned char *d = dib + (size_t)y * (size_t)sstride;
-    int x;
-    for (x = 0; x < w; x += 2) {
-      const int u = uv[x] - 128, v = uv[x + 1] - 128;
-      int k;
-      for (k = 0; k < 2 && x + k < w; k++) {
-        const int yy = yp[x + k] - 16;
-        const int rq = (298 * yy + 459 * v + 128) >> 8;
-        const int gq = (298 * yy - 55 * u - 136 * v + 128) >> 8;
-        const int bq = (298 * yy + 541 * u + 128) >> 8;
-        const int r = rq < 0 ? 0 : (rq > 255 ? 255 : rq);
-        const int g = gq < 0 ? 0 : (gq > 255 ? 255 : gq);
-        const int b = bq < 0 ? 0 : (bq > 255 ? 255 : bq);
-        const size_t px = (size_t)y * (size_t)w + (size_t)(x + k);
-        d[(x + k) * 3] = (unsigned char)b;
-        d[(x + k) * 3 + 1] = (unsigned char)g;
-        d[(x + k) * 3 + 2] = (unsigned char)r;
-        $packFusedPx
-      }
-    }
-    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
-  }
-}
+$packFusedNv12Fn
 
-/* 融合解包：g_out 直写 BGR 到处理后 DIB（免 g_rgb_dst 中转）。 */
-static void unpack_fused(const uint16_t *out, unsigned char *dib, int w,
-                         int h) {
-  const int sstride = (w * 3 + 3) & ~3;
-  int y;
-#pragma omp parallel for
-  for (y = 0; y < h; y++) {
-    unsigned char *d = dib + (size_t)y * (size_t)sstride;
-    int x;
-    for (x = 0; x < w; x++) {
-      const size_t px = (size_t)y * (size_t)w + (size_t)x;
-      $unpackFusedPx
-    }
-    if (sstride > w * 3) memset(d + w * 3, 0, (size_t)(sstride - w * 3));
-  }
-}
+$unpackFusedFn
 
 /* ---- 解码预读环（读者线程 + RING_N 帧环形缓冲）----
  * UI 线程同步读管道的旧形态下，ffmpeg 子进程只有几帧管道缓冲：UI 处理/
@@ -1423,6 +1615,7 @@ static int process_frame(int f) {
  * 提前唤醒——唤醒后由调用方循环重检标志）。高分辨率定时器不可用时回退
  * 事件超时等待（系统滴答粒度，仅旧 OS）。 */
 static void wait_ms(double ms) {
+  const DWORD t0 = GetTickCount();
   if (ms <= 0.0 || g_pipe_evt == NULL) return;
   if (g_hires_timer != NULL) {
     LARGE_INTEGER t;
@@ -1432,10 +1625,12 @@ static void wait_ms(double ms) {
       h[0] = g_hires_timer;
       h[1] = g_pipe_evt;
       WaitForMultipleObjects(2, h, FALSE, INFINITE);
+      g_idle_accum_ms += (double)(GetTickCount() - t0);
       return;
     }
   }
   WaitForSingleObject(g_pipe_evt, (DWORD)(ms + 0.5));
+  g_idle_accum_ms += (double)(GetTickCount() - t0);
 }
 
 /* 窗口模式处理一帧：取帧+融合装帧（g_in+原图 DIB）→ 管线 → 融合解包
@@ -1545,6 +1740,9 @@ static void worker_seek(double frac) {
 static DWORD WINAPI pipe_worker(LPVOID p) {
   int was_paused = 0;
   LONG seen_seek = 0;
+  /* 负载调节器滑窗状态（见 g_throttle_ms 注释）：跨循环迭代保持。 */
+  double gov_busy = 0.0, gov_idle = 0.0, gov_idle_mark = 0.0;
+  int gov_frames = 0, gov_calm = 0;
   (void)p;
   for (;;) {
     ResetEvent(g_pipe_evt);
@@ -1605,6 +1803,36 @@ static DWORD WINAPI pipe_worker(LPVOID p) {
         }
         PostMessage(g_hwnd_main, WM_APP_FRAME, 0, 0);
       }
+      if (g_video && g_vfps > 0.0) {
+        /* 负载调节器：~2s 滑窗取实测帧均忙时（取流/丢帧跳过/处理全在
+         * step_frame 内计时），超过帧预算 75% 即节流——每帧后强制空闲
+         * 忙时的一半（忙占比压到 ~67%）；负载回落（忙时低于预算 50%
+         * 持续两窗）自动解除。只降播放帧率，不影响帧内容。 */
+        const double busy = (double)(GetTickCount() - t0);
+        const double budget = 1000.0 / g_vfps;
+        gov_busy += busy;
+        gov_idle += g_idle_accum_ms - gov_idle_mark;
+        gov_idle_mark = g_idle_accum_ms;
+        gov_frames++;
+        if (gov_busy + gov_idle >= 2000.0) {
+          const double busy_avg = gov_busy / gov_frames;
+          if (busy_avg > budget * 0.75) {
+            g_throttle_ms = busy_avg * 0.5;
+            gov_calm = 0;
+          } else if (g_throttle_ms > 0.0 && busy_avg < budget * 0.5) {
+            if (++gov_calm >= 2) {
+              g_throttle_ms = 0.0;
+              gov_calm = 0;
+            }
+          } else {
+            gov_calm = 0;
+          }
+          gov_busy = 0.0;
+          gov_idle = 0.0;
+          gov_frames = 0;
+        }
+        if (g_throttle_ms > 0.0) wait_ms(g_throttle_ms);
+      }
       if (!g_video) {
         /* 图案/BMP：30ms 走帧节奏（旧 SetTimer 口径）。 */
         const double el = (double)(GetTickCount() - t0);
@@ -1630,6 +1858,11 @@ static int alloc_all(void) {
   g_rgb_dst = (unsigned char *)malloc((size_t)g_w * g_h * 3);
   g_in = (uint16_t *)malloc((size_t)g_w * g_h * 3 * sizeof(uint16_t));
   g_out = (uint16_t *)malloc((size_t)g_w * g_h * 3 * sizeof(uint16_t));
+  /* 输出缓冲清零：1 通道输出编组只写前 1/3，未写部分保持 0 使批模式
+   * 哈希确定（3 通道组每帧全写，清零不影响其哈希口径）。 */
+  if (g_out != NULL) {
+    memset(g_out, 0, (size_t)g_w * g_h * 3 * sizeof(uint16_t));
+  }
   g_scratch = malloc(g_scratch_bytes > 0 ? g_scratch_bytes : 1);
   return g_rgb_src && g_rgb_dst && g_in && g_out && g_scratch;
 }
@@ -2243,7 +2476,10 @@ static void draw(HDC dc, const RECT *client) {
   FillRect(mem, &barR, bar);
   draw_button(mem, &BTN_MODE, g_single_mode ? L"模式: 单视频" : L"模式: 并列",
               1);
-  draw_button(mem, &BTN_SRC, g_show_processed ? L"处理后" : L"原图",
+  /* 按住对比按钮：文案指示动作结果——静止（显示原图）时「按住显示处理
+   * 后图像」，按住中（显示处理后）时「释放显示处理前图像」。 */
+  draw_button(mem, &BTN_SRC,
+              g_show_processed ? L"释放显示处理前图像" : L"按住显示处理后图像",
               g_single_mode);
   draw_button(mem, &BTN_PLAY, g_playing ? L"暂停" : L"播放", 1);
   /* 控制条：上一帧管线本体耗时（不含读流/装帧/解包）。 */
@@ -2483,7 +2719,11 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       g_single_mode = !g_single_mode;
       InvalidateRect(hwnd, NULL, FALSE);
     } else if (g_single_mode && hit(&BTN_SRC, x, y)) {
-      g_show_processed = !g_show_processed;
+      /* 按住对比：按下显示处理后，松开（WM_LBUTTONUP）回退原图；
+       * SetCapture 保证拖出窗口再松开也能收到。 */
+      g_show_processed = 1;
+      g_src_hold = 1;
+      SetCapture(hwnd);
       InvalidateRect(hwnd, NULL, FALSE);
     } else if (hit(&BTN_PLAY, x, y)) {
       g_playing = !g_playing;
@@ -2534,6 +2774,14 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return 0;
   }
   case WM_LBUTTONUP: {
+    /* 原图/处理后 按钮按住对比的松开：回退原图并释放捕获（与进度条
+     * 拖动共用 capture，各自带标志区分）。 */
+    if (g_src_hold) {
+      g_src_hold = 0;
+      g_show_processed = 0;
+      ReleaseCapture();
+      InvalidateRect(hwnd, NULL, FALSE);
+    }
     if (g_dragging) {
       const int x = (int)(short)LOWORD(lp);
       RECT cr;
@@ -2561,6 +2809,12 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   }
   case WM_CAPTURECHANGED:
     g_dragging = 0;
+    /* 捕获意外丢失（Alt+Tab 等）视同松开：按钮按住对比回退原图。 */
+    if (g_src_hold) {
+      g_src_hold = 0;
+      g_show_processed = 0;
+      InvalidateRect(hwnd, NULL, FALSE);
+    }
     SetEvent(g_pipe_evt); /* 工作线程重估拖动/暂停状态 */
     return 0;
   case WM_PAINT: {
@@ -2592,6 +2846,11 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       }
       g_prev_nthreads = 0;
     }
+    /* 退出前终止 ffmpeg 解码子进程：否则父进程退出后子进程可能卡在非
+     * 管道阻塞点（如 NVDEC 初始化）成孤儿（持 CUDA 会话 + 数十线程，
+     * 多个孤儿会耗尽 NVDEC 会话数）。管线工作线程已汇合，无并发流操
+     * 作。 */
+    ff_kill();
     if (g_back_dc != NULL) {
       DeleteObject(g_back_bmp);
       DeleteDC(g_back_dc);
@@ -2614,17 +2873,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
   (void)hPrev;
   (void)lpCmdLine;
 
-  /* OpenMP 线程数封顶（不超过 16、核数-2）：默认线程数等于逻辑核数，
+  /* OpenMP 线程数封顶（不超过 48、核数-2）：默认线程数等于逻辑核数，
    * 大核数机器上装帧/解包的小并行区每帧唤醒上百个 vcomp 工作线程，
    * 帧间隙空转自旋把全机核占满（实测 112 线程机占 ~106 核）。装帧/解
-   * 包是 4K HSL 逐像素转换，16 线程内可近线性加速；行/像素并行结果
-   * 逐位一致，与线程数无关。 */
+   * 包是 4K HSL 逐像素转换，近线性加速但应用内与 ffmpeg 解码/读流/
+   * 绘制争抢物理核：112 线程机实测 SSE2 双像素快路径下 16 线程仅
+   * ~23fps、32 线程 ~48fps、48 线程 ~61fps（4K60 源满帧，pack/run/
+   * unpack ≈ 6.6/2.5/6.7ms）；48 线程仍留出 60+ 核且进程 BelowNormal
+   * 运行，桌面不受影响。行/像素并行结果逐位一致，与线程数无关。 */
   {
     SYSTEM_INFO si;
     int nt;
     GetSystemInfo(&si);
     nt = (int)si.dwNumberOfProcessors - 2;
-    if (nt > 16) nt = 16;
+    if (nt > 48) nt = 48;
     if (nt < 1) nt = 1;
     omp_set_num_threads(nt);
   }
@@ -2646,7 +2908,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
       NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
 
   /* 命令行：--frames N / --dump-hash / --bmp <路径> /
-   * --video <路径> --ffmpeg <ffmpeg路径> [--scale WxH] [--swdec] */
+   * --video <路径> --ffmpeg <ffmpeg路径> [--scale WxH] [--swdec] [--hdr] */
   for (i = 1; i < __argc; i++) {
     if (strcmp(__argv[i], "--frames") == 0 && i + 1 < __argc) {
       frames = atoi(__argv[++i]);
@@ -2664,6 +2926,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
     } else if (strcmp(__argv[i], "--swdec") == 0) {
       /* 强制软解（跳过 CUDA 硬解链探测，调试用）。 */
       g_hw = 0;
+    } else if (strcmp(__argv[i], "--hdr") == 0) {
+      /* HDR 片源：解码链前置 zscale+tonemap（见 ff_spawn_ex）。 */
+      g_hdr = 1;
     } else if (strcmp(__argv[i], "--avdir") == 0 && i + 1 < __argc) {
       /* libav* DLL 目录（拖动预览内嵌解码器；缺省/加载失败回退子进程）。 */
       _snprintf(g_av_dir, MAX_PATH, "%s", __argv[++i]);
@@ -2721,7 +2986,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
      * 理并发布到三缓冲（窗口未建时 PostMessage 空目标静默失败，
      * WM_PAINT 时经 ready 认领）。 */
     int rc;
-    if (g_hw) {
+    if (g_hw && !g_hdr) {
       rc = ff_spawn(0.0) == 0 ? proc_publish(0) : 2;
       if (rc != 0) {
         g_hw = 0;
@@ -2730,7 +2995,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
     } else {
       rc = ff_spawn(0.0) == 0 ? proc_publish(0) : 2;
     }
-    if (rc != 0) return 1;
+    if (rc != 0) {
+      ff_kill(); /* 首帧失败直接退出：不留孤儿 ffmpeg 子进程 */
+      return 1;
+    }
   } else if (proc_publish(0) != 0) {
     return 1;
   }
@@ -2748,10 +3016,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine,
   wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
   wc.lpszClassName = L"IspCcWinVerify";
   RegisterClassW(&wc);
-  AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-                   FALSE);
+  /* 可最大化/可调大小：后缓冲按客户区尺寸失配即重建（见 back_dc），
+   * 视频区 contain_rect 等比适配、进度条/状态栏底部锚定，按钮顶部左
+   * 对齐不随尺寸移动。 */
+  AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
   hwnd = CreateWindowW(wc.lpszClassName, L"ISP 编组验证（前后对比）",
-                       WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
+                       WS_OVERLAPPEDWINDOW,
                        CW_USEDEFAULT, CW_USEDEFAULT, wr.right - wr.left,
                        wr.bottom - wr.top, NULL, NULL, hInst, NULL);
   ShowWindow(hwnd, nShow);
@@ -3161,7 +3431,8 @@ Future<CCompileResult> compileGroupCFiles(
 /// 需要 HSL 转换且文件集中没有 isp_csc_common.h 时，优先用
 /// [cscCommonHeader]（调用方经 rootBundle 注入，安装版无 lib/ 目录）；
 /// 缺省时从 `lib/modules/isp_studio/c_ref/` 读盘注入（工作目录相对路径，
-/// 测试/开发环境行为）。
+/// 测试/开发环境行为）。HSL 装帧/解包的 SSE2 双像素快路径头
+/// isp_csc_sse.h 同理经 [cscSseHeader] 注入。
 /// [hasScratch] 透传 [stubMainWinSource]（黑盒无 scratch 参数的形态）。
 /// [maxValue] 为管线量化域（编组位深推导，见 lutDomainMaxOf）：LUT 模式
 /// 节点的查表快路径要求运行时 max_value 与烘焙域一致，缺省 255。
@@ -3173,6 +3444,7 @@ Future<CCompileResult> buildWinVerifyApp(
   bool hasScratch = true,
   int maxValue = 255,
   String? cscCommonHeader,
+  String? cscSseHeader,
   String? compilerPath,
   void Function(String chunk)? onOutput,
 }) async {
@@ -3201,39 +3473,51 @@ Future<CCompileResult> buildWinVerifyApp(
     );
   }
 
-  // 固定产物目录（重建前清空，避免旧 obj/exe 混入；目录被运行中的
-  // 验证程序占用时（exe 文件锁）改用带时间戳的备用目录，不打扰用户
-  // 正在运行的窗口）。优先 工作目录/scratch/cc_win_check（开发机行为
-  // 不变）；创建抛 FileSystemException 时（安装到 Program Files 后
-  // 普通用户对工作目录不可写）回退 %LOCALAPPDATA%\DebugToolSet\
-  // cc_win_check（无 LOCALAPPDATA 再用系统临时目录）。
-  var workDir =
-      Directory('${Directory.current.path}/scratch/cc_win_check');
-  if (workDir.existsSync()) {
+  // 并发构建安全：源文件/objs/exe 一律写入唯一构建子目录（每次调用一个），
+  // 避免并发验证构建互删固定目录中的源文件/obj（此前「删除固定目录再重建」
+  // 的写法下两个并发构建会互删对方正在编译的文件）；成功后把 exe 拷贝到
+  // 固定产物目录（用户双击运行的既有路径），拷贝失败静默忽略（exe 被运行
+  // 中的窗口占用时不打扰）。固定产物目录优先 工作目录/scratch/cc_win_check
+  // （开发机行为不变）；不可写时（安装版）回退 %LOCALAPPDATA%\
+  // DebugToolSet\cc_win_check（无 LOCALAPPDATA 再用系统临时目录）。
+  String fixedRoot = '';
+  {
+    final scratchDir =
+        Directory('${Directory.current.path}/scratch/cc_win_check');
     try {
-      await workDir.delete(recursive: true);
+      scratchDir.createSync(recursive: true);
+      fixedRoot = scratchDir.path;
     } on FileSystemException {
-      workDir = Directory(
-          '${Directory.current.path}/scratch/cc_win_check_${DateTime.now().millisecondsSinceEpoch}');
-      emit('固定产物目录被运行中的验证程序占用，改用 ${workDir.path}\n');
+      final localAppData = Platform.environment['LOCALAPPDATA'];
+      final alt = localAppData != null
+          ? '$localAppData\\DebugToolSet\\cc_win_check'
+          : '${Directory.systemTemp.path}/cc_win_check';
+      try {
+        Directory(alt).createSync(recursive: true);
+        fixedRoot = alt;
+      } on FileSystemException {
+        fixedRoot = '';
+      }
     }
   }
-  try {
-    await workDir.create(recursive: true);
-  } on FileSystemException {
-    final localAppData = Platform.environment['LOCALAPPDATA'];
-    workDir = Directory(localAppData != null
-        ? '$localAppData\\DebugToolSet\\cc_win_check'
-        : '${Directory.systemTemp.path}/cc_win_check');
-    await workDir.create(recursive: true);
-    emit('工作目录不可写，产物目录改用 ${workDir.path}\n');
-  }
+  final workDir = fixedRoot.isEmpty
+      ? Directory(
+          '${Directory.systemTemp.path}/cc_win_check_${DateTime.now().millisecondsSinceEpoch}')
+      : Directory(
+          '$fixedRoot/build_${DateTime.now().millisecondsSinceEpoch}');
+  await workDir.create(recursive: true);
   final allFiles = Map<String, String>.of(files);
   final needCsc = inFormat == 'hsl' || outFormat == 'hsl';
   if (needCsc && !allFiles.containsKey('isp_csc_common.h')) {
     allFiles['isp_csc_common.h'] = cscCommonHeader ??
         await File(
                 '${Directory.current.path}/lib/modules/isp_studio/c_ref/isp_csc_common.h')
+            .readAsString();
+  }
+  if (needCsc && !allFiles.containsKey('isp_csc_sse.h')) {
+    allFiles['isp_csc_sse.h'] = cscSseHeader ??
+        await File(
+                '${Directory.current.path}/lib/modules/isp_studio/c_ref/isp_csc_sse.h')
             .readAsString();
   }
   allFiles['main_win.c'] = stubMainWinSource(
@@ -3292,6 +3576,15 @@ Future<CCompileResult> buildWinVerifyApp(
 
   final artifactFile = File('${workDir.path}/$artifact');
   final success = exitCode == 0 && artifactFile.existsSync();
+  if (success && fixedRoot.isNotEmpty) {
+    // 拷贝到固定产物目录（用户双击运行的既有路径）；拷贝失败静默忽略
+    //（同名 exe 被运行中的窗口锁住时不打扰）。
+    try {
+      await artifactFile.copy('$fixedRoot/$artifact');
+    } on FileSystemException {
+      // 忽略：artifactPath 仍指向构建子目录内的 exe，可正常运行。
+    }
+  }
   emit(success
       ? '\n编译链接成功，产物：${artifactFile.path}\n'
       : '\n编译失败（exit $exitCode）\n');

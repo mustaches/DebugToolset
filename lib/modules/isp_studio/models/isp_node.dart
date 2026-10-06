@@ -264,6 +264,10 @@ class IspNode {
           ? 1500
           : type.typeId == 'adder'
               ? kNodeWidth * 3
+              : type.typeId == 'video_source'
+                  // 视频源：附加区有大字时间码（00:00/00:00 约需 240+
+                  // 画布宽），默认加宽避免截断。
+                  ? 260
               : type.typeId == 'hsl_debugger' ||
                       type.typeId == 'rgb_debugger' ||
                       type.typeId == 'yuv_debugger' ||

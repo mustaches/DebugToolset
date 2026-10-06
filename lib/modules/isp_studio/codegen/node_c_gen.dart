@@ -31,6 +31,7 @@ import 'dart:typed_data';
 import '../models/isp_node.dart';
 import '../pipeline/isp_kernels.dart';
 import 'c_ident.dart';
+import 'group_c_target.dart';
 import 'node_c_gen_adjust.dart';
 import 'node_c_gen_datapath.dart';
 import 'node_c_gen_fluoro.dart';
@@ -147,12 +148,17 @@ class CNodeGenCtx {
   /// 不一致时 wrapper 回退直算（同公式，数值一致）。
   final int lutDomainMax;
 
+  /// 导出目标 CPU（仅影响 lut_fixed 行核的 SIMD 变体选择，见
+  /// node_c_stream.dart 的 _lutFixedRowFn；默认与既有生成物一致）。
+  final GroupCTarget target;
+
   CNodeGenCtx({
     required this.node,
     required this.type,
     required this.ident,
     required this.inputFormats,
     this.lutDomainMax = 1023,
+    this.target = GroupCTarget.cortexA53_55,
   });
 
   /// 宏前缀（如 ISP_GAMMA_1）。

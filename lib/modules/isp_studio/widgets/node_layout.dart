@@ -71,6 +71,9 @@ double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
   if (type.typeId == 'image_output' || type.typeId == 'video_output') {
     h += 34; // 导出按钮行
   }
+  if (type.typeId == 'video_source') {
+    h += 40; // 源信息行（文件名 / 黑底白字大字的当前时间·总时长）
+  }
   return h;
 }
 

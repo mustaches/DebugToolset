@@ -125,6 +125,41 @@ class GpuPipeline {
     'fluoro_fusion',
   };
 
+  /// 逐像素（pointwise）算子：输入降采样后逐像素处理在显示尺寸下视觉
+  /// 无损。播放路径的「GPU链÷N」显示自适应降档只允许全部链都由这些
+  /// 算子组成时启用（含空间/时域算子的链降采样会改变处理语义；
+  /// histogram 与各 debugger 的统计口径也随分辨率变，一并排除）。
+  static const pointwiseOps = {
+    'black_level',
+    'grgb_balance',
+    'white_balance',
+    'ccm',
+    'gamma',
+    'csc_rgb2hsl',
+    'csc_rgb2yuv',
+    'csc_yuv2hsl',
+    'csc_hsl2rgb',
+    'csc_hsl2yuv',
+    'csc_yuv2rgb',
+    'rgb_splitter',
+    'rgb_combiner',
+    'hsl_splitter',
+    'hsl_combiner',
+    'yuv_splitter',
+    'yuv_combiner',
+    'color_controller',
+    'multi_band_eq',
+    'color_temp_adjuster',
+    'bright_contrast_adjuster',
+    'levels_curves',
+    'multiplier',
+    'adder',
+    'mux4',
+    'blender',
+    'pseudo_color',
+    'preview',
+  };
+
   /// 时域降噪的历史帧纹理（nodeId → 记录）：跨 run() 存活，有效性口径
   /// 与 CPU 路径 pipeline_runner._temporalHistory 一致（帧序连续 +
   /// 尺寸/参数不变才复用）。

@@ -12,6 +12,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:path/path.dart' as p;
 
 import '../modules/isp_studio/models/isp_align_mode.dart';
+import '../modules/isp_studio/codegen/group_c_target.dart';
 import '../modules/isp_studio/models/isp_graph.dart';
 import '../modules/isp_studio/models/isp_node.dart';
 import '../modules/isp_studio/pipeline/audio_analysis.dart';
@@ -240,10 +241,12 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 打开（或激活）某编组的代码标签页。
-  void openGroupCodeTab(String groupId) {
+  /// 打开（或激活）某编组的代码标签页（key 带 `@<target>` 后缀，同一
+  /// 编组可同时打开不同目标 CPU 的标签页）。
+  void openGroupCodeTab(String groupId,
+      {GroupCTarget target = GroupCTarget.cortexA53_55}) {
     if (!graph.groups.any((g) => g.id == groupId)) return;
-    final key = 'group:$groupId';
+    final key = 'group:$groupId@${target.name}';
     final i = openCodeTabs.indexOf(key);
     if (i >= 0) {
       activeTab = i + 1;
@@ -254,10 +257,12 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 打开编组黑盒（行级流水）代码标签页（key 前缀 'gbb:'）。
-  void openGroupBlackBoxCodeTab(String groupId) {
+  /// 打开编组黑盒（行级流水）代码标签页（key 前缀 'gbb:'，带
+  /// `@<target>` 后缀）。
+  void openGroupBlackBoxCodeTab(String groupId,
+      {GroupCTarget target = GroupCTarget.cortexA53_55}) {
     if (!graph.groups.any((g) => g.id == groupId)) return;
-    final key = 'gbb:$groupId';
+    final key = 'gbb:$groupId@${target.name}';
     final i = openCodeTabs.indexOf(key);
     if (i >= 0) {
       activeTab = i + 1;
@@ -395,6 +400,12 @@ class IspStudioState extends ChangeNotifier {
   int previewWidth = 0;
   int previewHeight = 0;
   int? totalFrames;
+
+  /// 当前 previewFrame/totalFrames 对应的源节点 id（单次运行/播放/仪器
+  /// 分析时由第一个预览链的链首填入；totalFrames 失效时一并清空）：
+  /// 视频源节点卡片据此只在自己的时间行上显示进度，多源图中避免
+  /// 把别的源的进度张冠李戴。
+  String? previewSrcNodeId;
 
   /// 最近一次预览运行时采样到的各节点输出
   /// （nodeId → `{'format': String, 'length': int, 'sample': List<int>}`），
@@ -1463,14 +1474,14 @@ class IspStudioState extends ChangeNotifier {
   }
 
   /// 当前选择是否可以编组：至少 2 个节点，且没有任何成员已在编组中
-  ///（已编组节点须先取消编组，才允许参与新的编组）。例外：多段色彩
-  /// 均衡器等效于多个色彩控制器的混叠，单节点也允许编组（编组后即可
-  /// 经右键菜单查看/导出 C 代码）。
+  /// （已编组节点须先取消编组，才允许参与新的编组）。例外：多段色彩
+  /// 均衡器（等效多个色彩控制器的混叠）与有整行行核的类型（单节点独占
+  /// 走 `<id>_row` SIMD 行核）单节点也允许编组。
   bool get canGroupSelectedNodes {
     if (selectedNodeIds.length == 1) {
       final id = selectedNodeIds.first;
       return groupIdOf(id) == null &&
-          graph.nodes[id]?.typeId == 'multi_band_eq';
+          kSingleNodeGroupTypeIds.contains(graph.nodes[id]?.typeId ?? '');
     }
     if (selectedNodeIds.length < 2) return false;
     for (final id in selectedNodeIds) {
@@ -1504,10 +1515,12 @@ class IspStudioState extends ChangeNotifier {
   void groupSelectedNodes({String? name}) {
     final members =
         selectedNodeIds.where((id) => graph.nodes.containsKey(id)).toSet();
-    // 例外：多段色彩均衡器允许单节点编组（见 canGroupSelectedNodes）。
+    // 例外：多段色彩均衡器与有整行行核的类型允许单节点编组（见
+    // canGroupSelectedNodes / kSingleNodeGroupTypeIds）。
     if (members.length < 2 &&
         !(members.length == 1 &&
-            graph.nodes[members.first]?.typeId == 'multi_band_eq')) {
+            kSingleNodeGroupTypeIds
+                .contains(graph.nodes[members.first]?.typeId ?? ''))) {
       return;
     }
     if (members.any((id) => groupIdOf(id) != null)) return;
@@ -1533,8 +1546,16 @@ class IspStudioState extends ChangeNotifier {
     final before = graph.groups.length;
     graph.groups.removeWhere((g) => g.id == groupId);
     if (graph.groups.length != before) {
-      closeCodeTab('group:$groupId');
-      closeCodeTab('gbb:$groupId');
+      // 编组标签 key 带 `@<target>` 后缀（同一编组可有多个目标标签页），
+      // 按前缀全部关闭；无后缀旧 key 一并兜底。
+      for (final key in [...openCodeTabs]) {
+        if (key == 'group:$groupId' ||
+            key == 'gbb:$groupId' ||
+            key.startsWith('group:$groupId@') ||
+            key.startsWith('gbb:$groupId@')) {
+          closeCodeTab(key);
+        }
+      }
       notifyListeners();
     }
   }
@@ -1802,6 +1823,7 @@ class IspStudioState extends ChangeNotifier {
       node.paramValues.remove('style_name');
     }
     totalFrames = null; // 源参数可能变了
+    previewSrcNodeId = null;
     nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 运行值已过期
     nodeRunOnGpu = {}; // 同上
@@ -1824,6 +1846,10 @@ class IspStudioState extends ChangeNotifier {
         node.typeId == 'video_source' &&
         value is String &&
         value.isNotEmpty) {
+      // 装载新视频：已播放时间（previewFrame/fps 换算的时间行与进度
+      // 滑条）复位到 00:00，不再沿用旧片的进度。
+      previewFrame = 0;
+      notifyListeners();
       autoFillFromVideo(nodeId); // 异步，失败静默
     }
   }
@@ -1844,6 +1870,7 @@ class IspStudioState extends ChangeNotifier {
       node.paramValues.remove('style_name');
     }
     totalFrames = null;
+    previewSrcNodeId = null;
     nodeOutputCaptures = {};
     nodeRunTimesUs = {}; // 运行值已过期
     nodeRunOnGpu = {}; // 同上
@@ -1878,6 +1905,7 @@ class IspStudioState extends ChangeNotifier {
       }
       if (changed) {
         totalFrames = null; // 预览帧数变了，下次运行重算
+        previewSrcNodeId = null;
         notifyListeners();
       }
     } catch (_) {
@@ -1937,6 +1965,7 @@ class IspStudioState extends ChangeNotifier {
         node.paramValues['width'] = w;
         node.paramValues['height'] = h;
         totalFrames = null; // 单帧字节数变了
+        previewSrcNodeId = null;
         changed = true;
       }
     }
@@ -2030,6 +2059,7 @@ class IspStudioState extends ChangeNotifier {
     }
     if (changed) {
       totalFrames = null; // 单帧字节数变了
+      previewSrcNodeId = null;
       nodeOutputCaptures = {};
       nodeRunTimesUs = {}; // 运行值已过期
       nodeRunOnGpu = {}; // 同上
@@ -2638,6 +2668,19 @@ class IspStudioState extends ChangeNotifier {
       final srcTypeId = firstChain.first['typeId'] as String;
       final srcParams = firstChain.first['params'] as Map<String, Object?>;
       totalFrames = await _previewFrameCount(firstPreview, srcTypeId, srcParams);
+      previewSrcNodeId = firstChain.first['nodeId'] as String?;
+      // 单次运行也填入视频源帧率/色彩传递：视频源节点与预览控制条的
+      // 「当前时间/总时长」在跑过一次预览后即可显示（videoFileInfo 有
+      // 缓存，sourceFrameCount 刚查过，零额外进程开销）。
+      if (srcTypeId == 'video_source') {
+        try {
+          final vi = await videoFileInfo(
+              srcParams['filePath']?.toString() ?? '',
+              ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '');
+          playbackSrcFps = vi.fps;
+          playbackSrcTransfer = vi.colorTransfer;
+        } catch (_) {}
+      }
       final frame = previewFrame.clamp(0, totalFrames! - 1);
       previewFrame = frame;
       // 图片源整图只解码一次：各预览链（含调节器「调整前」输入链）经
@@ -3018,6 +3061,17 @@ class IspStudioState extends ChangeNotifier {
           final total = await sourceFrameCount(chain.first['typeId'] as String,
               chain.first['params'] as Map<String, Object?>);
           totalFrames = total;
+          previewSrcNodeId = chain.first['nodeId'] as String?;
+          // 仪器分析路径同样填入视频源帧率，保证视频源节点时间行可用。
+          if (chain.first['typeId'] == 'video_source') {
+            try {
+              final sp = chain.first['params'] as Map<String, Object?>;
+              final vi = await videoFileInfo(sp['filePath']?.toString() ?? '',
+                  ffmpegPath: sp['ffmpegPath']?.toString() ?? '');
+              playbackSrcFps = vi.fps;
+              playbackSrcTransfer = vi.colorTransfer;
+            } catch (_) {}
+          }
           frame = previewFrame.clamp(0, total - 1);
           previewFrame = frame;
         } catch (_) {
@@ -3949,9 +4003,10 @@ class IspStudioState extends ChangeNotifier {
   /// 是否正在连续播放预览。
   bool isPlaying = false;
 
-  /// 当前/最近播放的视频源帧率（0 = 非视频源或未播放）：播放控制条
-  /// 进度滑条右侧的「已播放时间/总时间」按它换算。播放停止后保留
-  /// 最后一次的值（暂停态拖动进度条时时间文本仍正确）。
+  /// 当前/最近运行的视频源帧率（0 = 非视频源或尚未运行）：播放控制条
+  /// 进度滑条右侧与视频源节点时间行的「当前时间/总时长」按它换算。
+  /// 单次预览运行（runPreview）与播放启动（togglePlayback）都会填入；
+  /// 停止后保留最后一次的值（暂停态拖动进度条时时间文本仍正确）。
   double playbackSrcFps = 0;
 
   /// 当前视频源的色彩传递特性（0=SDR/1=PQ/2=HLG，VideoInfo.colorTransfer
@@ -4050,6 +4105,15 @@ class IspStudioState extends ChangeNotifier {
   /// ISP_AUTOHASH 设置）；置位时平面直连播放保留 480p 馈源计算。
   static bool debugAutohash = false;
 
+  /// 诊断：强制播放起步解码模式（main.dart 按 ISP_DECHW 设置：
+  /// true=硬解 / false=软解），验证 HDR 解码模式自适应切换用；
+  /// null = 按片源启发式（HDR tonemap→软解，其余→硬解）。
+  static bool? debugForceHwDecode;
+
+  /// 诊断：强制平面直连降档因子（main.dart 按 ISP_PLANEF 设置，
+  /// 0/1=自动），播放路径与欠产自适应验证用。
+  static int debugPlaneFactor = 0;
+
   /// 播放片源病灶（标题, 详细说明）列表：播放启动检测非空时填入并经
   /// [playbackIssueTick] 通知视图弹窗（「视频的问题在哪里 + 已如何
   /// 绕开」）；每文件每类问题每次运行只提示一次（[_warnedVideoIssues]
@@ -4097,6 +4161,7 @@ class IspStudioState extends ChangeNotifier {
     
     // 假设所有预览链源相同，取第一个计算总帧数
     totalFrames = await _previewFrameCount(graph.nodes[firstEntry.key]!, srcTypeId, srcParams);
+    previewSrcNodeId = chain.first['nodeId'] as String?;
     final total = totalFrames!;
     final (w, h) = await sourceDimensions(srcTypeId, srcParams);
     if (total <= 1) {
@@ -4265,9 +4330,45 @@ class IspStudioState extends ChangeNotifier {
       // 15-40ms——4K60 达不到原帧率的主因（1080p 上传 ~4ms 可满帧
       // 率）。按最大预览节点宽 × DPR 选 2 的幂降档（纹理宽仍 ≥ 显
       // 示宽，当前显示尺寸下无损）；节点拖大后重新播放自动升档。
-      // 仅平面直连（流只供显示）；YUV 处理链保持原生分辨率。
+      // 平面直连（流只供显示）恒可降档；GPU 链只允许全 pointwise 链
+      // 降档（multi_band_eq 等逐像素算子在显示尺寸下视觉无损，含
+      // 空间/时域算子的链降采样会改变处理语义）；YUV 处理链与
+      // 非 pointwise GPU 链保持原生分辨率。
+      // HDR 片源开映射时 zscale+tonemap 是 CPU 软滤镜链，吞吐约为
+      // 同档 scale-only 的一半（4K60 HDR ÷2 档实测 ~57fps vs
+      // ~125fps）：无损档可能达不到原帧率。但无条件多降一档会把
+      // 4K 小预览直接压到 ÷8（480 宽纹理拉伸显示，分辨率损失肉眼
+      // 明显）而 ÷4 档产能本已足够——故起步恒走无损档，仅当播放中
+      // 实测持续欠产且软/硬解切换仍不足时，才重启流降到余量档
+      //（hdrRelaxFactor，见上屏循环的自适应判定）。
+      // GPU 链的显示自适应降档门控（见 GpuPipeline.pointwiseOps）。
+      final gpuChainPointwise = gpuChain &&
+          validChains.values.every((c) => c
+              .skip(1)
+              .every((op) => GpuPipeline.pointwiseOps.contains(op['typeId'])));
+      // videoFileInfo 有缓存（设文件时已探测），此处几乎零开销。
+      final srcHdrTonemap = isVideo &&
+          hdrToneMapEnabled &&
+          (await videoFileInfo(srcParams['filePath']?.toString() ?? '',
+                  ffmpegPath: srcParams['ffmpegPath']?.toString() ?? ''))
+              .isHdr;
+      // 解码模式起步：HDR tonemap 启发式软解（滤镜链本在 CPU 跑，硬解
+      // 的帧还要 hwdownload 回内存，是净开销——本机实测 4K60 HDR ÷2
+      // 档软解 ~77fps vs 硬解 ~57fps）。但该结论因机型而异（弱 CPU
+      // 机软解本身可能不足、硬解回读反而划算），故播放中经产能 EMA
+      // 检测欠产，自动切换到另一模式实测对比、更差切回（见上屏循环
+      // 内的自适应判定与 switchDecodeMode）。ISP_DECHW 诊断环境变量
+      // 可强制起步模式（自适应路径验证用）。
+      var decodeHwaccel = debugForceHwDecode != null
+          ? (debugForceHwDecode! ? 'cuda' : '')
+          : (srcHdrTonemap ? '' : 'cuda');
       var planeFactor = 1;
-      if (gpuPlanes && videoDirect) {
+      // HDR tonemap 欠产时的余量档（0=无；仅平面直连路径——GPU 链驻留
+      // pass 纹理解包尺寸在建链时固定，不支持运行时降档）：起步走无
+      // 损档，实测欠产且软/硬解切换仍不足时播放中重启流降到此档（见
+      // 上屏循环的自适应判定）。
+      var hdrRelaxFactor = 0;
+      if ((gpuPlanes && videoDirect) || gpuChainPointwise) {
         var dpr = 1.0;
         try {
           dpr = ui.PlatformDispatcher.instance.views.firstOrNull
@@ -4280,17 +4381,44 @@ class IspStudioState extends ChangeNotifier {
           if (nw > targetW) targetW = nw;
         }
         targetW *= dpr;
+        // 起步恒走无损档（纹理宽 ≥ 显示宽）；HDR 余量档只在播放中实测
+        // 欠产时启用（无条件多降一档会把 4K 小预览压到 ÷8——480 宽纹理
+        // 拉伸显示，分辨率损失肉眼明显——而 ÷4 档产能本已足够）。
         while (planeFactor < 8 &&
             w % (planeFactor * 8) == 0 && // 降档后 outW 仍须 4 对齐（打包）
             h % (planeFactor * 4) == 0 && // outH 仍须偶数
             w ~/ (planeFactor * 2) >= targetW) {
           planeFactor *= 2;
         }
-        if (planeFactor > 1) pathTag = '$pathTag÷$planeFactor';
+        // 余量档 = 无损档再降一级（纹理宽最低降至显示宽的一半），对齐
+        // 约束与降档循环同口径。
+        if (srcHdrTonemap &&
+            gpuPlanes &&
+            videoDirect &&
+            debugPlaneFactor < 1 &&
+            planeFactor < 8 &&
+            w % (planeFactor * 8) == 0 &&
+            h % (planeFactor * 4) == 0 &&
+            w ~/ (planeFactor * 2) >= targetW / 2) {
+          hdrRelaxFactor = planeFactor * 2;
+        }
       }
+      // 诊断：ISP_PLANEF 强制降档因子（播放路径/欠产自适应验证用；
+      // 1 = 禁降档）；仍须满足打包对齐约束，否则保持自动选择。
+      if (debugPlaneFactor >= 1 &&
+          gpuPlanes &&
+          w % (debugPlaneFactor * 4) == 0 &&
+          h % (debugPlaneFactor * 2) == 0) {
+        planeFactor = debugPlaneFactor;
+      }
+      // pathTagBase 供播放中降档重启（hdrRelaxFactor）重组标签用。
+      final pathTagBase = pathTag;
+      if (planeFactor > 1) pathTag = '$pathTagBase÷$planeFactor';
       // 视频源：从当前帧起顺序流式解码（内部前向缓冲，背压限速）。
-      // 平面直连可按显示尺寸降档出帧（planeFactor，上传纹理只需覆盖
-      // 预览节点的物理像素）；其余路径全分辨率出帧不做降采样。
+      // 平面直连与全 pointwise GPU 链可按显示尺寸降档出帧
+      // （planeFactor，上传纹理与处理分辨率只需覆盖预览节点的物理
+      // 像素）；非 pointwise GPU 链与 CPU 池路径全分辨率出帧不做
+      // 降采样。
       var stream = isVideo
           ? await VideoFrameStream.start(
               srcParams['filePath']?.toString() ?? '', frame,
@@ -4301,6 +4429,9 @@ class IspStudioState extends ChangeNotifier {
               // 片源（如手术录像 HEVC Rext）默认会被 ffmpeg 逐帧复制
               // 成 60fps 交付，播放时每帧画面停 66ms 呈 15fps 卡顿观感。
               passthrough: true,
+              // 解码模式起步（HDR tonemap→软解启发式，见上；播放中
+              // 欠产自适应切换时经 decodeHwaccel 贯通）。
+              hwaccel: decodeHwaccel,
               // 预览 HDR/SDR 开关（SDR 直解对比 / HDR tonemap 显示）。
               toneMapHdr: hdrToneMapEnabled)
           : null;
@@ -4428,6 +4559,13 @@ class IspStudioState extends ChangeNotifier {
       var pace = frameDuration;
       Duration? emaProd;
       var nextDeadline = Duration.zero;
+      // HDR tonemap 解码模式自适应状态（触发判定在上屏循环内）：
+      // EMA 产能持续超过帧预算视为欠产，切换软/硬解实测对比。
+      var decodeAdaptTrials = 0;
+      Duration? emaBeforeSwitch;
+      Duration? adaptEma;
+      Duration? underSince;
+      var lastSwitchAt = Duration.zero;
       playbackProduced = playbackDisplayed = playbackDropped = 0;
       // 实时帧率统计：最近 1 秒上屏时间戳的滚动窗口。
       final fpsWindow = Queue<int>();
@@ -4475,6 +4613,8 @@ class IspStudioState extends ChangeNotifier {
                   // 同首播：每包一帧，禁 CFR 复制（防 60fps VUI 片源
                   // 重复帧导致的 15fps 卡顿观感）。
                   passthrough: true,
+                  // 同首播：解码模式跟随当前自适应选择。
+                  hwaccel: decodeHwaccel,
                   toneMapHdr: hdrToneMapEnabled);
               bytes = await stream!.next();
               if (bytes == null) return null;
@@ -4809,6 +4949,62 @@ class IspStudioState extends ChangeNotifier {
       }
 
       refillInflight();
+
+      // HDR tonemap 链欠产时的解码模式切换（软⇄硬解）：哪个快因机型
+      // 而异（本机 112 核实测软解占优，弱 CPU 机硬解回读开销可能
+      // 小于软解差距），不做先验测量，欠产时换模式实测对比。丢弃
+      // 在途生产，从 [resumeFrame] 起用另一模式重建解码流；切换的
+      // ~1s 重解码经时间轴/EMA 重建吸收，不计入停滞与新模式的产能
+      // 估计。每次播放最多 2 次（切换 + 更差切回），避免来回抖动。
+      // [toggleDecode] 为 false 时不切解码模式，仅按当前 planeFactor
+      // 重建流（HDR 欠产降档重启用，见上屏循环 decodeAdaptTrials==2
+      // 分支）。
+      Future<void> switchDecodeMode(int resumeFrame,
+          {bool toggleDecode = true}) async {
+        if (toggleDecode) {
+          decodeHwaccel = decodeHwaccel.isEmpty ? 'cuda' : '';
+        }
+        while (inflight.isNotEmpty) {
+          final stale = await inflight.removeFirst();
+          if (stale != null) {
+            for (final img in stale.$3.values) {
+              img.dispose();
+            }
+          }
+        }
+        statusMessage = toggleDecode
+            ? '解码模式切换为${decodeHwaccel.isEmpty ? '软解' : '硬解'}…'
+            : '欠产降档：平面直连÷$planeFactor…';
+        try {
+          await stream?.dispose();
+        } catch (_) {}
+        stream = await VideoFrameStream.start(
+            srcParams['filePath']?.toString() ?? '', resumeFrame,
+            ffmpegPath: srcParams['ffmpegPath']?.toString() ?? '',
+            pixelFormat: pixelFormat,
+            maxWorkingHeight: planeFactor > 1 ? h ~/ planeFactor : 0,
+            passthrough: true,
+            hwaccel: decodeHwaccel,
+            toneMapHdr: hdrToneMapEnabled);
+        if (!isPlaying || token != _runToken) return;
+        // 音频在切换点重新 playFrom 同步，避免切换冻结的 ~1s 累积
+        // 成音画偏移（与 EOF 重卷同口径）。
+        try {
+          audio.stop();
+          audioStarted = false;
+        } catch (_) {}
+        nextDeadline = playSw.elapsed;
+        emaProd = null;
+        adaptEma = null;
+        pace = frameDuration;
+        fpsWindow.clear();
+        underSince = null;
+        lastSwitchAt = playSw.elapsed;
+        inflight.add(produceFrame(resumeFrame));
+        nextProduceFrame = (resumeFrame + 1) % total;
+        refillInflight();
+      }
+
       // vsync 对齐上屏（真机）：自由运行的秒表节拍（33.33ms ±2ms）与
       // 显示器 vsync 无锁相，发布抖动会周期性把帧推过 vsync 边界，
       // 呈现时长在 1/2/3 个 vsync 间跳变——30fps 观感"丢帧"的主因
@@ -4970,14 +5166,64 @@ class IspStudioState extends ChangeNotifier {
           }
           playbackPaceUs = pace.inMicroseconds;
           if (prodUs > playbackMaxProdUs) playbackMaxProdUs = prodUs;
+          // 解码模式自适应专用的产能估计：不过滤尖刺（严重欠产时
+          // 每帧都超 2 倍帧预算，会被节拍 EMA 的尖刺过滤全部剔除而
+          // 不可见）；冷启动尖刺经起步 3.5s 沉淀期自然衰减。
+          adaptEma = adaptEma == null ? prod : adaptEma! * 0.7 + prod * 0.3;
+          // HDR tonemap 解码模式自适应：产能持续（>2.5s）超过帧
+          // 预算 3% 视为欠产，切换软/硬解实测对比一次；新模式更差
+          // （>2%）切回；解码模式已定仍欠产且有余量档时最后降一档
+          // 分辨率重启流（平面直连专用，纹理宽最低降至显示宽的一
+          // 半）。每次播放最多 3 次（切换 + 切回 + 降档），避免来
+          // 回抖动。起步/切换后留 3.5s 让估计代表当前模式；临近片
+          // 尾（<1.5s）不再切换。
+          if (srcHdrTonemap && decodeAdaptTrials < 3 && f < total - 90) {
+            final now = playSw.elapsed;
+            if (adaptEma! <= frameDuration * 1.03) {
+              underSince = null;
+            } else {
+              underSince ??= now;
+              if (now - underSince! >
+                      const Duration(milliseconds: 2500) &&
+                  now - lastSwitchAt >
+                      const Duration(milliseconds: 3500)) {
+                if (decodeAdaptTrials == 0) {
+                  emaBeforeSwitch = adaptEma;
+                  await switchDecodeMode(f + 1);
+                  decodeAdaptTrials = 1;
+                } else if (decodeAdaptTrials == 1) {
+                  if (emaBeforeSwitch != null &&
+                      adaptEma! > emaBeforeSwitch * 1.02) {
+                    await switchDecodeMode(f + 1);
+                  }
+                  decodeAdaptTrials = 2;
+                } else {
+                  // 解码模式已定仍欠产：降到 HDR 余量档重建流（解码
+                  // 模式不变）。无损档能满帧的机器不会走到这——分辨
+                  // 率优先，降档只是欠产时的兜底。
+                  if (hdrRelaxFactor > planeFactor) {
+                    planeFactor = hdrRelaxFactor;
+                    pathTag = '$pathTagBase÷$planeFactor';
+                    await switchDecodeMode(f + 1, toggleDecode: false);
+                  }
+                  decodeAdaptTrials = 3;
+                }
+              }
+            }
+          }
           // 实时帧率：最近 1 秒的上屏时间戳滚动窗口，窗口长度即 FPS。
           fpsWindow.add(playSw.elapsedMicroseconds);
           while (fpsWindow.isNotEmpty &&
               playSw.elapsedMicroseconds - fpsWindow.first > 1000000) {
             fpsWindow.removeFirst();
           }
+          // 解码模式标签：硬解请求被 worker 回退软解时如实显示软解。
+          final decTag =
+              decodeHwaccel.isNotEmpty && !(stream?.usedSoftwareDecode ?? false)
+                  ? '/硬解'
+                  : '/软解';
           statusMessage = srcFps > 0
-              ? '播放中[$pathTag] $srcInfoTag'
+              ? '播放中[$pathTag$decTag] $srcInfoTag'
                   '${fmtClock(f / srcFps)}/$srcInfoTotal  '
                   '第 ${f + 1}/$total 帧  '
                   '${fpsWindow.length} FPS  停滞 $playbackDropped 次'
@@ -6484,6 +6730,7 @@ class IspStudioState extends ChangeNotifier {
     }
     instrumentImages.clear();
     totalFrames = null;
+    previewSrcNodeId = null;
     // 非持有别名（见 runPreview）：置空即可，图像由下面的
     // previewImages 循环统一释放。
     _legacyPreviewImage = null;

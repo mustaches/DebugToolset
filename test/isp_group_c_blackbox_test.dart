@@ -221,7 +221,8 @@ void main() {
       final genTime = DateTime(2026, 1, 2, 3, 4, 5);
       final map = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
           readFile: readDisk, genTime: genTime);
-      // 黑盒只产 bb top + isp_common（像素数学自含，不拷其它 c_ref 文件）。
+      // 黑盒只产 bb top + isp_common（像素数学自含，不拷其它 c_ref 文件）
+      // + 目标微架构说明。
       expect(
           map.keys.toList(),
           equals([
@@ -229,7 +230,13 @@ void main() {
             'isp_pipe_pipe_bb.c',
             'isp_common.h',
             'isp_common.c',
+            'cortex_a53_55_code_micro.md',
           ]));
+      // 微架构说明：目标名 + 加速宏（NEON 守卫/OpenMP）+ 实现方案。
+      expect(map['cortex_a53_55_code_micro.md'],
+          contains('Cortex-A53/A55'));
+      expect(map['cortex_a53_55_code_micro.md'], contains('__ARM_NEON'));
+      expect(map['cortex_a53_55_code_micro.md'], contains('lut_fixed'));
 
       final dir = await Directory.systemTemp.createTemp('isp_bb_w_');
       addTearDown(() => dir.delete(recursive: true));
@@ -1284,6 +1291,275 @@ ${cmp.join('\n')}
       expect(r.artifactPath, endsWith('isp_pipe_n1_bb-check.elf'));
       expect(File(r.artifactPath!).existsSync(), isTrue);
       // -Wall 下零警告（此路径曾出 -Wpointer-sign / -Wunused-variable）。
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 csc_rgb2yuv 黑盒 __ARM_NEON 路径交叉编译链接零警告', () async {
+      // csc_rgb2yuv（BT.601 全范围）整行行核的 NEON 变体：VLD3/vmull/vmlal
+      // 路径同样只在 aarch64 gcc 下真实编译，交叉编译 -Wall 零警告。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final csc = graph.addNode('csc_rgb2yuv', 0, 0);
+      graph.nodes[csc]!.name = 'csc';
+      graph.groups.add(IspNodeGroup('g1', {csc}, name: 'c2y'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      // 守卫：生成物确实含 NEON 行核（否则本用例空转失去意义）。
+      final bb = files['isp_pipe_c2y_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vmulq_s32'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_c2y_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_c2y_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 csc_yuv2rgb 黑盒 __ARM_NEON 路径交叉编译链接零警告', () async {
+      // csc_yuv2rgb 整行行核 NEON 变体（vsubq_s32 半程偏置 + vmulq/vmlaq）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final csc = graph.addNode('csc_yuv2rgb', 0, 0);
+      graph.nodes[csc]!.name = 'csc';
+      graph.groups.add(IspNodeGroup('g1', {csc}, name: 'y2r'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_y2r_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vsubq_s32'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_y2r_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_y2r_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 white_balance LUT 黑盒 __ARM_NEON 路径交叉编译链接零警告',
+        () async {
+      // white_balance LUT 模式整行行核 NEON 变体（VLD3 gather + VST3）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final wb = graph.addNode('white_balance', 0, 0);
+      graph.nodes[wb]!.name = 'wb';
+      graph.nodes[wb]!.paramValues['mode'] = 'manual';
+      graph.nodes[wb]!.paramValues['codegenMode'] = 'lut';
+      graph.nodes[wb]!.paramValues['rGain'] = 1.5;
+      graph.nodes[wb]!.paramValues['bGain'] = 0.8;
+      graph.groups.add(IspNodeGroup('g1', {wb}, name: 'wb1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_wb1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vld1q_u16'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_wb1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_wb1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 ccm 黑盒 __ARM_NEON 路径交叉编译链接零警告', () async {
+      // ccm（Q20 定点矩阵）整行行核 NEON 变体（vmull_n/vmlal_n int64 累加
+      // + vshrq_n_s64 + vmovn 窄化）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final ccm = graph.addNode('ccm', 0, 0);
+      graph.nodes[ccm]!.name = 'ccm';
+      graph.nodes[ccm]!.paramValues['matrix'] = [
+        1.1, -0.05, 0.0,
+        0.05, 0.95, -0.1,
+        -0.03, 0.02, 1.05,
+      ];
+      graph.groups.add(IspNodeGroup('g1', {ccm}, name: 'cc1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_cc1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vmull_n_s32'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_cc1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_cc1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 levels_curves 黑盒 __ARM_NEON 路径交叉编译链接零警告', () async {
+      // levels_curves（4096 级 LUT 三通道 gather）整行行核 NEON 变体。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final lv = graph.addNode('levels_curves', 0, 0);
+      graph.nodes[lv]!.name = 'lv';
+      graph.nodes[lv]!.paramValues['curveMode'] = 'linear';
+      graph.nodes[lv]!.paramValues['points'] = [
+        [0.0, 0.0],
+        [2048.0, 3000.0],
+        [4095.0, 4095.0],
+      ];
+      graph.groups.add(IspNodeGroup('g1', {lv}, name: 'lv1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_lv1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vld3q_u16'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_lv1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_lv1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 color_temp LUT 黑盒 __ARM_NEON 路径交叉编译链接零警告',
+        () async {
+      // color_temp LUT 模式整行行核 NEON 变体（三通道 gather）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final ct = graph.addNode('color_temp_adjuster', 0, 0);
+      graph.nodes[ct]!.name = 'ct';
+      graph.nodes[ct]!.paramValues['codegenMode'] = 'lut';
+      graph.nodes[ct]!.paramValues['temperature'] = 4000.0;
+      graph.nodes[ct]!.paramValues['measured_cct'] = 6500;
+      graph.groups.add(IspNodeGroup('g1', {ct}, name: 'ct1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_ct1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vld3q_u16'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_ct1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_ct1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 pseudo_color LUT 黑盒 __ARM_NEON 路径交叉编译链接零警告',
+        () async {
+      // pseudo_color LUT 模式整行行核 NEON 变体（mono VLD1 gather → VST3）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final pc = graph.addNode('pseudo_color', 0, 0);
+      graph.nodes[pc]!.name = 'pc';
+      graph.nodes[pc]!.paramValues['codegenMode'] = 'lut';
+      graph.nodes[pc]!.paramValues['colormap'] = 'hot';
+      graph.nodes[pc]!.paramValues['gain'] = 1.5;
+      graph.groups.add(IspNodeGroup('g1', {pc}, name: 'pc1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_pc1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vld1q_u16'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_pc1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_pc1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 highlight clip LUT 黑盒 __ARM_NEON 路径交叉编译链接零警告',
+        () async {
+      // highlight clip LUT 模式整行行核 NEON 变体（mono VLD1 gather）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final hl = graph.addNode('highlight', 0, 0);
+      graph.nodes[hl]!.name = 'hl';
+      graph.nodes[hl]!.paramValues['mode'] = 'clip';
+      graph.nodes[hl]!.paramValues['codegenMode'] = 'lut';
+      graph.nodes[hl]!.paramValues['knee'] = 0.8;
+      graph.groups.add(IspNodeGroup('g1', {hl}, name: 'hl1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_hl1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vld1q_u16'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_hl1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_hl1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
+      expect(r.output, isNot(contains('warning')));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('单节点 gamma 黑盒 __ARM_NEON 路径交叉编译链接零警告', () async {
+      // gamma（16 位 RGB → 8 位 RGBA）整行行核 NEON 变体（VLD3 → gather
+      // → VST4，LUT 指针形参）。
+      final gcc = detectLinuxCrossGcc() ??
+          await detectLinuxCrossGccWsl(timeout: const Duration(seconds: 60));
+      if (gcc == null) {
+        // ignore: avoid_print
+        print('Windows 与 WSL 均未检测到 Linux 交叉编译 gcc，跳过实机编译');
+        return;
+      }
+      final graph = IspGraph();
+      final gm = graph.addNode('gamma', 0, 0);
+      graph.nodes[gm]!.name = 'gm';
+      graph.nodes[gm]!.paramValues['gamma'] = 2.2;
+      graph.nodes[gm]!.paramValues['brightness'] = 0.1;
+      graph.nodes[gm]!.paramValues['contrast'] = 1.1;
+      graph.groups.add(IspNodeGroup('g1', {gm}, name: 'gm1'));
+      final files = await buildGroupBlackBoxCFiles(graph, graph.groups.single,
+          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final bb = files['isp_pipe_gm1_bb.c']!;
+      expect(bb, contains('#if defined(__ARM_NEON)'));
+      expect(bb, contains('vst4_u8'));
+      final r = await compileGroupCFiles(files, CCompileTarget.linuxCross,
+          topName: 'isp_pipe_gm1_bb');
+      expect(r.success, isTrue, reason: r.output);
+      expect(r.artifactPath, endsWith('isp_pipe_gm1_bb-check.elf'));
+      expect(File(r.artifactPath!).existsSync(), isTrue);
       expect(r.output, isNot(contains('warning')));
     }, timeout: const Timeout(Duration(minutes: 5)));
   });
