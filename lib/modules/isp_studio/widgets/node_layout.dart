@@ -56,6 +56,7 @@ double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
       type.typeId == 'levels_curves' ||
       type.typeId == 'format_converter' ||
       type.typeId == 'video_health_check' ||
+      type.typeId == 'video_output' ||
       allInstrumentTypes.contains(type.typeId)) {
     h += previewExtraHeight;
   }
@@ -68,11 +69,11 @@ double nodeHeight(IspNodeType type, {double previewExtraHeight = 160}) {
   if (type.typeId == 'mux4') {
     h += 24; // 源1~源4 单选开关行
   }
-  if (type.typeId == 'image_output' || type.typeId == 'video_output') {
+  if (type.typeId == 'image_output') {
     h += 34; // 导出按钮行
   }
   if (type.typeId == 'video_source') {
-    h += 40; // 源信息行（文件名 / 黑底白字大字的当前时间·总时长）
+    h += 116; // 源信息行（时间 30 + 帧数·帧率 30 + 进度条 20 + 控制行 36）
   }
   return h;
 }

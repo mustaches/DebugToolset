@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -43,11 +42,12 @@ void main() {
     expect(find.text('isp_common.h'), findsOneWidget);
     expect(find.text('isp_unpack.h'), findsOneWidget);
     expect(find.text('isp_unpack.c'), findsOneWidget);
-    // C 视图页头下有编译工具栏；「导出代码」保留在文件清单底部。
+    // C 视图顶部为编译工具栏（图标按钮）；「导出代码」已上移至工具栏。
     expect(find.byKey(const ValueKey('nodeCompileButton')), findsOneWidget);
-    // 编译按钮图标为自绘 VS「生成项目」风格 SVG（锤子 + 砖墙）。
-    expect(find.byType(SvgPicture), findsOneWidget);
-    expect(find.text('导出代码'), findsOneWidget);
+    // 工具栏图标为 codicons PNG（编译 build + 导出 git-stash-pop；节点页
+    // 无运行验证按钮）。
+    expect(find.byType(Image), findsNWidgets(2));
+    expect(find.byTooltip('导出代码'), findsOneWidget);
     // 终端面板默认不出现。
     expect(find.byKey(const ValueKey('nodeCompileTerminal')), findsNothing);
     // C 视图不显示变量表。

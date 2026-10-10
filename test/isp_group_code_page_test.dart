@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -11,6 +10,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/code_browser.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/group_code_page.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/group_compile_dialog.dart';
+import 'package:debug_tool_set/modules/isp_studio/widgets/tab_toolbar.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 
 void main() {
@@ -153,12 +153,24 @@ void main() {
       expect(item.padding, const EdgeInsets.fromLTRB(32, 4, 10, 4),
           reason: file);
     }
-    // 「导出代码」保留在文件清单底部；「编译」在页头下方工具栏。
-    expect(find.text('导出代码'), findsOneWidget);
-    expect(find.text('编译'), findsOneWidget);
+    // 「导出代码」已上移为工具栏图标按钮（tooltip）；「编译」同为图标按钮。
+    expect(find.byTooltip('导出代码'), findsOneWidget);
+    expect(find.byTooltip('编译'), findsOneWidget);
     expect(find.byKey(const ValueKey('groupCompileButton')), findsOneWidget);
-    // 编译按钮图标为自绘 VS「生成项目」风格 SVG（锤子 + 砖墙）。
-    expect(find.byType(SvgPicture), findsOneWidget);
+    // 工具栏图标为 codicons PNG（编译 build / 导出 git-stash-pop；本编组
+    // 无 Win32 验证入口，无运行验证按钮）。
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is Image &&
+            w.image is AssetImage &&
+            (w.image as AssetImage).assetName == 'icons/build.png'),
+        findsOneWidget);
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is Image &&
+            w.image is AssetImage &&
+            (w.image as AssetImage).assetName == 'icons/git-stash-pop.png'),
+        findsOneWidget);
 
     // 点工具栏「编译」弹出编译验证对话框（只做目标选择，不执行编译）。
     await tester.tap(find.byKey(const ValueKey('groupCompileButton')));
@@ -608,6 +620,59 @@ void main() {
     expect(state.activeTab, 0);
   });
 
+  testWidgets('页头信息并入工具栏行右侧：单行、与编译按钮同行、统一高度',
+      (tester) async {
+    final (state, groupId) = makeGroup();
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(wrap(state, groupId, filesBuilder: fakeFiles));
+    await tester.pump();
+    await tester.pump();
+
+    // 编组信息与「编译」图标按钮在同一行（工具栏），信息在右。
+    expect(find.byTooltip('编译'), findsOneWidget);
+    expect(find.text('pipe (g1)'), findsOneWidget);
+    expect(find.text('编组'), findsOneWidget);
+    expect(find.text('只读'), findsOneWidget);
+    final btnTop = tester.getTopLeft(find.byTooltip('编译'));
+    final infoTop = tester.getTopLeft(find.text('pipe (g1)'));
+    expect((infoTop.dy - btnTop.dy).abs() < 10, isTrue, reason: '同一行');
+    expect(infoTop.dx, greaterThan(btnTop.dx), reason: '信息在按钮右侧');
+
+    // 工具栏行高与主工具栏统一（kIspTabToolbarHeight）：信息文本的首个
+    // Container 祖先即工具栏容器（ispTabToolbarRow）。
+    final toolbar = find
+        .ancestor(
+            of: find.text('pipe (g1)'), matching: find.byType(Container))
+        .first;
+    expect(tester.getSize(toolbar).height, kIspTabToolbarHeight);
+  });
+
+  testWidgets('文件清单分隔条可左右拖动调整宽度（钳位 120~600）', (tester) async {
+    final (state, groupId) = makeGroup();
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(wrap(state, groupId, filesBuilder: fakeFiles));
+    await tester.pump();
+    await tester.pump();
+
+    double listWidth() => tester.getSize(find.byType(CFileList)).width;
+    expect(listWidth(), 190); // 初始宽度
+
+    final divider = find.byType(IspVerticalDragDivider);
+    expect(divider, findsOneWidget);
+    // 右拖 +100：左栏 190 → 290。
+    await tester.dragFrom(tester.getCenter(divider), const Offset(100, 0),
+        touchSlopX: 0);
+    await tester.pump();
+    expect(listWidth(), 290);
+    // 左拖超下限：钳位到 120。
+    await tester.dragFrom(tester.getCenter(divider), const Offset(-500, 0),
+        touchSlopX: 0);
+    await tester.pump();
+    expect(listWidth(), 120);
+  });
+
   testWidgets('编译后终端面板出现并流式打印，状态转成功', (tester) async {
     final (state, groupId) = makeGroup();
     addTearDown(state.dispose);
@@ -855,13 +920,13 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey('groupCompileTerminal')), findsOneWidget);
-    // 工具栏按钮与终端标题栏均显示「编译中…」。
-    expect(find.text('编译中…'), findsNWidgets(2));
-    // 编译中工具栏「编译」按钮禁用（防重复点击）。
+    // 终端标题栏显示「编译中…」（工具栏编译按钮为图标态，转进度圈）。
+    expect(find.text('编译中…'), findsOneWidget);
+    // 编译中工具栏「编译」图标按钮禁用（防重复点击）。
     expect(
         tester
-            .widget<InkWell>(find.byKey(const ValueKey('groupCompileButton')))
-            .onTap,
+            .widget<IconButton>(find.byKey(const ValueKey('groupCompileButton')))
+            .onPressed,
         isNull);
     // 终端关闭按钮禁用。
     final closeInk = tester.widget<InkWell>(find
@@ -882,11 +947,11 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text('成功'), findsOneWidget);
-    expect(find.text('编译'), findsOneWidget);
+    expect(find.byTooltip('编译'), findsOneWidget);
     expect(
         tester
-            .widget<InkWell>(find.byKey(const ValueKey('groupCompileButton')))
-            .onTap,
+            .widget<IconButton>(find.byKey(const ValueKey('groupCompileButton')))
+            .onPressed,
         isNotNull);
   });
 }

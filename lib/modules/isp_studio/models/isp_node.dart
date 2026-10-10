@@ -262,6 +262,10 @@ class IspNode {
           // 格式转换/视频健康检查节点尺寸固定 1500x1200（min=max 不可调），
           // 内嵌终端整页显示 ffmpeg 处理信息。
           ? 1500
+          : type.typeId == 'video_output'
+              // 视频输出节点尺寸固定 860x360（min=max 不可调），
+              // 内嵌终端显示导出过程。
+              ? 860
           : type.typeId == 'adder'
               ? kNodeWidth * 3
               : type.typeId == 'video_source'
@@ -285,6 +289,9 @@ class IspNode {
               type.typeId == 'video_health_check'
           // 1162 = 总高 1200 − 标题 30 − 底部留白 8（内嵌终端占满其余）。
           ? 1162
+          : type.typeId == 'video_output'
+              // 234 = 总高 360 − 标题 30 − 4 端口行 88 − 底部留白 8。
+              ? 234
           : type.typeId == 'multi_band_eq'
           // 多段色彩均衡器附加区 = 取色器工具栏 + 双联矢量示波器方格
           // （1:1，高 = 半格宽 = (380-20)/2 = 180）+ 双联预览图（16:9

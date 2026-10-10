@@ -291,6 +291,35 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 打开编组电路图标签页（key 前缀 'sch:'，带 `@<vendor>` 后缀——厂商
+  /// 决定电路图顶层封装的选择；同一编组可同开多家厂商标签页）。
+  void openSchematicTab(String groupId, IpVendor vendor) {
+    if (!graph.groups.any((g) => g.id == groupId)) return;
+    final key = 'sch:$groupId@${vendor.name}';
+    final i = openCodeTabs.indexOf(key);
+    if (i >= 0) {
+      activeTab = i + 1;
+    } else {
+      openCodeTabs.add(key);
+      activeTab = openCodeTabs.length;
+    }
+    notifyListeners();
+  }
+
+  /// 打开（或激活）仿真波形标签页（Surfer WASM 内嵌，key 前缀 'wave:'；
+  /// 全局单例，每次一键仿真后内容经 WaveServer 广播刷新）。
+  void openWaveTab() {
+    const key = 'wave:sim';
+    final i = openCodeTabs.indexOf(key);
+    if (i >= 0) {
+      activeTab = i + 1;
+    } else {
+      openCodeTabs.add(key);
+      activeTab = openCodeTabs.length;
+    }
+    notifyListeners();
+  }
+
   /// 关闭某节点/编组的代码标签页，活动标签落到相邻标签上。
   void closeCodeTab(String nodeId) {
     final i = openCodeTabs.indexOf(nodeId);
@@ -354,6 +383,20 @@ class IspStudioState extends ChangeNotifier {
   /// 局部重建），onOutput 高频回调只动它不 notifyListeners
   /// （参照 instrumentTick 模式）。
   final ValueNotifier<int> formatConvertTick = ValueNotifier(0);
+
+  /// 视频输出节点（video_output）的内嵌终端全文：节点 id → 导出过程
+  /// 日志（关键节点信息 + \r 覆盖式进度行）。导出开始清空，结束保留。
+  final videoExportLogs = <String, String>{};
+
+  /// 视频导出终端刷新信号（同 formatConvertTick 模式）。
+  final ValueNotifier<int> videoExportTick = ValueNotifier(0);
+
+  /// 视频输出节点终端追加（\r 覆盖行处理 + tick 局部刷新）。
+  void _videoExportLog(String nodeId, String chunk) {
+    videoExportLogs[nodeId] =
+        fmtconv.appendConsoleText(videoExportLogs[nodeId] ?? '', chunk);
+    videoExportTick.value++;
+  }
 
   /// 格式转换节点：实测可用的硬件编码器 id 列表（probeHwEncoders 探测
   /// 缓存，供属性面板编码器下拉与 auto 尝试链使用）。
@@ -759,6 +802,9 @@ class IspStudioState extends ChangeNotifier {
           : typeId == 'format_converter' || typeId == 'video_health_check'
               // 格式转换/视频健康检查节点尺寸固定 1500x1200（min=max，不可调）。
               ? 1500
+              : typeId == 'video_output'
+                  // 视频输出节点尺寸固定 860x360（min=max，不可调）。
+                  ? 860
               : typeId == 'preview'
               ? kMaxPreviewNodeWidth * 1.5
               : (typeId == 'hsl_debugger' ||
@@ -776,31 +822,39 @@ class IspStudioState extends ChangeNotifier {
                   : kMaxPreviewNodeWidth;
 
   /// 节点宽度下限：格式转换/视频健康检查节点内嵌终端固定 1500x1200
-  ///（min=max，不可调；ffmpeg 处理信息整页可读）；其余节点用全局下限。
+  ///（min=max，不可调；ffmpeg 处理信息整页可读）；视频输出节点固定
+  /// 860x360；其余节点用全局下限。
   static double minNodeWidthFor(String typeId) =>
       typeId == 'format_converter' || typeId == 'video_health_check'
           ? 1500
-          : kMinPreviewNodeWidth;
+          : typeId == 'video_output'
+              ? 860
+              : kMinPreviewNodeWidth;
 
   /// 节点附加区高度下限：格式转换/视频健康检查节点 1162（标题 30 +
-  /// 底部留白 8 + extra = 总高 1200）；其余节点用全局下限。
+  /// 底部留白 8 + extra = 总高 1200）；视频输出节点 234（总高 360）；
+  /// 其余节点用全局下限。
   static double minExtraHeightFor(String typeId) =>
       typeId == 'format_converter' || typeId == 'video_health_check'
           ? 1162
-          : kMinPreviewExtraHeight;
+          : typeId == 'video_output'
+              ? 234
+              : kMinPreviewExtraHeight;
 
   /// 节点附加区高度上限：多段色彩均衡器（矢量示波器 + 预览图双行显示，
   /// 预览图需要更大加高空间）放宽到全局上限的 2 倍；预览节点放宽到
   /// 全局上限的 1.5 倍；格式转换节点固定 1162（总高 1200，min=max 不
-  /// 可调）；其余节点用全局上限。
+  /// 可调）；视频输出节点固定 234（总高 360）；其余节点用全局上限。
   static double maxPreviewExtraHeightFor(String typeId) =>
       typeId == 'multi_band_eq'
           ? kMaxPreviewExtraHeight * 2
           : typeId == 'format_converter' || typeId == 'video_health_check'
               ? 1162
-              : typeId == 'preview'
-                  ? kMaxPreviewExtraHeight * 1.5
-                  : kMaxPreviewExtraHeight;
+              : typeId == 'video_output'
+                  ? 234
+                  : typeId == 'preview'
+                      ? kMaxPreviewExtraHeight * 1.5
+                      : kMaxPreviewExtraHeight;
   final Map<String, double> _previewExtraHeights = {};
 
   int _runToken = 0;
@@ -1570,9 +1624,11 @@ class IspStudioState extends ChangeNotifier {
         if (key == 'group:$groupId' ||
             key == 'gbb:$groupId' ||
             key == 'gip:$groupId' ||
+            key == 'sch:$groupId' ||
             key.startsWith('group:$groupId@') ||
             key.startsWith('gbb:$groupId@') ||
-            key.startsWith('gip:$groupId@')) {
+            key.startsWith('gip:$groupId@') ||
+            key.startsWith('sch:$groupId@')) {
           closeCodeTab(key);
         }
       }
@@ -2376,11 +2432,21 @@ class IspStudioState extends ChangeNotifier {
         }
       }
 
+      // 视频源的流注入帧顺带按流直传口径上传：RGBA8 纹理 +
+      // rgba8_to_rgb16 GPU pass 重排，免 rgba8ToRgb16 的 CPU 逐像素
+      // 转换（4K 实测 ~470ms/帧，是步进消除 seek 后的最大剩余开销）。
+      final mainSrcId = mainChain.first['nodeId'] as String;
+      final streamFmt =
+          mainChain.first['typeId'] == 'video_source' &&
+              imageSources.containsKey(mainSrcId)
+          ? 'rgba'
+          : null;
       final result = await gpu.run(mainChain, frame,
           onNodeStart: onNodeStart,
           displayCaptures: displayCaptures,
           rgbaReadbackPorts: readbackPorts,
-          imageSources: imageSources);
+          imageSources: imageSources,
+          streamFormat: streamFmt);
 
       // 产物合并：主图 + 捕获图 + 耗时 + 采样 + 仪器馈源。
       previewImages.remove(mainSink)?.dispose();
@@ -2724,6 +2790,67 @@ class IspStudioState extends ChangeNotifier {
         imageSrcRgba[srcIds[i]] = decoded[i];
       }
       final firstSrcId = firstChain.first['nodeId'] as String;
+      // 视频源：常驻顺序解码流取帧注入（与图片源共享帧同一通道，
+      // CPU/GPU 两路径命中后均跳过链内 ffmpeg seek 解码）。
+      // 同帧重跑（调参）复用上次交付帧零解码；步进 +1 顺序取下一帧；
+      // 其余情形（换文件/换 HDR 口径/seek/前一帧）重建流——单次成本
+      // 与原逐帧 seek 相当，但为后续步进铺路。流取帧失败回退原行为。
+      if (srcTypeId == 'video_source') {
+        final path = srcParams['filePath']?.toString() ?? '';
+        final ff = srcParams['ffmpegPath']?.toString() ?? '';
+        final key = '$path|$ff|$hdrToneMapEnabled';
+        try {
+          if (_stepStream != null &&
+              _stepStreamKey == key &&
+              _stepStreamDelivered == frame &&
+              _stepFrameBuffer != null) {
+            final s = _stepStream!;
+            imageSrcRgba[firstSrcId] =
+                (_stepFrameBuffer!, s.outWidth, s.outHeight);
+          } else {
+            var stream = _stepStream;
+            if (stream == null ||
+                _stepStreamKey != key ||
+                stream.nextIndex != frame ||
+                stream.isDrained) {
+              await _disposeStepStream();
+              stream = await VideoFrameStream.start(
+                path,
+                frame,
+                ffmpegPath: ff,
+                pixelFormat: 'rgba',
+                // 步进量小，软解直出（HDR tonemap 本就在 CPU 跑）。
+                hwaccel: '',
+                toneMapHdr: hdrToneMapEnabled,
+              );
+              _stepStream = stream;
+              _stepStreamKey = key;
+            }
+            if (token != _runToken) return;
+            // 交付新帧前先归还上一帧缓冲（worker 信用额度口径）。
+            final prev = _stepFrameBuffer;
+            if (prev != null) stream.recycle(prev);
+            _stepFrameBuffer = null;
+            _stepStreamDelivered = -1;
+            final rgba = await stream.next();
+            if (token != _runToken) {
+              if (rgba != null) stream.recycle(rgba);
+              return;
+            }
+            if (rgba != null) {
+              _stepFrameBuffer = rgba;
+              _stepStreamDelivered = frame;
+              imageSrcRgba[firstSrcId] =
+                  (rgba, stream.outWidth, stream.outHeight);
+            }
+          }
+        } catch (_) {
+          await _disposeStepStream();
+        }
+      } else if (_stepStream != null) {
+        // 源不再是视频：释放常驻流。
+        await _disposeStepStream();
+      }
       final (w, h) = srcTypeId == 'image_source'
           ? (imageSrcRgba[firstSrcId]!.$2, imageSrcRgba[firstSrcId]!.$3)
           : await sourceDimensions(srcTypeId, srcParams);
@@ -4018,6 +4145,32 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 单帧步进（视频源节点控制条的前一帧/后一帧）：播放中忽略（与进度
+  /// 滑条播放中禁用同口径），步进后按新帧重跑预览。
+  void stepPreviewFrame(int delta) {
+    final total = totalFrames ?? 1;
+    if (total <= 1 || isPlaying || isProcessing) return;
+    final f = (previewFrame + delta).clamp(0, total - 1);
+    if (f == previewFrame) return;
+    setPreviewFrame(f);
+    runPreview();
+  }
+
+  /// 播放倍速（0.5/0.75/1/1.5/2，默认 1）：走帧帧间隔 = 标称帧间隔 /
+  /// 倍速。非 1x 时音轨不同步，播放不开音频（见 togglePlayback 内
+  /// 音频初始化）。播放中切换经停播重播生效。
+  double playbackSpeed = 1.0;
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    if (speed == playbackSpeed) return;
+    playbackSpeed = speed;
+    notifyListeners();
+    if (isPlaying) {
+      stopPlayback();
+      await togglePlayback();
+    }
+  }
+
   // ---- 连续播放 ----
 
   /// 是否正在连续播放预览。
@@ -4104,6 +4257,36 @@ class IspStudioState extends ChangeNotifier {
   /// 诊断：等待结束后超过截止时刻的最大值（微秒）。
   int playbackMaxWaitOverUs = 0;
 
+  /// 实时播放帧率（最近 1 秒实际上屏帧数，走帧循环逐帧更新；
+  /// 视频源节点帧数行右侧的 FPS 显示；停播清零）。
+  int playbackFps = 0;
+
+  /// 单帧步进用的常驻顺序解码流：步进 +1 直接取下一帧（免每步一次
+  /// ffmpeg 关键帧 seek 解码——大 GOP/高码率片源单步几秒的主因）。
+  /// 换文件/换 HDR 口径/非顺序帧（seek/前一帧）时重建，单次成本与
+  /// 原逐帧 seek 相当但为后续步进铺路；同帧重跑（调参）直接复用
+  /// 上次交付帧。播放启动时释放（播放用自己的流）。
+  VideoFrameStream? _stepStream;
+  String _stepStreamKey = '';
+  Uint8List? _stepFrameBuffer;
+
+  /// 流最后交付的帧号（_stepFrameBuffer 对应帧；-1 = 无有效交付）。
+  int _stepStreamDelivered = -1;
+
+  /// 释放步进流：先归还已交付帧缓冲再终止解码（worker 信用额度口径）。
+  Future<void> _disposeStepStream() async {
+    final s = _stepStream;
+    final b = _stepFrameBuffer;
+    _stepStream = null;
+    _stepFrameBuffer = null;
+    _stepStreamDelivered = -1;
+    _stepStreamKey = '';
+    if (s != null) {
+      if (b != null) s.recycle(b);
+      await s.dispose();
+    }
+  }
+
   /// 播放中最近一次上屏帧的各预览链 RGBA（暂停时仪器刷新直接复用，
   /// 免逐仪器重新 seek 解码视频帧）。
   Map<String, Uint8List>? _lastPlaybackRgba;
@@ -4174,6 +4357,8 @@ class IspStudioState extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    // 播放用自己的解码流：释放步进用的常驻流，避免两条解码链并存。
+    await _disposeStepStream();
     final firstEntry = validChains.entries.first;
     final chain = firstEntry.value;
     final srcTypeId = chain.first['typeId'] as String;
@@ -4505,11 +4690,12 @@ class IspStudioState extends ChangeNotifier {
           }
         }
       }
-      // 音频回放（有音轨时）：ffmpeg 抽取 WAV + MCI 播放。
+      // 音频回放（有音轨时）：ffmpeg 抽取 WAV + MCI 播放。非 1x 倍速时
+      // 音轨与画面不同步，不开音频。
       final audio = MciAudioPlayer();
       var audioReady = false;
       var audioStarted = false;
-      if (isVideo && stream!.info.hasAudio) {
+      if (isVideo && stream!.info.hasAudio && playbackSpeed == 1.0) {
         try {
           final wav = await ensureAudioWav(
               srcParams['filePath']?.toString() ?? '',
@@ -4531,8 +4717,10 @@ class IspStudioState extends ChangeNotifier {
           : (graph.nodes[firstEntry.key]!.paramValues['fps'] as num?)
                   ?.toDouble() ??
               30;
-      final frameDuration =
-          Duration(microseconds: (1000000 / fps.clamp(1, 240)).round());
+      final frameDuration = Duration(
+        // 走帧帧间隔：标称帧间隔 / 倍速（0.5x 慢放、2x 快放）。
+        microseconds: (1000000 / (fps.clamp(1, 240) * playbackSpeed)).round(),
+      );
       // 视频源信息标签（状态栏随播放显示）：分辨率@帧率 + SDR/HDR +
       // 当前时间/总时长。静态部分循环前拼好，当前时间逐帧更新。
       String fmtClock(double sec) {
@@ -5237,6 +5425,7 @@ class IspStudioState extends ChangeNotifier {
               playSw.elapsedMicroseconds - fpsWindow.first > 1000000) {
             fpsWindow.removeFirst();
           }
+          playbackFps = fpsWindow.length;
           // 解码模式标签：硬解请求被 worker 回退软解时如实显示软解。
           final decTag =
               decodeHwaccel.isNotEmpty && !(stream?.usedSoftwareDecode ?? false)
@@ -5336,6 +5525,7 @@ class IspStudioState extends ChangeNotifier {
   void stopPlayback() {
     if (!isPlaying) return;
     isPlaying = false;
+    playbackFps = 0;
     notifyListeners();
   }
 
@@ -6087,6 +6277,13 @@ class IspStudioState extends ChangeNotifier {
           ExportProgressInfo(width: w, height: h, fps: fps, totalFrames: total);
       exportInfoTick.value++;
       _exportInfoLastNotifyMs = 0;
+      // 节点内嵌终端：清空并开始记录导出过程。
+      videoExportLogs[nodeId] = '';
+      _videoExportLog(
+        nodeId,
+        '输出: $outPath\n'
+        '输入: ${w}x$h @$fps fps，共 $total 帧，CRF $crf\n',
+      );
 
       // 帧生产优化（2026-09 性能排查结论）：
       // - 旧实现每帧 compute() 新起 isolate（spawn 开销每帧摊一次），且
@@ -6142,6 +6339,11 @@ class IspStudioState extends ChangeNotifier {
           : (gpuBlockReason != null
               ? 'CPU 池（链含 GPU 不支持节点：$gpuBlockReason）'
               : 'CPU 池');
+      _videoExportLog(
+        nodeId,
+        '处理路径: $pathNote'
+        '${useGpuChain && hwaccel.isNotEmpty ? '（$hwaccel 硬解）' : ''}\n',
+      );
 
       if (!useGpuChain) {
         frameRunners.addAll(List.generate(
@@ -6250,6 +6452,7 @@ class IspStudioState extends ChangeNotifier {
         notifyListeners();
         try {
           final (segEnc, segParts) = await _exportVideoGpuSegmented(
+            nodeId: nodeId,
             gpuChain: gpuChain,
             gpu: gpu,
             srcPath: srcPath,
@@ -6268,11 +6471,13 @@ class IspStudioState extends ChangeNotifier {
           );
           segEncoder = segEnc;
           pathNote = 'GPU 链 ×$segParts 段';
+          _videoExportLog(nodeId, '分段并行: $segParts 段，编码器 $segEnc\n');
         } catch (e) {
           if (token != _runToken) rethrow; // 取消：外抛走统一收尾
           segEncoder = null;
           pathNote = 'GPU 链（分段失败回退单段：'
               '${e.toString().replaceFirst('Bad state: ', '')}）';
+          _videoExportLog(nodeId, '分段失败，回退单段路径\n');
         }
       }
 
@@ -6372,6 +6577,9 @@ class IspStudioState extends ChangeNotifier {
             exportInfoTick.value++;
           }
         },
+        // 编码器实时输出（frame=/fps=/bitrate=/speed= 进度行）直通
+        // 节点终端，\r 覆盖同一行显示压缩进度。
+        onOutput: (chunk) => _videoExportLog(nodeId, chunk),
       );
       gpuDecodeProc?.kill();
       for (final r in frameRunners) {
@@ -6382,7 +6590,16 @@ class IspStudioState extends ChangeNotifier {
       }
       statusMessage = '视频导出完成 → $outPath'
           '（${usedEncoder == 'nvenc' ? 'h264_nvenc 硬件编码' : 'libx264 软件编码'}，$pathNote）';
+      _videoExportLog(
+        nodeId,
+        '\n[DONE] ${usedEncoder == 'nvenc' ? 'h264_nvenc 硬件编码' : 'libx264 软件编码'}，$pathNote\n'
+        '输出文件: $outPath\n',
+      );
     } catch (e) {
+      _videoExportLog(
+        nodeId,
+        '\n[FAILED] ${e.toString().replaceFirst('Bad state: ', '')}\n',
+      );
       statusMessage = e.toString().replaceFirst('Bad state: ', '');
     } finally {
       gpuDecodeProc?.kill();
@@ -6419,6 +6636,7 @@ class IspStudioState extends ChangeNotifier {
   /// 返回（实际使用的编码器 id, 分段数）。任何失败抛 [StateError]
   /// （调用方回退单段路径；取消经 token 判定直接外抛）。
   Future<(String, int)> _exportVideoGpuSegmented({
+    required String nodeId,
     required List<Map<String, Object?>> gpuChain,
     required GpuPipeline gpu,
     required String srcPath,
@@ -6514,11 +6732,23 @@ class IspStudioState extends ChangeNotifier {
       void noteFrame() {
         segDone++;
         _advanceProgress(segDone / grandTotal);
-        exportVideoInfo?.addFrame(DateTime.now().millisecondsSinceEpoch);
+        final info = exportVideoInfo;
+        info?.addFrame(DateTime.now().millisecondsSinceEpoch);
         final nowMs = DateTime.now().millisecondsSinceEpoch;
         if (nowMs - _exportInfoLastNotifyMs >= 250) {
           _exportInfoLastNotifyMs = nowMs;
           exportInfoTick.value++;
+          // 内嵌终端进度行（\r 覆盖同一行）：帧数/百分比/实时帧率/ETA。
+          if (info != null) {
+            final pct = (segDone / grandTotal * 100).toStringAsFixed(1);
+            final fpsT = info.smoothFps > 0
+                ? '  ${info.smoothFps.toStringAsFixed(1)} 帧/秒'
+                : '';
+            final eta = info.etaSeconds;
+            final etaT = eta == null ? '' : '  剩余 ${formatHhMmSs(eta)}';
+            _videoExportLog(
+                nodeId, '\r帧 $segDone/$grandTotal（$pct%）$fpsT$etaT');
+          }
         }
       }
 
@@ -6796,6 +7026,7 @@ class IspStudioState extends ChangeNotifier {
     progressTick.dispose();
     _instrumentAnalyzer.dispose();
     cleanupAudioWavCache();
+    unawaited(_disposeStepStream());
     // _legacyPreviewImage 是非持有别名，其图像含在 previewImages 中。
     for (final img in previewImages.values) {
       img.dispose();

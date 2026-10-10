@@ -52,20 +52,6 @@
       "params": {}
     },
     {
-      "id": "n30",
-      "typeId": "video_source",
-      "x": 410.0,
-      "y": 200.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "Video#1",
-      "params": {
-        "filePath": "K:\\AI网剧\\盗版三国志.mp4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
-      }
-    },
-    {
       "id": "n33",
       "typeId": "preview",
       "x": 590.0,
@@ -74,8 +60,22 @@
       "extraHeight": 432.0,
       "name": "预览#1",
       "params": {
-        "fps": 30,
-        "frameCount": 30
+        "fps": 60,
+        "frameCount": 20263
+      }
+    },
+    {
+      "id": "n35",
+      "typeId": "video_source",
+      "x": 110.0,
+      "y": 70.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\SONY OLED 4K Video ULTRA HD Demo SDR Test Part 2.MP4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
     }
   ],
@@ -102,27 +102,27 @@
       "toPort": "in_mono"
     },
     {
-      "id": "c31",
-      "from": "n30",
+      "id": "c36",
+      "from": "n35",
+      "fromPort": "out_yuv",
+      "to": "n33",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c37",
+      "from": "n35",
       "fromPort": "out_yuv",
       "to": "n24",
       "toPort": "in"
     },
     {
-      "id": "c32",
-      "from": "n30",
+      "id": "c38",
+      "from": "n35",
       "fromPort": "out_yuv",
       "to": "n19",
-      "toPort": "in_yuv"
-    },
-    {
-      "id": "c34",
-      "from": "n30",
-      "fromPort": "out_yuv",
-      "to": "n33",
       "toPort": "in_yuv"
     }
   ],
   "groups": [],
-  "nextId": 35
+  "nextId": 39
 }

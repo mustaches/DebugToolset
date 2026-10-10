@@ -3,14 +3,13 @@
 /// `group_c_target.dart` 的 `GroupCTargetInfo` extension 单独定义）。
 library;
 
-/// FPGA 厂商目标。v1 实现 Vivado / Libero / 通用 Verilog；Quartus / Lattice /
-/// Efinix 列出但禁用并标注「待完成」（对话框下拉项灰显）。
+/// FPGA 厂商目标。v1 实现 Vivado / 通用 Verilog；Quartus / Libero /
+/// Lattice / Efinix 列出但禁用并标注「待完成」（对话框下拉项灰显不可选）。
 enum IpVendor {
   vivado('AMD/Xilinx Vivado', 'Vivado', true,
       '用 package_ip.tcl 在 Vivado 打包导入；双击 IP 可用 Customize IP 界面改参数。'),
   quartus('Intel Quartus', 'Quartus', false, '待完成'),
-  libero('Microchip Libero', 'Libero', true,
-      '顶层为 valid/ready 裸流封装；参数在 SmartDesign generics 面板可见可改。'),
+  libero('Microchip Libero', 'Libero', false, '待完成'),
   lattice('Lattice Radiant/Diamond', 'Lattice', false, '待完成'),
   efinix('Efinix Efinity', 'Efinix', false, '待完成'),
   generic('通用 Verilog', '通用', true,
@@ -28,11 +27,44 @@ enum IpVendor {
   bool get isLibero => this == libero;
 }
 
+/// Vivado 器件系列（对话框中仅 Vivado 厂商时显示）：驱动 package_ip.tcl
+/// 的 `create_project -part` 与 `supported_families`。
+/// 注：Spartan6/Virtex6 为 ISE 器件族，Vivado 无对应 part，仅作系列标注
+/// 导出（part 字段仍给代表型号，供需要时人工替换）。
+enum VivadoSeries {
+  spartan6('Spartan6', 'xc6slx45-fgg484-2', 'spartan6'),
+  virtex6('Virtex6', 'xc6vlx240t-ff1156-1', 'virtex6'),
+  spartan7('Spartan7', 'xc7s50-csga324-1', 'spartan7'),
+  artix7('Artix7', 'xc7a100t-csg324-1', 'artix7'),
+  kintex7('Kintex7', 'xc7k325t-ffg900-2', 'kintex7'),
+  virtex7('Virtex7', 'xc7v585t-ffg1157-1', 'virtex7'),
+  zynq7000('Zynq7000_SOC', 'xc7z020-clg484-1', 'zynq'),
+  zynqUltrascalePlus(
+    'Zynq UltraScale+ MPSoC',
+    'xczu3eg-sbva484-1-e',
+    'zynquplus',
+  ),
+  versalAiCore('Versal AI Core Series', 'xcvc1902-vsva2197-2MP-e-S', 'versal');
+
+  const VivadoSeries(this.displayName, this.part, this.supportedFamilies);
+
+  final String displayName;
+
+  /// package_ip.tcl 的 `create_project -part` 代表型号。
+  final String part;
+
+  /// package_ip.tcl 的 `supported_families` 值。
+  final String supportedFamilies;
+}
+
 /// IP 生成选项（应用内对话框采集的「出厂默认」——写入生成的 `parameter`
 /// 默认值；用户在 Vivado Customize IP 界面可再次修改）。顶层参数与
 /// 视频输入物理层选择由此驱动。
 class IpGenOptions {
   final IpVendor vendor;
+
+  /// Vivado 器件系列（仅 vendor == vivado 时有意义）。
+  final VivadoSeries series;
 
   /// 视频输入接口：`none`（直通）/ `dvp` / `lvds` / `mipi`（v1 仅 none）。
   final String vinType;
@@ -52,6 +84,7 @@ class IpGenOptions {
 
   const IpGenOptions({
     required this.vendor,
+    this.series = VivadoSeries.zynqUltrascalePlus,
     this.vinType = 'none',
     this.pixBits = 0,
     this.maxWidth = 4096,

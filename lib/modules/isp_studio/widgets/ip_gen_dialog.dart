@@ -31,6 +31,7 @@ class _IpGenDialog extends StatefulWidget {
 
 class _IpGenDialogState extends State<_IpGenDialog> {
   late IpVendor _vendor;
+  late VivadoSeries _series;
   late int _pixBits; // 0 = 位深推导
   late int _maxWidth;
   IverilogToolchain? _iverilog;
@@ -39,6 +40,7 @@ class _IpGenDialogState extends State<_IpGenDialog> {
   void initState() {
     super.initState();
     _vendor = widget.initial?.vendor ?? IpVendor.vivado;
+    _series = widget.initial?.series ?? VivadoSeries.zynqUltrascalePlus;
     _pixBits = widget.initial?.pixBits ?? 0;
     _maxWidth = widget.initial?.maxWidth ?? 4096;
     _iverilog = detectIverilog();
@@ -62,13 +64,35 @@ class _IpGenDialogState extends State<_IpGenDialog> {
                   DropdownMenuItem(
                     value: v,
                     enabled: v.enabled,
-                    child: Text(v.enabled ? v.displayName : '${v.displayName}（待完成）'),
+                    child: Text(
+                      v.enabled ? v.displayName : '${v.displayName}（待完成）',
+                      // 禁用项暗色主题下不显灰，显式灰色字体
+                      style: v.enabled
+                          ? null
+                          : const TextStyle(color: Colors.grey),
+                    ),
                   ),
               ],
               onChanged: (v) {
                 if (v != null) setState(() => _vendor = v);
               },
             ),
+            // 器件系列：仅 Vivado 厂商显示（驱动 package_ip.tcl 的
+            // create_project -part 与 supported_families）。
+            if (_vendor.isVivado) ...[
+              const SizedBox(height: 12),
+              _label('器件系列'),
+              DropdownButtonFormField<VivadoSeries>(
+                initialValue: _series,
+                items: [
+                  for (final s in VivadoSeries.values)
+                    DropdownMenuItem(value: s, child: Text(s.displayName)),
+                ],
+                onChanged: (v) {
+                  if (v != null) setState(() => _series = v);
+                },
+              ),
+            ],
             const SizedBox(height: 12),
             _label('像素位宽 PIX_BITS'),
             DropdownButtonFormField<int>(
@@ -131,6 +155,7 @@ class _IpGenDialogState extends State<_IpGenDialog> {
             context,
             IpGenOptions(
               vendor: _vendor,
+              series: _series,
               pixBits: _pixBits,
               maxWidth: _maxWidth,
             ),

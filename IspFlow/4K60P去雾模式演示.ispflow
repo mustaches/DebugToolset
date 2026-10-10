@@ -28,7 +28,7 @@
       "name": "预览#1",
       "params": {
         "fps": 30,
-        "frameCount": 35940
+        "frameCount": 35941
       }
     },
     {
@@ -41,21 +41,7 @@
       "name": "预览#2",
       "params": {
         "fps": 30,
-        "frameCount": 35940
-      }
-    },
-    {
-      "id": "n8",
-      "typeId": "video_source",
-      "x": 1000.0,
-      "y": 410.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "Video#1",
-      "params": {
-        "filePath": "H:\\Surgery_video\\贵州毕节 手术备份2025.12.03\\第三台胆囊切除\\record-2025-12-03-11-49-45-0001.mp4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+        "frameCount": 35941
       }
     },
     {
@@ -112,23 +98,23 @@
       "params": {
         "bypass": false
       }
+    },
+    {
+      "id": "n32",
+      "typeId": "video_source",
+      "x": 960.0,
+      "y": 430.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "H:\\Surgery_video\\record-2025-12-03-11-49-45.mp4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
     }
   ],
   "connections": [
-    {
-      "id": "c9",
-      "from": "n8",
-      "fromPort": "out_hsl",
-      "to": "n1",
-      "toPort": "in"
-    },
-    {
-      "id": "c12",
-      "from": "n8",
-      "fromPort": "out_hsl",
-      "to": "n4",
-      "toPort": "in_hsl"
-    },
     {
       "id": "c14",
       "from": "n1",
@@ -156,6 +142,20 @@
       "fromPort": "out",
       "to": "n6",
       "toPort": "in"
+    },
+    {
+      "id": "c33",
+      "from": "n32",
+      "fromPort": "out_hsl",
+      "to": "n4",
+      "toPort": "in_hsl"
+    },
+    {
+      "id": "c34",
+      "from": "n32",
+      "fromPort": "out_hsl",
+      "to": "n1",
+      "toPort": "in"
     }
   ],
   "groups": [
@@ -178,5 +178,5 @@
       ]
     }
   ],
-  "nextId": 31
+  "nextId": 35
 }

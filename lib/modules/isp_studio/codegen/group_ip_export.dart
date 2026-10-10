@@ -456,11 +456,12 @@ String _sucl(IpPlan plan) {
 
 String _packageIpTcl(IpPlan plan) {
   final top = plan.topName;
+  final series = plan.options.series;
   return '''
 # Vivado IP Packager：把 ${top}_axis 打包为可定制 IP（参数在 Customize IP
 # 界面可改）。用法：vivado -mode batch -source package_ip.tcl
 set ip_name $top
-create_project -in_memory -part xczu3eg-sbva484-1-e
+create_project -in_memory -part ${series.part}
 add_files ${top}_core.v
 add_files ${top}_top.v
 add_files ${top}_axis.v
@@ -476,7 +477,7 @@ set_property value_resolve_type user [ipx::get_user_parameters PIX_BITS]
 set_property value ${plan.pixBits} [ipx::get_user_parameters PIX_BITS]
 ipx::add_user_parameter MAX_WIDTH [ipx::current_core]
 set_property value ${plan.options.maxWidth} [ipx::get_user_parameters MAX_WIDTH]
-set_property supported_families {zynquplus} [ipx::current_core]
+set_property supported_families {${series.supportedFamilies}} [ipx::current_core]
 ipx::save_core [ipx::current_core]
 ipx::check_integrity [ipx::current_core]
 puts "IP 已打包到 ./ip_repo"

@@ -6,8 +6,8 @@
 ///   两栏，右栏直接预览该函数定义（标题栏保留「Go to REF」按钮，点击经
 ///   回调正式跳转定义所在文件与行）；经 [CodeAreaController] 可让代码区
 ///   滚动到指定行。五项参数同时非 null 才启用，缺省行为与之前完全一致。
-/// - [CFileList]：左侧文件清单（分组小标题 + 文件项选中高亮 + 底部
-///   「导出代码」按钮），分组与导出行为均可由调用方定制。
+/// - [CFileList]：左侧文件清单（分组小标题 + 文件项选中高亮），分组
+///   可由调用方定制。
 library;
 
 import 'dart:async';
@@ -15,13 +15,13 @@ import 'dart:async';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../text_editor/utils/syntax_highlighter.dart';
 import '../codegen/c_compile.dart';
 import '../pipeline/c_def_index.dart';
 import '../pipeline/node_c_code.dart';
 import 'group_compile_dialog.dart';
+import 'tab_toolbar.dart';
 
 /// 代码区与行号共用字体（Consolas，VSCode Dark+ 纯文本色）。
 const kCodeBrowserStyle = TextStyle(
@@ -87,10 +87,12 @@ List<TextSpan> applyIdentHighlight(
         if (a > 0) {
           out.add(TextSpan(text: text.substring(0, a), style: s.style));
         }
-        out.add(TextSpan(
-          text: text.substring(a, b),
-          style: (s.style ?? const TextStyle()).merge(hl),
-        ));
+        out.add(
+          TextSpan(
+            text: text.substring(a, b),
+            style: (s.style ?? const TextStyle()).merge(hl),
+          ),
+        );
         if (b < text.length) {
           out.add(TextSpan(text: text.substring(b), style: s.style));
         }
@@ -422,11 +424,7 @@ class _CodeAreaState extends State<CodeArea> {
       final first = lineText.codeUnitAt(start);
       // 数字开头的片段不是标识符（如 0x1F 的尾部）。
       if (first >= 0x30 && first <= 0x39) return null;
-      return (
-        name: lineText.substring(start, end),
-        start: start,
-        end: end,
-      );
+      return (name: lineText.substring(start, end), start: start, end: end);
     } finally {
       painter.dispose();
     }
@@ -643,11 +641,30 @@ class _CodeAreaState extends State<CodeArea> {
   }
 }
 
+/// 默认「导出代码」行为：选择目标文件夹后导出列表中的全部文件（节点
+/// 代码页工具栏导出按钮用；编组代码页有自定义导出逻辑，走自己的回调）。
+Future<void> exportCRefFilesInteractive(
+    BuildContext context, List<String> files) async {
+  final dir = await getDirectoryPath();
+  if (dir == null || !context.mounted) return;
+  final (ok, failed) = await exportCRefFiles(files, dir);
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        failed.isEmpty
+            ? '已导出 $ok 个文件到 $dir'
+            : '已导出 $ok 个文件到 $dir；失败 ${failed.length} 个：${failed.join('、')}',
+      ),
+    ),
+  );
+}
+
 /// C 视图的文件层次列表：默认按 isp_common.* 前缀分「共享层」（多节点
 /// 共用的类型/工具声明）与「本节点文件」两组；调用方也可经 [groups]
 /// 指定任意分组（编组代码页：顶层 / 节点封装 / 算法参考）。小标题灰色，
-/// 文件项选中高亮；底部附「导出代码」按钮，默认导出列表全部文件到
-/// 指定文件夹，可经 [onExport] 替换为自定义导出逻辑。
+/// 文件项选中高亮。「导出代码」按钮已上移至工具栏（CodeCompileArea
+/// .onExport），本列表不再附带。
 class CFileList extends StatelessWidget {
   final List<String> files;
   final String selected;
@@ -655,9 +672,6 @@ class CFileList extends StatelessWidget {
 
   /// 自定义分组（按列表顺序显示）；null 时用 isp_common 前缀两组默认形态。
   final List<CodeFileGroup>? groups;
-
-  /// 自定义「导出代码」按钮行为；null 时默认把列表全部文件导出到所选目录。
-  final Future<void> Function(BuildContext context)? onExport;
 
   /// 分组标题是否用亮蓝色高亮背景（编组代码页开启，让大类分组更醒目）；
   /// 默认 false 保持灰色小标题原样（节点代码页）。
@@ -669,7 +683,6 @@ class CFileList extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     this.groups,
-    this.onExport,
     this.highlightGroupTitles = false,
   });
 
@@ -689,91 +702,20 @@ class CFileList extends StatelessWidget {
         ];
     return Container(
       color: const Color(0xFF202020),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 6),
         children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              children: [
-                for (final g in effectiveGroups)
-                  if (g.files.isNotEmpty) ...[
-                    _groupTitle(g),
-                    for (final f in g.files) _fileItem(f),
-                  ],
-              ],
-            ),
-          ),
-          _exportBar(context),
+          for (final g in effectiveGroups)
+            if (g.files.isNotEmpty) ...[
+              _groupTitle(g),
+              for (final f in g.files) _fileItem(f),
+            ],
         ],
       ),
     );
   }
 
   /// 底部「导出代码」按钮：选择目标文件夹后导出列表中的全部文件。
-  Widget _exportBar(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF3A3A3A))),
-      ),
-      padding: const EdgeInsets.all(8),
-      child: Row(
-        children: [
-          Expanded(
-            child: _barButton(
-              Icons.save_alt,
-              '导出代码',
-              () => onExport != null ? onExport!(context) : _exportAll(context),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 操作条按钮：图标 + 文字，统一样式。
-  Widget _barButton(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(3),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2D2D30),
-          borderRadius: BorderRadius.circular(3),
-          border: Border.all(color: const Color(0xFF3A3A3A)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 13, color: Colors.white70),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 11, color: Colors.white70),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _exportAll(BuildContext context) async {
-    final dir = await getDirectoryPath();
-    if (dir == null || !context.mounted) return;
-    final (ok, failed) = await exportCRefFiles(files, dir);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          failed.isEmpty
-              ? '已导出 $ok 个文件到 $dir'
-              : '已导出 $ok 个文件到 $dir；失败 ${failed.length} 个：${failed.join('、')}',
-        ),
-      ),
-    );
-  }
-
   Widget _groupTitle(CodeFileGroup group) {
     // 高亮形态：底色整行铺满 + 白字。分组自带 titleColor 时强制使用
     //（如「临时main调用（不导出）」红色标识，与 highlightGroupTitles 无关）；否则跟随
@@ -840,7 +782,8 @@ class CFileList extends StatelessWidget {
   }
 }
 
-/// 带编译验证的代码浏览区：工具栏（「编译」按钮，横跨内容区）+ 左栏
+/// 带编译验证的代码浏览区：工具栏（编译/运行验证图标按钮在左、页面信息
+/// [CodeCompileArea.trailing] 在右，横跨内容区）+ 左栏
 /// 文件清单 + 右侧代码区；编译时代码区下方切出 1/4 高度终端面板，
 /// 流式打印编译过程。编组代码页与节点代码页（C 视图）共用。
 ///
@@ -849,7 +792,7 @@ class CFileList extends StatelessWidget {
 /// [filesLoader] 取「文件名→内容」→ [compileRunner]（缺省
 /// compileGroupCFiles）流式编译 → 标题栏状态转成功/失败。
 class CodeCompileArea extends StatefulWidget {
-  /// 左侧文件清单面板（宽度固定 [leftWidth]）。
+  /// 左侧文件清单面板（初始宽度 [leftWidth]，分隔条可拖动调整）。
   final Widget leftPane;
 
   /// 右侧代码区（通常为一个 [CodeArea]）。
@@ -878,9 +821,21 @@ class CodeCompileArea extends StatefulWidget {
   /// 终端面板流式构建，成功即启动生成的窗口程序（[buildWinVerifyApp]
   /// 口径，main_win.c 不导出）。[scaleDown] 为 true 时启动参数附
   /// --scale（视频逐级减半降档至宽 ≤1280）。
-  final Future<CCompileResult> Function(void Function(String chunk) onOutput,
-      {required bool scaleDown})? winVerifyBuilder;
+  final Future<CCompileResult> Function(
+    void Function(String chunk) onOutput, {
+    required bool scaleDown,
+  })?
+  winVerifyBuilder;
 
+  /// 工具栏右侧信息区（编组名/变体/目标 CPU/只读标识等，经 Spacer 收在
+  /// 按钮右侧）；null 时工具栏只有按钮。
+  final Widget? trailing;
+
+  /// 「导出代码」按钮行为（工具栏图标按钮，tooltip 显示功能名）；null 时
+  /// 不显示导出按钮。
+  final Future<void> Function(BuildContext context)? onExport;
+
+  /// 左栏初始宽度（分隔条拖动调整后以状态为准）。
   final double leftWidth;
 
   const CodeCompileArea({
@@ -894,6 +849,8 @@ class CodeCompileArea extends StatefulWidget {
     this.compileRunner,
     this.preCompileCheck,
     this.winVerifyBuilder,
+    this.trailing,
+    this.onExport,
     this.leftWidth = 190,
   });
 
@@ -1005,113 +962,50 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
     }
   }
 
-  /// 工具栏：编译入口（带图标按钮，编译中转进度态并禁用）。
+  /// 工具栏：编译/运行验证/导出图标按钮（codicons PNG 已重着色为纯白，
+  /// 悬停 tooltip 显示功能名，编译中转进度态并禁用/图标压暗）+ 右侧
+  /// 信息区（[CodeCompileArea.trailing]）。高度与各标签页工具栏统一。
   Widget _buildToolbar() {
-    final fg = _compiling ? Colors.white38 : Colors.white70;
-    return Container(
-      height: 32,
-      decoration: const BoxDecoration(
-        color: Color(0xFF252525),
-        border: Border(bottom: BorderSide(color: Color(0xFF3A3A3A))),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      alignment: Alignment.centerLeft,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          InkWell(
-            key: widget.buttonKey,
-            onTap: _compiling ? null : _startCompile,
-            borderRadius: BorderRadius.circular(3),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2D2D30),
-                borderRadius: BorderRadius.circular(3),
-                border: Border.all(color: const Color(0xFF3A3A3A)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_compiling)
-                    const SizedBox(
-                      width: 13,
-                      height: 13,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    // 自绘 VS「生成项目」风格图标（锤子 + 砖墙），禁用时降透明度。
-                    Opacity(
-                      opacity: _compiling ? 0.5 : 1.0,
-                      child: SvgPicture.asset(
-                        'icons/build_project.svg',
-                        width: 13,
-                        height: 13,
-                      ),
-                    ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _compiling ? '编译中…' : '编译',
-                    style: TextStyle(fontSize: 11, color: fg),
-                  ),
-                ],
-              ),
-            ),
+    return ispTabToolbarRow(
+      children: [
+        // 「编译」：codicon build（编译中替换为进度圈并禁用）。
+        ispTabIconButton(
+          key: widget.buttonKey,
+          tooltip: '编译',
+          onTap: _compiling ? null : _startCompile,
+          icon: _compiling
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : ispTabAssetIcon('icons/build.png'),
+        ),
+        // 「运行验证（原尺寸/scale）」：编组页注入 winVerifyBuilder
+        // 时出现。原尺寸按钮 play 图标，scale 按钮 debug-coverage 图标。
+        if (widget.winVerifyBuilder != null) ...[
+          ispTabIconButton(
+            tooltip: '运行验证（原尺寸）',
+            onTap: _compiling ? null : () => _startWinVerify(scaleDown: false),
+            icon: ispTabAssetIcon('icons/play.png',
+                color: _compiling ? Colors.white38 : Colors.white),
           ),
-          // 「运行验证（原尺寸/scale）」：编组页注入 winVerifyBuilder
-          // 时出现。原尺寸按钮绿色播放图标，scale 按钮蓝色播放图标。
-          if (widget.winVerifyBuilder != null) ...[
-            const SizedBox(width: 8),
-            _winVerifyButton(
-              label: '运行验证（原尺寸）',
-              iconColor:
-                  _compiling ? Colors.white38 : const Color(0xFF4CAF50),
-              scaleDown: false,
-              fg: fg,
-            ),
-            const SizedBox(width: 8),
-            _winVerifyButton(
-              label: '运行验证（scale）',
-              iconColor:
-                  _compiling ? Colors.white38 : const Color(0xFF2196F3),
-              scaleDown: true,
-              fg: fg,
-            ),
-          ],
+          ispTabIconButton(
+            tooltip: '运行验证（scale）',
+            onTap: _compiling ? null : () => _startWinVerify(scaleDown: true),
+            icon: ispTabAssetIcon('icons/debug-coverage.png',
+                color: _compiling ? Colors.white38 : Colors.white),
+          ),
         ],
-      ),
-    );
-  }
-
-  /// 「运行验证」按钮（原尺寸 / --scale 降档两个形态共用样式）。
-  Widget _winVerifyButton({
-    required String label,
-    required Color iconColor,
-    required bool scaleDown,
-    required Color fg,
-  }) {
-    return InkWell(
-      onTap: _compiling ? null : () => _startWinVerify(scaleDown: scaleDown),
-      borderRadius: BorderRadius.circular(3),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2D2D30),
-          borderRadius: BorderRadius.circular(3),
-          border: Border.all(color: const Color(0xFF3A3A3A)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.play_arrow, size: 14, color: iconColor),
-            const SizedBox(width: 4),
-            Text(
-              _compiling ? '编译中…' : label,
-              style: TextStyle(fontSize: 11, color: fg),
-            ),
-          ],
-        ),
-      ),
+        // 「导出代码」：原文件清单底部按钮上移至此（codicon git-stash-pop）。
+        if (widget.onExport != null)
+          ispTabIconButton(
+            tooltip: '导出代码',
+            onTap: () => widget.onExport!(context),
+            icon: ispTabAssetIcon('icons/git-stash-pop.png'),
+          ),
+        if (widget.trailing != null) ...[const Spacer(), widget.trailing!],
+      ],
     );
   }
 
@@ -1194,6 +1088,15 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
     );
   }
 
+  /// 左侧文件清单宽度（当前值，初始为 [CodeCompileArea.leftWidth]，可经
+  /// 分隔条拖动调整，钳位 120~600px）。
+  late double _leftWidth = widget.leftWidth;
+
+  /// 分隔条拖动：按水平增量调整左栏宽度。
+  void _onDividerDrag(double dx) {
+    setState(() => _leftWidth = (_leftWidth + dx).clamp(120.0, 600.0));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -1204,8 +1107,9 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(width: widget.leftWidth, child: widget.leftPane),
-              Container(width: 1, color: const Color(0xFF3A3A3A)),
+              SizedBox(width: _leftWidth, child: widget.leftPane),
+              // 1px 分隔线（含隐形热区），左右拖动调整左栏宽度。
+              IspVerticalDragDivider(onDelta: _onDividerDrag),
               // 右侧：代码区 3/4 + 终端面板 1/4（终端关闭时代码区占满）。
               Expanded(
                 child: Column(

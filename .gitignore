@@ -92,3 +92,9 @@ Linux_setup/Output/
 # C:\iverilog 与 C:\surfer 重新拷入 tools/ 即可，详见 tools/README.md）
 /tools/iverilog/
 /tools/surfer/
+
+# 电路图浏览工具链（yosys 子集 + node.exe + netlistsvg npm 包，约 100MB，
+# 不入库；重建方式见 tools/README.md）
+/tools/yosys/
+/tools/netlistsvg/
+

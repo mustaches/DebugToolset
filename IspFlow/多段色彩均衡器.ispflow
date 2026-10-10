@@ -2,22 +2,6 @@
   "name": "多段色彩均衡器",
   "nodes": [
     {
-      "id": "n24",
-      "typeId": "video_output",
-      "x": 1430.0,
-      "y": -860.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "视频输出#1",
-      "params": {
-        "fps": 60,
-        "crf": 25,
-        "encoder": "auto",
-        "filePath": "G:\\DebugToolSet\\IspFlow\\Video_out\\record-2025-12-03-10-04-21-0002-output.mp4",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
-      }
-    },
-    {
       "id": "n34",
       "typeId": "multi_band_eq",
       "x": -460.0,
@@ -37,7 +21,7 @@
         "b0_dh": 11.859423384746407,
         "b0_q": 1.8,
         "fps": 60,
-        "frameCount": 6270,
+        "frameCount": 20263,
         "b1_q": 3.495145631067961,
         "b1_s": 0.6,
         "b1_l": 0.9,
@@ -59,26 +43,42 @@
       "extraHeight": 160.0,
       "name": "Video#1",
       "params": {
-        "filePath": "G:\\DebugToolSet\\4k60VRec\\Sony 4K60p SDR Demo Video.MP4",
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\SONY OLED 4K Video ULTRA HD Demo  HDR Test Part 2.mp4",
         "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n48",
+      "typeId": "video_output",
+      "x": 1440.0,
+      "y": -860.0,
+      "width": 860.0,
+      "extraHeight": 234.0,
+      "name": "视频输出#1",
+      "params": {
+        "fps": 60,
+        "crf": 25,
+        "encoder": "auto",
+        "filePath": "IspFlow/VideoOut/output.mp4",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
     }
   ],
   "connections": [
     {
-      "id": "c37",
-      "from": "n34",
-      "fromPort": "out",
-      "to": "n24",
-      "toPort": "in_hsl"
-    },
-    {
       "id": "c45",
       "from": "n44",
       "fromPort": "out_hsl",
       "to": "n34",
       "toPort": "in"
+    },
+    {
+      "id": "c49",
+      "from": "n34",
+      "fromPort": "out",
+      "to": "n48",
+      "toPort": "in_hsl"
     }
   ],
   "groups": [
@@ -90,5 +90,5 @@
       ]
     }
   ],
-  "nextId": 46
+  "nextId": 50
 }

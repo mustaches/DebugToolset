@@ -26,7 +26,15 @@ class IspEditorTabBar extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         children: [
           _EditorTab(
-            icon: Icons.account_tree_outlined,
+            // 流程图标签用 codicon type-hierarchy-sub（白色 PNG，随
+            // 激活态着色）。
+            icon: (fg) => Image.asset(
+              'icons/type-hierarchy-sub.png',
+              width: 26,
+              height: 26,
+              color: fg,
+              colorBlendMode: BlendMode.srcIn,
+            ),
             title: state.graphTabTitle,
             active: state.activeTab == 0,
             onTap: () => state.setActiveTab(0),
@@ -34,12 +42,55 @@ class IspEditorTabBar extends StatelessWidget {
           for (final (i, tab) in state.openCodeTabs.indexed)
             _EditorTab(
               icon: tab.startsWith('group:') || tab.startsWith('gbb:')
-                  ? Icons.account_tree
-                  : tab.startsWith('gip:')
-                      ? Icons.memory
-                      : Icons.code,
+                  // 「查看C代码」（group:）与「查看黑盒C代码」（gbb:）标签用
+                  // codicon file-code（白色 PNG，随激活态着色）；电路图
+                  // （sch:）用 circuit-board；其余为 Material 图标。
+                  ? (fg) => Image.asset(
+                        'icons/file-code.png',
+                        width: 26,
+                        height: 26,
+                        color: fg,
+                        colorBlendMode: BlendMode.srcIn,
+                      )
+                  : tab.startsWith('sch:')
+                      ? (fg) => Image.asset(
+                            'icons/circuit-board.png',
+                            width: 26,
+                            height: 26,
+                            color: fg,
+                            colorBlendMode: BlendMode.srcIn,
+                          )
+                      : tab.startsWith('gip:')
+                      // Verilog IP 标签用 codicon kimi（白色 PNG）。
+                      ? (fg) => Image.asset(
+                            'icons/kimi.png',
+                            width: 26,
+                            height: 26,
+                            color: fg,
+                            colorBlendMode: BlendMode.srcIn,
+                          )
+                      : tab.startsWith('wave:')
+                          // 仿真波形标签用 codicon telescope（白色 PNG）。
+                          ? (fg) => Image.asset(
+                                'icons/telescope.png',
+                                width: 26,
+                                height: 26,
+                                color: fg,
+                                colorBlendMode: BlendMode.srcIn,
+                              )
+                          : (fg) => Image.asset(
+                                // 节点「查看代码」标签用 codicon
+                                // code-oss（白色 PNG，随激活态着色）。
+                                'icons/code-oss.png',
+                                width: 26,
+                                height: 26,
+                                color: fg,
+                                colorBlendMode: BlendMode.srcIn,
+                              ),
               title: _tabTitle(state, tab),
-              tooltip: '$tab — 只读代码',
+              tooltip: tab.startsWith('wave:')
+                  ? '仿真波形（Surfer 内嵌）'
+                  : '$tab — 只读代码',
               active: state.activeTab == i + 1,
               onTap: () => state.setActiveTab(i + 1),
               onClose: () => state.closeCodeTab(tab),
@@ -74,6 +125,16 @@ class IspEditorTabBar extends StatelessWidget {
       );
     }
 
+    if (tab.startsWith('wave:')) return '仿真波形';
+    if (tab.startsWith('sch:')) {
+      final (groupId, vendor) = splitVendor(tab.substring(4));
+      for (final g in state.graph.groups) {
+        if (g.id == groupId) {
+          return '${g.name}·电路图${vendor == null ? '' : '·${vendor.shortName}'}';
+        }
+      }
+      return '编组电路图';
+    }
     if (tab.startsWith('gip:')) {
       final (groupId, vendor) = splitVendor(tab.substring(4));
       for (final g in state.graph.groups) {
@@ -107,9 +168,9 @@ class IspEditorTabBar extends StatelessWidget {
   }
 }
 
-/// 单个标签：图标 + 标题 + 可选关闭按钮。
+/// 单个标签：图标（随激活态着色的构建器）+ 标题 + 可选关闭按钮。
 class _EditorTab extends StatelessWidget {
-  final IconData icon;
+  final Widget Function(Color fg) icon;
   final String title;
   final String? tooltip;
   final bool active;
@@ -128,24 +189,35 @@ class _EditorTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = active ? Colors.white : Colors.grey;
+    // Chrome 浏览器标签风格：活动标签圆角顶角 + 与下方工具栏条同色连通
+    //（活动标签底色 = 工具栏条底色 0xFF252525），非活动标签透明底。
     final tab = Container(
       decoration: BoxDecoration(
         color: active ? const Color(0xFF252525) : Colors.transparent,
+        borderRadius: active
+            ? const BorderRadius.vertical(top: Radius.circular(8))
+            : null,
         border: Border(
+          left: BorderSide(
+              color: active
+                  ? const Color(0xFF3A3A3A)
+                  : const Color(0xFF2A2A2A)),
+          right: BorderSide(
+              color: active
+                  ? const Color(0xFF3A3A3A)
+                  : const Color(0xFF2A2A2A)),
           top: BorderSide(
-            color: active
-                ? Theme.of(context).colorScheme.primary
-                : Colors.transparent,
-            width: 2,
-          ),
-          right: const BorderSide(color: Color(0xFF3A3A3A)),
+              color: active
+                  ? const Color(0xFF3A3A3A)
+                  : Colors.transparent),
         ),
       ),
+      margin: const EdgeInsets.only(left: 2, top: 3),
       padding: const EdgeInsets.only(left: 10, right: 6),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: fg),
+          icon(fg),
           const SizedBox(width: 6),
           Text(title, style: TextStyle(fontSize: 12, color: fg)),
           if (onClose != null)
@@ -164,7 +236,10 @@ class _EditorTab extends StatelessWidget {
     );
     return Tooltip(
       message: tooltip ?? title,
-      child: InkWell(onTap: onTap, child: tab),
+      child: InkWell(
+          onTap: onTap,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+          child: tab),
     );
   }
 }

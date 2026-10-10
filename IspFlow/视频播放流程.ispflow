@@ -10,8 +10,8 @@
       "extraHeight": 632.0,
       "name": "预览#1",
       "params": {
-        "fps": 60,
-        "frameCount": 6270
+        "fps": 30,
+        "frameCount": 15458
       }
     },
     {
@@ -27,14 +27,30 @@
     {
       "id": "n8",
       "typeId": "video_source",
-      "x": 520.0,
+      "x": 530.0,
       "y": 370.0,
       "width": 260.0,
       "extraHeight": 160.0,
       "name": "Video#1",
       "params": {
-        "filePath": "D:\\DebugToolSet\\4k60VRec\\Sony 4K60p HDR Demo Video.MP4",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\本地部署DeepSeek Harness 加 Qwen3.8-27B教程.mp4",
         "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n13",
+      "typeId": "video_output",
+      "x": 1810.0,
+      "y": 370.0,
+      "width": 860.0,
+      "extraHeight": 194.0,
+      "name": "视频输出#1",
+      "params": {
+        "fps": 30,
+        "crf": 51,
+        "encoder": "auto",
+        "filePath": "G:\\DebugToolSet\\IspFlow\\Video_out\\本地部署DeepSeek Harness 加 Qwen3.8-27B教程.mp4",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
     }
@@ -53,8 +69,15 @@
       "fromPort": "out_audio",
       "to": "n6",
       "toPort": "in"
+    },
+    {
+      "id": "c14",
+      "from": "n2",
+      "fromPort": "out",
+      "to": "n13",
+      "toPort": "in"
     }
   ],
   "groups": [],
-  "nextId": 11
+  "nextId": 15
 }

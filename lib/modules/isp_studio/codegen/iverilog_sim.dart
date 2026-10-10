@@ -6,6 +6,7 @@ library;
 
 import 'dart:convert' show utf8;
 import 'dart:io';
+import 'dart:typed_data';
 
 /// iverilog 编译器可执行文件路径（含 `iverilog`/`vvp` 两件套，附带可选的
 /// `gtkwave` 波形查看器）。未找到返回 null。
@@ -86,11 +87,16 @@ class IpSimResult {
   final String output;
   final int exitCode;
 
+  /// tb 转储的 wave.vcd 内容（内嵌波形标签页用；临时目录删除前捕获，
+  /// 无波形文件时为 null）。
+  final Uint8List? vcdData;
+
   const IpSimResult({
     required this.success,
     required this.passed,
     required this.output,
     required this.exitCode,
+    this.vcdData,
   });
 }
 
@@ -166,11 +172,19 @@ Future<IpSimResult> runIpSimulation(
       emit('\n未检测到波形查看器（Surfer / GTKWave），波形文件未打开\n');
     }
 
+    // 目录删除前捕获波形内容（内嵌波形标签页经回环伺服读取）。
+    Uint8List? vcdData;
+    try {
+      final f = File(vcd);
+      if (f.existsSync()) vcdData = await f.readAsBytes();
+    } catch (_) {}
+
     return IpSimResult(
         success: true,
         passed: passed,
         output: out.toString(),
-        exitCode: runCode);
+        exitCode: runCode,
+        vcdData: vcdData);
   } finally {
     if (!keepDir) {
       try {
@@ -180,6 +194,37 @@ Future<IpSimResult> runIpSimulation(
       }
     }
   }
+}
+
+/// 外部查看器兜底（内嵌 WebView2 不可用时的回退）：把波形与查看器配置
+/// 写临时目录，用探测到的查看器打开。临时目录保留不删（查看器异步读
+/// 文件，交给系统回收）。返回查看器名；无可用查看器返回 null。
+Future<String?> launchWaveformExternally(Uint8List vcd,
+    {String? sucl, String? gtkw}) async {
+  final viewer = detectWaveViewer(detectIverilog());
+  if (viewer == null) return null;
+  final dir = await Directory.systemTemp.createTemp('isp_ip_wave_');
+  final vcdPath = '${dir.path}${Platform.pathSeparator}wave.vcd';
+  await File(vcdPath).writeAsBytes(vcd);
+  final List<String> args;
+  if (viewer.isSurfer) {
+    String? suclPath;
+    if (sucl != null) {
+      suclPath = '${dir.path}${Platform.pathSeparator}wave.sucl';
+      await File(suclPath).writeAsString(sucl);
+    }
+    args = [vcdPath, if (suclPath != null) ...['--command-file', suclPath]];
+  } else {
+    String? gtkwPath;
+    if (gtkw != null) {
+      gtkwPath = '${dir.path}${Platform.pathSeparator}wave.gtkw';
+      await File(gtkwPath).writeAsString(gtkw);
+    }
+    args = [vcdPath, ?gtkwPath];
+  }
+  await Process.start(viewer.exe, args,
+      workingDirectory: dir.path, mode: ProcessStartMode.detached);
+  return viewer.isSurfer ? 'Surfer' : 'GTKWave';
 }
 
 Future<int> _runStep(String exe, List<String> args, String workDir,

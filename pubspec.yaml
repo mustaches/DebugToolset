@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.2.0+20
+version: 1.2.0+22
 
 environment:
   sdk: ^3.12.2
@@ -76,8 +76,38 @@ flutter:
   assets:
     - LXI_Logo/LXI_Logo.svg
     - LXI_Logo/LXI_Logo_2.png
-    # ISP Studio 编译工具栏「编译」按钮图标（自绘锤子+砖墙，VS Build 风格）。
-    - icons/build_project.svg
+    # ISP Studio 代码页工具栏图标（codicons，自 codicons-ico-multi 的 .ico
+    # 提取 64x64 PNG 并重着色为纯白；禁用态运行时压暗）。
+    - icons/build.png
+    - icons/play.png
+    - icons/debug-coverage.png
+    - icons/git-stash-pop.png
+    # ISP Studio「查看C代码」「查看黑盒C代码」标签页图标（同上提取 + 白色）。
+    - icons/file-code.png
+    # ISP Studio 流程图标签页图标（同上提取 + 白色）。
+    - icons/type-hierarchy-sub.png
+    # ISP Studio Verilog IP 标签页图标（同上提取 + 白色）。
+    - icons/kimi.png
+    # ISP Studio IP 页工具栏「生成选项」图标（同上提取 + 白色）。
+    - icons/settings-gear.png
+    # ISP Studio 仿真波形标签页图标（同上提取 + 白色）。
+    - icons/telescope.png
+    # ISP Studio 电路图标签页/IP 页工具栏「电路图浏览」图标（同上）。
+    - icons/circuit-board.png
+    # ISP Studio 电路图页工具栏「重新生成」图标（同上）。
+    - icons/refresh.png
+    # ISP Studio 主工具栏「打开流程」「保存流程」图标（同上提取 + 白色）。
+    - icons/folder-opened.png
+    - icons/save.png
+    # ISP Studio 视频输出节点「设定路径」「CRF 档位」「导出 MP4」图标
+    #（同上提取 + 白色；设定路径复用 folder-opened.png）。
+    - icons/gear.png
+    - icons/go-to-file.png
+    # ISP Studio 节点右上角「查看代码」图标（同上提取 + 白色）。
+    - icons/code-oss.png
+    # ISP Studio 节点右上角「最大化/还原」图标（同上提取 + 白色）。
+    - icons/screen-full.png
+    - icons/screen-normal.png
     # ISP Studio「查看代码」：pipeline 真实源码打包为资产，运行时按符号提取。
     - lib/modules/isp_studio/pipeline/
     - lib/modules/isp_studio/pipeline/metrics/

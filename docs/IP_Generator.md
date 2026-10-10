@@ -61,12 +61,37 @@ iverilog -g2012 -o tb.vvp tb_isp_ip_<组>.v isp_ip_<组>_core.v isp_ip_<组>_top
 vvp tb.vvp      # 输出 PASS/FAIL（EXACT 逐位 FNV-1a 对拍），并转储 wave.vcd
 ```
 
-testbench 内含 `$dumpfile/$dumpvars` 波形转储；仿真结束后自动打开波形
-查看器。**工具链随安装包内置**（`tools/iverilog/` + `tools/surfer/`，
-安装版开箱即用）；开发机未内置时依次回退：Surfer（PATH 或 `C:\surfer`
-下的 surfer.exe；经 `wave.sucl` 启动命令文件自动加载时钟与 IP I/O 信号
-并 Zoom Fit）→ GTKWave（`C:\iverilog\bin`；经 `wave.gtkw` 保存文件自动
-加载同一批信号）。无 iverilog 时 UI 探测行提示安装（导出功能不受影响）。
+testbench 内含 `$dumpfile/$dumpvars` 波形转储；仿真结束后自动打开
+ISP Studio 内嵌**「仿真波形」标签页**（Flutter 原生数字波形查看器：
+解析 wave.vcd 后 CustomPaint 渲染，时钟/复位/IP I/O 信号默认展示，
+拖动平移、滚轮缩放、单击光标、双击 Zoom Fit）。工具链随安装包内置
+（`tools/iverilog/` + `tools/surfer/`，安装版开箱即用）；标签页工具栏
+可改由外部查看器打开：Surfer（经 `wave.sucl` 启动命令文件自动加载
+同一批信号）→ GTKWave（经 `wave.gtkw` 保存文件）。无 iverilog 时 UI
+探测行提示安装（导出功能不受影响）。
+
+## 电路图浏览
+
+IP 标签页工具栏「电路图浏览」打开**「电路图」标签页**（`sch:` 前缀），
+含两种视图（工具栏左侧切换）：
+
+- **模块框图**（默认）：由编组规划 IR 直绘的模块级框图（Vivado
+  Elaborated Design 风格）——实例块带端口针脚、网表三段正交肘线连线、
+  位宽标注，输入/输出端口组钉在左右缘，节点按拓扑层级分列；点节点块
+  可打开其代码页。零工具链依赖，即时显示。
+- **RTL 网表**：yosys + netlistsvg 管线渲染的实际网表电路图（首次
+  切换时懒触发）：
+
+```
+yosys -p "read_verilog <各 .v>; hierarchy -top <最外层封装>; proc; opt_clean; write_json net.json"
+node netlistsvg.js net.json -o sch.svg
+```
+
+页内嵌 SVG 浏览（拖动平移、滚轮缩放），工具栏含「重新生成」「导出SVG」
+与日志面板开关。顶层封装按厂商选择：Vivado 取 `*_axis`，Libero 取
+`*_libero`，通用取 `*_top`。工具链随安装包内置（`tools/yosys/` +
+`tools/netlistsvg/`，安装版开箱即用；重建方式见 `tools/README.md`）；
+缺失时 RTL 视图提示安装（框图视图不受影响）。
 
 ## 导入说明
 

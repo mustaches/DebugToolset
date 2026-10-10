@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 81 种节点类型', () {
+    test('包含全部 84 种节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -90,11 +90,13 @@ void main() {
         'kid',
         'musiq',
         'clipiqa',
+        'format_converter',
+        'video_health_check',
       ];
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 82);
+      expect(IspNodeRegistry.types.length, 84);
     });
 
     test('端口类型符合预期', () {

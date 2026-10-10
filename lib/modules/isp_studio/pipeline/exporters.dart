@@ -250,12 +250,17 @@ Future<String> exportMp4({
   /// w*h*3/2/帧——GPU 出图直接以 yuv420p 回读喂入时使用，免 ffmpeg
   /// 内部 rgba→yuv420p 的 CPU 转换且管道流量降为 37%）。
   String inputPixelFormat = 'rgba',
+
+  /// 编码器实时输出（stderr 的 frame=/fps=/size=/bitrate=/speed= 进度
+  /// 行等，含 \r 覆盖；解析选定的编码器也会经此先行上报）。
+  void Function(String chunk)? onOutput,
 }) async {
   // 自动模式：先探测后选定。探测只花 1 帧开销，可在帧流开始前决定用哪
   // 套参数——导出帧源是按序单遍拉取的（上游调度队列不可重放），不能
   // 编码到一半换编码器重跑，故回退发生在开始之前而不是中途。
   final useEncoder =
       await resolveMp4Encoder(ffmpegPath, encoder, width: width, height: height);
+  onOutput?.call('编码器: $useEncoder（CRF $crf，$width×$height @${fps}fps）\n');
   final process = await startMp4Encoder(
       ffmpegPath: ffmpegPath,
       outputPath: outputPath,
@@ -268,7 +273,10 @@ Future<String> exportMp4({
   final stderrBuf = StringBuffer();
   final stderrDone = process.stderr
       .transform(const SystemEncoding().decoder)
-      .listen(stderrBuf.write)
+      .listen((chunk) {
+        stderrBuf.write(chunk);
+        onOutput?.call(chunk);
+      })
       .asFuture<void>();
 
   try {

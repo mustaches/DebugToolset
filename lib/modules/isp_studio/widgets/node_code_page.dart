@@ -1,11 +1,11 @@
 /// ISP Studio 节点代码标签页。
 ///
 /// 嵌入式相关节点（nodeCCodeFiles 中有 C 映射）展示 C 代码视图：左侧为
-/// c_ref/ 文件层次列表（共享层 / 本节点文件，底部附「导出代码」按钮，
+/// c_ref/ 文件层次列表（共享层 / 本节点文件；工具栏「导出代码」图标按钮
 /// 可把列表全部文件导出到指定文件夹），右侧为带行号的语法高亮
 /// 代码区（只读，C 高亮）；PC 侧节点（pcSideNodeTypes）与其余类型展示
 /// 原 Dart 视图：左侧 2/3 代码区，右侧 1/3 变量表（变量名 / 数据类型 /
-/// 变量内容，数组以表格展开），PC 侧节点页头下另附说明横幅。
+/// 变量内容，数组以表格展开），PC 侧节点工具栏下另附说明横幅。
 library;
 
 import 'package:flutter/material.dart';
@@ -20,11 +20,12 @@ import '../pipeline/frame3d.dart';
 import '../pipeline/node_c_code.dart';
 import '../pipeline/node_code.dart';
 import 'code_browser.dart';
+import 'tab_toolbar.dart';
 
 /// 单个节点的只读代码页面（作为编辑器标签页嵌入主视图）。
-/// 嵌入式节点（C 视图）页头下有编译工具栏：点「编译」在代码区下方
+/// 嵌入式节点（C 视图）工具栏含编译入口：点「编译」在代码区下方
 /// 切出 1/4 高度的终端面板，流式打印编译过程（与编组代码页共用
-/// CodeCompileArea）。
+/// CodeCompileArea）；页面信息（节点名/类型/只读）收在工具栏行右侧。
 class NodeCodePage extends StatefulWidget {
   final String nodeId;
 
@@ -35,8 +36,12 @@ class NodeCodePage extends StatefulWidget {
   /// 真实资产 IO；缺省为 loadCRefFile 逐个读入）。
   final Future<Map<String, String>> Function(List<String> files)? filesLoader;
 
-  const NodeCodePage(
-      {super.key, required this.nodeId, this.compileRunner, this.filesLoader});
+  const NodeCodePage({
+    super.key,
+    required this.nodeId,
+    this.compileRunner,
+    this.filesLoader,
+  });
 
   @override
   State<NodeCodePage> createState() => _NodeCodePageState();
@@ -68,8 +73,9 @@ class _NodeCodePageState extends State<NodeCodePage> {
     if (fileName == 'main.c') {
       if (_cFileFuture == null || _cFileKey != fileName) {
         _cFileKey = fileName;
-        _cFileFuture =
-            Future.value(stubMainCSource(target: CCompileTarget.x86));
+        _cFileFuture = Future.value(
+          stubMainCSource(target: CCompileTarget.x86),
+        );
       }
       return _cFileFuture!;
     }
@@ -97,39 +103,31 @@ class _NodeCodePageState extends State<NodeCodePage> {
       builder: (context, snapshot) {
         // 加载中显示占位；资产读取失败时降级为占位注释，
         // Input/Output 变量（静态表）不受影响仍正常显示。
-        final code = snapshot.data ??
-            (snapshot.hasError
-                ? '// 加载源码失败：${snapshot.error}'
-                : '// 加载中…');
+        final code =
+            snapshot.data ??
+            (snapshot.hasError ? '// 加载源码失败：${snapshot.error}' : '// 加载中…');
         return _buildWithCode(context, state, node, code);
       },
     );
   }
 
-  /// 页头：节点名 + 类型 id + 只读标识（C / Dart 视图共用）。
-  Widget _buildHeader(IspNode node) {
-    return Container(
-      height: 28,
-      color: const Color(0xFF252525),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      alignment: Alignment.centerLeft,
-      child: Row(
-        children: [
-          Text(
-            '${node.name} (${widget.nodeId})',
-            style: const TextStyle(fontSize: 12, color: Colors.white70),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            node.typeId,
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
-          ),
-          const Spacer(),
-          const Icon(Icons.lock_outline, size: 12, color: Colors.grey),
-          const SizedBox(width: 4),
-          const Text('只读', style: TextStyle(fontSize: 11, color: Colors.grey)),
-        ],
-      ),
+  /// 工具栏右侧信息区：节点名 + 类型 id + 只读标识（C / Dart 视图共用）。
+  Widget _buildToolbarInfo(IspNode node) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '${node.name} (${widget.nodeId})',
+          style: const TextStyle(fontSize: 12, color: Colors.white70),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          node.typeId,
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        const SizedBox(width: 8),
+        ispTabToolbarReadOnly(),
+      ],
     );
   }
 
@@ -145,16 +143,17 @@ class _NodeCodePageState extends State<NodeCodePage> {
     // 默认选中列表中第一个 .c 文件，无 .c 则第一个文件。
     final selected =
         _selectedCFile != null && displayFiles.contains(_selectedCFile)
-            ? _selectedCFile!
-            : displayFiles.firstWhere((f) => f.endsWith('.c'),
-                orElse: () => displayFiles.first);
+        ? _selectedCFile!
+        : displayFiles.firstWhere(
+            (f) => f.endsWith('.c'),
+            orElse: () => displayFiles.first,
+          );
     return FutureBuilder<String>(
       future: _cCodeFor(selected),
       builder: (context, snapshot) {
-        final code = snapshot.data ??
-            (snapshot.hasError
-                ? '// 加载源码失败：${snapshot.error}'
-                : '// 加载中…');
+        final code =
+            snapshot.data ??
+            (snapshot.hasError ? '// 加载源码失败：${snapshot.error}' : '// 加载中…');
         // 与文本对比/补丁视图同一套 VSCode Dark+ 语法高亮（C family 规则）。
         final spans = SyntaxHighlighter.highlightText(
           code.trim(),
@@ -163,42 +162,39 @@ class _NodeCodePageState extends State<NodeCodePage> {
         );
         return Container(
           color: const Color(0xFF1E1E1E),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildHeader(node),
-              Expanded(
-                child: CodeCompileArea(
-                  buttonKey: const ValueKey('nodeCompileButton'),
-                  terminalKey: const ValueKey('nodeCompileTerminal'),
-                  leftPane: CFileList(
-                    // files 传原始清单（「导出代码」产物不变，不含 main.c）；
-                    // main.c 只经 groups 进入展示分组。
-                    files: files,
-                    selected: selected,
-                    onSelect: (f) => setState(() => _selectedCFile = f),
-                    groups: [
-                      CodeFileGroup('共享层', [
-                        for (final f in files)
-                          if (f.startsWith('isp_common.')) f,
-                      ]),
-                      CodeFileGroup('本节点文件', [
-                        for (final f in files)
-                          if (!f.startsWith('isp_common.')) f,
-                      ]),
-                      // 「临时main调用（不导出）」分组标题用红色底标识（VS 系红）。
-                      const CodeFileGroup('临时main调用（不导出）', ['main.c'],
-                          titleColor: Color(0xFFC42B1C)),
-                    ],
-                  ),
-                  codeArea: CodeArea(spans: spans),
-                  filesLoader: widget.filesLoader != null
-                      ? () => widget.filesLoader!(files)
-                      : () => _cRefFileMap(files),
-                  compileRunner: widget.compileRunner,
-                ),
-              ),
-            ],
+          child: CodeCompileArea(
+            buttonKey: const ValueKey('nodeCompileButton'),
+            terminalKey: const ValueKey('nodeCompileTerminal'),
+            trailing: _buildToolbarInfo(node),
+            // 工具栏「导出代码」：导出清单全部 c_ref 文件（默认行为，
+            // 不含仅展示的 stub main.c）。
+            onExport: (ctx) => exportCRefFilesInteractive(ctx, files),
+            leftPane: CFileList(
+              // files 传原始清单（「导出代码」产物不变，不含 main.c）；
+              // main.c 只经 groups 进入展示分组。
+              files: files,
+              selected: selected,
+              onSelect: (f) => setState(() => _selectedCFile = f),
+              groups: [
+                CodeFileGroup('共享层', [
+                  for (final f in files)
+                    if (f.startsWith('isp_common.')) f,
+                ]),
+                CodeFileGroup('本节点文件', [
+                  for (final f in files)
+                    if (!f.startsWith('isp_common.')) f,
+                ]),
+                // 「临时main调用（不导出）」分组标题用红色底标识（VS 系红）。
+                const CodeFileGroup('临时main调用（不导出）', [
+                  'main.c',
+                ], titleColor: Color(0xFFC42B1C)),
+              ],
+            ),
+            codeArea: CodeArea(spans: spans),
+            filesLoader: widget.filesLoader != null
+                ? () => widget.filesLoader!(files)
+                : () => _cRefFileMap(files),
+            compileRunner: widget.compileRunner,
           ),
         );
       },
@@ -214,8 +210,12 @@ class _NodeCodePageState extends State<NodeCodePage> {
     return map;
   }
 
-  Widget _buildWithCode(BuildContext context, IspStudioState state,
-      IspNode node, String code) {
+  Widget _buildWithCode(
+    BuildContext context,
+    IspStudioState state,
+    IspNode node,
+    String code,
+  ) {
     final nodeId = widget.nodeId;
     final type = IspNodeRegistry.byId(node.typeId);
     // 与文本对比/补丁视图同一套 VSCode Dark+ 语法高亮（Dart 走 C family 规则）。
@@ -235,8 +235,12 @@ class _NodeCodePageState extends State<NodeCodePage> {
     final upstreamCapture = upstreamId != null
         ? _sampledCapture(state.nodeOutputCaptures[upstreamId])
         : null;
-    final inputs =
-        _applyInputs(variables.inputs, node, upstreamCapture, upstreamId);
+    final inputs = _applyInputs(
+      variables.inputs,
+      node,
+      upstreamCapture,
+      upstreamId,
+    );
     final outputs = _applyCapture(variables.outputs, capture, nodeId);
     final isSource = type?.inputs.isEmpty ?? false;
     return Container(
@@ -244,7 +248,8 @@ class _NodeCodePageState extends State<NodeCodePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildHeader(node),
+          // Dart 视图无功能按钮，工具栏行仅右侧信息区（保持高度一致）。
+          ispTabToolbarRow(children: [const Spacer(), _buildToolbarInfo(node)]),
           // PC 侧节点：无嵌入式 C 参考实现，说明以下为 Dart 源码。
           if (pcSideNodeTypes.contains(node.typeId))
             Container(
@@ -273,8 +278,8 @@ class _NodeCodePageState extends State<NodeCodePage> {
                     inputTitle: isSource
                         ? 'Input（参数值）'
                         : (upstreamCapture != null
-                            ? 'Input（运行值）'
-                            : 'Input（未运行）'),
+                              ? 'Input（运行值）'
+                              : 'Input（未运行）'),
                     outputTitle: capture != null
                         ? 'Output（运行值）'
                         : 'Output（未运行）',
@@ -295,7 +300,10 @@ class _NodeCodePageState extends State<NodeCodePage> {
 
   /// 该节点输入端口所连上游节点的 id（未连接为 null）。
   static String? _upstreamNodeId(
-      IspStudioState state, IspNode node, IspNodeType? type) {
+    IspStudioState state,
+    IspNode node,
+    IspNodeType? type,
+  ) {
     if (type == null) return null;
     for (final port in type.inputs) {
       final conn = state.graph.connectionAt(node.id, port.name);
@@ -308,7 +316,10 @@ class _NodeCodePageState extends State<NodeCodePage> {
   /// 元素以 (frame, width, height) 三维坐标标注（只加载当前帧，frame 恒为 0）。
   /// [queryNodeId] 为坐标查询的目标节点（输出=本节点，输入=上游节点）。
   static CodeVariable _runtimeBufferVar(
-      CodeVariable v, Map<String, Object?> capture, String queryNodeId) {
+    CodeVariable v,
+    Map<String, Object?> capture,
+    String queryNodeId,
+  ) {
     final sample = (capture['sample'] as List).cast<int>();
     final length = capture['length'] as int;
     final format = capture['format'] as String;
@@ -323,14 +334,17 @@ class _NodeCodePageState extends State<NodeCodePage> {
     final labels = <String>[];
     for (var i = 0; i < sample.length; i++) {
       final (f, x, y, c) = view.coordinateOf(i);
-      labels.add(view.channels == 1
-          ? '($f, $x, $y)'
-          : '($f, $x, $y) ${channelLabels?[c] ?? 'c$c'}');
+      labels.add(
+        view.channels == 1
+            ? '($f, $x, $y)'
+            : '($f, $x, $y) ${channelLabels?[c] ?? 'c$c'}',
+      );
     }
     return CodeVariable(
       name: v.name,
       type: v.type,
-      value: '运行值（$format，共 $length 项'
+      value:
+          '运行值（$format，共 $length 项'
           '${sample.length < length ? '，显示前 ${sample.length}' : ''}）',
       items: [for (final x in sample) '$x'],
       itemLabels: labels,
@@ -344,8 +358,10 @@ class _NodeCodePageState extends State<NodeCodePage> {
   /// 把预览运行时采样到的输出数据合并进 Output 变量；
   /// 非数据缓冲变量保留契约说明。
   static List<CodeVariable> _applyCapture(
-      List<CodeVariable> outputs, Map<String, Object?>? capture,
-      String nodeId) {
+    List<CodeVariable> outputs,
+    Map<String, Object?>? capture,
+    String nodeId,
+  ) {
     if (capture == null) return outputs;
     return [
       for (final v in outputs)
@@ -360,10 +376,11 @@ class _NodeCodePageState extends State<NodeCodePage> {
   /// 数据缓冲取上游节点的运行采样；width/height 取上游帧尺寸；
   /// maxValue 按位深参数推导；其余与节点参数同名的显示参数实际值。
   static List<CodeVariable> _applyInputs(
-      List<CodeVariable> inputs,
-      IspNode node,
-      Map<String, Object?>? upstreamCapture,
-      String? upstreamNodeId) {
+    List<CodeVariable> inputs,
+    IspNode node,
+    Map<String, Object?>? upstreamCapture,
+    String? upstreamNodeId,
+  ) {
     /// 输入变量名 → 节点参数键（命名不一致时的别名）。
     const paramAliases = {'path': 'filePath', 'pattern': 'bayerPattern'};
     final params = node.paramValues;
@@ -376,7 +393,10 @@ class _NodeCodePageState extends State<NodeCodePage> {
         else if ((v.name == 'width' || v.name == 'height') &&
             upstreamCapture != null)
           CodeVariable(
-              name: v.name, type: v.type, value: '${upstreamCapture[v.name]}')
+            name: v.name,
+            type: v.type,
+            value: '${upstreamCapture[v.name]}',
+          )
         else if (v.name == 'maxValue' && params['bitDepth'] != null)
           CodeVariable(
             name: v.name,
@@ -443,16 +463,23 @@ class _VariablePanelState extends State<_VariablePanel> {
 
   static const _headerStyle = TextStyle(fontSize: 11, color: Colors.grey);
   static const _nameStyle = TextStyle(
-      fontSize: 11, color: kVscodeVariable, fontFamily: 'Consolas');
+    fontSize: 11,
+    color: kVscodeVariable,
+    fontFamily: 'Consolas',
+  );
   static const _typeStyle = TextStyle(
-      fontSize: 11, color: kVscodeType, fontFamily: 'Consolas');
+    fontSize: 11,
+    color: kVscodeType,
+    fontFamily: 'Consolas',
+  );
   static const _valueStyle = TextStyle(
-      fontSize: 11, color: kVscodePlain, fontFamily: 'Consolas');
+    fontSize: 11,
+    color: kVscodePlain,
+    fontFamily: 'Consolas',
+  );
 
   bool get _isEmpty =>
-      widget.inputs.isEmpty &&
-      widget.outputs.isEmpty &&
-      widget.inside.isEmpty;
+      widget.inputs.isEmpty && widget.outputs.isEmpty && widget.inside.isEmpty;
 
   /// 按当前进制格式化数值内容；非纯数字（表达式等）原样返回。
   String _formatValue(String content) {
@@ -475,12 +502,15 @@ class _VariablePanelState extends State<_VariablePanel> {
               : Colors.transparent,
           borderRadius: BorderRadius.circular(3),
           border: Border.all(
-              color: active ? Colors.transparent : Colors.grey.shade700),
+            color: active ? Colors.transparent : Colors.grey.shade700,
+          ),
         ),
         child: Text(
           label,
           style: TextStyle(
-              fontSize: 10, color: active ? Colors.white : Colors.grey),
+            fontSize: 10,
+            color: active ? Colors.white : Colors.grey,
+          ),
         ),
       ),
     );
@@ -502,11 +532,17 @@ class _VariablePanelState extends State<_VariablePanel> {
             child: Row(
               children: [
                 const Expanded(
-                    flex: 3, child: Text('变量名', style: _headerStyle)),
+                  flex: 3,
+                  child: Text('变量名', style: _headerStyle),
+                ),
                 const Expanded(
-                    flex: 2, child: Text('数据类型', style: _headerStyle)),
+                  flex: 2,
+                  child: Text('数据类型', style: _headerStyle),
+                ),
                 const Expanded(
-                    flex: 3, child: Text('变量内容', style: _headerStyle)),
+                  flex: 3,
+                  child: Text('变量内容', style: _headerStyle),
+                ),
                 _radixButton('DEC', !_hex),
                 _radixButton('HEX', _hex),
               ],
@@ -515,18 +551,28 @@ class _VariablePanelState extends State<_VariablePanel> {
           Expanded(
             child: _isEmpty
                 ? const Center(
-                    child: Text('未解析到变量',
-                        style:
-                            TextStyle(fontSize: 11, color: Colors.grey)),
+                    child: Text(
+                      '未解析到变量',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
                   )
                 : ListView(
                     children: [
-                      _buildSection(widget.inputTitle, widget.inputs,
-                          const Color(0xFF569CD6)),
-                      _buildSection(widget.outputTitle, widget.outputs,
-                          const Color(0xFFC586C0)),
-                      _buildSection('Inside', widget.inside,
-                          const Color(0xFF858585)),
+                      _buildSection(
+                        widget.inputTitle,
+                        widget.inputs,
+                        const Color(0xFF569CD6),
+                      ),
+                      _buildSection(
+                        widget.outputTitle,
+                        widget.outputs,
+                        const Color(0xFFC586C0),
+                      ),
+                      _buildSection(
+                        'Inside',
+                        widget.inside,
+                        const Color(0xFF858585),
+                      ),
                     ],
                   ),
           ),
@@ -536,8 +582,7 @@ class _VariablePanelState extends State<_VariablePanel> {
   }
 
   /// 一节：分组标题条 + 变量行。
-  Widget _buildSection(
-      String title, List<CodeVariable> vars, Color accent) {
+  Widget _buildSection(String title, List<CodeVariable> vars, Color accent) {
     if (vars.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -552,16 +597,19 @@ class _VariablePanelState extends State<_VariablePanel> {
               Container(
                 width: 6,
                 height: 6,
-                decoration:
-                    BoxDecoration(color: accent, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: 6),
               Text(
                 title,
                 style: TextStyle(
-                    fontSize: 11,
-                    color: accent,
-                    fontWeight: FontWeight.bold),
+                  fontSize: 11,
+                  color: accent,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -585,13 +633,19 @@ class _VariablePanelState extends State<_VariablePanel> {
             children: [
               Expanded(
                 flex: 3,
-                child: Text(v.name,
-                    style: _nameStyle, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  v.name,
+                  style: _nameStyle,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               Expanded(
                 flex: 2,
-                child: Text(v.type,
-                    style: _typeStyle, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  v.type,
+                  style: _typeStyle,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               Expanded(
                 flex: 3,
@@ -620,8 +674,12 @@ class _VariablePanelState extends State<_VariablePanel> {
     final items = v.items!;
     final labels = v.itemLabels;
     const border = BorderSide(color: Color(0xFF3A3A3A));
-    TableRow row(String index, String content,
-        {Color? bg, TextStyle style = _valueStyle}) {
+    TableRow row(
+      String index,
+      String content, {
+      Color? bg,
+      TextStyle style = _valueStyle,
+    }) {
       return TableRow(
         decoration: BoxDecoration(color: bg),
         children: [
@@ -633,8 +691,11 @@ class _VariablePanelState extends State<_VariablePanel> {
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             child: Tooltip(
               message: _formatValue(content),
-              child: Text(_formatValue(content),
-                  style: style, overflow: TextOverflow.ellipsis),
+              child: Text(
+                _formatValue(content),
+                style: style,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
         ],
@@ -668,8 +729,12 @@ class _VariablePanelState extends State<_VariablePanel> {
               verticalInside: border,
             ),
             children: [
-              row(labels != null ? '(帧, 宽, 高)' : '序号', '内容',
-                  bg: const Color(0xFF2A2A2A), style: _headerStyle),
+              row(
+                labels != null ? '(帧, 宽, 高)' : '序号',
+                '内容',
+                bg: const Color(0xFF2A2A2A),
+                style: _headerStyle,
+              ),
               for (final (i, item) in items.indexed)
                 row(labels != null ? labels[i] : '$i', item),
             ],
@@ -731,7 +796,9 @@ class _CoordinateQueryBarState extends State<_CoordinateQueryBar> {
     final y = int.tryParse(_y.text.trim());
     final c = int.tryParse(_channel.text.trim());
     String? error;
-    if (f == null || x == null || y == null ||
+    if (f == null ||
+        x == null ||
+        y == null ||
         (widget.channels > 1 && c == null)) {
       error = '请输入整数坐标';
     } else if (f != 0) {
@@ -755,12 +822,17 @@ class _CoordinateQueryBarState extends State<_CoordinateQueryBar> {
       _error = null;
     });
     try {
-      final v = await context
-          .read<IspStudioState>()
-          .queryNodeOutputAt(widget.nodeId, x!, y!, c ?? 0);
+      final v = await context.read<IspStudioState>().queryNodeOutputAt(
+        widget.nodeId,
+        x!,
+        y!,
+        c ?? 0,
+      );
       if (!mounted) return;
       setState(() {
-        final coord = widget.channels > 1 ? '(0, $x, $y) c${c ?? 0}' : '(0, $x, $y)';
+        final coord = widget.channels > 1
+            ? '(0, $x, $y) c${c ?? 0}'
+            : '(0, $x, $y)';
         _result = '$coord = ${widget.format('$v')}';
       });
     } catch (e) {
@@ -775,8 +847,11 @@ class _CoordinateQueryBarState extends State<_CoordinateQueryBar> {
   }
 
   /// 单个坐标输入框（标签 + 窄文本框）。
-  Widget _field(String label, TextEditingController controller,
-      {double width = 48}) {
+  Widget _field(
+    String label,
+    TextEditingController controller, {
+    double width = 48,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: Row(
@@ -793,8 +868,10 @@ class _CoordinateQueryBarState extends State<_CoordinateQueryBar> {
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
                 isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 4,
+                ),
                 border: OutlineInputBorder(),
               ),
               onSubmitted: (_) => _query(),
@@ -822,8 +899,10 @@ class _CoordinateQueryBarState extends State<_CoordinateQueryBar> {
               InkWell(
                 onTap: _busy ? null : _query,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primary,
                     borderRadius: BorderRadius.circular(3),

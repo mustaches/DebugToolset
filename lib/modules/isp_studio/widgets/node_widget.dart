@@ -197,8 +197,7 @@ class IspNodeWidget extends StatelessWidget {
                     _buildExportButton(
                         state, '导出图片', () => state.exportImages(node.id)),
                   if (type.typeId == 'video_output')
-                    _buildExportButton(
-                        state, '导出 MP4', () => state.exportVideo(node.id)),
+                    _buildVideoOutputExtra(state),
                   if (type.typeId == 'format_converter')
                     _buildFormatConvertExtra(state),
                   if (type.typeId == 'video_health_check')
@@ -791,7 +790,7 @@ class IspNodeWidget extends StatelessWidget {
                 child: Text(
                   formatNodeRunTime(state.nodeRunTimesUs[node.id]!),
                   style: const TextStyle(
-                      color: Colors.white70, fontSize: 10),
+                      color: Colors.white70, fontSize: 15),
                 ),
               ),
             ),
@@ -800,9 +799,9 @@ class IspNodeWidget extends StatelessWidget {
             message: '查看代码',
             child: InkWell(
               onTap: () => state.openCodeTab(node.id),
-              child: const Padding(
-                padding: EdgeInsets.all(2),
-                child: Icon(Icons.code, size: 14, color: Colors.white70),
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Image.asset('icons/code-oss.png', width: 26, height: 26),
               ),
             ),
           ),
@@ -825,12 +824,12 @@ class IspNodeWidget extends StatelessWidget {
                 onTap: onToggleMaximize,
                 child: Padding(
                   padding: const EdgeInsets.all(2),
-                  child: Icon(
+                  child: Image.asset(
                     state.maximizedNodeId == node.id
-                        ? Icons.fullscreen_exit
-                        : Icons.fullscreen,
-                    size: 14,
-                    color: Colors.white70,
+                        ? 'icons/screen-normal.png'
+                        : 'icons/screen-full.png',
+                    width: 26,
+                    height: 26,
                   ),
                 ),
               ),
@@ -979,37 +978,198 @@ class IspNodeWidget extends StatelessWidget {
           final path = node.paramValues['filePath']?.toString() ?? '';
           text = path.isEmpty ? '未选择视频文件' : p.basename(path);
         }
-        // 时间形态：黑底白字大字（播放器 OSD 风格）；文件名形态保持
-        // 灰色小字。行高 40 与时间大字匹配（nodeHeight 同步 +40）。
+        // 时间形态：白字（透明底，与节点底色一致）+ 下方同款字体的
+        // 「已播放帧数/总帧数」，两行均水平居中；文件名形态保持灰色小字。
+        // 底部固定控制行：前一帧 / 播放暂停 / 倍速 / 后一帧。
+        // 行高 116（30 时间 + 30 帧数·帧率 + 20 进度条 + 36 控制行，
+        // nodeHeight 同步 +116）。
+        final canStep = showTime && !state.isPlaying && !state.isProcessing;
         return SizedBox(
-          height: 40,
+          height: 116,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: showTime
-                ? Container(
-                    width: double.infinity,
-                    color: Colors.black,
-                    alignment: Alignment.center,
-                    child: Text(text,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'Consolas',
-                          fontFamilyFallback: ['monospace'],
-                          fontSize: 30,
-                          color: Colors.white,
-                        )),
-                  )
-                : Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(text,
-                        overflow: TextOverflow.ellipsis,
-                        style:
-                            const TextStyle(fontSize: 10, color: Colors.grey)),
+            child: Column(
+              children: [
+                SizedBox(
+                  height: 30,
+                  width: double.infinity,
+                  child: Center(
+                    child: showTime
+                        ? Text(text,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: 'Consolas',
+                              fontFamilyFallback: ['monospace'],
+                              fontSize: 22.5,
+                              color: Colors.white,
+                            ))
+                        : Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(text,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 10, color: Colors.grey)),
+                          ),
                   ),
+                ),
+                SizedBox(
+                  height: 30,
+                  child: showTime
+                      ? Center(
+                          child: Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(
+                                  // 已播放帧数/总帧数（左侧补零使左右
+                                  // 位数一致）
+                                  text:
+                                      '${'${state.previewFrame}'.padLeft('$total'.length, '0')}/$total',
+                                  style: const TextStyle(
+                                    fontFamily: 'Consolas',
+                                    fontFamilyFallback: ['monospace'],
+                                    fontSize: 18,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                // 实时播放帧率（最近 1 秒上屏帧数；
+                                // 字体颜色与帧数一致，仅播放中显示）
+                                if (state.isPlaying)
+                                  TextSpan(
+                                    text: '  ${state.playbackFps} FPS',
+                                    style: const TextStyle(
+                                      fontFamily: 'Consolas',
+                                      fontFamilyFallback: ['monospace'],
+                                      fontSize: 18,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        )
+                      : null,
+                ),
+                // 播放进度条：当前帧/总帧数；暂停时可拖动定位
+                //（播放中禁用，与预览控制条同口径）。
+                SizedBox(
+                  height: 20,
+                  child: SliderTheme(
+                    data: kIspSliderTheme,
+                    child: Slider(
+                      value: showTime
+                          ? state.previewFrame
+                              .clamp(0, total - 1)
+                              .toDouble()
+                          : 0,
+                      min: 0,
+                      max: (total - 1).toDouble(),
+                      onChanged: !showTime || state.isPlaying
+                          ? null
+                          : (v) => state.setPreviewFrame(v.round()),
+                      onChangeEnd: !showTime || state.isPlaying
+                          ? null
+                          : (_) => state.runPreview(),
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  height: 36,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _videoCtlBtn(
+                        Icons.folder_open,
+                        '打开视频文件',
+                        // 播放中禁换片（解码流已按旧片起好）。
+                        state.isPlaying
+                            ? null
+                            : () => _pickVideoFile(state),
+                      ),
+                      _videoCtlBtn(
+                        Icons.skip_previous,
+                        '前一帧',
+                        canStep && state.previewFrame > 0
+                            ? () => state.stepPreviewFrame(-1)
+                            : null,
+                      ),
+                      _videoCtlBtn(
+                        state.isPlaying ? Icons.pause : Icons.play_arrow,
+                        state.isPlaying ? '暂停' : '播放',
+                        state.isProcessing && !state.isPlaying
+                            ? null
+                            : () => state.togglePlayback(),
+                      ),
+                      // 倍速选择（帧间隔 = 标称帧间隔 / 倍速；非 1x 无音频）
+                      DropdownButtonHideUnderline(
+                        child: DropdownButton<double>(
+                          value: state.playbackSpeed,
+                          isDense: true,
+                          dropdownColor: const Color(0xFF2E2E2E),
+                          style: const TextStyle(
+                              fontSize: 16.5, color: Colors.white),
+                          items: const [
+                            DropdownMenuItem(value: 0.25, child: Text('0.25x')),
+                            DropdownMenuItem(value: 0.5, child: Text('0.5x')),
+                            DropdownMenuItem(value: 0.75, child: Text('0.75x')),
+                            DropdownMenuItem(value: 1.0, child: Text('1x')),
+                            DropdownMenuItem(value: 1.5, child: Text('1.5x')),
+                            DropdownMenuItem(value: 2.0, child: Text('2x')),
+                          ],
+                          onChanged: (v) {
+                            if (v != null) state.setPlaybackSpeed(v);
+                          },
+                        ),
+                      ),
+                      _videoCtlBtn(
+                        Icons.skip_next,
+                        '后一帧',
+                        canStep && state.previewFrame < total - 1
+                            ? () => state.stepPreviewFrame(1)
+                            : null,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
+  }
+
+  /// 视频源控制行小按钮（null onTap = 禁用置灰）。
+  Widget _videoCtlBtn(IconData icon, String tip, VoidCallback? onTap) {
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          child: Icon(
+            icon,
+            size: 24,
+            color: onTap == null ? Colors.white24 : Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 控制行「打开」：选择视频文件并写入 filePath（与属性面板同口径；
+  /// setParam 联动复位播放进度并自动填充帧率/帧数）。
+  Future<void> _pickVideoFile(IspStudioState state) async {
+    final file = await openFile(
+      acceptedTypeGroups: [
+        const XTypeGroup(
+          label: '视频',
+          extensions: ['mp4', 'mkv', 'avi', 'mov', 'ts', 'flv', 'wmv'],
+        ),
+      ],
+    );
+    final path = file?.path;
+    if (path != null) state.setParam(node.id, 'filePath', path);
   }
 
   /// 预览附加区：屏幕 + 播放控制条 + 底部拖动手柄（调整屏幕高度）。
@@ -2542,6 +2702,223 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
+  /// 视频输出节点附加区：按钮行（设定路径 + 导出 MP4）+ 内嵌终端
+  /// 面板（导出过程：输入/路径/编码器/进度行/结果，复用格式转换的
+  /// 终端组件与 tick 局部刷新模式）。尺寸固定 860x360（无拖动手柄）：
+  /// 附加区总高 = extraHeight（234，即节点总高 360），构成 = 按钮行
+  /// 34 + 间距 3 + 终端（extra − 37）。
+  Widget _buildVideoOutputExtra(IspStudioState state) {
+    final extra = state.previewExtraHeight(node.id);
+    return SizedBox(
+      height: extra,
+      child: Column(
+        children: [
+          _buildVideoOutputButtons(state),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 3),
+            child: ValueListenableBuilder<int>(
+              valueListenable: state.videoExportTick,
+              builder: (context, tick, child) => _FormatConvertConsole(
+                log: state.videoExportLogs[node.id] ?? '',
+                height: math.max(0.0, extra - 37),
+                hint: '导出 MP4 的过程信息将在此显示',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// CRF 质量档位（值即 x264 CRF：1 无损画质档，越大文件越小画质越低）。
+  /// 「真无损」（crf 0）另会把编码器强制为 libx264：NVENC 的 -cq 0 只是
+  /// 视觉无损，只有 libx264 -crf 0 位级无损；从真无损切到其他档时恢复
+  /// 编码器 auto。
+  static const Map<String, int> _crfPresets = {
+    '真无损': 0,
+    '无损': 1,
+    '超高': 15,
+    '高': 18,
+    '较高': 21,
+    '中': 25,
+    '较低': 30,
+    '最低': 40,
+  };
+
+  /// 视频输出节点按钮行：「设定路径」（选择输出 mp4，tooltip 显示当前
+  /// 路径）+ CRF 档位下拉（无损~最低 / 自定义CRF值，自定义时展开
+  /// 输入框）+「导出 MP4」（未设路径时先弹保存对话框）。
+  Widget _buildVideoOutputButtons(IspStudioState state) {
+    final outPath = node.paramValues['filePath']?.toString() ?? '';
+    final crf = (node.paramValues['crf'] as num?)?.toInt() ?? 25;
+    final isPreset = _crfPresets.containsValue(crf);
+    // 档位标签显式带数值：无损画质（1）、超高画质（15）…；真无损标注
+    // 编码器（0·libx264）；自定义显示当前值。
+    String labelOf(String name) =>
+        name == '真无损' ? '$name画质（0·libx264）' : '$name画质（${_crfPresets[name]}）';
+    final selLabel = isPreset
+        ? labelOf(_crfPresets.keys.firstWhere((k) => _crfPresets[k] == crf))
+        : '自定义CRF值（$crf）';
+    final btnStyle = ElevatedButton.styleFrom(
+      foregroundColor: Colors.white,
+      padding: EdgeInsets.zero,
+      textStyle: const TextStyle(fontSize: 12),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 3, 8, 3),
+      child: SizedBox(
+        height: 28,
+        // 三个控件等宽（自定义 CRF 输入框为附加件，不参与等分）。
+        child: Row(
+          children: [
+            Expanded(
+              child: Tooltip(
+                message: outPath.isEmpty ? '未设置输出路径' : outPath,
+                child: ElevatedButton(
+                  onPressed: state.isProcessing
+                      ? null
+                      : () => _pickVideoOutputPath(state),
+                  style: btnStyle,
+                  child: _iconBtnContent('icons/folder-opened.png', '设定路径'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            // CRF 档位：按钮风格一致（ElevatedButton 外观 + 弹出菜单）。
+            Expanded(
+              child: PopupMenuButton<String>(
+                enabled: !state.isProcessing,
+                color: const Color(0xFF2E2E2E),
+                onSelected: (v) {
+                  final preset = _crfPresets[v];
+                  if (preset == null) return;
+                  if (v == '真无损') {
+                    // 位级无损：libx264 + crf 0（NVENC cq0 只是视觉无损）。
+                    state.setParams(node.id, {'crf': 0, 'encoder': 'x264'});
+                  } else if (crf == 0 &&
+                      (node.paramValues['encoder']?.toString() ?? 'auto') ==
+                          'x264') {
+                    // 从真无损切出：恢复编码器自动选择。
+                    state.setParams(node.id, {'crf': preset, 'encoder': 'auto'});
+                  } else {
+                    state.setParam(node.id, 'crf', preset);
+                  }
+                },
+                itemBuilder: (context) => [
+                  for (final name in _crfPresets.keys)
+                    PopupMenuItem<String>(
+                      value: name,
+                      height: 30,
+                      child: Text(
+                        labelOf(name),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: labelOf(name) == selLabel
+                              ? Colors.white
+                              : const Color(0xFFCCCCCC),
+                        ),
+                      ),
+                    ),
+                  PopupMenuItem<String>(
+                    value: '自定义CRF值',
+                    height: 30,
+                    child: Text(
+                      '自定义CRF值（$crf）',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: !isPreset
+                            ? Colors.white
+                            : const Color(0xFFCCCCCC),
+                      ),
+                    ),
+                  ),
+                ],
+                child: IgnorePointer(
+                  child: ElevatedButton(
+                    onPressed: () {}, // 仅外观；点击由 PopupMenuButton 处理
+                    style: btnStyle,
+                    child:
+                        _iconBtnContent('icons/gear.png', selLabel, dropdown: true),
+                  ),
+                ),
+              ),
+            ),
+            if (!isPreset) ...[
+              const SizedBox(width: 6),
+              SizedBox(
+                width: 52,
+                child: TextFormField(
+                  key: ValueKey('crf_${node.id}_$crf'),
+                  initialValue: '$crf',
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(fontSize: 12, color: Colors.white),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (v) {
+                    final n = int.tryParse(v);
+                    if (n != null) {
+                      state.setParam(node.id, 'crf', n.clamp(0, 51));
+                    }
+                  },
+                ),
+              ),
+            ],
+            const SizedBox(width: 6),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: state.isProcessing
+                    ? null
+                    : () => _exportVideoMp4(state),
+                style: btnStyle,
+                child: _iconBtnContent('icons/go-to-file.png', '导出 MP4'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 带图标的按钮内容：codicons PNG（已重着色为纯白）+ 文本，
+  /// [dropdown] 时尾部附加下拉箭头。
+  Widget _iconBtnContent(String icon, String label, {bool dropdown = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Image.asset(icon, width: 24, height: 24),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        if (dropdown) const Icon(Icons.arrow_drop_down, size: 16),
+      ],
+    );
+  }
+
+  /// 选择视频输出路径（保存对话框），写入 filePath；返回所选路径。
+  Future<String?> _pickVideoOutputPath(IspStudioState state) async {
+    final loc = await getSaveLocation(suggestedName: 'output.mp4');
+    final path = loc?.path;
+    if (path != null) state.setParam(node.id, 'filePath', path);
+    return path;
+  }
+
+  /// 导出 MP4：未设置输出路径时先弹保存对话框（用户取消则不导出，
+  /// 不再静默只在状态栏报错）。
+  Future<void> _exportVideoMp4(IspStudioState state) async {
+    final path = node.paramValues['filePath']?.toString() ?? '';
+    if (path.isEmpty && await _pickVideoOutputPath(state) == null) return;
+    state.exportVideo(node.id);
+  }
+
   /// 格式转换节点附加区：「开始转换」按钮 + 内嵌终端面板（流式显示
   /// ffmpeg 输出，参照 CodeCompileArea 的终端形态）。节点尺寸固定
   /// 1500x1200（min=max 不可调，无拖动手柄）：附加区总高 = extraHeight
@@ -2674,13 +3051,14 @@ class _FormatConvertConsoleState extends State<_FormatConvertConsole> {
   }
 }
 
-/// 播放控制条时间文本：当前时间/总时长（mm:ss/mm:ss），按
+/// 播放控制条时间文本：当前时间/总时长（hh:mm:ss/hh:mm:ss），按
 /// [IspStudioState.playbackSrcFps] 换算（视频源单次预览运行与播放时
 /// 都会填入）。预览控制条与视频源节点时间行共用。
 String playbackTimeText(IspStudioState state, int total) {
   String fmt(double sec) {
     final s = sec.isFinite && sec > 0 ? sec.floor() : 0;
-    return '${(s ~/ 60).toString().padLeft(2, '0')}:'
+    return '${(s ~/ 3600).toString().padLeft(2, '0')}:'
+        '${((s % 3600) ~/ 60).toString().padLeft(2, '0')}:'
         '${(s % 60).toString().padLeft(2, '0')}';
   }
 
