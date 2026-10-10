@@ -33,7 +33,7 @@ extern "C" {
 #endif
 
 /** 段数上限（与 Dart kMultiBandEqMaxBands 一致）。 */
-#define ISP_MULTI_BAND_EQ_MAX_BANDS 24
+#define ISP_MULTI_BAND_EQ_MAX_BANDS 16
 
 /**
  * @brief 多段色彩均衡器的单段参数（与色彩控制器同构的高斯色相带）。

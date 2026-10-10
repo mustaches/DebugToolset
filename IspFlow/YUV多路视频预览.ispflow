@@ -8,6 +8,7 @@
       "y": -100.0,
       "width": 700.0,
       "extraHeight": 444.0,
+      "name": "预览#1",
       "params": {
         "fps": 30,
         "frameCount": 15458
@@ -20,6 +21,7 @@
       "y": 510.0,
       "width": 700.0,
       "extraHeight": 444.0,
+      "name": "预览#2",
       "params": {
         "fps": 30,
         "frameCount": 15458
@@ -32,6 +34,7 @@
       "y": 1120.0,
       "width": 700.0,
       "extraHeight": 444.0,
+      "name": "预览#3",
       "params": {
         "fps": 30,
         "frameCount": 15458
@@ -44,6 +47,7 @@
       "y": 1120.0,
       "width": 781.0,
       "extraHeight": 447.0,
+      "name": "示波器#1",
       "params": {}
     },
     {
@@ -53,6 +57,7 @@
       "y": 510.0,
       "width": 781.0,
       "extraHeight": 447.0,
+      "name": "示波器#2",
       "params": {}
     },
     {
@@ -62,6 +67,7 @@
       "y": -100.0,
       "width": 781.0,
       "extraHeight": 447.0,
+      "name": "示波器#3",
       "params": {}
     },
     {
@@ -71,6 +77,7 @@
       "y": -720.0,
       "width": 781.0,
       "extraHeight": 447.0,
+      "name": "示波器#4",
       "params": {}
     },
     {
@@ -80,6 +87,7 @@
       "y": -720.0,
       "width": 700.0,
       "extraHeight": 444.0,
+      "name": "预览#4",
       "params": {
         "fps": 30,
         "frameCount": 15458
@@ -92,6 +100,7 @@
       "y": 550.0,
       "width": 190.0,
       "extraHeight": 160.0,
+      "name": "YUV 分路器#1",
       "params": {}
     },
     {
@@ -101,6 +110,7 @@
       "y": 550.0,
       "width": 190.0,
       "extraHeight": 160.0,
+      "name": "YUV 合路器#1",
       "params": {}
     },
     {
@@ -110,6 +120,7 @@
       "y": -170.0,
       "width": 800.0,
       "extraHeight": 574.0,
+      "name": "预览#5",
       "params": {
         "fps": 30,
         "frameCount": 15458
@@ -122,20 +133,8 @@
       "y": 630.0,
       "width": 800.0,
       "extraHeight": 800.0,
+      "name": "矢量示波器#1",
       "params": {}
-    },
-    {
-      "id": "n55",
-      "typeId": "video_source",
-      "x": 450.0,
-      "y": 530.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "params": {
-        "filePath": "G:\\DebugToolSet\\IspFlow\\本地部署DeepSeek Harness 加 Qwen3.8-27B教程.mp4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
-      }
     },
     {
       "id": "n59",
@@ -144,7 +143,22 @@
       "y": 820.0,
       "width": 800.0,
       "extraHeight": 380.0,
+      "name": "音频EQ频谱#1",
       "params": {}
+    },
+    {
+      "id": "n61",
+      "typeId": "video_source",
+      "x": 370.0,
+      "y": 510.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
     }
   ],
   "connections": [
@@ -226,20 +240,6 @@
       "toPort": "in_yuv"
     },
     {
-      "id": "c56",
-      "from": "n55",
-      "fromPort": "out_yuv",
-      "to": "n41",
-      "toPort": "in"
-    },
-    {
-      "id": "c57",
-      "from": "n55",
-      "fromPort": "out_yuv",
-      "to": "n38",
-      "toPort": "in_yuv"
-    },
-    {
       "id": "c58",
       "from": "n38",
       "fromPort": "out_yuv",
@@ -247,12 +247,20 @@
       "toPort": "in_yuv"
     },
     {
-      "id": "c60",
-      "from": "n55",
+      "id": "c62",
+      "from": "n61",
       "fromPort": "out_audio",
       "to": "n59",
       "toPort": "in"
+    },
+    {
+      "id": "c63",
+      "from": "n61",
+      "fromPort": "out_yuv",
+      "to": "n41",
+      "toPort": "in"
     }
   ],
-  "nextId": 61
+  "groups": [],
+  "nextId": 64
 }

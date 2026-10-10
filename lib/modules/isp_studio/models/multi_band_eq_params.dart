@@ -11,9 +11,10 @@ import 'dart:typed_data';
 
 import '../pipeline/isp_kernels.dart';
 
-/// 段数上限：色环 360° 按 15° 等分（取色器「增加」到上限置灰；GPU
-/// uniform 数组 uBands[24×5] 与 C 侧 ISP_MULTI_BAND_EQ_MAX_BANDS 同步）。
-const int kMultiBandEqMaxBands = 24;
+/// 段数上限：16（取色器「增加」到上限置灰；GPU shader uBands[24×5] 容量
+/// 保留 24 不变——容量大于上限无害，有效段数由 uCount 控制；C 侧
+/// ISP_MULTI_BAND_EQ_MAX_BANDS 同步为 16）。
+const int kMultiBandEqMaxBands = 16;
 
 /// 每段的拍平键后缀（`b{i}_<suffix>`）。
 const List<String> kMultiBandEqBandSuffixes = ['h', 'q', 'dh', 's', 'l'];

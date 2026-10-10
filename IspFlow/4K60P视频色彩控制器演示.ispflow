@@ -28,7 +28,7 @@
       "name": "预览#1",
       "params": {
         "fps": 30,
-        "frameCount": 27000
+        "frameCount": 15458
       }
     },
     {
@@ -41,21 +41,7 @@
       "name": "预览#2",
       "params": {
         "fps": 30,
-        "frameCount": 27000
-      }
-    },
-    {
-      "id": "n8",
-      "typeId": "video_source",
-      "x": 1000.0,
-      "y": 410.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "Video#1",
-      "params": {
-        "filePath": "H:\\Surgery_video\\record-2024-09-26-12-03-24.mp4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+        "frameCount": 15458
       }
     },
     {
@@ -88,23 +74,23 @@
         "filePath": "G:\\DebugToolSet\\IspFlow\\Video_out\\20260915_130047_00_00_output.mp4",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
+    },
+    {
+      "id": "n27",
+      "typeId": "video_source",
+      "x": 940.0,
+      "y": 400.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
     }
   ],
   "connections": [
-    {
-      "id": "c9",
-      "from": "n8",
-      "fromPort": "out_hsl",
-      "to": "n1",
-      "toPort": "in"
-    },
-    {
-      "id": "c12",
-      "from": "n8",
-      "fromPort": "out_hsl",
-      "to": "n4",
-      "toPort": "in_hsl"
-    },
     {
       "id": "c14",
       "from": "n1",
@@ -124,6 +110,20 @@
       "from": "n6",
       "fromPort": "out_hsl",
       "to": "n24",
+      "toPort": "in_hsl"
+    },
+    {
+      "id": "c28",
+      "from": "n27",
+      "fromPort": "out_hsl",
+      "to": "n1",
+      "toPort": "in"
+    },
+    {
+      "id": "c29",
+      "from": "n27",
+      "fromPort": "out_hsl",
+      "to": "n4",
       "toPort": "in_hsl"
     }
   ],
@@ -145,5 +145,5 @@
       ]
     }
   ],
-  "nextId": 27
+  "nextId": 30
 }

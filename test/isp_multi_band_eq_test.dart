@@ -50,13 +50,11 @@ void main() {
       expect(type.params[3].defaultValue, 0);
     });
 
-    test('IspNode.create 默认值：宽度与色彩控制器一致，高度更大', () {
+    test('IspNode.create 默认值：尺寸锁定 1920x1770（附加区 1710）', () {
       final node = IspNode.create(IspNodeRegistry.byId('multi_band_eq')!,
           'mb', 0, 0);
-      final cc = IspNode.create(IspNodeRegistry.byId('color_controller')!,
-          'cc', 0, 0);
-      expect(node.width, cc.width);
-      expect(node.extraHeight, greaterThan(cc.extraHeight));
+      expect(node.width, 1920);
+      expect(node.extraHeight, 1710);
       expect(node.paramValues['band_count'], 1);
       expect(node.paramValues['band_mode'], 'parallel');
       expect(node.paramValues['sel_band'], 0);

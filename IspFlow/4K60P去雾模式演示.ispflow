@@ -28,7 +28,7 @@
       "name": "预览#1",
       "params": {
         "fps": 30,
-        "frameCount": 35941
+        "frameCount": 15458
       }
     },
     {
@@ -41,7 +41,7 @@
       "name": "预览#2",
       "params": {
         "fps": 30,
-        "frameCount": 35941
+        "frameCount": 15458
       }
     },
     {
@@ -108,7 +108,7 @@
       "extraHeight": 160.0,
       "name": "Video#1",
       "params": {
-        "filePath": "H:\\Surgery_video\\record-2025-12-03-11-49-45.mp4",
+        "filePath": "",
         "bitDepth": "8",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.2.0+22
+version: 1.2.0+24
 
 environment:
   sdk: ^3.12.2
@@ -108,6 +108,14 @@ flutter:
     # ISP Studio 节点右上角「最大化/还原」图标（同上提取 + 白色）。
     - icons/screen-full.png
     - icons/screen-normal.png
+    # ISP Studio 多段色彩均衡器「comp 对比模式」图标（同上提取 + 白色）。
+    - icons/book.png
+    # ISP Studio 均衡器 comp 模式「退出对比」图标（同上提取 + 白色）。
+    - icons/layout-sidebar-right-dock.png
+    # ISP Studio 均衡器取色器工具栏「增加/删除取色器」图标（同上）；
+    # 「读取预设」「保存风格」复用 folder-opened.png / save.png。
+    - icons/diff-added.png
+    - icons/diff-removed.png
     # ISP Studio「查看代码」：pipeline 真实源码打包为资产，运行时按符号提取。
     - lib/modules/isp_studio/pipeline/
     - lib/modules/isp_studio/pipeline/metrics/

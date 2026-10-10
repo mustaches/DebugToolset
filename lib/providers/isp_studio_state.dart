@@ -798,7 +798,8 @@ class IspStudioState extends ChangeNotifier {
   /// 放宽到全局上限的 1.5 倍；其余节点用全局上限。
   static double maxNodeWidthFor(String typeId) =>
       typeId == 'multi_band_eq'
-          ? kMaxPreviewNodeWidth * 1.6 * 1.5
+          // 多段色彩均衡器节点尺寸固定 1920x1770（min=max，不可调）。
+          ? 1920
           : typeId == 'format_converter' || typeId == 'video_health_check'
               // 格式转换/视频健康检查节点尺寸固定 1500x1200（min=max，不可调）。
               ? 1500
@@ -823,35 +824,39 @@ class IspStudioState extends ChangeNotifier {
 
   /// 节点宽度下限：格式转换/视频健康检查节点内嵌终端固定 1500x1200
   ///（min=max，不可调；ffmpeg 处理信息整页可读）；视频输出节点固定
-  /// 860x360；其余节点用全局下限。
+  /// 860x360；多段色彩均衡器固定 1920x1770；其余节点用全局下限。
   static double minNodeWidthFor(String typeId) =>
       typeId == 'format_converter' || typeId == 'video_health_check'
           ? 1500
           : typeId == 'video_output'
               ? 860
-              : kMinPreviewNodeWidth;
+              : typeId == 'multi_band_eq'
+                  ? 1920
+                  : kMinPreviewNodeWidth;
 
   /// 节点附加区高度下限：格式转换/视频健康检查节点 1162（标题 30 +
   /// 底部留白 8 + extra = 总高 1200）；视频输出节点 234（总高 360）；
-  /// 其余节点用全局下限。
+  /// 多段色彩均衡器 1710（总高 1770）；其余节点用全局下限。
   static double minExtraHeightFor(String typeId) =>
       typeId == 'format_converter' || typeId == 'video_health_check'
           ? 1162
           : typeId == 'video_output'
               ? 234
-              : kMinPreviewExtraHeight;
+              : typeId == 'multi_band_eq'
+                  ? 1710
+                  : kMinPreviewExtraHeight;
 
-  /// 节点附加区高度上限：多段色彩均衡器（矢量示波器 + 预览图双行显示，
-  /// 预览图需要更大加高空间）放宽到全局上限的 2 倍；预览节点放宽到
-  /// 全局上限的 1.5 倍；格式转换节点固定 1162（总高 1200，min=max 不
-  /// 可调）；视频输出节点固定 234（总高 360）；其余节点用全局上限。
+  /// 节点附加区高度上限：格式转换/视频健康检查节点固定 1162（总高
+  /// 1200，min=max 不可调）；视频输出节点固定 234（总高 360）；多段
+  /// 色彩均衡器固定 1710（总高 1770）；预览节点放宽到全局上限的
+  /// 1.5 倍；其余节点用全局上限。
   static double maxPreviewExtraHeightFor(String typeId) =>
-      typeId == 'multi_band_eq'
-          ? kMaxPreviewExtraHeight * 2
-          : typeId == 'format_converter' || typeId == 'video_health_check'
-              ? 1162
-              : typeId == 'video_output'
-                  ? 234
+      typeId == 'format_converter' || typeId == 'video_health_check'
+          ? 1162
+          : typeId == 'video_output'
+              ? 234
+              : typeId == 'multi_band_eq'
+                  ? 1710
                   : typeId == 'preview'
                       ? kMaxPreviewExtraHeight * 1.5
                       : kMaxPreviewExtraHeight;
@@ -1781,6 +1786,15 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 宽度锁定（min=max 的固定尺寸节点：格式转换/视频健康检查/视频
+  /// 输出/多段色彩均衡器）：统一尺寸操作不得改动其宽度。
+  static bool isWidthLockedFor(String typeId) =>
+      minNodeWidthFor(typeId) == maxNodeWidthFor(typeId);
+
+  /// 附加区高度锁定（同宽度口径）：统一尺寸操作不得改动其高度。
+  static bool isHeightLockedFor(String typeId) =>
+      minExtraHeightFor(typeId) == maxPreviewExtraHeightFor(typeId);
+
   void matchSelectedNodesSize() {
     final primaryId = primarySelectedNodeId;
     if (primaryId == null) return;
@@ -1792,9 +1806,12 @@ class IspStudioState extends ChangeNotifier {
       if (id == primaryId) continue;
       final n = graph.nodes[id];
       if (n != null) {
-        n.width = w;
-        n.extraHeight = h;
-        _previewExtraHeights[id] = h;
+        // 锁定尺寸的节点不改动（宽/高各自独立判定）。
+        if (!isWidthLockedFor(n.typeId)) n.width = w;
+        if (!isHeightLockedFor(n.typeId)) {
+          n.extraHeight = h;
+          _previewExtraHeights[id] = h;
+        }
       }
     }
     notifyListeners();
@@ -1809,7 +1826,7 @@ class IspStudioState extends ChangeNotifier {
     for (final id in selectedNodeIds) {
       if (id == primaryId) continue;
       final n = graph.nodes[id];
-      if (n != null) {
+      if (n != null && !isWidthLockedFor(n.typeId)) {
         n.width = w;
       }
     }
@@ -1825,7 +1842,7 @@ class IspStudioState extends ChangeNotifier {
     for (final id in selectedNodeIds) {
       if (id == primaryId) continue;
       final n = graph.nodes[id];
-      if (n != null) {
+      if (n != null && !isHeightLockedFor(n.typeId)) {
         n.extraHeight = h;
         _previewExtraHeights[id] = h;
       }

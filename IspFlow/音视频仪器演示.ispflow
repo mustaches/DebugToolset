@@ -8,22 +8,10 @@
       "y": 580.0,
       "width": 800.0,
       "extraHeight": 514.0,
+      "name": "预览#1",
       "params": {
         "fps": 30,
         "frameCount": 15458
-      }
-    },
-    {
-      "id": "n22",
-      "typeId": "video_source",
-      "x": 770.0,
-      "y": 341.9719807253511,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "params": {
-        "filePath": "G:\\DebugToolSet\\IspFlow\\本地部署DeepSeek Harness 加 Qwen3.8-27B教程.mp4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
     },
     {
@@ -33,6 +21,7 @@
       "y": -10.0,
       "width": 800.0,
       "extraHeight": 423.5165472993941,
+      "name": "示波器#1",
       "params": {}
     },
     {
@@ -42,6 +31,7 @@
       "y": 580.0,
       "width": 800.0,
       "extraHeight": 759.5689331774336,
+      "name": "矢量示波器#1",
       "params": {}
     },
     {
@@ -51,6 +41,7 @@
       "y": 520.0,
       "width": 800.0,
       "extraHeight": 100.0,
+      "name": "音频电平#1",
       "params": {}
     },
     {
@@ -60,6 +51,7 @@
       "y": 710.0,
       "width": 800.0,
       "extraHeight": 239.1761113364907,
+      "name": "音频波形#1",
       "params": {}
     },
     {
@@ -69,6 +61,7 @@
       "y": 1030.0,
       "width": 800.0,
       "extraHeight": 336.6170000676569,
+      "name": "音频EQ频谱#1",
       "params": {}
     },
     {
@@ -78,17 +71,25 @@
       "y": 20.0,
       "width": 800.0,
       "extraHeight": 384.0,
+      "name": "直方图#1",
       "params": {}
+    },
+    {
+      "id": "n40",
+      "typeId": "video_source",
+      "x": 940.0,
+      "y": 190.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
     }
   ],
   "connections": [
-    {
-      "id": "c23",
-      "from": "n22",
-      "fromPort": "out_rgb",
-      "to": "n12",
-      "toPort": "in"
-    },
     {
       "id": "c28",
       "from": "n12",
@@ -104,33 +105,41 @@
       "toPort": "in"
     },
     {
-      "id": "c35",
-      "from": "n22",
-      "fromPort": "out_audio",
-      "to": "n32",
-      "toPort": "in"
-    },
-    {
-      "id": "c36",
-      "from": "n22",
-      "fromPort": "out_audio",
-      "to": "n33",
-      "toPort": "in"
-    },
-    {
-      "id": "c37",
-      "from": "n22",
-      "fromPort": "out_audio",
-      "to": "n34",
-      "toPort": "in"
-    },
-    {
       "id": "c39",
       "from": "n12",
       "fromPort": "out",
       "to": "n38",
       "toPort": "in"
+    },
+    {
+      "id": "c41",
+      "from": "n40",
+      "fromPort": "out_rgb",
+      "to": "n12",
+      "toPort": "in"
+    },
+    {
+      "id": "c42",
+      "from": "n40",
+      "fromPort": "out_audio",
+      "to": "n32",
+      "toPort": "in"
+    },
+    {
+      "id": "c43",
+      "from": "n40",
+      "fromPort": "out_audio",
+      "to": "n33",
+      "toPort": "in"
+    },
+    {
+      "id": "c44",
+      "from": "n40",
+      "fromPort": "out_audio",
+      "to": "n34",
+      "toPort": "in"
     }
   ],
-  "nextId": 40
+  "groups": [],
+  "nextId": 45
 }

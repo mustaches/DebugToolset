@@ -46,20 +46,6 @@
       }
     },
     {
-      "id": "n8",
-      "typeId": "video_source",
-      "x": 850.0,
-      "y": 410.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "Video#1",
-      "params": {
-        "filePath": "H:\\Surgery_video\\贵州毕节 手术备份2025.12.03\\12.03第二台胆总管切开取石\\record-2025-12-03-10-04-21-0002.mp4",
-        "bitDepth": "8",
-        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
-      }
-    },
-    {
       "id": "n24",
       "typeId": "video_output",
       "x": 2720.0,
@@ -118,23 +104,23 @@
           ]
         ]
       }
+    },
+    {
+      "id": "n34",
+      "typeId": "video_source",
+      "x": 780.0,
+      "y": 400.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
     }
   ],
   "connections": [
-    {
-      "id": "c9",
-      "from": "n8",
-      "fromPort": "out_hsl",
-      "to": "n1",
-      "toPort": "in"
-    },
-    {
-      "id": "c12",
-      "from": "n8",
-      "fromPort": "out_hsl",
-      "to": "n4",
-      "toPort": "in_hsl"
-    },
     {
       "id": "c28",
       "from": "n1",
@@ -162,6 +148,20 @@
       "fromPort": "out",
       "to": "n24",
       "toPort": "in"
+    },
+    {
+      "id": "c35",
+      "from": "n34",
+      "fromPort": "out_hsl",
+      "to": "n1",
+      "toPort": "in"
+    },
+    {
+      "id": "c36",
+      "from": "n34",
+      "fromPort": "out_hsl",
+      "to": "n4",
+      "toPort": "in_hsl"
     }
   ],
   "groups": [
@@ -183,5 +183,5 @@
       ]
     }
   ],
-  "nextId": 34
+  "nextId": 37
 }

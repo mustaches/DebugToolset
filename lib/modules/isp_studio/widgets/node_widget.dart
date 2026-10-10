@@ -4624,6 +4624,12 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
   /// 默认 X6）。
   int _magZoom = 6;
 
+  /// comp 对比模式：隐藏双联示波器/取色器工具栏/调整后预览，调整前
+  /// 预览充满这些位置，顶部换为 comp 工具栏（comp 按住看调整后 +
+  /// 恢复退出）。[_compHold] = comp 按钮按住中。
+  bool _compMode = false;
+  bool _compHold = false;
+
   /// ALL 视图：双联矢量示波器叠加全部段的色相线/色带（按段色着色）。
   bool _allView = false;
 
@@ -4795,7 +4801,11 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     state.setParams(node.id, patch);
     setState(() {
       if (_armedBand == i) _armedBand = null;
-      _hoverDeleteBand = null;
+      // 删除后光标位置不动：后段前移，原位置变成第 i 段（段按钮无 key
+      // 按位置复用元素，且被删按钮的 MouseRegion 卸载会触发 onExit，
+      // 因此悬停标记必须在这里显式重指——否则要动一下鼠标 X 遮罩才
+      // 出现在新到该位置的段上）。删除的是末段时原位置已无按钮。
+      _hoverDeleteBand = i < count - 1 ? i : null;
       // 剩 1 段时退出删除模式（按钮随即置灰）。
       if (count - 1 <= 1) _deleteArmed = false;
       // 段按钮颜色同步前移重排（与 reindexBandParams 同口径）。
@@ -5126,15 +5136,14 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
       leftOverride = _AllBandsPainter(bands: before);
       rightOverride = _AllBandsPainter(bands: after);
     }
-    // 示波器行顶部留白 4 + 取色器工具栏 26 + 预览行间隔 4 + 5 行滑块
-    // 各 24 + 播放控制条 26 + 底部手柄 10。示波器格保持 1:1（矢量示波器
-    // 为圆形，格高 = 半格宽，与 _displayAspect/_displayChrome 的口径
-    // 一致），其余高度归预览图行。节点高度不足（旧存档/手动压扁）时
-    // 示波器格等比收缩，不溢出。
+    // 示波器行顶部留白 4 + 取色器工具栏 64 + 预览行间隔 4 + 5 行滑块
+    // 各 24 + 播放控制条 26（节点尺寸锁定 1920x1770，无底部手柄行）。
+    // 示波器格保持 1:1（矢量示波器为圆形，格高 = 半格宽，与
+    // _displayAspect/_displayChrome 的口径一致），其余高度归预览图行。
     final scopeHeight = math.min((node.width - 20) / 2,
-        math.max(0.0, extra - 4 - 26 - 4 - 24 * 5 - 26 - 10));
+        math.max(0.0, extra - 4 - 64 - 4 - 24 * 5 - 26));
     final imageHeight = math.max(
-        0.0, extra - 4 - 26 - 4 - 24 * 5 - 26 - 10 - scopeHeight);
+        0.0, extra - 4 - 64 - 4 - 24 * 5 - 26 - scopeHeight);
     return SizedBox(
       height: extra,
       // 点击工具栏/右预览/滑条背景等空白处退出取色模式（左预览与按钮
@@ -5146,6 +5155,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
         },
         child: Column(
           children: [
+            if (!_compMode) ...[
             // 双联矢量示波器行（左调整前/右调整后），位于预览图上方，
             // 与 color_controller 同一统计口径（vectorscope 仪器）。
             // 左格叠加选中段的 H 中心线 + Q 高斯带（白色标线）；右格叠加
@@ -5220,6 +5230,24 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                 ),
               ),
             ),
+            ] else ...[
+              // comp 对比模式：示波器/取色器工具栏/调整后预览隐藏，
+              // 预览充满这些位置（comp 工具栏与原工具栏同高 64，
+              // 预览高 = 示波器行 + 原预览行 + 间隔 4）。
+              _buildCompToolbar(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                child: SizedBox(
+                  height: scopeHeight + 4 + imageHeight,
+                  child: _compHold
+                      // 按住 comp：显示调整后；释放：调整前。
+                      ? host._buildHslComparePane(
+                          image, '调整后', '运行预览后显示效果')
+                      : _buildInputPane(inputImage,
+                          hasInput ? '运行预览后显示' : '未连接输入'),
+                ),
+              ),
+            ],
             host._buildHslSliderRow(state, 'H中心', 'b${sel}_h', 0, 360, 0,
                 (v) => '${v.toStringAsFixed(0)}°',
                 labelWidth: 34, livePreview: true),
@@ -5240,8 +5268,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
             // 播放控制条（与预览节点附加区同款）：播放/暂停 + 帧进度
             // 滑条（播放中禁拖；暂停时拖动定位、松手重跑预览）。
             _buildPlaybackBar(),
-            // 底部手柄条：与预览/仪器节点共用同一套拖动调整机制。
-            host._buildResizeBar(state),
+            // 节点尺寸锁定（1920x1770），无底部拖动手柄。
           ],
         ),
       ),
@@ -5309,30 +5336,94 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     );
   }
 
-  /// 取色器工具栏（26px，样式仿 preview 控制条）：[读取预设] [保存风格] │
-  /// [+]增加 [-]删除 │ 放大率互斥组 [X2 X4 X6 X8 X10] │ [段按钮 1..n]。
+  /// comp 模式工具栏（与取色器工具栏同规格：总高 64 = 顶部留白 4 +
+  /// 内容 60，按钮 56x56、图标 48px，居中）：[comp]（释放=调整前，
+  /// 按住=调整后，验证程序按住对比同款语义）+ [恢复]（退出 comp
+  /// 对比模式，还原多段色彩均衡器界面）。
+  Widget _buildCompToolbar() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: SizedBox(
+        height: 60,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Tooltip(
+              message: '前后效果对比',
+              child: Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (_) => setState(() => _compHold = true),
+                onPointerUp: (_) => setState(() => _compHold = false),
+                onPointerCancel: (_) => setState(() => _compHold = false),
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    // 按住时高亮描边（与放大率按钮选中态同款配色）。
+                    color: _compHold
+                        ? const Color(0xFF4A6E8E)
+                        : const Color(0xFF333333),
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(
+                      color: _compHold
+                          ? const Color(0xFF6A9EC0)
+                          : Colors.grey.shade800,
+                    ),
+                  ),
+                  child: Image.asset('icons/book.png', width: 48, height: 48),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: Image.asset('icons/layout-sidebar-right-dock.png',
+                  width: 48, height: 48),
+              constraints: const BoxConstraints.tightFor(width: 56, height: 56),
+              padding: EdgeInsets.zero,
+              tooltip: '退出 comp 对比模式',
+              onPressed: () => setState(() {
+                _compMode = false;
+                _compHold = false;
+              }),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 取色器工具栏（64px，样式仿 preview 控制条）：[读取预设] [保存风格] │
+  /// [+]增加 [-]删除 │ 放大率互斥组 [X2 X4 X6 X8 X10] │ [段按钮 1..n] │
+  /// [comp]。按钮统一 56x56（图标 48px），内容垂直居中；顶部留白 4px
+  ///（视觉居中修正——内容与上下邻区间距对称）。
   Widget _buildToolbar() {
     final count = _bandCount;
-    return SizedBox(
-      height: 26,
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: SizedBox(
+        height: 60,
       child: Row(
         children: [
           const SizedBox(width: 4),
           IconButton(
-            icon: const Icon(Icons.folder_open_outlined, size: 16),
+            icon: Image.asset('icons/folder-opened.png', width: 48, height: 48),
+            constraints: const BoxConstraints.tightFor(width: 56, height: 56),
             padding: EdgeInsets.zero,
             tooltip: '读取预设',
             onPressed: () => _loadStyle(),
           ),
           IconButton(
-            icon: const Icon(Icons.save_outlined, size: 16),
+            icon: Image.asset('icons/save.png', width: 48, height: 48),
+            constraints: const BoxConstraints.tightFor(width: 56, height: 56),
             padding: EdgeInsets.zero,
             tooltip: '保存风格',
             onPressed: () => _saveStyle(),
           ),
           _toolbarDivider(),
           IconButton(
-            icon: const Icon(Icons.add, size: 16),
+            icon: Image.asset('icons/diff-added.png', width: 48, height: 48),
+            constraints: const BoxConstraints.tightFor(width: 56, height: 56),
             padding: EdgeInsets.zero,
             tooltip: '增加取色器',
             // 段数到上限置灰。
@@ -5340,9 +5431,14 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                 count >= kMultiBandEqMaxBands ? null : () => _addBand(),
           ),
           IconButton(
-            icon: Icon(Icons.remove,
-                size: 16,
-                color: _deleteArmed ? const Color(0xFFFF6E6E) : null),
+            // 删除模式激活时图标染红（PNG 为纯白，color 默认 srcIn 着色）。
+            icon: Image.asset(
+              'icons/diff-removed.png',
+              width: 48,
+              height: 48,
+              color: _deleteArmed ? const Color(0xFFFF6E6E) : null,
+            ),
+            constraints: const BoxConstraints.tightFor(width: 56, height: 56),
             padding: EdgeInsets.zero,
             tooltip: _deleteArmed ? '退出删除模式' : '删除取色器',
             // 剩 1 段时置灰。
@@ -5360,7 +5456,11 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: Container(
+              // 行级 onExit 统一清除悬停删除标记（按钮自身的 onExit
+              // 不承担——见 _buildBandButton 注释）。
+              child: MouseRegion(
+                onExit: (_) => setState(() => _hoverDeleteBand = null),
+                child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
                 decoration: _deleteArmed
                     ? BoxDecoration(
@@ -5378,10 +5478,27 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                     ],
                   ],
                 ),
+                ),
               ),
             ),
           ),
+          _toolbarDivider(),
+          // comp 对比模式（取色器工具栏右侧）：进入后示波器/本工具栏/
+          // 调整后预览隐藏，调整前预览充满，顶部换 comp 工具栏。
+          IconButton(
+            icon: Image.asset('icons/book.png', width: 48, height: 48),
+            constraints: const BoxConstraints.tightFor(width: 56, height: 56),
+            padding: EdgeInsets.zero,
+            tooltip: '进入Comp对比模式',
+            onPressed: () => setState(() {
+              if (_armedBand != null) _disarmPick();
+              _deleteArmed = false;
+              _compMode = true;
+              _compHold = false;
+            }),
+          ),
         ],
+      ),
       ),
     );
   }
@@ -5393,8 +5510,8 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     return GestureDetector(
       onTap: () => setState(() => _magZoom = z),
       child: Container(
-        width: 26,
-        height: 18,
+        width: 56,
+        height: 56,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: sel ? const Color(0xFF4A6E8E) : const Color(0xFF333333),
@@ -5404,7 +5521,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
         ),
         child: Text('X$z',
             style: TextStyle(
-                fontSize: 10,
+                fontSize: 20,
                 color: sel ? Colors.white : Colors.grey.shade500)),
       ),
     );
@@ -5416,8 +5533,8 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     return GestureDetector(
       onTap: () => setState(() => _allView = !_allView),
       child: Container(
-        width: 26,
-        height: 18,
+        width: 56,
+        height: 56,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color:
@@ -5430,7 +5547,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
         ),
         child: Text('ALL',
             style: TextStyle(
-                fontSize: 9,
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: _allView ? Colors.white : Colors.grey.shade500)),
       ),
@@ -5450,15 +5567,17 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     final pickedColor = _bandColors[i];
     return MouseRegion(
       onEnter: (_) => setState(() => _hoverDeleteBand = i),
-      onExit: (_) => setState(() => _hoverDeleteBand = null),
+      // 注意：不设 onExit——按钮行整体的外层 MouseRegion 负责清除。
+      // 删除段后被删按钮的 MouseRegion 卸载会误触发 onExit 把刚重指到
+      // 前移段的悬停标记清空（光标其实没动）。
       child: GestureDetector(
         onTap: () => _tapBand(i),
         child: Stack(
           clipBehavior: Clip.none,
           children: [
             Container(
-              width: 22,
-              height: 18,
+              width: 56,
+              height: 56,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: pickedColor ??
@@ -5483,19 +5602,19 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                       children: [
                         Text('${i + 1}',
                             style: TextStyle(
-                                fontSize: 10,
+                                fontSize: 22,
                                 foreground: Paint()
                                   ..style = PaintingStyle.stroke
-                                  ..strokeWidth = 2
+                                  ..strokeWidth = 3.5
                                   ..color = Colors.black)),
                         Text('${i + 1}',
                             style: const TextStyle(
-                                fontSize: 10, color: Colors.white)),
+                                fontSize: 22, color: Colors.white)),
                       ],
                     )
                   : Text('${i + 1}',
                       style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 22,
                           color: sel || armed
                               ? Colors.white
                               : Colors.grey.shade500)),
