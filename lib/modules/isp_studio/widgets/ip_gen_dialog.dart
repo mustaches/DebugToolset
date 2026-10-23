@@ -34,6 +34,8 @@ class _IpGenDialogState extends State<_IpGenDialog> {
   late VivadoSeries _series;
   late int _pixBits; // 0 = 位深推导
   late int _maxWidth;
+  late int _gstrategy; // 0 面积 / 1 平衡 / 2 性能
+  late int _fold; // 1/2/4（仅面积档生效）
   IverilogToolchain? _iverilog;
 
   @override
@@ -43,6 +45,8 @@ class _IpGenDialogState extends State<_IpGenDialog> {
     _series = widget.initial?.series ?? VivadoSeries.zynqUltrascalePlus;
     _pixBits = widget.initial?.pixBits ?? 0;
     _maxWidth = widget.initial?.maxWidth ?? 4096;
+    _gstrategy = widget.initial?.gstrategy ?? 2;
+    _fold = widget.initial?.fold ?? 2;
     _iverilog = detectIverilog();
   }
 
@@ -118,6 +122,37 @@ class _IpGenDialogState extends State<_IpGenDialog> {
                 if (v != null) setState(() => _maxWidth = v);
               },
             ),
+            const SizedBox(height: 12),
+            // 优化策略（写入生成代码 parameter 默认值；FOLD 仅面积档
+            // 可编辑，其余档锁定为 1 并灰显——与 Vivado 定制界面联动
+            // 同口径）。
+            _label('优化策略 GSTRATEGY'),
+            DropdownButtonFormField<int>(
+              initialValue: _gstrategy,
+              items: const [
+                DropdownMenuItem(value: 2, child: Text('性能优先（II=1 全展开）')),
+                DropdownMenuItem(value: 1, child: Text('平衡（乘法器绑 LUT）')),
+                DropdownMenuItem(value: 0, child: Text('面积优先（算子折叠）')),
+              ],
+              onChanged: (v) {
+                if (v != null) setState(() => _gstrategy = v);
+              },
+            ),
+            const SizedBox(height: 12),
+            _label('折叠因子 FOLD（仅面积档生效）'),
+            DropdownButtonFormField<int>(
+              key: ValueKey(_gstrategy), // 档切换时重建以刷新锁定值
+              initialValue: _gstrategy == 0 ? _fold : 1,
+              items: [
+                for (final f in const [1, 2, 4])
+                  DropdownMenuItem(value: f, child: Text('×$f')),
+              ],
+              onChanged: _gstrategy == 0
+                  ? (v) {
+                      if (v != null) setState(() => _fold = v);
+                    }
+                  : null,
+            ),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -158,6 +193,9 @@ class _IpGenDialogState extends State<_IpGenDialog> {
               series: _series,
               pixBits: _pixBits,
               maxWidth: _maxWidth,
+              gstrategy: _gstrategy,
+              // 非面积档 FOLD 恒为 1（对话框与 Vivado 定制界面同口径）。
+              fold: _gstrategy == 0 ? _fold : 1,
             ),
           ),
           child: const Text('生成'),

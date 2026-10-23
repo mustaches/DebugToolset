@@ -1,0 +1,1403 @@
+// yosys 网表模型（netlist_model.dart）测试：合成 JSON 契约 + 真实 IP 包
+// 经 yosys 现场出网表校验（无 yosys 自动 skip，仿既有 e2e 用例约定）。
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' show Rect, Size;
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:debug_tool_set/modules/isp_studio/codegen/group_ip_export.dart';
+import 'package:debug_tool_set/modules/isp_studio/codegen/ip_target.dart';
+import 'package:debug_tool_set/modules/isp_studio/codegen/netlist_model.dart';
+import 'package:debug_tool_set/modules/isp_studio/codegen/netlist_symbols.dart';
+import 'package:debug_tool_set/modules/isp_studio/codegen/yosys_schematic.dart';
+import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
+import 'package:debug_tool_set/modules/isp_studio/widgets/netlist_diagram.dart';
+import 'package:debug_tool_set/providers/isp_studio_state.dart';
+
+/// 合成网表：顶层（端口 + 加法器 + 常量输入 + $meminit 应被跳过）、
+/// 子模块 `sub`、以及实例化 `sub` 的 `wrap`（校验实例端口方向来源）。
+const _synthJson = r'''
+{
+  "creator": "Yosys test",
+  "modules": {
+    "top": {
+      "ports": {
+        "clk": {"direction": "input", "bits": [10]},
+        "a":   {"direction": "input", "bits": [100,101,102,103,104,105,106,107]},
+        "y":   {"direction": "output", "bits": [108,109,110,111,112,113,114,115]}
+      },
+      "cells": {
+        "$add$foo.v:12$1": {
+          "hide_name": 0,
+          "type": "$add",
+          "parameters": {
+            "A_SIGNED": "00000000000000000000000000000000",
+            "A_WIDTH": "00000000000000000000000000001000",
+            "B_WIDTH": "00000000000000000000000000001000",
+            "Y_WIDTH": "00000000000000000000000000001000"
+          },
+          "connections": {
+            "A": [100,101,102,103,104,105,106,107],
+            "B": [0,0,0,0,0,0,0,0],
+            "Y": [108,109,110,111,112,113,114,115]
+          }
+        },
+        "$meminit$\n1_rom$foo.v:30$9": {
+          "hide_name": 1,
+          "type": "$meminit_v2",
+          "parameters": {},
+          "connections": {"ADDR": [0,0], "DATA": [0,1], "EN": [1,1]}
+        }
+      },
+      "netnames": {
+        "a": {"hide_name": 0, "bits": [100,101,102,103,104,105,106,107]},
+        "y": {"hide_name": 0, "bits": [108,109,110,111,112,113,114,115]}
+      }
+    },
+    "sub": {
+      "ports": {
+        "i": {"direction": "input", "bits": [200]},
+        "o": {"direction": "output", "bits": [201]}
+      },
+      "cells": {
+        "$not$foo.v:40$2": {
+          "hide_name": 1,
+          "type": "$not",
+          "parameters": {"A_WIDTH": "00000000000000000000000000000001"},
+          "connections": {"A": [200], "Y": [201]}
+        }
+      },
+      "netnames": {}
+    },
+    "wrap": {
+      "ports": {
+        "clk": {"direction": "input", "bits": [10]},
+        "x":   {"direction": "input", "bits": [300]},
+        "z":   {"direction": "output", "bits": [301]}
+      },
+      "cells": {
+        "$paramod$abc123\\sub": {
+          "hide_name": 0,
+          "type": "$paramod$abc123\\sub",
+          "parameters": {},
+          "connections": {"i": [300], "o": [301]}
+        }
+      },
+      "netnames": {}
+    }
+  }
+}
+''';
+
+void main() {
+  group('网表模型（合成 JSON）', () {
+    test('端口方向/位宽、总线归组、常量段、非逻辑单元跳过', () {
+      final nl = YosysNetlist.parse(_synthJson);
+      expect(nl.modules.keys, containsAll(['top', 'sub', 'wrap']));
+
+      final top = nl.module('top')!;
+      expect(top.inputs.map((p) => p.name), ['clk', 'a']);
+      expect(top.outputs.map((p) => p.name), ['y']);
+
+      // $meminit_v2 被跳过，只剩加法器。
+      expect(top.cells, hasLength(1));
+      final add = top.cells.single;
+      expect(add.type, r'$add');
+      expect(add.kind, NetlistCellKind.arith);
+      expect(add.typeLabel, 'ADD');
+      expect(add.source, 'foo.v:12');
+      expect(add.label, 'add12');
+      expect(add.width, 8);
+
+      // 输入端口 A 是 8 位真实网名 `a`；B 是 8 位常量 0。
+      expect(add.ins.map((p) => p.port), ['A', 'B']);
+      final a = add.ins[0];
+      expect(a.width, 8);
+      expect(a.nets.single.name, 'a');
+      expect(a.nets.single.range, isEmpty, reason: '整条网不带范围后缀');
+      expect(a.display, 'A[7:0]');
+      final b = add.ins[1];
+      expect(b.isConst, isTrue);
+      expect(b.nets.single.name, "8'h00");
+      expect(b.nets.single.constValue, 0);
+
+      // 输出的比特同时被端口 `y` 与网名 `y` 覆盖（同一批比特）→ 端口名胜出。
+      final y = add.outs.single;
+      expect(y.port, 'Y');
+      expect(y.width, 8);
+      expect(top.bitNames[108], 'y');
+      // 端口自身的比特名保留。
+      expect(top.bitNames[100], 'a');
+      expect(top.bitNames[0], "1'b0");
+      expect(top.bitNames[1], "1'b1");
+    });
+
+    test('别名网名：拼接端口 vs 更窄的内部信号 → 取更窄者', () {
+      // `o`（4 位端口）= {part, low}，`part` 只覆盖高 2 位 → 高 2 位用 `part`。
+      const j = r'''
+      {"modules": {"c": {
+        "ports": {"o": {"direction": "output", "bits": [400,401,402,403]}},
+        "cells": {},
+        "netnames": {
+          "o":    {"bits": [400,401,402,403]},
+          "part": {"bits": [402,403]},
+          "low":  {"bits": [400,401]}
+        }
+      }}}
+      ''';
+      final m = YosysNetlist.parse(j).module('c')!;
+      expect(m.bitNames[402], 'part');
+      expect(m.bitNames[403], 'part');
+      expect(m.bitNames[400], 'low');
+      expect(m.bitNames[401], 'low');
+    });
+
+    test('常量总线取十六进制、含 x/z 的段标注未知', () {
+      expect(netsOf([1, 1, 1, 1]).single.name, "4'hF");
+      expect(netsOf([0]).single.name, "1'b0");
+      expect(netsOf([0, 0, 0]).single.name, "3'h0");
+      expect(netsOf(['x']).single.name, "1'bx");
+      expect(netsOf(['z', 'z']).single.name, "2'bx");
+      // 常量段与信号段混在同一引脚时按段拆开。
+      final mixed = netsOf([1, 1, 1, 1, 1, 1, 1, 1]);
+      expect(mixed, hasLength(1));
+      expect(mixed.single.width, 8);
+    });
+
+    test('子模块实例：端口方向按被引用模块定义（o 为输出）', () {
+      final nl = YosysNetlist.parse(_synthJson);
+      final wrap = nl.module('wrap')!;
+      expect(wrap.cells, hasLength(1));
+      final inst = wrap.cells.single;
+      expect(inst.isInstance, isTrue);
+      expect(inst.kind, NetlistCellKind.instance);
+      expect(inst.moduleRef, 'sub');
+      expect(inst.label, 'sub');
+      expect(inst.ins.map((p) => p.port), ['i']);
+      expect(inst.outs.map((p) => p.port), ['o']);
+      // 参数化名解析到真实模块。
+      expect(nl.resolveInstance(r'$paramod$abc123\sub')!.name, 'sub');
+      expect(nl.module(r'$paramod$abc123\sub')!.name, 'sub');
+    });
+
+    test('端口方向三分类：input/output/inout（含双向端口）', () {
+      const j = r'''
+      {"modules": {"m": {
+        "ports": {
+          "a":  {"direction": "input",  "bits": [1]},
+          "b":  {"direction": "output", "bits": [2]},
+          "c":  {"direction": "inout",  "bits": [3]},
+          "d":  {"direction": "inout",  "bits": [4]}
+        },
+        "cells": {
+          "u_sub": {
+            "type": "$paramod$abc\\sub",
+            "parameters": {},
+            "connections": {"i": [1], "o": [2], "io": [3]}
+          }
+        },
+        "netnames": {}
+      },
+      "sub": {
+        "ports": {
+          "i":  {"direction": "input",  "bits": [10]},
+          "o":  {"direction": "output", "bits": [11]},
+          "io": {"direction": "inout",  "bits": [12]}
+        },
+        "cells": {},
+        "netnames": {}
+      }}}
+      ''';
+      final nl = YosysNetlist.parse(j);
+      final m = nl.module('m')!;
+      expect(m.inputs.map((p) => p.name), ['a']);
+      expect(m.outputs.map((p) => p.name), ['b']);
+      expect(m.inouts.map((p) => p.name), ['c', 'd']);
+      expect(m.ports, hasLength(4));
+      expect(m.portDirCounts[NetlistPortDir.input], 1);
+      expect(m.portDirCounts[NetlistPortDir.output], 1);
+      expect(m.portDirCounts[NetlistPortDir.inout], 2);
+      // 方向短名（图上标注用）。
+      expect(NetlistPortDir.input.label, 'I');
+      expect(NetlistPortDir.output.label, 'O');
+      expect(NetlistPortDir.inout.label, 'IO');
+      // 实例引脚方向按被引用模块（含双向）：双向引脚放块右缘（`outs`）。
+      final inst = m.cells.single;
+      expect(inst.ins.map((p) => p.port), ['i']);
+      expect(inst.outs.map((p) => p.port), containsAll(['o', 'io']));
+      final io = inst.outs.firstWhere((p) => p.port == 'io');
+      expect(io.dir, NetlistPortDir.inout);
+      expect(io.isOutput, isFalse, reason: '双向不是纯输出');
+      expect(io.isInout, isTrue);
+      expect(io.display, 'IO io', reason: '双向引脚带 IO 前缀标注');
+    });
+
+    test('模块名解析：精确名优先，参数化名回退后缀匹配', () {
+      final nl = YosysNetlist.parse(_synthJson);
+      expect(nl.module('sub')!.name, 'sub');
+      expect(nl.module('nope'), isNull);
+    });
+
+    NetlistModule denseFanoutModule() {
+      final cells = <String, Object>{};
+      for (var s = 0; s < 4; s++) {
+        cells['not_$s'] = {
+          'type': r'$not',
+          'parameters': <String, Object>{},
+          'connections': {'A': 1, 'Y': 100 + s},
+        };
+        for (var k = 0; k < 4; k++) {
+          cells['and_${s}_$k'] = {
+            'type': r'$and',
+            'parameters': <String, Object>{},
+            'connections': {
+              'A': 100 + s,
+              'B': k.isEven ? 100 + ((s + 1) % 4) : 1,
+              'Y': 200 + s * 4 + k,
+            },
+          };
+        }
+      }
+      cells['or_final'] = {
+        'type': r'$or',
+        'parameters': <String, Object>{},
+        'connections': {'A': 200, 'B': 201, 'Y': 999},
+      };
+      final json = jsonEncode({
+        'modules': {
+          'm': {
+            'ports': {
+              'i': {
+                'direction': 'input',
+                'bits': [1],
+              },
+              'o': {
+                'direction': 'output',
+                'bits': [999],
+              },
+            },
+            'cells': cells,
+            'netnames': <String, Object>{},
+          },
+        },
+      });
+      return YosysNetlist.parse(json).module('m')!;
+    }
+
+    test('密集扇入扇出：异网零重叠、符号零穿线、同网分支有圆点', () {
+      final model = buildNetlistDiagramModel(denseFanoutModule());
+      final overlaps = findNetOverlaps(model.wires);
+      expect(overlaps, isEmpty, reason: overlaps.take(8).join('\n'));
+      final crossings = findBlockCrossings(model);
+      expect(crossings, isEmpty, reason: crossings.take(8).join('\n'));
+      expect(findGridViolations(model), isEmpty);
+      final badStubs = findPinStubViolations(model);
+      expect(badStubs, isEmpty, reason: badStubs.take(8).join('\n'));
+      final fanouts = model.wires.where((w) => w.loads.length > 1).toList();
+      expect(fanouts, isNotEmpty);
+      for (final w in model.wires) {
+        for (final load in w.loads) {
+          expect(onSegments(w.segments, load.pos), isTrue);
+        }
+      }
+      for (final w in fanouts) {
+        expect(w.junctions, isNotEmpty, reason: '${w.label} 应有分支圆点');
+        for (final p in w.junctions) {
+          expect(onSegments(w.segments, p), isTrue);
+        }
+      }
+    });
+
+    test('折点统计：直线、L、Z 与同网分支按坐标计数', () {
+      NlWire wireOf(
+        List<(Offset, Offset)> segments, [
+        List<Offset> junctions = const [],
+      ]) {
+        final pin = NlPin(port: 'P', display: 'P', width: 1, bits: const [1]);
+        final wire = NlWire(pin, const <NlPin>[], '', bits: const [1]);
+        wire.segments = segments;
+        wire.junctions = junctions;
+        return wire;
+      }
+
+      expect(nlWireBendCount(wireOf(const [(Offset(0, 0), Offset(30, 0))])), 0);
+      expect(
+        nlWireBendCount(
+          wireOf(const [
+            (Offset(0, 0), Offset(30, 0)),
+            (Offset(30, 0), Offset(30, 30)),
+          ]),
+        ),
+        1,
+      );
+      expect(
+        nlWireBendCount(
+          wireOf(const [
+            (Offset(0, 0), Offset(30, 0)),
+            (Offset(30, 0), Offset(30, 30)),
+            (Offset(30, 30), Offset(60, 30)),
+          ]),
+        ),
+        2,
+      );
+      expect(
+        nlWireBendCount(
+          wireOf(
+            const [
+              (Offset(-15, 0), Offset(15, 0)),
+              (Offset(0, 0), Offset(0, 30)),
+            ],
+            const [Offset(0, 0)],
+          ),
+        ),
+        1,
+        reason: '同网 T 分支也是一个折点，但同一坐标只计一次',
+      );
+    });
+
+    test('同列不同宽度元件按列中心线居中', () {
+      final json = jsonEncode({
+        'modules': {
+          'm': {
+            'ports': <String, Object>{},
+            'cells': {
+              'rom': {
+                'type': r'$memrd',
+                'parameters': <String, Object>{},
+                'connections': {'DATA': List<int>.generate(1024, (i) => i)},
+              },
+              'not': {
+                'type': r'$not',
+                'parameters': <String, Object>{},
+                'connections': {'A': 2000, 'Y': 2001},
+              },
+            },
+            'netnames': <String, Object>{},
+          },
+        },
+      });
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+        optimization: const NlRoutingOptimizationOptions.singlePass(),
+      );
+      final byColumn = <int, List<NlBlock>>{};
+      for (final block in model.blocks.where((b) => !b.isIo)) {
+        (byColumn[block.column] ??= []).add(block);
+      }
+      expect(
+        byColumn.values.any(
+          (blocks) =>
+              blocks.length > 1 &&
+              blocks.map((b) => b.boxSize.width).toSet().length > 1,
+        ),
+        isTrue,
+      );
+      for (final blocks in byColumn.values) {
+        final maxWidth = blocks
+            .map((b) => b.boxSize.width)
+            .reduce((a, b) => a > b ? a : b);
+        final columnCenter =
+            blocks.firstWhere((b) => b.boxSize.width == maxWidth).boxOrigin.dx +
+            maxWidth / 2;
+        for (final block in blocks) {
+          final center = block.boxOrigin.dx + block.boxSize.width / 2;
+          expect((center - columnCenter).abs(), lessThanOrEqualTo(7.5));
+        }
+      }
+    });
+
+    test('多轮候选优化收敛且不劣于单次布局', () {
+      final baseline = buildNetlistDiagramModel(
+        denseFanoutModule(),
+        optimization: const NlRoutingOptimizationOptions.singlePass(),
+      );
+      expect(baseline.optimizationRounds, 0);
+      expect(baseline.optimizationEvaluations, 1);
+      expect(baseline.optimizationConverged, isTrue);
+
+      final optimized = buildNetlistDiagramModel(denseFanoutModule());
+      expect(optimized.optimizationConverged, isTrue);
+      expect(optimized.optimizationRounds, lessThanOrEqualTo(128));
+      expect(optimized.optimizationEvaluations, greaterThan(1));
+      expect(
+        optimized.crossingCount,
+        lessThanOrEqualTo(baseline.crossingCount),
+      );
+      double length(NetlistDiagramModel value) => value.wires.fold<double>(
+        0,
+        (sum, wire) =>
+            sum +
+            wire.segments.fold<double>(
+              0,
+              (inner, segment) => inner + (segment.$2 - segment.$1).distance,
+            ),
+      );
+      if (optimized.crossingCount == baseline.crossingCount) {
+        final baselineBends = nlRoutingBendCount(baseline);
+        final optimizedBends = nlRoutingBendCount(optimized);
+        expect(
+          optimizedBends,
+          lessThanOrEqualTo(baselineBends),
+          reason: '交叉数相同时必须优先减少折点',
+        );
+        if (optimizedBends == baselineBends) {
+          expect(
+            length(optimized),
+            lessThanOrEqualTo(length(baseline) + 0.01),
+            reason: '交叉数与折点数都相同时才比较总走线长度',
+          );
+        }
+      }
+      expect(countNetCrossings(optimized.wires), optimized.crossingCount);
+      final overlaps = findNetOverlaps(optimized.wires);
+      expect(overlaps, isEmpty, reason: overlaps.take(8).join('\n'));
+      final blockCrossings = findBlockCrossings(optimized);
+      expect(
+        blockCrossings,
+        isEmpty,
+        reason: blockCrossings.take(8).join('\n'),
+      );
+      expect(findGridViolations(optimized), isEmpty);
+      final badStubs = findPinStubViolations(optimized);
+      expect(badStubs, isEmpty, reason: badStubs.take(8).join('\n'));
+    });
+
+    test('默认全量候选达到已知收敛最优值', () {
+      const options = NlRoutingOptimizationOptions();
+      expect(options.maxWiresPerRound, 0);
+      final model = buildNetlistDiagramModel(denseFanoutModule());
+      expect(model.optimizationConverged, isTrue);
+      expect(model.crossingCount, lessThanOrEqualTo(23));
+    });
+
+    test('交叉数、折点数与总长度相同的候选保留为不同最优布局并去重', () {
+      const json = r'''
+      {"modules": {"m": {
+        "ports": {"i": {"direction": "input", "bits": [1]}},
+        "cells": {
+          "src0": {"type": "$not", "parameters": {},
+            "connections": {"A": 0, "Y": 100}},
+          "src1": {"type": "$not", "parameters": {},
+            "connections": {"A": 0, "Y": 101}},
+          "dst0": {"type": "$not", "parameters": {},
+            "connections": {"A": 100, "Y": 200}},
+          "dst1": {"type": "$not", "parameters": {},
+            "connections": {"A": 101, "Y": 201}},
+          "dst2": {"type": "$not", "parameters": {},
+            "connections": {"A": 1, "Y": 202}}
+        },
+        "netnames": {}
+      }}}
+      ''';
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+        optimization: const NlRoutingOptimizationOptions(tryBlockMoves: false),
+      );
+      double length(NetlistDiagramModel value) => value.wires.fold<double>(
+        0,
+        (sum, wire) =>
+            sum +
+            wire.segments.fold<double>(
+              0,
+              (inner, segment) => inner + (segment.$2 - segment.$1).distance,
+            ),
+      );
+      final variants = model.optimizationVariants;
+      expect(variants.length, greaterThan(1));
+      for (final variant in variants) {
+        expect(variant.crossingCount, model.crossingCount);
+        expect(nlRoutingBendCount(variant), nlRoutingBendCount(model));
+        expect(length(variant), closeTo(length(model), 0.01));
+        expect(variant.optimizationConverged, model.optimizationConverged);
+      }
+      final geometries = variants.map(nlRoutingGeometrySignature).toSet();
+      expect(geometries.length, variants.length, reason: '相同几何不占多个编号');
+    });
+
+    test('后台 isolate 逐轮回传优化进度并最终收敛', () async {
+      final progress = <NetlistDiagramModel>[];
+      final task = startNetlistDiagramModelOptimization(
+        denseFanoutModule(),
+        onProgress: progress.add,
+      );
+      final model = await task.result;
+      expect(model.optimizationConverged, isTrue);
+      expect(progress, isNotEmpty);
+      expect(progress.first.optimizationRounds, 0);
+      expect(progress.first.optimizationConverged, isFalse);
+      expect(progress.any((m) => m.optimizationRounds > 0), isTrue);
+      expect(
+        progress.any((m) => m.crossingCount == model.crossingCount),
+        isTrue,
+      );
+      for (var i = 1; i < progress.length; i++) {
+        expect(
+          progress[i].optimizationRounds,
+          greaterThanOrEqualTo(progress[i - 1].optimizationRounds),
+        );
+        expect(
+          progress[i].optimizationEvaluations,
+          greaterThanOrEqualTo(progress[i - 1].optimizationEvaluations),
+        );
+      }
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('后台优化任务可取消', () async {
+      final task = startNetlistDiagramModelOptimization(
+        denseFanoutModule(),
+        onProgress: (_) {},
+      );
+      task.cancel();
+      await expectLater(task.result, throwsA(anything));
+    });
+
+    test('24bit 总线三个驱动位段分别标注，默认隐藏且高亮才显示', () {
+      final cells = <String, Object>{};
+      for (var i = 0; i < 3; i++) {
+        final bits = [for (var j = 0; j < 8; j++) 100 + i * 8 + j];
+        cells['mux$i'] = {
+          'type': r'$mux',
+          'parameters': <String, Object>{},
+          'connections': {'A': 0, 'B': 1, 'S': 1, 'Y': bits},
+        };
+        cells['sink$i'] = {
+          'type': r'$add',
+          'parameters': <String, Object>{},
+          'connections': {'A': bits, 'B': 0, 'Y': 200 + i},
+        };
+      }
+      final json = jsonEncode({
+        'modules': {
+          'm': {
+            'ports': {
+              'i': {
+                'direction': 'input',
+                'bits': [1],
+              },
+            },
+            'cells': cells,
+            'netnames': {
+              'n1_res_l': {
+                'bits': [for (var bit = 100; bit < 124; bit++) bit],
+              },
+            },
+          },
+        },
+      });
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+      );
+      final res = model.wires
+          .where((w) => w.label.startsWith('n1_res_l'))
+          .toList();
+      expect(res, hasLength(3));
+      expect(res.map((w) => w.label).toSet(), {
+        'n1_res_l[7:0]',
+        'n1_res_l[15:8]',
+        'n1_res_l[23:16]',
+      });
+      for (final w in res) {
+        expect(w.bits, hasLength(8));
+        expect(w.isBus, isTrue);
+        expect(
+          nlWireLabelVisible(active: false, exportMode: false),
+          isFalse,
+          reason: '${w.label} 默认必须隐藏',
+        );
+        expect(nlWireLabelVisible(active: true, exportMode: false), isTrue);
+        expect(nlWireLabelVisible(active: false, exportMode: true), isTrue);
+        expect(w.segments, isNotEmpty);
+      }
+      final overlaps = findNetOverlaps(model.wires);
+      expect(overlaps, isEmpty, reason: overlaps.take(8).join('\n'));
+      expect(findBlockCrossings(model), isEmpty);
+    });
+
+    test('非等宽连接在网名上显示源输出实际使用的位域', () {
+      const json = r'''
+      {"modules": {"m": {
+        "ports": {},
+        "cells": {
+          "mux": {"type": "$mux", "parameters": {},
+            "connections": {"A": 0, "B": 1, "S": 1,
+                            "Y": [300,301,302,303,304,305,306,307,308,309,310,311,312,313,314,315,316]}},
+          "sink": {"type": "$add", "parameters": {},
+            "connections": {"A": [300,301,302,303,304,305,306,307], "B": 0, "Y": 400}}
+        },
+        "netnames": {
+          "n1_hwrap": {"bits": [300,301,302,303,304,305,306,307,308,309,310,311,312,313,314,315,316]},
+          "n1_res_h": {"bits": [300,301,302,303,304,305,306,307]}
+        }
+      }}}
+      ''';
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+      );
+      final wire = model.wires.singleWhere((w) => w.from.bits.contains(300));
+      expect(wire.from.bits, hasLength(17));
+      expect(wire.bits, [300, 301, 302, 303, 304, 305, 306, 307]);
+      expect(wire.label, 'n1_hwrap[7:0]');
+      expect(nlWireLabelVisible(active: false, exportMode: false), isFalse);
+      expect(nlWireLabelVisible(active: true, exportMode: false), isTrue);
+      expect(wire.isBus, isTrue);
+      expect(wire.segments, isNotEmpty);
+    });
+
+    test('同一源位域扇出到不同目标位宽时同时标注目标针脚', () {
+      const json = r'''
+      {"modules": {"m": {
+        "ports": {},
+        "cells": {
+          "add268": {"type": "$add", "parameters": {},
+            "connections": {"A": 0, "B": 1,
+              "Y": [100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124]}},
+          "gt274": {"type": "$gt", "parameters": {},
+            "connections": {"A": [114,115,116,117,118,119,120,121,122,123,124], "B": 0, "Y": 200}},
+          "mux274": {"type": "$mux", "parameters": {},
+            "connections": {"A": [114,115,116,117,118,119,120,121], "B": 0, "S": 200, "Y": 201}}
+        },
+        "netnames": {
+          "n1_l_sum": {"bits": [100,101,102,103,104,105,106,107,108,109,110,111,112,113]},
+          "n1_l_scl": {"bits": [114,115,116,117,118,119,120,121,122,123,124]}
+        }
+      }}}
+      ''';
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+      );
+      final wire = model.wires.singleWhere(
+        (w) => w.from.ownerTitle == 'add268',
+      );
+      expect(wire.bits, hasLength(11));
+      expect(wire.label, 'n1_l_scl[24:14]');
+      final gtA = model.blocks
+          .singleWhere((b) => b.cell?.label == 'gt274')
+          .ins
+          .singleWhere((p) => p.port == 'A');
+      final muxA = model.blocks
+          .singleWhere((b) => b.cell?.label == 'mux274')
+          .ins
+          .singleWhere((p) => p.port == 'A');
+      expect(wire.branchLabels, hasLength(2));
+      expect(wire.branchLabels[gtA], 'n1_l_scl[24:14]');
+      expect(wire.branchLabels[muxA], 'n1_l_scl[21:14]');
+      expect(gtA.branchLabel, 'n1_l_scl[24:14]');
+      expect(muxA.branchLabel, 'n1_l_scl[21:14]');
+      expect(gtA.branchLabelWidth, greaterThan(0));
+      expect(muxA.branchLabelWidth, greaterThan(0));
+      expect(wire.labelWidth, 0, reason: '分支标签取代整网组合长标签');
+    });
+
+    test('多驱动 B[23:0] 按高中低位域拆成三个独立针脚', () {
+      final cells = <String, Object>{};
+      for (var i = 0; i < 3; i++) {
+        cells['mux$i'] = {
+          'type': r'$mux',
+          'parameters': <String, Object>{},
+          'connections': {
+            'A': 0,
+            'B': 1,
+            'S': 1,
+            'Y': [for (var j = 0; j < 8; j++) 100 + i * 8 + j],
+          },
+        };
+      }
+      cells['sink'] = {
+        'type': r'$mux',
+        'parameters': <String, Object>{},
+        'connections': {
+          'A': 0,
+          'B': [for (var bit = 100; bit < 124; bit++) bit],
+          'S': 1,
+          'Y': 200,
+        },
+      };
+      final json = jsonEncode({
+        'modules': {
+          'm': {
+            'ports': <String, Object>{},
+            'cells': cells,
+            'netnames': {
+              'res_l': {
+                'bits': [for (var bit = 100; bit < 108; bit++) bit],
+              },
+              'res_s': {
+                'bits': [for (var bit = 108; bit < 116; bit++) bit],
+              },
+              'res_h': {
+                'bits': [for (var bit = 116; bit < 124; bit++) bit],
+              },
+            },
+          },
+        },
+      });
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+      );
+      final sink = model.blocks.firstWhere((b) => b.cell?.label == 'sink');
+      final bPins = sink.ins.where((p) => p.port == 'B').toList();
+      expect(bPins, hasLength(3));
+      expect(bPins.map((p) => p.display), ['B[23:16]', 'B[15:8]', 'B[7:0]']);
+      expect(bPins.map((p) => p.bits), [
+        [for (var bit = 116; bit < 124; bit++) bit],
+        [for (var bit = 108; bit < 116; bit++) bit],
+        [for (var bit = 100; bit < 108; bit++) bit],
+      ]);
+      expect(bPins[0].pos.dy, lessThan(bPins[1].pos.dy));
+      expect(bPins[1].pos.dy, lessThan(bPins[2].pos.dy));
+      for (var i = 0; i < 3; i++) {
+        final wire = model.wires.firstWhere(
+          (w) => w.from.bits.contains(100 + i * 8),
+        );
+        expect(identical(wire.loads.single, bPins[2 - i]), isTrue);
+      }
+      final overlaps = findNetOverlaps(model.wires);
+      expect(overlaps, isEmpty, reason: overlaps.take(8).join('\n'));
+      expect(findBlockCrossings(model), isEmpty);
+    });
+
+    test('单比特接入总线针脚仍用单信号线宽，并与总线零重叠', () {
+      const json = r'''
+      {"modules": {"m": {
+        "ports": {},
+        "cells": {
+          "gt": {"type": "$gt", "parameters": {},
+            "connections": {"A": 0, "B": 1, "Y": 50}},
+          "mux": {"type": "$mux", "parameters": {},
+            "connections": {"A": 0, "B": 1, "S": 1, "Y": [60,61,62]}},
+          "sink": {"type": "$add", "parameters": {},
+            "connections": {"A": [50,60,61,62], "B": 0, "Y": 70}}
+        },
+        "netnames": {
+          "cmp": {"bits": [50]},
+          "data_bus": {"bits": [60,61,62]},
+          "mixed": {"bits": [50,60,61,62]}
+        }
+      }}}
+      ''';
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+      );
+      final single = model.wires.firstWhere((w) => w.from.bits.contains(50));
+      final bus = model.wires.firstWhere((w) => w.from.bits.contains(60));
+      expect(single.bits, [50]);
+      expect(single.isBus, isFalse, reason: '负载针脚即使为 4bit，也不能把单比特网画成总线');
+      expect(bus.bits, [60, 61, 62]);
+      expect(bus.isBus, isTrue);
+      expect(identical(single.loads.single, bus.loads.single), isFalse);
+      expect(single.loads.single.display, 'A[0]');
+      expect(bus.loads.single.display, 'A[3:1]');
+      expect(single.loads.single.pos.dy, isNot(bus.loads.single.pos.dy));
+      final overlaps = findNetOverlaps(model.wires);
+      expect(overlaps, isEmpty, reason: overlaps.join('\n'));
+      expect(findBlockCrossings(model), isEmpty);
+    });
+
+    test('同一组负载的完整总线拼接仍合并为一条总线', () {
+      const json = r'''
+      {"modules": {"m": {
+        "ports": {},
+        "cells": {
+          "dff": {"type": "$adff", "parameters": {},
+            "connections": {"D": 0, "CLK": 1, "ARST": 1, "Q": [80,81,82,83]}},
+          "sink": {"type": "$add", "parameters": {},
+            "connections": {"A": [80,81,82,83], "B": 0, "Y": 90}}
+        },
+        "netnames": {
+          "h": {"bits": [80,81]},
+          "s": {"bits": [82]},
+          "l": {"bits": [83]}
+        }
+      }}}
+      ''';
+      final model = buildNetlistDiagramModel(
+        YosysNetlist.parse(json).module('m')!,
+      );
+      final bus = model.wires.where((w) => w.from.bits.contains(80));
+      expect(bus, hasLength(1), reason: '同一负载集合的位段不得拆成平行线');
+      expect(bus.single.bits, [80, 81, 82, 83]);
+      expect(bus.single.isBus, isTrue);
+      expect(
+        bus.single.loads.single.display,
+        'A[3:0]',
+        reason: '单驱动完整总线不得拆成多个位域针脚',
+      );
+    });
+  });
+
+  group('真实网表（yosys，缺失自动 skip）', () {
+    test('多段色彩均衡器 IP：层级/真实信号名/单元类型', () async {
+      final yosys = detectYosys();
+      if (yosys == null) {
+        markTestSkipped('未检测到 yosys（tools/yosys 或 PATH）');
+        return;
+      }
+      // 生成 IP 包并写盘。
+      final state = IspStudioState();
+      addTearDown(state.dispose);
+      final mb = state.graph.addNode('multi_band_eq', 0, 0);
+      state.graph.nodes[mb]!.paramValues['codegenMode'] = 'lut_fixed';
+      state.graph.groups.add(IspNodeGroup('g1', {mb}, name: 'eq'));
+      final group = state.graph.groups.single;
+      final files = buildGroupIpFiles(
+        state.graph,
+        group,
+        const IpGenOptions(vendor: IpVendor.generic),
+      );
+      final top = schematicTopModule(files);
+
+      final dir = await Directory.systemTemp.createTemp('isp_netlist_test_');
+      addTearDown(() {
+        try {
+          dir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final sources = <String>[];
+      for (final e in files.entries) {
+        if (!e.key.endsWith('.v') || e.key.startsWith('tb_')) continue;
+        File(
+          '${dir.path}${Platform.pathSeparator}${e.key}',
+        ).writeAsStringSync(e.value);
+        sources.add(e.key);
+      }
+      final script =
+          'read_verilog ${sources.join(' ')}; '
+          'hierarchy -top $top; proc; opt_clean; write_json net.json';
+      final r = await Process.run(yosys.exe, [
+        '-q',
+        '-p',
+        script,
+      ], workingDirectory: dir.path);
+      if (r.exitCode != 0) {
+        markTestSkipped('yosys 执行失败：${r.stderr}');
+        return;
+      }
+      final json = File(
+        '${dir.path}${Platform.pathSeparator}net.json',
+      ).readAsStringSync();
+      final nl = YosysNetlist.parse(json);
+
+      // 顶层：端口 + 1 个子模块实例（可下钻）。
+      final topMod = nl.module(top)!;
+      expect(topMod.inputs.map((p) => p.name), contains('in_data'));
+      expect(topMod.outputs.map((p) => p.name), contains('out_data'));
+      expect(topMod.cells, hasLength(1));
+      final inst = topMod.cells.single;
+      expect(inst.isInstance, isTrue);
+      // 实例的输出端口必须按被引用模块判定（out_data/out_valid…）。
+      expect(inst.outs.map((p) => p.port), contains('out_data'));
+
+      // 核心模块：32 个可绘制单元（768 个 $meminit 已跳过）。
+      final core = nl.resolveInstance(inst.type)!;
+      expect(
+        core.cells.where((c) => c.kind != NetlistCellKind.other).length,
+        greaterThan(20),
+      );
+      final types = {for (final c in core.cells) c.type};
+      expect(
+        types,
+        containsAll([r'$add', r'$mux', r'$adff', r'$memrd', r'$mul']),
+      );
+      // 无 ROM 初始化 / 层次调试单元。
+      expect(types.any((t) => t.startsWith(r'$meminit')), isFalse);
+
+      // 真实信号名保留（不 flatten 的关键收益）：比特名与引脚网名都可读。
+      final names = core.bitNames.values.toSet();
+      expect(names, contains('n1_hsum'));
+      expect(names.where((n) => n.startsWith('n1_')).length, greaterThan(5));
+      // 引脚网名按引脚跨度选名：乘法器的输入应是真实信号（而非碎片名）。
+      final mul = core.cells.firstWhere((c) => c.type == r'$mul');
+      final mulNets = [...mul.ins.expand((p) => p.nets)];
+      expect(mulNets, isNotEmpty);
+      expect(
+        mulNets.any(
+          (n) => n.name.startsWith('n1_') || n.name.startsWith('in_'),
+        ),
+        isTrue,
+        reason: '引脚网名应取真实信号名：${mulNets.map((n) => n.display)}',
+      );
+      // ROM 读口带 MEMID 名。
+      final rom = core.cells.firstWhere((c) => c.type == r'$memrd');
+      expect(rom.memId, startsWith('n1_'));
+      expect(rom.source, isNotNull);
+      expect(rom.outs.single.port, 'DATA');
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('真实网表布局：不同网的走线互不重叠（共针脚者除外）', () async {
+      final yosys = detectYosys();
+      if (yosys == null) {
+        markTestSkipped('未检测到 yosys（tools/yosys 或 PATH）');
+        return;
+      }
+      final state = IspStudioState();
+      addTearDown(state.dispose);
+      final mb = state.graph.addNode('multi_band_eq', 0, 0);
+      state.graph.nodes[mb]!.paramValues['codegenMode'] = 'lut_fixed';
+      state.graph.groups.add(IspNodeGroup('g1', {mb}, name: 'eq'));
+      final files = buildGroupIpFiles(
+        state.graph,
+        state.graph.groups.single,
+        const IpGenOptions(vendor: IpVendor.generic),
+      );
+      final res = await extractSchematicNetlist(
+        files,
+        topName: schematicTopModule(files),
+      );
+      if (!res.success || res.netlist == null) {
+        markTestSkipped('网表提取失败：${res.log}');
+        return;
+      }
+      final core = res.netlist!.modules.values.firstWhere(
+        (m) => m.cells.length > 5,
+        orElse: () => throw StateError('无核心模块'),
+      );
+      final model = buildNetlistDiagramModel(core);
+      // 真实网表也按标准符号落针脚：组合逻辑单输出居中、OR 接内凹曲线、
+      // MUX 选择端落在底边。
+      for (final b in model.blocks.where((b) => !b.isIo)) {
+        final rect = Rect.fromLTWH(
+          b.boxOrigin.dx,
+          b.boxOrigin.dy,
+          b.boxSize.width,
+          b.boxSize.height,
+        );
+        if (b.outs.length == 1 && netlistSymbolCentersOutput(b.cell)) {
+          expect(b.outs.single.edge.dy, closeTo(rect.center.dy, 0.01));
+        }
+        if (b.cell?.type == r'$or') {
+          for (final p in b.ins) {
+            expect(p.edge.dx, greaterThan(rect.left));
+          }
+        }
+        if (netlistSymbolKindOf(b.cell) == NetlistSymbolKind.mux) {
+          final s = b.ins.firstWhere((p) => p.port == 'S');
+          expect(s.edge.dy, rect.bottom);
+          expect(s.pos.dy, greaterThan(rect.bottom));
+        }
+      }
+      final bad = findNetOverlaps(model.wires);
+      expect(bad, isEmpty, reason: bad.take(6).join('\n'));
+      // 走线不得穿过块体（含从块体底下穿过）：线段与块体矩形不允许相交。
+      final cross = findBlockCrossings(model);
+      expect(cross, isEmpty, reason: cross.take(6).join('\n'));
+      expect(findGridViolations(model), isEmpty);
+      final badStubs = findPinStubViolations(model);
+      expect(badStubs, isEmpty, reason: badStubs.take(8).join('\n'));
+
+      expect(model.optimizationConverged, isTrue);
+      expect(model.optimizationRounds, greaterThan(0));
+      expect(
+        model.optimizationEvaluations,
+        greaterThan(model.optimizationRounds),
+      );
+      // 最佳优先搜索必须达到当前 15px Grid 的已知自然收敛结果。
+      final crossings = countNetCrossings(model.wires);
+      expect(crossings, model.crossingCount);
+      expect(
+        crossings,
+        lessThanOrEqualTo(115),
+        reason: '优化不得提前停止，当前为 $crossings 个',
+      );
+
+      // 已知长轨道：源低于负载时只能向上绕，源高于负载时只能向下绕。
+      double trackY(NlWire w) {
+        final horizontal =
+            w.segments.where((s) {
+              final (a, b) = s;
+              return (a.dy - b.dy).abs() < 0.01;
+            }).toList()..sort(
+              (a, b) =>
+                  (b.$2 - b.$1).distance.compareTo((a.$2 - a.$1).distance),
+            );
+        return horizontal.first.$1.dy;
+      }
+
+      final outValid = model.wires.singleWhere((w) => w.label == 'out_valid');
+      expect(outValid.from.pos.dy, greaterThan(outValid.loads.single.pos.dy));
+      final upY = trackY(outValid);
+      expect(upY, lessThan(outValid.from.pos.dy));
+      expect(upY, lessThan(outValid.loads.single.pos.dy));
+      final clk = model.wires.singleWhere(
+        (w) => w.from.isPort && w.from.port == 'clk',
+      );
+      final minLoadY = clk.loads.map((p) => p.pos.dy).reduce(math.min);
+      final maxLoadY = clk.loads.map((p) => p.pos.dy).reduce(math.max);
+      expect(clk.from.pos.dy, lessThanOrEqualTo(minLoadY));
+      final downY = trackY(clk);
+      expect(downY, greaterThan(clk.from.pos.dy));
+      expect(downY, greaterThan(maxLoadY));
+
+      // CLK/ARST 必须沿 pin 水平线直达通道，不能在 pos 上先折到别的行再折回。
+      final dff = model.blocks.firstWhere(
+        (b) =>
+            b.cell?.type == r'$adff' &&
+            b.ins.any((p) => p.port == 'CLK') &&
+            b.ins.any((p) => p.port == 'ARST'),
+      );
+      for (final name in ['CLK', 'ARST']) {
+        final pin = dff.ins.firstWhere((p) => p.port == name);
+        final wire = model.wires.firstWhere(
+          (w) => w.loads.any((l) => identical(l, pin)),
+        );
+        final direct = wire.segments.any((s) {
+          final (a, b) = s;
+          if ((a.dy - pin.pos.dy).abs() > 0.01 ||
+              (b.dy - pin.pos.dy).abs() > 0.01) {
+            return false;
+          }
+          final lo = math.min(a.dx, b.dx), hi = math.max(a.dx, b.dx);
+          return lo <= pin.pos.dx - 20 && hi >= pin.pos.dx;
+        });
+        expect(direct, isTrue, reason: '$name 应有 pin 所在行的直达水平段');
+        final posJog = wire.segments.any((s) {
+          final (a, b) = s;
+          return (a.dx - b.dx).abs() < 0.01 &&
+              (a.dx - pin.pos.dx).abs() < 0.01 &&
+              (a.dy - b.dy).abs() > 0.01 &&
+              onSegments([s], pin.pos);
+        });
+        expect(posJog, isFalse, reason: '$name 不得在 pos 上提前折弯');
+      }
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('原位展开后**每一层**都满足三条几何不变式（3 层嵌套）', () {
+      // 合成 3 层：top → mid → leaf，展开 top 的实例与 mid 的实例。
+      String leaf(String name, int bw) =>
+          r'''
+        "'''
+          '$name'
+          r'''": {
+          "ports": {"a": {"direction": "input", "bits": [1,2,3,4]},
+                    "y": {"direction": "output", "bits": [20,21,22,23]}},
+          "cells": {
+            "add''$name''": {"type": "$add",
+              "parameters": {"A_WIDTH": "'''
+          '${bw.toString().padLeft(32, '0')}'
+          r'''",
+                             "Y_WIDTH": "'''
+          '${bw.toString().padLeft(32, '0')}'
+          r'''"},
+              "connections": {"A": [1,2,3,4], "B": [0,0,0,0],
+                              "Y": [20,21,22,23]}},
+            "not''$name''": {"type": "$not", "parameters": {},
+              "connections": {"A": 2, "Y": [30]}},
+            "and''$name''": {"type": "$and",
+              "parameters": {"A_WIDTH": "00000000000000000000000000000010",
+                             "B_WIDTH": "00000000000000000000000000000010",
+                             "Y_WIDTH": "00000000000000000000000000000010"},
+              "connections": {"A": [30,31], "B": [32,33], "Y": [40,41]}}
+          },
+          "netnames": {"n_''$name''": {"bits": [40,41]}}
+        }''';
+      final json =
+          '''
+      {"modules": {
+        "top": {
+          "ports": {"i": {"direction": "input", "bits": [1,2,3,4]},
+                    "o": {"direction": "output", "bits": [20,21,22,23]}},
+          "cells": {"u_mid": {"type": "\$paramod\$deadbeef\\\\mid", "parameters": {},
+            "connections": {"a": [1,2,3,4], "y": [20,21,22,23]}}},
+          "netnames": {}
+        },
+        "mid": {
+          "ports": {"a": {"direction": "input", "bits": [1,2,3,4]},
+                    "y": {"direction": "output", "bits": [20,21,22,23]}},
+          "cells": {"u_leaf": {"type": "\$paramod\$cafebabe\\\\leaf", "parameters": {},
+            "connections": {"a": [1,2,3,4], "y": [20,21,22,23]}}},
+          "netnames": {}
+        },
+        ${leaf('leaf', 4)}
+      }}''';
+      final nl = YosysNetlist.parse(json);
+      final top = nl.module('top')!;
+      final model = buildNetlistDiagramModel(
+        top,
+        expanded: {'u_mid', 'u_leaf'},
+        resolve: (t) => nl.resolveInstance(t) ?? nl.module(t),
+      );
+      final levels = model.flattened();
+      expect(levels, hasLength(3), reason: 'top / mid / leaf 三层都要展开');
+      for (var i = 0; i < levels.length; i++) {
+        final lv = levels[i];
+        final levelModel = NetlistDiagramModel(
+          blocks: lv.blocks,
+          wires: lv.wires,
+          canvasSize: Size.zero,
+          moduleName: '',
+          cellCount: 0,
+        );
+        // ① 不同网不共线重叠
+        final ovl = findNetOverlaps(lv.wires);
+        expect(ovl, isEmpty, reason: '第 $i 层网重叠：${ovl.take(3).join('; ')}');
+        // ② 走线不穿块体
+        final cross = findBlockCrossings(levelModel);
+        expect(cross, isEmpty, reason: '第 $i 层穿块体：${cross.take(3).join('; ')}');
+        expect(
+          findGridViolations(levelModel),
+          isEmpty,
+          reason: '第 $i 层存在非 15px Grid 坐标',
+        );
+        final badStubs = findPinStubViolations(levelModel);
+        expect(
+          badStubs,
+          isEmpty,
+          reason: '第 $i 层 pin 外延伸违规：${badStubs.take(3).join('; ')}',
+        );
+        // ③ 每个负载针脚都落在线段上（含展开层）
+        for (final w in lv.wires) {
+          for (final l in w.loads) {
+            expect(
+              onSegments(w.segments, l.pos),
+              isTrue,
+              reason: '第 $i 层负载 ${l.display} 未接住',
+            );
+          }
+        }
+      }
+    });
+  });
+}
+
+/// 点是否落在某条线段上（含线段内部——同轴线段合并后，针脚可能位于
+/// 合并段中间，几何上依然相连）。
+bool onSegments(List<(Offset, Offset)> segs, Offset p) => nlOnSegments(segs, p);
+
+/// 找出与块体矩形相交的走线段（针脚短线在块外，不算）。
+List<String> findBlockCrossings(NetlistDiagramModel model) =>
+    nlFindBlockCrossings(model);
+
+/// 检查每个元件 pin 都从符号轮廓沿自身方向向外直行至少一个 Grid，
+/// 且彩色网线从 pos 到 routePos 也有完整一个 Grid 直行首段；
+/// 对应走线不得在灰色短线或彩色首段内提前折弯、交叉或分支。
+List<String> findPinStubViolations(NetlistDiagramModel model) {
+  final out = <String>[];
+  const eps = 0.01;
+  bool onSeg(Offset p, Offset a, Offset b) => onSegments([(a, b)], p);
+  bool entersStub(NlPin pin, Offset a, Offset b) {
+    final edge = pin.edge, pos = pin.pos;
+    final horizontal = (edge.dy - pos.dy).abs() < eps;
+    if (horizontal && (a.dy - b.dy).abs() < eps) {
+      if ((a.dy - edge.dy).abs() >= eps) return false;
+      final lo = math.max(math.min(edge.dx, pos.dx), math.min(a.dx, b.dx));
+      final hi = math.min(math.max(edge.dx, pos.dx), math.max(a.dx, b.dx));
+      return lo < hi - eps;
+    }
+    if (!horizontal && (a.dx - b.dx).abs() < eps) {
+      if ((a.dx - edge.dx).abs() >= eps) return false;
+      final lo = math.max(math.min(edge.dy, pos.dy), math.min(a.dy, b.dy));
+      final hi = math.min(math.max(edge.dy, pos.dy), math.max(a.dy, b.dy));
+      return lo < hi - eps;
+    }
+    Offset? cross;
+    if (horizontal && (a.dx - b.dx).abs() < eps) {
+      cross = Offset(a.dx, edge.dy);
+    } else if (!horizontal && (a.dy - b.dy).abs() < eps) {
+      cross = Offset(edge.dx, a.dy);
+    }
+    if (cross == null) return false;
+    final atPos = (cross - pos).distance < eps;
+    return !atPos && onSeg(cross, edge, pos) && onSeg(cross, a, b);
+  }
+
+  for (final block in model.blocks) {
+    if (block.isIo) continue;
+    for (final pin in [...block.ins, ...block.outs]) {
+      final delta = pin.pos - pin.edge;
+      final bottom = netlistSymbolIsBottomPin(block.cell, pin.port);
+      final input = block.ins.contains(pin);
+      final valid = bottom
+          ? delta.dx.abs() < eps && delta.dy >= 15.0 - eps
+          : input
+          ? delta.dy.abs() < eps && delta.dx <= -15.0 + eps
+          : delta.dy.abs() < eps && delta.dx >= 15.0 - eps;
+      if (!valid) {
+        out.add(
+          '${block.title}.${pin.port} 短线方向/长度违规 '
+          'edge=${pin.edge} pos=${pin.pos}',
+        );
+      }
+      final routeDelta = pin.routePos - pin.pos;
+      final routeValid = bottom
+          ? routeDelta.dx.abs() < eps && routeDelta.dy >= 15.0 - eps
+          : input
+          ? routeDelta.dy.abs() < eps && routeDelta.dx <= -15.0 + eps
+          : routeDelta.dy.abs() < eps && routeDelta.dx >= 15.0 - eps;
+      if (!routeValid) {
+        out.add(
+          '${block.title}.${pin.port} 外部首段方向/长度违规 '
+          'pos=${pin.pos} routePos=${pin.routePos}',
+        );
+      }
+      for (final wire in model.wires) {
+        final connected =
+            identical(wire.from, pin) ||
+            wire.loads.any((l) => identical(l, pin));
+        if (!connected) continue;
+        final coversOut = wire.segments.any(
+          (s) => onSeg(pin.pos, s.$1, s.$2) && onSeg(pin.routePos, s.$1, s.$2),
+        );
+        if (!coversOut) {
+          out.add('${block.title}.${pin.port} 缺少 pos → routePos 完整直行首段');
+        }
+        final horizontalOut = delta.dy.abs() < eps;
+        for (final (a, b) in wire.segments) {
+          final perpendicular = horizontalOut
+              ? (a.dx - b.dx).abs() < eps && (a.dy - b.dy).abs() > eps
+              : (a.dy - b.dy).abs() < eps && (a.dx - b.dx).abs() > eps;
+          if (perpendicular && onSeg(pin.pos, a, b)) {
+            out.add('${block.title}.${pin.port} 在 pos 上提前折弯/交叉 seg=($a)-($b)');
+          }
+          if (entersStub(pin, a, b)) {
+            out.add(
+              '${block.title}.${pin.port} 在一个 Grid 短线内提前折弯/分支 '
+              'seg=($a)-($b)',
+            );
+          }
+        }
+        for (final junction in wire.junctions) {
+          if ((junction - pin.pos).distance >= eps &&
+              onSeg(junction, pin.edge, pin.pos)) {
+            out.add('${block.title}.${pin.port} 在一个 Grid 短线内出现分支点');
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/// 找出不同网之间**共线重叠或平行间距不足（<15px）**的走线段。
+/// 针脚短线也计入；同一根网内部不算，横竖十字交叉不算。
+List<String> findNetOverlaps(List<NlWire> wires) {
+  final out = <String>[];
+  List<(Offset, Offset)> segmentsOf(NlWire w) => [
+    ...nlWirePinStubs(w),
+    ...w.segments,
+  ];
+  for (var i = 0; i < wires.length; i++) {
+    for (var j = i + 1; j < wires.length; j++) {
+      final a = wires[i], b = wires[j];
+      for (final (p, q) in segmentsOf(a)) {
+        for (final (r, s) in segmentsOf(b)) {
+          final ah = (p.dy - q.dy).abs() < 0.01;
+          final bh = (r.dy - s.dy).abs() < 0.01;
+          if (ah != bh) continue;
+          final axisA = ah ? p.dy : p.dx;
+          final axisB = ah ? r.dy : r.dx;
+          if ((axisA - axisB).abs() >= 15.0) continue;
+          final alo = ah ? math.min(p.dx, q.dx) : math.min(p.dy, q.dy);
+          final ahi = ah ? math.max(p.dx, q.dx) : math.max(p.dy, q.dy);
+          final blo = ah ? math.min(r.dx, s.dx) : math.min(r.dy, s.dy);
+          final bhi = ah ? math.max(r.dx, s.dx) : math.max(r.dy, s.dy);
+          if (alo < bhi - 0.01 && blo < ahi - 0.01) {
+            out.add(
+              '${ah ? '水平' : '垂直'}间距不足/重叠 '
+              'axis=${axisA.toStringAsFixed(1)} vs ${axisB.toStringAsFixed(1)} '
+              'A=(${p.dx.toStringAsFixed(1)},${p.dy.toStringAsFixed(1)})-'
+              '(${q.dx.toStringAsFixed(1)},${q.dy.toStringAsFixed(1)}) '
+              'B=(${r.dx.toStringAsFixed(1)},${r.dy.toStringAsFixed(1)})-'
+              '(${s.dx.toStringAsFixed(1)},${s.dy.toStringAsFixed(1)}) '
+              '(${a.label} / ${b.label})',
+            );
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/// 统计不同网之间的横竖交叉点；同一点去重，平行段不参与计数。
+int countNetCrossings(List<NlWire> wires) {
+  final crossings = <(int, int, double, double)>{};
+  for (var i = 0; i < wires.length; i++) {
+    for (var j = i + 1; j < wires.length; j++) {
+      for (final (a, b) in wires[i].segments) {
+        for (final (c, d) in wires[j].segments) {
+          final ah = (a.dy - b.dy).abs() < 0.01;
+          final bh = (c.dy - d.dy).abs() < 0.01;
+          if (ah == bh) continue;
+          final h0 = ah ? a : c;
+          final h1 = ah ? b : d;
+          final v0 = ah ? c : a;
+          final v1 = ah ? d : b;
+          final x = v0.dx, y = h0.dy;
+          final inH =
+              x >= math.min(h0.dx, h1.dx) - 0.01 &&
+              x <= math.max(h0.dx, h1.dx) + 0.01;
+          final inV =
+              y >= math.min(v0.dy, v1.dy) - 0.01 &&
+              y <= math.max(v0.dy, v1.dy) + 0.01;
+          if (inH && inV) crossings.add((i, j, x, y));
+        }
+      }
+    }
+  }
+  return crossings.length;
+}
+
+/// 检查符号边界、pin、连接点、分支点和全部走线端点是否都落在 15px Grid 上。
+List<String> findGridViolations(NetlistDiagramModel model) {
+  final out = <String>[];
+  bool offGrid(double v) => (v % 15.0).abs() > 0.001;
+  void check(Offset p, String what) {
+    if (offGrid(p.dx) || offGrid(p.dy)) {
+      out.add('$what=(${p.dx.toStringAsFixed(2)},${p.dy.toStringAsFixed(2)})');
+    }
+  }
+
+  check(Offset(model.canvasSize.width, model.canvasSize.height), 'canvas');
+  for (final block in model.blocks) {
+    check(block.boxOrigin, '${block.title}.boxOrigin');
+    check(
+      Offset(
+        block.boxOrigin.dx + block.boxSize.width,
+        block.boxOrigin.dy + block.boxSize.height,
+      ),
+      '${block.title}.boxBottomRight',
+    );
+    if (block.isContainer) check(block.subOffset, '${block.title}.subOffset');
+    for (final (a, b) in block.subLinks) {
+      check(a, '${block.title}.subLink.a');
+      check(b, '${block.title}.subLink.b');
+    }
+    for (final p in [...block.ins, ...block.outs]) {
+      check(p.pos, '${block.title}.${p.port}.pos');
+      check(p.routePos, '${block.title}.${p.port}.routePos');
+      check(p.edge, '${block.title}.${p.port}.edge');
+    }
+  }
+  for (final wire in model.wires) {
+    for (final (a, b) in wire.segments) {
+      check(a, '${wire.label}.a');
+      check(b, '${wire.label}.b');
+    }
+    for (final p in wire.junctions) {
+      check(p, '${wire.label}.junction');
+    }
+  }
+  return out;
+}
+
+/// 单个引脚（`A`）连接的网段——用于常量/分组口径测试。
+/// 比特值为整数（网比特号）或 `'x'`/`'z'` 常量字符串。
+List<NetlistNet> netsOf(List<Object> bits) {
+  final j = jsonEncode({
+    'modules': {
+      'm': {
+        'ports': <String, Object>{},
+        'cells': {
+          r'$not$f.v:1$1': {
+            'type': r'$not',
+            'parameters': <String, Object>{},
+            'connections': {'A': bits},
+          },
+        },
+        'netnames': <String, Object>{},
+      },
+    },
+  });
+  return YosysNetlist.parse(j).module('m')!.cells.single.ins.single.nets;
+}

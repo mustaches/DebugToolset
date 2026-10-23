@@ -10,8 +10,8 @@
       "extraHeight": 444.0,
       "name": "预览#1",
       "params": {
-        "fps": 30,
-        "frameCount": 15458
+        "fps": 60,
+        "frameCount": 29314
       }
     },
     {
@@ -23,8 +23,8 @@
       "extraHeight": 444.0,
       "name": "预览#2",
       "params": {
-        "fps": 30,
-        "frameCount": 15458
+        "fps": 60,
+        "frameCount": 29314
       }
     },
     {
@@ -36,8 +36,8 @@
       "extraHeight": 444.0,
       "name": "预览#3",
       "params": {
-        "fps": 30,
-        "frameCount": 15458
+        "fps": 60,
+        "frameCount": 29314
       }
     },
     {
@@ -122,8 +122,8 @@
       "extraHeight": 574.0,
       "name": "预览#5",
       "params": {
-        "fps": 30,
-        "frameCount": 15458
+        "fps": 60,
+        "frameCount": 29314
       }
     },
     {
@@ -155,7 +155,7 @@
       "extraHeight": 160.0,
       "name": "Video#1",
       "params": {
-        "filePath": "",
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\8K HDR 240 FPS Dolby Vision - Special OLED Demo.mkv",
         "bitDepth": "8",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }
@@ -259,8 +259,15 @@
       "fromPort": "out_yuv",
       "to": "n41",
       "toPort": "in"
+    },
+    {
+      "id": "c64",
+      "from": "n61",
+      "fromPort": "out_yuv",
+      "to": "n38",
+      "toPort": "in_yuv"
     }
   ],
   "groups": [],
-  "nextId": 64
+  "nextId": 65
 }

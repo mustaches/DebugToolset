@@ -16,10 +16,12 @@ import '../codegen/ip_validate.dart';
 import '../models/isp_graph.dart';
 import '../models/isp_node.dart';
 import 'connection_painter.dart';
+import 'flow_file_dialog.dart';
 import 'group_code_page.dart';
 import 'ip_gen_dialog.dart';
 import 'node_layout.dart';
 import 'node_widget.dart';
+import 'run_progress_dialog.dart';
 
 /// 编组名显示带的高度（包围框顶部向上延伸的净空区，保证组名不被
 /// 成员节点遮挡；连线在框下层绘制，名字带内衬底后同样遮不住）。
@@ -285,6 +287,14 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
   /// 画布坐标下的框选起点；null 表示当前未进行框选。
   Offset? _boxSelectStartCanvasPos;
 
+  /// 右键按下状态：空白处按下位置（屏幕坐标）与是否已越过平移阈值。
+  /// 右键拖拽平移与空白处右键菜单互斥——越过 4px 判为拖拽，未越过
+  /// 且起始于空白时释放弹出画布菜单。
+  Offset? _secondaryDownPos;
+  bool _secondaryDown = false;
+  bool _secondaryOnBlank = false;
+  bool _secondaryPanned = false;
+
   /// 画布坐标下的节点标题栏命中（后绘制者优先）：左键点住标题栏拖动节点。
   String? _nodeAt(IspStudioState state, Offset canvasPos) {
     for (final node in state.graph.nodes.values.toList().reversed) {
@@ -342,6 +352,54 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
   /// 流水变体；两者选中后原位级联选择目标 CPU，见 _pickGroupCTarget）
   /// 「更改编组名」「取消编组」。
   /// 其余情况不弹菜单（保留右键拖动平移画布）。
+  /// 空白画布右键菜单（右键按下未拖拽时弹出）：打开流程 / 保存流程 /
+  /// 全选节点（至少一个节点时可用）│ 适配全屏 / 运行预览（与主工具栏
+  /// 同功能）。
+  void _showCanvasMenu(IspStudioState state, Offset globalPos) {
+    final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPos.dx, globalPos.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        _canvasMenuItem('open', '打开流程'),
+        _canvasMenuItem('save', '保存流程'),
+        _canvasMenuItem('selectAll', '全选节点',
+            enabled: state.graph.nodes.isNotEmpty),
+        const PopupMenuDivider(height: 6),
+        _canvasMenuItem('fit', '适配全屏'),
+        _canvasMenuItem('run', '运行预览'),
+      ],
+    ).then((v) {
+      if (!mounted) return;
+      switch (v) {
+        case 'open':
+          openFlowWithDialog(state);
+        case 'save':
+          saveFlowWithDialog(state);
+        case 'selectAll':
+          state.selectAllNodes();
+        case 'fit':
+          state.resetView();
+        case 'run':
+          runPreviewWithProgress(context, state);
+      }
+    });
+  }
+
+  /// 画布菜单项（纯文本，紧凑行高）。
+  PopupMenuItem<String> _canvasMenuItem(String value, String label,
+      {bool enabled = true}) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 24,
+      enabled: enabled,
+      child: Text(label, style: const TextStyle(fontSize: 12)),
+    );
+  }
+
   void _showNodeGroupMenu(
       IspStudioState state, String nodeId, Offset globalPos) {
     final groupId = state.groupIdOf(nodeId);
@@ -520,9 +578,15 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
             _dragNodeId = null;
             _boxSelectStartCanvasPos = null;
             if (event.buttons & kSecondaryButton != 0) {
+              // 右键按下：先记账，命中节点/编组直接弹编组菜单；空白处
+              // 等释放——未拖拽（位移 < 4px）时弹画布菜单。
+              _secondaryDown = true;
+              _secondaryDownPos = event.position;
+              _secondaryPanned = false;
               // 标题栏右键：编组/取消编组菜单。
               final canvasPos = globalToCanvas(event.position);
               final titleNodeId = _nodeAt(state, canvasPos);
+              _secondaryOnBlank = titleNodeId == null;
               if (titleNodeId != null) {
                 _showNodeGroupMenu(state, titleNodeId, event.position);
               } else {
@@ -530,10 +594,12 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
                 // 定位所属编组，同样弹编组菜单。
                 final cardNodeId = _nodeCardAt(state, canvasPos);
                 if (cardNodeId != null) {
+                  _secondaryOnBlank = false;
                   _showNodeGroupMenu(state, cardNodeId, event.position);
                 } else {
                   final group = _groupAt(state, canvasPos);
                   if (group != null) {
+                    _secondaryOnBlank = false;
                     _showNodeGroupMenu(
                         state, group.nodeIds.first, event.position);
                   }
@@ -556,10 +622,30 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
                   multiSelect: isMulti);
             }
           } else if (event.buttons & kSecondaryButton != 0) {
+            // 空白起按的右键：位移 < 4px 判为待弹菜单（不平移），
+            // 越过阈值判为拖拽平移。
+            if (_secondaryOnBlank && !_secondaryPanned) {
+              final down = _secondaryDownPos;
+              if (down == null) return;
+              if ((event.position - down).distance < 4) return;
+              _secondaryPanned = true;
+            }
             state.panBy(event.delta);
           }
         },
         onPointerUp: (_) {
+          // 空白处右键未拖拽：释放时弹画布菜单（打开/保存流程、适配
+          // 全屏、运行预览）。
+          if (_secondaryDown &&
+              _secondaryOnBlank &&
+              !_secondaryPanned &&
+              _secondaryDownPos != null) {
+            _showCanvasMenu(state, _secondaryDownPos!);
+          }
+          _secondaryDown = false;
+          _secondaryDownPos = null;
+          _secondaryOnBlank = false;
+          _secondaryPanned = false;
           if (_dragNodeId != null) {
             state.endNodeDrag();
             _dragNodeId = null;
@@ -570,6 +656,10 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
           }
         },
         onPointerCancel: (_) {
+          _secondaryDown = false;
+          _secondaryDownPos = null;
+          _secondaryOnBlank = false;
+          _secondaryPanned = false;
           if (_dragNodeId != null) {
             state.endNodeDrag();
             _dragNodeId = null;
@@ -593,9 +683,9 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
               child: Stack(
               clipBehavior: Clip.none,
               children: [
-                // (a) 深色背景 + 点阵（屏幕空间绘制）。
+                // (a) 全黑背景 + 点阵（屏幕空间绘制）。
                 const Positioned.fill(
-                  child: ColoredBox(color: Color(0xFF121212)),
+                  child: ColoredBox(color: Colors.black),
                 ),
                 Positioned.fill(
                   child: CustomPaint(

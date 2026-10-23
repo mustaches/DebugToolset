@@ -1,7 +1,5 @@
-import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,6 +9,7 @@ import 'codegen/ip_target.dart';
 import 'models/isp_align_mode.dart';
 import 'models/isp_node.dart';
 import 'widgets/editor_tab_bar.dart';
+import 'widgets/flow_file_dialog.dart';
 import 'widgets/group_code_page.dart';
 import 'widgets/ip_generator_page.dart';
 import 'widgets/node_canvas.dart';
@@ -61,45 +60,12 @@ class IspStudioView extends StatelessWidget {
     return (center - state.canvasOffset) / state.canvasZoom;
   }
 
-  /// 流程图文件类型（JSON 文本，与 .waveform/.uiproj 同一约定）。
-  static const _flowTypeGroup = XTypeGroup(
-    label: 'ISP 流程',
-    extensions: ['ispflow'],
-  );
-
-  /// 打开/保存流程的默认目录（根目录下的 IspFlow，不存在则创建）。
-  /// 注意：必须使用平台分隔符拼接。Windows 上混用 '/' 会导致
-  /// file_selector 内部 SHCreateItemFromParsingName 失败（E_INVALIDARG），
-  /// 文件对话框静默回退到“上次使用的目录”而不是 IspFlow。
-  Future<Directory> _flowDir() async {
-    final dir = Directory(
-      '${Directory.current.path}${Platform.pathSeparator}IspFlow',
-    );
-    if (!dir.existsSync()) await dir.create(recursive: true);
-    return dir;
-  }
-
   /// 选择 .ispflow 文件并打开（替换当前图）。
-  Future<void> _importFlow(IspStudioState state) async {
-    final file = await openFile(
-      acceptedTypeGroups: [_flowTypeGroup],
-      initialDirectory: (await _flowDir()).path,
-    );
-    if (file != null) await state.importGraphFromFile(file.path);
-  }
+  Future<void> _importFlow(IspStudioState state) => openFlowWithDialog(state);
 
   /// 把当前流程图保存为 .ispflow 文件；返回是否真正保存
   /// （用户在保存对话框中取消返回 false）。
-  Future<bool> _saveFlow(IspStudioState state) async {
-    final loc = await getSaveLocation(
-      suggestedName: '${state.graphTabTitle}.ispflow',
-      acceptedTypeGroups: [_flowTypeGroup],
-      initialDirectory: (await _flowDir()).path,
-    );
-    if (loc == null) return false;
-    await state.saveGraphToFile(loc.path);
-    return !state.statusMessage.startsWith('保存流程失败');
-  }
+  Future<bool> _saveFlow(IspStudioState state) => saveFlowWithDialog(state);
 
   /// 清除画布：警告窗口（保存并清除 / 清除画布 / 取消操作）。
   Future<void> _confirmResetCanvas(

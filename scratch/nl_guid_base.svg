@@ -1,0 +1,624 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2895.0" height="1995.0" viewBox="0 0 2895.0 1995.0">
+  <rect x="0" y="0" width="2895.0" height="1995.0" fill="#1e1e1e"/>
+  <g stroke="#ffffff" stroke-width="0.5">
+    <line x1="645.0" y1="945.0" x2="630.0" y2="945.0"/>
+    <line x1="645.0" y1="975.0" x2="630.0" y2="975.0"/>
+    <line x1="645.0" y1="1005.0" x2="630.0" y2="1005.0"/>
+    <line x1="750.0" y1="945.0" x2="765.0" y2="945.0"/>
+    <line x1="645.0" y1="1155.0" x2="630.0" y2="1155.0"/>
+    <line x1="645.0" y1="1185.0" x2="630.0" y2="1185.0"/>
+    <line x1="645.0" y1="1215.0" x2="630.0" y2="1215.0"/>
+    <line x1="750.0" y1="1155.0" x2="765.0" y2="1155.0"/>
+    <line x1="645.0" y1="1395.0" x2="630.0" y2="1395.0"/>
+    <line x1="645.0" y1="1425.0" x2="630.0" y2="1425.0"/>
+    <line x1="645.0" y1="1455.0" x2="630.0" y2="1455.0"/>
+    <line x1="750.0" y1="1395.0" x2="765.0" y2="1395.0"/>
+    <line x1="2445.0" y1="960.0" x2="2430.0" y2="960.0"/>
+    <line x1="2445.0" y1="990.0" x2="2430.0" y2="990.0"/>
+    <line x1="2445.0" y1="1020.0" x2="2430.0" y2="1020.0"/>
+    <line x1="2565.0" y1="960.0" x2="2580.0" y2="960.0"/>
+    <line x1="990.0" y1="885.0" x2="975.0" y2="885.0"/>
+    <line x1="990.0" y1="915.0" x2="975.0" y2="915.0"/>
+    <line x1="990.0" y1="945.0" x2="975.0" y2="945.0"/>
+    <line x1="1140.0" y1="915.0" x2="1155.0" y2="915.0"/>
+    <line x1="990.0" y1="675.0" x2="975.0" y2="675.0"/>
+    <line x1="990.0" y1="705.0" x2="975.0" y2="705.0"/>
+    <line x1="990.0" y1="735.0" x2="975.0" y2="735.0"/>
+    <line x1="1140.0" y1="705.0" x2="1155.0" y2="705.0"/>
+    <line x1="990.0" y1="465.0" x2="975.0" y2="465.0"/>
+    <line x1="990.0" y1="495.0" x2="975.0" y2="495.0"/>
+    <line x1="990.0" y1="525.0" x2="975.0" y2="525.0"/>
+    <line x1="1140.0" y1="495.0" x2="1155.0" y2="495.0"/>
+    <line x1="1005.0" y1="255.0" x2="990.0" y2="255.0"/>
+    <line x1="1005.0" y1="285.0" x2="990.0" y2="285.0"/>
+    <line x1="1005.0" y1="315.0" x2="990.0" y2="315.0"/>
+    <line x1="1125.0" y1="285.0" x2="1140.0" y2="285.0"/>
+    <line x1="1410.0" y1="585.0" x2="1395.0" y2="585.0"/>
+    <line x1="1410.0" y1="615.0" x2="1395.0" y2="615.0"/>
+    <line x1="1530.0" y1="600.0" x2="1545.0" y2="600.0"/>
+    <line x1="1755.0" y1="990.0" x2="1740.0" y2="990.0"/>
+    <line x1="1755.0" y1="1020.0" x2="1740.0" y2="1020.0"/>
+    <line x1="1875.0" y1="1005.0" x2="1890.0" y2="1005.0"/>
+    <line x1="1755.0" y1="1170.0" x2="1740.0" y2="1170.0"/>
+    <line x1="1755.0" y1="1200.0" x2="1740.0" y2="1200.0"/>
+    <line x1="1875.0" y1="1185.0" x2="1890.0" y2="1185.0"/>
+    <line x1="1410.0" y1="225.0" x2="1395.0" y2="225.0"/>
+    <line x1="1410.0" y1="255.0" x2="1395.0" y2="255.0"/>
+    <line x1="1530.0" y1="240.0" x2="1545.0" y2="240.0"/>
+    <line x1="1410.0" y1="405.0" x2="1395.0" y2="405.0"/>
+    <line x1="1410.0" y1="435.0" x2="1395.0" y2="435.0"/>
+    <line x1="1530.0" y1="420.0" x2="1545.0" y2="420.0"/>
+    <line x1="1410.0" y1="1335.0" x2="1395.0" y2="1335.0"/>
+    <line x1="1410.0" y1="1365.0" x2="1395.0" y2="1365.0"/>
+    <line x1="1530.0" y1="1350.0" x2="1545.0" y2="1350.0"/>
+    <line x1="330.0" y1="885.0" x2="315.0" y2="885.0"/>
+    <line x1="330.0" y1="915.0" x2="315.0" y2="915.0"/>
+    <line x1="435.0" y1="900.0" x2="450.0" y2="900.0"/>
+    <line x1="1410.0" y1="765.0" x2="1395.0" y2="765.0"/>
+    <line x1="1410.0" y1="795.0" x2="1395.0" y2="795.0"/>
+    <line x1="1530.0" y1="780.0" x2="1545.0" y2="780.0"/>
+    <line x1="2085.0" y1="510.0" x2="2070.0" y2="510.0"/>
+    <line x1="2085.0" y1="540.0" x2="2070.0" y2="540.0"/>
+    <line x1="2085.0" y1="570.0" x2="2070.0" y2="570.0"/>
+    <line x1="2220.0" y1="540.0" x2="2235.0" y2="540.0"/>
+    <line x1="2085.0" y1="930.0" x2="2070.0" y2="930.0"/>
+    <line x1="2085.0" y1="960.0" x2="2070.0" y2="960.0"/>
+    <line x1="2085.0" y1="990.0" x2="2070.0" y2="990.0"/>
+    <line x1="2220.0" y1="960.0" x2="2235.0" y2="960.0"/>
+    <line x1="1410.0" y1="945.0" x2="1395.0" y2="945.0"/>
+    <line x1="1410.0" y1="975.0" x2="1395.0" y2="975.0"/>
+    <line x1="1530.0" y1="960.0" x2="1545.0" y2="960.0"/>
+    <line x1="2085.0" y1="1365.0" x2="2070.0" y2="1365.0"/>
+    <line x1="2085.0" y1="1395.0" x2="2070.0" y2="1395.0"/>
+    <line x1="2085.0" y1="1425.0" x2="2070.0" y2="1425.0"/>
+    <line x1="2085.0" y1="1455.0" x2="2070.0" y2="1455.0"/>
+    <line x1="2160.0" y1="1500.0" x2="2160.0" y2="1515.0"/>
+    <line x1="2235.0" y1="1410.0" x2="2250.0" y2="1410.0"/>
+    <line x1="1020.0" y1="1320.0" x2="1005.0" y2="1320.0"/>
+    <line x1="1020.0" y1="1350.0" x2="1005.0" y2="1350.0"/>
+    <line x1="1065.0" y1="1395.0" x2="1065.0" y2="1410.0"/>
+    <line x1="1110.0" y1="1335.0" x2="1125.0" y2="1335.0"/>
+    <line x1="1020.0" y1="1110.0" x2="1005.0" y2="1110.0"/>
+    <line x1="1020.0" y1="1140.0" x2="1005.0" y2="1140.0"/>
+    <line x1="1065.0" y1="1185.0" x2="1065.0" y2="1200.0"/>
+    <line x1="1110.0" y1="1125.0" x2="1125.0" y2="1125.0"/>
+    <line x1="1020.0" y1="1530.0" x2="1005.0" y2="1530.0"/>
+    <line x1="1020.0" y1="1560.0" x2="1005.0" y2="1560.0"/>
+    <line x1="1065.0" y1="1605.0" x2="1065.0" y2="1620.0"/>
+    <line x1="1110.0" y1="1545.0" x2="1125.0" y2="1545.0"/>
+    <line x1="1425.0" y1="1530.0" x2="1410.0" y2="1530.0"/>
+    <line x1="1425.0" y1="1560.0" x2="1410.0" y2="1560.0"/>
+    <line x1="1470.0" y1="1605.0" x2="1470.0" y2="1620.0"/>
+    <line x1="1515.0" y1="1545.0" x2="1530.0" y2="1545.0"/>
+    <line x1="645.0" y1="750.0" x2="630.0" y2="750.0"/>
+    <line x1="645.0" y1="780.0" x2="630.0" y2="780.0"/>
+    <line x1="705.0" y1="825.0" x2="705.0" y2="840.0"/>
+    <line x1="765.0" y1="765.0" x2="780.0" y2="765.0"/>
+    <line x1="1755.0" y1="795.0" x2="1740.0" y2="795.0"/>
+    <line x1="1755.0" y1="825.0" x2="1740.0" y2="825.0"/>
+    <line x1="1815.0" y1="870.0" x2="1815.0" y2="885.0"/>
+    <line x1="1875.0" y1="810.0" x2="1890.0" y2="810.0"/>
+    <line x1="1410.0" y1="1140.0" x2="1395.0" y2="1140.0"/>
+    <line x1="1410.0" y1="1170.0" x2="1395.0" y2="1170.0"/>
+    <line x1="1470.0" y1="1215.0" x2="1470.0" y2="1230.0"/>
+    <line x1="1530.0" y1="1155.0" x2="1545.0" y2="1155.0"/>
+    <line x1="2100.0" y1="735.0" x2="2085.0" y2="735.0"/>
+    <line x1="2100.0" y1="765.0" x2="2085.0" y2="765.0"/>
+    <line x1="2160.0" y1="810.0" x2="2160.0" y2="825.0"/>
+    <line x1="2220.0" y1="750.0" x2="2235.0" y2="750.0"/>
+    <line x1="2100.0" y1="1155.0" x2="2085.0" y2="1155.0"/>
+    <line x1="2100.0" y1="1185.0" x2="2085.0" y2="1185.0"/>
+    <line x1="2160.0" y1="1230.0" x2="2160.0" y2="1245.0"/>
+    <line x1="2220.0" y1="1170.0" x2="2235.0" y2="1170.0"/>
+    <line x1="660.0" y1="555.0" x2="645.0" y2="555.0"/>
+    <line x1="660.0" y1="585.0" x2="645.0" y2="585.0"/>
+    <line x1="735.0" y1="570.0" x2="750.0" y2="570.0"/>
+    <line x1="1020.0" y1="1725.0" x2="1005.0" y2="1725.0"/>
+    <line x1="1095.0" y1="1725.0" x2="1110.0" y2="1725.0"/>
+    <line x1="1440.0" y1="1725.0" x2="1410.0" y2="1725.0"/>
+    <line x1="1440.0" y1="1755.0" x2="1410.0" y2="1755.0"/>
+    <line x1="1500.0" y1="1740.0" x2="1515.0" y2="1740.0"/>
+  </g>
+  <rect x="990.0" y="250.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="946.8" y="258.0" font-family="monospace" font-size="9" fill="#ffffff">9'h000</text>
+  <rect x="1395.0" y="610.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="1301.4" y="618.0" font-family="monospace" font-size="9" fill="#ffffff">8'h00|1'b1|8'h00</text>
+  <rect x="1740.0" y="1015.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="1636.3" y="1023.0" font-family="monospace" font-size="9" fill="#ffffff">13'h0000|1'b1|4'h0</text>
+  <rect x="1740.0" y="1195.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="1636.3" y="1203.0" font-family="monospace" font-size="9" fill="#ffffff">13'h0000|1'b1|4'h0</text>
+  <rect x="1395.0" y="1360.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="1301.4" y="1368.0" font-family="monospace" font-size="9" fill="#ffffff">8'h00|1'b1|8'h00</text>
+  <rect x="315.0" y="910.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="276.8" y="918.0" font-family="monospace" font-size="9" fill="#ffffff">8'hFF</text>
+  <rect x="1395.0" y="790.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="1321.5" y="798.0" font-family="monospace" font-size="9" fill="#ffffff">8'hFF|9'h000</text>
+  <rect x="2070.0" y="505.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2016.7" y="513.0" font-family="monospace" font-size="9" fill="#ffffff">14'h0000</text>
+  <rect x="2070.0" y="565.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2031.8" y="573.0" font-family="monospace" font-size="9" fill="#ffffff">8'hFF</text>
+  <rect x="2070.0" y="925.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2016.7" y="933.0" font-family="monospace" font-size="9" fill="#ffffff">14'h0000</text>
+  <rect x="2070.0" y="985.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2031.8" y="993.0" font-family="monospace" font-size="9" fill="#ffffff">8'hFF</text>
+  <rect x="1395.0" y="970.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="1336.6" y="978.0" font-family="monospace" font-size="9" fill="#ffffff">17'h00000</text>
+  <rect x="1005.0" y="1555.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="971.8" y="1563.0" font-family="monospace" font-size="9" fill="#ffffff">1'b0</text>
+  <rect x="630.0" y="775.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="591.8" y="783.0" font-family="monospace" font-size="9" fill="#ffffff">8'hFF</text>
+  <rect x="2085.0" y="760.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2046.8" y="768.0" font-family="monospace" font-size="9" fill="#ffffff">8'hFF</text>
+  <rect x="2085.0" y="1180.0" width="10" height="10" fill="#1e1e1e" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2046.8" y="1188.0" font-family="monospace" font-size="9" fill="#ffffff">8'hFF</text>
+  <path d="M765.0,945.0 L825.0,945.0 M2730.0,945.0 L2745.0,945.0 M825.0,1530.0 L1005.0,1530.0 M825.0,1725.0 L1005.0,1725.0 M825.0,45.0 L2730.0,45.0 M825.0,45.0 L825.0,1725.0 M2730.0,45.0 L2730.0,945.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="825.0" cy="945.0" r="3.0" fill="#4caf50"/>
+  <circle cx="825.0" cy="1530.0" r="3.0" fill="#4caf50"/>
+  <path d="M765.0,1155.0 L840.0,1155.0 M2715.0,1155.0 L2745.0,1155.0 M840.0,1110.0 L1005.0,1110.0 M840.0,60.0 L2715.0,60.0 M840.0,60.0 L840.0,1155.0 M2715.0,60.0 L2715.0,1155.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="840.0" cy="1110.0" r="3.0" fill="#4caf50"/>
+  <path d="M765.0,1395.0 L855.0,1395.0 M2700.0,1395.0 L2745.0,1395.0 M855.0,1320.0 L1005.0,1320.0 M855.0,75.0 L2700.0,75.0 M855.0,75.0 L855.0,1395.0 M2700.0,75.0 L2700.0,1395.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="855.0" cy="1320.0" r="3.0" fill="#4caf50"/>
+  <path d="M2580.0,960.0 L2745.0,960.0 M2370.0,915.0 L2595.0,915.0 M1980.0,1365.0 L2070.0,1365.0 M1980.0,1305.0 L2370.0,1305.0 M2595.0,915.0 L2595.0,960.0 M1980.0,1305.0 L1980.0,1365.0 M2370.0,915.0 L2370.0,1305.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <circle cx="2595.0" cy="960.0" r="3.0" fill="#00bfff"/>
+  <path d="M1155.0,915.0 L1200.0,915.0 M1200.0,435.0 L1395.0,435.0 M1200.0,435.0 L1200.0,915.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1161.2" y="900.0" width="32.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1164.2" y="912.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_lq</text>
+  <path d="M1155.0,705.0 L1185.0,705.0 M1185.0,255.0 L1395.0,255.0 M1185.0,255.0 L1185.0,705.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1273.7" y="240.0" width="32.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1276.7" y="252.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_sq</text>
+  <path d="M1155.0,495.0 L1170.0,495.0 M960.0,570.0 L1170.0,570.0 M960.0,315.0 L990.0,315.0 M1170.0,495.0 L1170.0,570.0 M960.0,315.0 L960.0,570.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="881.9" y="300.0" width="91.1" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="884.9" y="312.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_shift17[15:0]</text>
+  <path d="M1140.0,285.0 L1215.0,285.0 M1215.0,585.0 L1395.0,585.0 M1215.0,765.0 L1395.0,765.0 M1215.0,945.0 L1395.0,945.0 M1215.0,1140.0 L1395.0,1140.0 M1215.0,1335.0 L1395.0,1335.0 M1215.0,285.0 L1215.0,1335.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <circle cx="1215.0" cy="585.0" r="3.0" fill="#00bfff"/>
+  <circle cx="1215.0" cy="765.0" r="3.0" fill="#00bfff"/>
+  <circle cx="1215.0" cy="945.0" r="3.0" fill="#00bfff"/>
+  <circle cx="1215.0" cy="1140.0" r="3.0" fill="#00bfff"/>
+  <rect x="1155.9" y="270.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1158.9" y="282.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_hsum</text>
+  <path d="M1545.0,600.0 L1560.0,600.0 M1350.0,660.0 L1560.0,660.0 M1350.0,1170.0 L1395.0,1170.0 M1560.0,600.0 L1560.0,660.0 M1350.0,660.0 L1350.0,1170.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1430.7" y="645.0" width="48.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1433.7" y="657.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">add260_Y</text>
+  <path d="M1890.0,1005.0 L1920.0,1005.0 M1920.0,540.0 L2070.0,540.0 M1920.0,735.0 L2085.0,735.0 M1920.0,540.0 L1920.0,1005.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <circle cx="1920.0" cy="735.0" r="3.0" fill="#00bfff"/>
+  <rect x="1967.2" y="525.0" width="85.8" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1970.2" y="537.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_s_scl[24:14]</text>
+  <rect x="1982.2" y="720.0" width="85.8" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1985.2" y="732.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_s_scl[21:14]</text>
+  <path d="M1890.0,1185.0 L1950.0,1185.0 M1950.0,960.0 L2070.0,960.0 M1950.0,1155.0 L2085.0,1155.0 M1950.0,960.0 L1950.0,1185.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <circle cx="1950.0" cy="1155.0" r="3.0" fill="#00bfff"/>
+  <rect x="1967.2" y="945.0" width="85.8" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1970.2" y="957.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_l_scl[24:14]</text>
+  <rect x="1982.2" y="1140.0" width="85.8" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1985.2" y="1152.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_l_scl[21:14]</text>
+  <path d="M1545.0,240.0 L1695.0,240.0 M1695.0,990.0 L1740.0,990.0 M1695.0,240.0 L1695.0,990.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1593.1" y="225.0" width="53.9" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1596.1" y="237.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_s_prod</text>
+  <path d="M1545.0,420.0 L1650.0,420.0 M1650.0,1170.0 L1740.0,1170.0 M1650.0,420.0 L1650.0,1170.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1570.6" y="405.0" width="53.9" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1573.6" y="417.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_l_prod</text>
+  <path d="M1545.0,1350.0 L1605.0,1350.0 M1605.0,825.0 L1740.0,825.0 M1605.0,825.0 L1605.0,1350.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1550.7" y="1335.0" width="48.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1553.7" y="1347.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">sub259_Y</text>
+  <path d="M450.0,900.0 L495.0,900.0 M495.0,855.0 L705.0,855.0 M705.0,840.0 L705.0,855.0 M495.0,855.0 L495.0,900.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="578.4" y="840.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="581.4" y="852.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">gt246_Y</text>
+  <path d="M1545.0,780.0 L1620.0,780.0 M1620.0,900.0 L1815.0,900.0 M1815.0,885.0 L1815.0,900.0 M1620.0,780.0 L1620.0,900.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="1560.9" y="765.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1563.9" y="777.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">gt259_Y</text>
+  <path d="M2235.0,540.0 L2250.0,540.0 M2055.0,615.0 L2250.0,615.0 M2055.0,840.0 L2160.0,840.0 M2250.0,540.0 L2250.0,615.0 M2160.0,825.0 L2160.0,840.0 M2055.0,615.0 L2055.0,840.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="2130.9" y="600.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="2133.9" y="612.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">gt272_Y</text>
+  <path d="M2235.0,960.0 L2250.0,960.0 M2040.0,1035.0 L2250.0,1035.0 M2040.0,1260.0 L2160.0,1260.0 M2250.0,960.0 L2250.0,1035.0 M2160.0,1245.0 L2160.0,1260.0 M2040.0,1035.0 L2040.0,1260.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="2123.4" y="1020.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="2126.4" y="1032.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">gt274_Y</text>
+  <path d="M1545.0,960.0 L1560.0,960.0 M1335.0,1020.0 L1560.0,1020.0 M1335.0,1245.0 L1470.0,1245.0 M1560.0,960.0 L1560.0,1020.0 M1470.0,1230.0 L1470.0,1245.0 M1335.0,1020.0 L1335.0,1245.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="1425.9" y="1005.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1428.9" y="1017.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">lt260_Y</text>
+  <path d="M2250.0,1410.0 L2265.0,1410.0 M2265.0,960.0 L2430.0,960.0 M2265.0,960.0 L2265.0,1410.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="2323.2" y="945.0" width="48.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="2326.2" y="957.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">out_data</text>
+  <path d="M615.0,1335.0 L915.0,1335.0 M1125.0,1335.0 L1140.0,1335.0 M915.0,1260.0 L1140.0,1260.0 M615.0,1395.0 L630.0,1395.0 M1140.0,1260.0 L1140.0,1335.0 M615.0,1335.0 L615.0,1395.0 M915.0,1260.0 L915.0,1335.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="1005.9" y="1245.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1008.9" y="1257.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">out_eol</text>
+  <path d="M1125.0,1125.0 L1140.0,1125.0 M930.0,1050.0 L1140.0,1050.0 M615.0,1155.0 L630.0,1155.0 M615.0,1095.0 L930.0,1095.0 M1140.0,1050.0 L1140.0,1125.0 M615.0,1095.0 L615.0,1155.0 M930.0,1050.0 L930.0,1095.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="1013.4" y="1035.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1016.4" y="1047.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">out_sof</text>
+  <path d="M1125.0,1545.0 L1230.0,1545.0 M1230.0,1530.0 L1410.0,1530.0 M1230.0,1530.0 L1230.0,1545.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="1150.6" y="1530.0" width="53.9" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1153.6" y="1542.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">mux4678_Y</text>
+  <path d="M1530.0,1545.0 L1665.0,1545.0 M585.0,105.0 L1665.0,105.0 M585.0,945.0 L630.0,945.0 M1665.0,105.0 L1665.0,1545.0 M585.0,105.0 L585.0,945.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="1570.6" y="1530.0" width="53.9" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1573.6" y="1542.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">out_valid</text>
+  <path d="M780.0,765.0 L870.0,765.0 M870.0,285.0 L990.0,285.0 M870.0,465.0 L975.0,465.0 M870.0,675.0 L975.0,675.0 M870.0,885.0 L975.0,885.0 M870.0,285.0 L870.0,885.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <circle cx="870.0" cy="465.0" r="3.0" fill="#00bfff"/>
+  <circle cx="870.0" cy="675.0" r="3.0" fill="#00bfff"/>
+  <circle cx="870.0" cy="765.0" r="3.0" fill="#00bfff"/>
+  <rect x="808.7" y="750.0" width="32.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="811.7" y="762.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_hv</text>
+  <path d="M1890.0,810.0 L1935.0,810.0 M1935.0,1395.0 L2070.0,1395.0 M1935.0,810.0 L1935.0,1395.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1977.8" y="1380.0" width="75.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1980.8" y="1392.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_hwrap[7:0]</text>
+  <path d="M1545.0,1155.0 L1575.0,1155.0 M1575.0,795.0 L1740.0,795.0 M1575.0,795.0 L1575.0,1155.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="1633.2" y="780.0" width="48.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1636.2" y="792.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">mux260_Y</text>
+  <path d="M2235.0,750.0 L2250.0,750.0 M2025.0,675.0 L2250.0,675.0 M2025.0,1425.0 L2070.0,1425.0 M2250.0,675.0 L2250.0,750.0 M2025.0,675.0 L2025.0,1425.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="2113.2" y="660.0" width="48.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="2116.2" y="672.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_res_s</text>
+  <path d="M2235.0,1170.0 L2250.0,1170.0 M2010.0,1095.0 L2250.0,1095.0 M2010.0,1455.0 L2070.0,1455.0 M2250.0,1095.0 L2250.0,1170.0 M2010.0,1095.0 L2010.0,1455.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <rect x="2105.7" y="1080.0" width="48.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="2108.7" y="1092.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">n1_res_l</text>
+  <path d="M750.0,570.0 L810.0,570.0 M810.0,1215.0 L1065.0,1215.0 M810.0,1425.0 L1065.0,1425.0 M810.0,1890.0 L1995.0,1890.0 M1305.0,1635.0 L1470.0,1635.0 M1995.0,1530.0 L2160.0,1530.0 M1065.0,1200.0 L1065.0,1215.0 M1065.0,1410.0 L1065.0,1425.0 M810.0,570.0 L810.0,1890.0 M1470.0,1620.0 L1470.0,1635.0 M1305.0,1635.0 L1305.0,1890.0 M2160.0,1515.0 L2160.0,1530.0 M1995.0,1530.0 L1995.0,1890.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="810.0" cy="1215.0" r="3.0" fill="#4caf50"/>
+  <circle cx="810.0" cy="1425.0" r="3.0" fill="#4caf50"/>
+  <circle cx="1305.0" cy="1890.0" r="3.0" fill="#4caf50"/>
+  <rect x="758.4" y="555.0" width="43.2" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="761.4" y="567.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">advance</text>
+  <path d="M1110.0,1725.0 L1410.0,1725.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <rect x="1235.7" y="1710.0" width="48.6" height="13" rx="2.5" fill="#1e1e1e" fill-opacity="0.82" stroke="#9ccc9c" stroke-opacity="0.45"/>
+  <text x="1238.7" y="1722.0" font-family="monospace" font-size="9.5" fill="#9ccc9c">not278_Y</text>
+  <path d="M1515.0,1740.0 L2745.0,1740.0 M600.0,120.0 L1680.0,120.0 M600.0,555.0 L645.0,555.0 M1680.0,120.0 L1680.0,1740.0 M600.0,120.0 L600.0,555.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="1680.0" cy="1740.0" r="3.0" fill="#4caf50"/>
+  <path d="M150.0,975.0 L630.0,975.0 M225.0,1185.0 L630.0,1185.0 M225.0,1425.0 L630.0,1425.0 M225.0,1905.0 L2385.0,1905.0 M2385.0,990.0 L2430.0,990.0 M225.0,975.0 L225.0,1905.0 M2385.0,990.0 L2385.0,1905.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="225.0" cy="975.0" r="3.0" fill="#4caf50"/>
+  <circle cx="225.0" cy="1185.0" r="3.0" fill="#4caf50"/>
+  <circle cx="225.0" cy="1425.0" r="3.0" fill="#4caf50"/>
+  <path d="M150.0,1005.0 L630.0,1005.0 M210.0,1215.0 L630.0,1215.0 M210.0,1455.0 L630.0,1455.0 M210.0,1920.0 L2400.0,1920.0 M2400.0,1020.0 L2430.0,1020.0 M210.0,1005.0 L210.0,1920.0 M2400.0,1020.0 L2400.0,1920.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="210.0" cy="1005.0" r="3.0" fill="#4caf50"/>
+  <circle cx="210.0" cy="1215.0" r="3.0" fill="#4caf50"/>
+  <circle cx="210.0" cy="1455.0" r="3.0" fill="#4caf50"/>
+  <path d="M150.0,1560.0 L195.0,1560.0 M1290.0,1560.0 L1410.0,1560.0 M195.0,135.0 L1290.0,135.0 M570.0,585.0 L645.0,585.0 M195.0,135.0 L195.0,1560.0 M570.0,135.0 L570.0,585.0 M1290.0,135.0 L1290.0,1560.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="570.0" cy="135.0" r="3.0" fill="#4caf50"/>
+  <path d="M150.0,1140.0 L180.0,1140.0 M945.0,1140.0 L1005.0,1140.0 M180.0,1935.0 L945.0,1935.0 M180.0,1140.0 L180.0,1935.0 M945.0,1140.0 L945.0,1935.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <path d="M150.0,1350.0 L1005.0,1350.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <path d="M150.0,885.0 L315.0,885.0 M240.0,750.0 L630.0,750.0 M240.0,150.0 L1365.0,150.0 M1365.0,225.0 L1395.0,225.0 M1365.0,405.0 L1395.0,405.0 M240.0,150.0 L240.0,885.0 M1365.0,150.0 L1365.0,405.0" fill="none" stroke="#00bfff" stroke-width="2.2"/>
+  <circle cx="1365.0" cy="225.0" r="3.0" fill="#00bfff"/>
+  <circle cx="240.0" cy="750.0" r="3.0" fill="#00bfff"/>
+  <circle cx="240.0" cy="885.0" r="3.0" fill="#00bfff"/>
+  <path d="M150.0,1620.0 L270.0,1620.0 M270.0,1635.0 L1065.0,1635.0 M270.0,1950.0 L1320.0,1950.0 M1320.0,1755.0 L1410.0,1755.0 M1065.0,1620.0 L1065.0,1635.0 M270.0,1620.0 L270.0,1950.0 M1320.0,1755.0 L1320.0,1950.0" fill="none" stroke="#4caf50" stroke-width="1.3"/>
+  <circle cx="270.0" cy="1635.0" r="3.0" fill="#4caf50"/>
+  <path d="M123.0,967.5 L142.5,967.5 L150.0,975.0 L142.5,982.5 L123.0,982.5 Z" fill="#1b2a28" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="136.5" y="978.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">I</text>
+  <text x="117.0" y="978.0" font-family="monospace" font-size="10" text-anchor="end" fill="#ffffff">clk</text>
+  <path d="M123.0,997.5 L142.5,997.5 L150.0,1005.0 L142.5,1012.5 L123.0,1012.5 Z" fill="#1b2a28" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="136.5" y="1008.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">I</text>
+  <text x="117.0" y="1008.0" font-family="monospace" font-size="10" text-anchor="end" fill="#ffffff">rst_n</text>
+  <path d="M123.0,1552.5 L142.5,1552.5 L150.0,1560.0 L142.5,1567.5 L123.0,1567.5 Z" fill="#1b2a28" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="136.5" y="1563.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">I</text>
+  <text x="117.0" y="1563.0" font-family="monospace" font-size="10" text-anchor="end" fill="#ffffff">in_valid</text>
+  <path d="M123.0,1132.5 L142.5,1132.5 L150.0,1140.0 L142.5,1147.5 L123.0,1147.5 Z" fill="#1b2a28" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="136.5" y="1143.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">I</text>
+  <text x="117.0" y="1143.0" font-family="monospace" font-size="10" text-anchor="end" fill="#ffffff">in_sof</text>
+  <path d="M123.0,1342.5 L142.5,1342.5 L150.0,1350.0 L142.5,1357.5 L123.0,1357.5 Z" fill="#1b2a28" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="136.5" y="1353.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">I</text>
+  <text x="117.0" y="1353.0" font-family="monospace" font-size="10" text-anchor="end" fill="#ffffff">in_eol</text>
+  <path d="M123.0,877.5 L142.5,877.5 L150.0,885.0 L142.5,892.5 L123.0,892.5 Z" fill="#1b2a28" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="136.5" y="888.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">I</text>
+  <text x="117.0" y="888.0" font-family="monospace" font-size="10" text-anchor="end" fill="#ffffff">in_data</text>
+  <path d="M123.0,1612.5 L142.5,1612.5 L150.0,1620.0 L142.5,1627.5 L123.0,1627.5 Z" fill="#1b2a28" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="136.5" y="1623.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">I</text>
+  <text x="117.0" y="1623.0" font-family="monospace" font-size="10" text-anchor="end" fill="#ffffff">out_ready</text>
+  <path d="M2745.0,1732.5 L2764.5,1732.5 L2772.0,1740.0 L2764.5,1747.5 L2745.0,1747.5 Z" fill="#2a2418" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2758.5" y="1743.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">O</text>
+  <text x="2778.0" y="1743.0" font-family="monospace" font-size="10" text-anchor="start" fill="#ffffff">in_ready</text>
+  <path d="M2745.0,937.5 L2764.5,937.5 L2772.0,945.0 L2764.5,952.5 L2745.0,952.5 Z" fill="#2a2418" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2758.5" y="948.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">O</text>
+  <text x="2778.0" y="948.0" font-family="monospace" font-size="10" text-anchor="start" fill="#ffffff">out_valid</text>
+  <path d="M2745.0,1147.5 L2764.5,1147.5 L2772.0,1155.0 L2764.5,1162.5 L2745.0,1162.5 Z" fill="#2a2418" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2758.5" y="1158.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">O</text>
+  <text x="2778.0" y="1158.0" font-family="monospace" font-size="10" text-anchor="start" fill="#ffffff">out_sof</text>
+  <path d="M2745.0,1387.5 L2764.5,1387.5 L2772.0,1395.0 L2764.5,1402.5 L2745.0,1402.5 Z" fill="#2a2418" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2758.5" y="1398.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">O</text>
+  <text x="2778.0" y="1398.0" font-family="monospace" font-size="10" text-anchor="start" fill="#ffffff">out_eol</text>
+  <path d="M2745.0,952.5 L2764.5,952.5 L2772.0,960.0 L2764.5,967.5 L2745.0,967.5 Z" fill="#2a2418" stroke="#ffffff" stroke-width="0.5"/>
+  <text x="2758.5" y="963.0" font-family="monospace" font-size="8.5" font-weight="600" text-anchor="middle" fill="#ffffff">O</text>
+  <text x="2778.0" y="963.0" font-family="monospace" font-size="10" text-anchor="start" fill="#ffffff">out_data</text>
+  <g data-symbol="flipFlop">
+    <path d="M645.0,915.0 L750.0,915.0 L750.0,1035.0 L645.0,1035.0 Z" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <path d="M645.0,971.0 L652.0,975.0 L645.0,979.0 Z" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="645.0" cy="1005.0" r="2.5" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="697.5" y="896.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">adff4687</text>
+    <text x="697.5" y="1045.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADFF</text>
+    <text x="650.0" y="949.0" font-family="monospace" font-size="10" fill="#ffffff">D</text>
+    <text x="656.0" y="979.0" font-family="monospace" font-size="10" fill="#ffffff">CLK</text>
+    <text x="650.0" y="1009.0" font-family="monospace" font-size="10" fill="#ffffff">ARST</text>
+    <text x="739.4" y="949.0" font-family="monospace" font-size="10" fill="#ffffff">Q</text>
+  </g>
+  <g data-symbol="flipFlop">
+    <path d="M645.0,1125.0 L750.0,1125.0 L750.0,1245.0 L645.0,1245.0 Z" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <path d="M645.0,1181.0 L652.0,1185.0 L645.0,1189.0 Z" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="645.0" cy="1215.0" r="2.5" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="697.5" y="1106.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">adff4692</text>
+    <text x="697.5" y="1255.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADFF</text>
+    <text x="650.0" y="1159.0" font-family="monospace" font-size="10" fill="#ffffff">D</text>
+    <text x="656.0" y="1189.0" font-family="monospace" font-size="10" fill="#ffffff">CLK</text>
+    <text x="650.0" y="1219.0" font-family="monospace" font-size="10" fill="#ffffff">ARST</text>
+    <text x="739.4" y="1159.0" font-family="monospace" font-size="10" fill="#ffffff">Q</text>
+  </g>
+  <g data-symbol="flipFlop">
+    <path d="M645.0,1365.0 L750.0,1365.0 L750.0,1485.0 L645.0,1485.0 Z" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <path d="M645.0,1421.0 L652.0,1425.0 L645.0,1429.0 Z" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="645.0" cy="1455.0" r="2.5" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="697.5" y="1346.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">adff4697</text>
+    <text x="697.5" y="1495.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADFF</text>
+    <text x="650.0" y="1399.0" font-family="monospace" font-size="10" fill="#ffffff">D</text>
+    <text x="656.0" y="1429.0" font-family="monospace" font-size="10" fill="#ffffff">CLK</text>
+    <text x="650.0" y="1459.0" font-family="monospace" font-size="10" fill="#ffffff">ARST</text>
+    <text x="739.4" y="1399.0" font-family="monospace" font-size="10" fill="#ffffff">Q</text>
+  </g>
+  <g data-symbol="flipFlop">
+    <path d="M2445.0,930.0 L2565.0,930.0 L2565.0,1050.0 L2445.0,1050.0 Z" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <path d="M2445.0,986.0 L2452.0,990.0 L2445.0,994.0 Z" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="2445.0" cy="1020.0" r="2.5" fill="#233247" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="2505.0" y="911.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">adff4702</text>
+    <text x="2505.0" y="1060.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADFF</text>
+    <text x="2450.0" y="964.0" font-family="monospace" font-size="10" fill="#ffffff">D[23:0]</text>
+    <text x="2456.0" y="994.0" font-family="monospace" font-size="10" fill="#ffffff">CLK</text>
+    <text x="2450.0" y="1024.0" font-family="monospace" font-size="10" fill="#ffffff">ARST</text>
+    <text x="2520.8" y="964.0" font-family="monospace" font-size="10" fill="#ffffff">Q[23:0]</text>
+  </g>
+  <g data-symbol="memory">
+    <path d="M990.0,855.0 L1140.0,855.0 L1140.0,975.0 L990.0,975.0 Z" fill="#3a3320" stroke="#ffffff" stroke-width="0.5"/>
+    <path d="M990.0,941.0 L997.0,945.0 L990.0,949.0 Z" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="990.0" cy="945.0" r="2.5" fill="#3a3320" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1065.0" y="918.9" font-family="monospace" font-size="11.0" text-anchor="middle" fill="#ffffff">ROM</text>
+    <text x="1065.0" y="836.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">rom250</text>
+    <text x="1065.0" y="985.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ROM</text>
+    <text x="995.0" y="889.0" font-family="monospace" font-size="10" fill="#ffffff">ADDR[7:0]</text>
+    <text x="995.0" y="919.0" font-family="monospace" font-size="10" fill="#ffffff">EN</text>
+    <text x="1001.0" y="949.0" font-family="monospace" font-size="10" fill="#ffffff">CLK</text>
+    <text x="1079.0" y="919.0" font-family="monospace" font-size="10" fill="#ffffff">DATA[16:0]</text>
+  </g>
+  <g data-symbol="memory">
+    <path d="M990.0,645.0 L1140.0,645.0 L1140.0,765.0 L990.0,765.0 Z" fill="#3a3320" stroke="#ffffff" stroke-width="0.5"/>
+    <path d="M990.0,731.0 L997.0,735.0 L990.0,739.0 Z" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="990.0" cy="735.0" r="2.5" fill="#3a3320" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1065.0" y="708.9" font-family="monospace" font-size="11.0" text-anchor="middle" fill="#ffffff">ROM</text>
+    <text x="1065.0" y="626.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">rom249</text>
+    <text x="1065.0" y="775.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ROM</text>
+    <text x="995.0" y="679.0" font-family="monospace" font-size="10" fill="#ffffff">ADDR[7:0]</text>
+    <text x="995.0" y="709.0" font-family="monospace" font-size="10" fill="#ffffff">EN</text>
+    <text x="1001.0" y="739.0" font-family="monospace" font-size="10" fill="#ffffff">CLK</text>
+    <text x="1079.0" y="709.0" font-family="monospace" font-size="10" fill="#ffffff">DATA[16:0]</text>
+  </g>
+  <g data-symbol="memory">
+    <path d="M990.0,435.0 L1140.0,435.0 L1140.0,555.0 L990.0,555.0 Z" fill="#3a3320" stroke="#ffffff" stroke-width="0.5"/>
+    <path d="M990.0,521.0 L997.0,525.0 L990.0,529.0 Z" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="990.0" cy="525.0" r="2.5" fill="#3a3320" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1065.0" y="498.9" font-family="monospace" font-size="11.0" text-anchor="middle" fill="#ffffff">ROM</text>
+    <text x="1065.0" y="416.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">rom248</text>
+    <text x="1065.0" y="565.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ROM</text>
+    <text x="995.0" y="469.0" font-family="monospace" font-size="10" fill="#ffffff">ADDR[7:0]</text>
+    <text x="995.0" y="499.0" font-family="monospace" font-size="10" fill="#ffffff">EN</text>
+    <text x="1001.0" y="529.0" font-family="monospace" font-size="10" fill="#ffffff">CLK</text>
+    <text x="1079.0" y="499.0" font-family="monospace" font-size="10" fill="#ffffff">DATA[15:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1005.0,225.0 L1125.0,225.0 L1125.0,345.0 L1005.0,345.0 Z" fill="#20372a" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1065.0" y="290.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">+</text>
+    <text x="1065.0" y="206.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">add257</text>
+    <text x="1065.0" y="355.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADD</text>
+    <text x="1010.0" y="259.0" font-family="monospace" font-size="10" fill="#ffffff">A[16:8]</text>
+    <text x="1010.0" y="289.0" font-family="monospace" font-size="10" fill="#ffffff">A[7:0]</text>
+    <text x="1010.0" y="319.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1080.8" y="289.0" font-family="monospace" font-size="10" fill="#ffffff">Y[16:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1410.0,555.0 L1530.0,555.0 L1530.0,645.0 L1410.0,645.0 Z" fill="#20372a" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="605.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">+</text>
+    <text x="1470.0" y="536.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">add260</text>
+    <text x="1470.0" y="655.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADD</text>
+    <text x="1415.0" y="589.0" font-family="monospace" font-size="10" fill="#ffffff">A[16:0]</text>
+    <text x="1415.0" y="619.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1485.8" y="604.0" font-family="monospace" font-size="10" fill="#ffffff">Y[16:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1755.0,960.0 L1875.0,960.0 L1875.0,1050.0 L1755.0,1050.0 Z" fill="#20372a" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1815.0" y="1010.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">+</text>
+    <text x="1815.0" y="941.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">add267</text>
+    <text x="1815.0" y="1060.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADD</text>
+    <text x="1760.0" y="994.0" font-family="monospace" font-size="10" fill="#ffffff">A[24:0]</text>
+    <text x="1760.0" y="1024.0" font-family="monospace" font-size="10" fill="#ffffff">B[17:0]</text>
+    <text x="1830.8" y="1009.0" font-family="monospace" font-size="10" fill="#ffffff">Y[24:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1755.0,1140.0 L1875.0,1140.0 L1875.0,1230.0 L1755.0,1230.0 Z" fill="#20372a" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1815.0" y="1190.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">+</text>
+    <text x="1815.0" y="1121.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">add268</text>
+    <text x="1815.0" y="1240.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">ADD</text>
+    <text x="1760.0" y="1174.0" font-family="monospace" font-size="10" fill="#ffffff">A[24:0]</text>
+    <text x="1760.0" y="1204.0" font-family="monospace" font-size="10" fill="#ffffff">B[17:0]</text>
+    <text x="1830.8" y="1189.0" font-family="monospace" font-size="10" fill="#ffffff">Y[24:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1410.0,195.0 L1530.0,195.0 L1530.0,285.0 L1410.0,285.0 Z" fill="#20372a" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="245.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">×</text>
+    <text x="1470.0" y="176.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mul265</text>
+    <text x="1470.0" y="295.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUL</text>
+    <text x="1415.0" y="229.0" font-family="monospace" font-size="10" fill="#ffffff">A[7:0]</text>
+    <text x="1415.0" y="259.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1485.8" y="244.0" font-family="monospace" font-size="10" fill="#ffffff">Y[24:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1410.0,375.0 L1530.0,375.0 L1530.0,465.0 L1410.0,465.0 Z" fill="#20372a" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="425.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">×</text>
+    <text x="1470.0" y="356.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mul266</text>
+    <text x="1470.0" y="475.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUL</text>
+    <text x="1415.0" y="409.0" font-family="monospace" font-size="10" fill="#ffffff">A[7:0]</text>
+    <text x="1415.0" y="439.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1485.8" y="424.0" font-family="monospace" font-size="10" fill="#ffffff">Y[24:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1410.0,1305.0 L1530.0,1305.0 L1530.0,1395.0 L1410.0,1395.0 Z" fill="#20372a" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="1355.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">−</text>
+    <text x="1470.0" y="1286.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">sub259</text>
+    <text x="1470.0" y="1405.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">SUB</text>
+    <text x="1415.0" y="1339.0" font-family="monospace" font-size="10" fill="#ffffff">A[16:0]</text>
+    <text x="1415.0" y="1369.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1485.8" y="1354.0" font-family="monospace" font-size="10" fill="#ffffff">Y[16:0]</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M330.0,855.0 L435.0,855.0 L435.0,945.0 L330.0,945.0 Z" fill="#3a2c20" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="382.5" y="905.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">&gt;</text>
+    <text x="382.5" y="836.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">gt246</text>
+    <text x="382.5" y="955.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">GT</text>
+    <text x="335.0" y="889.0" font-family="monospace" font-size="10" fill="#ffffff">A[7:0]</text>
+    <text x="335.0" y="919.0" font-family="monospace" font-size="10" fill="#ffffff">B[7:0]</text>
+    <text x="424.4" y="904.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1410.0,735.0 L1530.0,735.0 L1530.0,825.0 L1410.0,825.0 Z" fill="#3a2c20" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="785.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">&gt;</text>
+    <text x="1470.0" y="716.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">gt259</text>
+    <text x="1470.0" y="835.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">GT</text>
+    <text x="1415.0" y="769.0" font-family="monospace" font-size="10" fill="#ffffff">A[16:0]</text>
+    <text x="1415.0" y="799.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1519.4" y="784.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M2085.0,480.0 L2220.0,480.0 L2220.0,600.0 L2085.0,600.0 Z" fill="#3a2c20" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="2152.5" y="545.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">&gt;</text>
+    <text x="2152.5" y="461.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">gt272</text>
+    <text x="2152.5" y="610.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">GT</text>
+    <text x="2090.0" y="514.0" font-family="monospace" font-size="10" fill="#ffffff">A[24:11]</text>
+    <text x="2090.0" y="544.0" font-family="monospace" font-size="10" fill="#ffffff">A[10:0]</text>
+    <text x="2090.0" y="574.0" font-family="monospace" font-size="10" fill="#ffffff">B[7:0]</text>
+    <text x="2209.4" y="544.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M2085.0,900.0 L2220.0,900.0 L2220.0,1020.0 L2085.0,1020.0 Z" fill="#3a2c20" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="2152.5" y="965.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">&gt;</text>
+    <text x="2152.5" y="881.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">gt274</text>
+    <text x="2152.5" y="1030.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">GT</text>
+    <text x="2090.0" y="934.0" font-family="monospace" font-size="10" fill="#ffffff">A[24:11]</text>
+    <text x="2090.0" y="964.0" font-family="monospace" font-size="10" fill="#ffffff">A[10:0]</text>
+    <text x="2090.0" y="994.0" font-family="monospace" font-size="10" fill="#ffffff">B[7:0]</text>
+    <text x="2209.4" y="964.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="operatorBlock">
+    <path d="M1410.0,915.0 L1530.0,915.0 L1530.0,1005.0 L1410.0,1005.0 Z" fill="#3a2c20" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="965.6" font-family="monospace" font-size="16.0" text-anchor="middle" fill="#ffffff">&lt;</text>
+    <text x="1470.0" y="896.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">lt260</text>
+    <text x="1470.0" y="1015.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">LT</text>
+    <text x="1415.0" y="949.0" font-family="monospace" font-size="10" fill="#ffffff">A[16:0]</text>
+    <text x="1415.0" y="979.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1519.4" y="964.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M2085.0,1320.0 L2235.0,1329.0 L2235.0,1491.0 L2085.0,1500.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="2160.0" y="1301.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux4670</text>
+    <text x="2160.0" y="1510.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="2090.0" y="1369.0" font-family="monospace" font-size="10" fill="#ffffff">A[23:0]</text>
+    <text x="2090.0" y="1399.0" font-family="monospace" font-size="10" fill="#ffffff">B[23:16]</text>
+    <text x="2090.0" y="1429.0" font-family="monospace" font-size="10" fill="#ffffff">B[15:8]</text>
+    <text x="2090.0" y="1459.0" font-family="monospace" font-size="10" fill="#ffffff">B[7:0]</text>
+    <text x="2157.2" y="1496.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="2190.8" y="1414.0" font-family="monospace" font-size="10" fill="#ffffff">Y[23:0]</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M1020.0,1275.0 L1110.0,1284.0 L1110.0,1386.0 L1020.0,1395.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1065.0" y="1256.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux4673</text>
+    <text x="1065.0" y="1405.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="1025.0" y="1324.0" font-family="monospace" font-size="10" fill="#ffffff">A</text>
+    <text x="1025.0" y="1354.0" font-family="monospace" font-size="10" fill="#ffffff">B</text>
+    <text x="1062.2" y="1391.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="1099.4" y="1339.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M1020.0,1065.0 L1110.0,1074.0 L1110.0,1176.0 L1020.0,1185.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1065.0" y="1046.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux4676</text>
+    <text x="1065.0" y="1195.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="1025.0" y="1114.0" font-family="monospace" font-size="10" fill="#ffffff">A</text>
+    <text x="1025.0" y="1144.0" font-family="monospace" font-size="10" fill="#ffffff">B</text>
+    <text x="1062.2" y="1181.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="1099.4" y="1129.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M1020.0,1485.0 L1110.0,1494.0 L1110.0,1596.0 L1020.0,1605.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1065.0" y="1466.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux4678</text>
+    <text x="1065.0" y="1615.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="1025.0" y="1534.0" font-family="monospace" font-size="10" fill="#ffffff">A</text>
+    <text x="1025.0" y="1564.0" font-family="monospace" font-size="10" fill="#ffffff">B</text>
+    <text x="1062.2" y="1601.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="1099.4" y="1549.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M1425.0,1485.0 L1515.0,1494.0 L1515.0,1596.0 L1425.0,1605.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="1466.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux4681</text>
+    <text x="1470.0" y="1615.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="1430.0" y="1534.0" font-family="monospace" font-size="10" fill="#ffffff">A</text>
+    <text x="1430.0" y="1564.0" font-family="monospace" font-size="10" fill="#ffffff">B</text>
+    <text x="1467.2" y="1601.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="1504.4" y="1549.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M645.0,705.0 L765.0,714.0 L765.0,816.0 L645.0,825.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="705.0" y="686.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux246</text>
+    <text x="705.0" y="835.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="650.0" y="754.0" font-family="monospace" font-size="10" fill="#ffffff">A[7:0]</text>
+    <text x="650.0" y="784.0" font-family="monospace" font-size="10" fill="#ffffff">B[7:0]</text>
+    <text x="702.2" y="821.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="726.4" y="769.0" font-family="monospace" font-size="10" fill="#ffffff">Y[7:0]</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M1755.0,750.0 L1875.0,759.0 L1875.0,861.0 L1755.0,870.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1815.0" y="731.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux259</text>
+    <text x="1815.0" y="880.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="1760.0" y="799.0" font-family="monospace" font-size="10" fill="#ffffff">A[16:0]</text>
+    <text x="1760.0" y="829.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1812.2" y="866.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="1830.8" y="814.0" font-family="monospace" font-size="10" fill="#ffffff">Y[16:0]</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M1410.0,1095.0 L1530.0,1104.0 L1530.0,1206.0 L1410.0,1215.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1470.0" y="1076.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux260</text>
+    <text x="1470.0" y="1225.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="1415.0" y="1144.0" font-family="monospace" font-size="10" fill="#ffffff">A[16:0]</text>
+    <text x="1415.0" y="1174.0" font-family="monospace" font-size="10" fill="#ffffff">B[16:0]</text>
+    <text x="1467.2" y="1211.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="1485.8" y="1159.0" font-family="monospace" font-size="10" fill="#ffffff">Y[16:0]</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M2100.0,690.0 L2220.0,699.0 L2220.0,801.0 L2100.0,810.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="2160.0" y="671.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux272</text>
+    <text x="2160.0" y="820.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="2105.0" y="739.0" font-family="monospace" font-size="10" fill="#ffffff">A[7:0]</text>
+    <text x="2105.0" y="769.0" font-family="monospace" font-size="10" fill="#ffffff">B[7:0]</text>
+    <text x="2157.2" y="806.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="2181.4" y="754.0" font-family="monospace" font-size="10" fill="#ffffff">Y[7:0]</text>
+  </g>
+  <g data-symbol="mux">
+    <path d="M2100.0,1110.0 L2220.0,1119.0 L2220.0,1221.0 L2100.0,1230.0 Z" fill="#2e2740" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="2160.0" y="1091.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">mux274</text>
+    <text x="2160.0" y="1240.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">MUX</text>
+    <text x="2105.0" y="1159.0" font-family="monospace" font-size="10" fill="#ffffff">A[7:0]</text>
+    <text x="2105.0" y="1189.0" font-family="monospace" font-size="10" fill="#ffffff">B[7:0]</text>
+    <text x="2157.2" y="1226.0" font-family="monospace" font-size="10" fill="#ffffff">S</text>
+    <text x="2181.4" y="1174.0" font-family="monospace" font-size="10" fill="#ffffff">Y[7:0]</text>
+  </g>
+  <g data-symbol="andGate">
+    <path d="M660.0,525.0 L697.5,525.0 C747.5,525.0,747.5,615.0,697.5,615.0 L660.0,615.0 Z" fill="#2b2b2b" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="697.5" y="506.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">and277</text>
+    <text x="697.5" y="625.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">AND</text>
+    <text x="665.0" y="559.0" font-family="monospace" font-size="10" fill="#ffffff">A</text>
+    <text x="665.0" y="589.0" font-family="monospace" font-size="10" fill="#ffffff">B</text>
+    <text x="724.4" y="574.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="notGate">
+    <path d="M1020.0,1695.0 L1089.0,1725.0 L1020.0,1755.0 Z" fill="#2b2b2b" stroke="#ffffff" stroke-width="0.5"/>
+    <circle cx="1092.0" cy="1725.0" r="3.0" fill="#2b2b2b" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1057.5" y="1676.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">not278</text>
+    <text x="1057.5" y="1765.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">NOT</text>
+    <text x="1025.0" y="1729.0" font-family="monospace" font-size="10" fill="#ffffff">A</text>
+    <text x="1084.4" y="1729.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+  <g data-symbol="orGate">
+    <path d="M1425.0,1695.0 Q1468.5,1695.0,1500.0,1740.0 Q1468.5,1785.0,1425.0,1785.0 Q1447.5,1740.0,1425.0,1695.0 Z" fill="#2b2b2b" stroke="#ffffff" stroke-width="0.5"/>
+    <text x="1462.5" y="1676.0" font-family="monospace" font-size="10.5" text-anchor="middle" fill="#ffffff">or278</text>
+    <text x="1462.5" y="1795.0" font-family="monospace" font-size="9" text-anchor="middle" fill="#ffffff">OR</text>
+    <text x="1445.0" y="1729.0" font-family="monospace" font-size="10" fill="#ffffff">A</text>
+    <text x="1445.0" y="1759.0" font-family="monospace" font-size="10" fill="#ffffff">B</text>
+    <text x="1489.4" y="1744.0" font-family="monospace" font-size="10" fill="#ffffff">Y</text>
+  </g>
+</svg>

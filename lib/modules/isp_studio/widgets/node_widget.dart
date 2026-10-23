@@ -2704,9 +2704,9 @@ class IspNodeWidget extends StatelessWidget {
 
   /// 视频输出节点附加区：按钮行（设定路径 + 导出 MP4）+ 内嵌终端
   /// 面板（导出过程：输入/路径/编码器/进度行/结果，复用格式转换的
-  /// 终端组件与 tick 局部刷新模式）。尺寸固定 860x360（无拖动手柄）：
-  /// 附加区总高 = extraHeight（234，即节点总高 360），构成 = 按钮行
-  /// 34 + 间距 3 + 终端（extra − 37）。
+  /// 终端组件与 tick 局部刷新模式）。尺寸固定 860x380（无拖动手柄）：
+  /// 附加区总高 = extraHeight（254，即节点总高 380），构成 = 按钮行
+  /// 49 + 间距 3 + 终端（extra − 52）。
   Widget _buildVideoOutputExtra(IspStudioState state) {
     final extra = state.previewExtraHeight(node.id);
     return SizedBox(
@@ -2720,7 +2720,7 @@ class IspNodeWidget extends StatelessWidget {
               valueListenable: state.videoExportTick,
               builder: (context, tick, child) => _FormatConvertConsole(
                 log: state.videoExportLogs[node.id] ?? '',
-                height: math.max(0.0, extra - 37),
+                height: math.max(0.0, extra - 52),
                 hint: '导出 MP4 的过程信息将在此显示',
               ),
             ),
@@ -2762,12 +2762,16 @@ class IspNodeWidget extends StatelessWidget {
     final btnStyle = ElevatedButton.styleFrom(
       foregroundColor: Colors.white,
       padding: EdgeInsets.zero,
-      textStyle: const TextStyle(fontSize: 12),
+      // 去掉默认最小尺寸/点击热区余量，按钮严格贴合行高 43，内容垂直居中。
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      textStyle: const TextStyle(fontSize: 18),
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 3, 8, 3),
       child: SizedBox(
-        height: 28,
+        // 按钮行高 43（38 + 5）。
+        height: 43,
         // 三个控件等宽（自定义 CRF 输入框为附加件，不参与等分）。
         child: Row(
           children: [
@@ -2884,21 +2888,24 @@ class IspNodeWidget extends StatelessWidget {
   }
 
   /// 带图标的按钮内容：codicons PNG（已重着色为纯白）+ 文本，
-  /// [dropdown] 时尾部附加下拉箭头。
+  /// [dropdown] 时尾部附加下拉箭头。图标 26px、文本 18px（按钮行 43px）。
+  /// 文本不设 height（默认行高包含完整 ascent/descent，中文在按钮内
+  /// 垂直居中；height: 1.0 会裁掉字形上下余量导致视觉偏上）。
   Widget _iconBtnContent(String icon, String label, {bool dropdown = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Image.asset(icon, width: 24, height: 24),
-        const SizedBox(width: 4),
+        Image.asset(icon, width: 26, height: 26),
+        const SizedBox(width: 6),
         Flexible(
           child: Text(
             label,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12),
+            style: const TextStyle(fontSize: 18),
           ),
         ),
-        if (dropdown) const Icon(Icons.arrow_drop_down, size: 16),
+        if (dropdown) const Icon(Icons.arrow_drop_down, size: 24),
       ],
     );
   }

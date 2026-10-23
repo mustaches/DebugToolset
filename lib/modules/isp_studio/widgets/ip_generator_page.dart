@@ -16,13 +16,91 @@ import 'package:provider/provider.dart';
 import '../../../providers/isp_studio_state.dart';
 import '../../text_editor/utils/syntax_highlighter.dart';
 import '../codegen/group_ip_export.dart';
+import '../codegen/ip_gen_plan.dart';
+import '../codegen/ip_stimulus.dart';
 import '../codegen/ip_target.dart';
 import '../codegen/iverilog_sim.dart';
 import '../codegen/sim_wave_store.dart';
 import '../models/isp_graph.dart';
 import 'code_browser.dart';
 import 'ip_gen_dialog.dart';
+import 'ip_stimulus_dialog.dart';
+import 'markdown_view.dart';
 import 'tab_toolbar.dart';
+
+/// word 在 text 中是否按 Verilog 标识符词边界出现（自动选文件用）。
+bool containsVerilogWord(String text, String word) {
+  if (word.isEmpty) return false;
+  var i = 0;
+  while (i < text.length) {
+    final idx = text.indexOf(word, i);
+    if (idx < 0) return false;
+    final before = idx > 0 ? text.codeUnitAt(idx - 1) : 0;
+    final end = idx + word.length;
+    final after = end < text.length ? text.codeUnitAt(end) : 0;
+    if (!_isVerilogIdChar(before) && !_isVerilogIdChar(after)) return true;
+    i = end;
+  }
+  return false;
+}
+
+bool _isVerilogIdChar(int c) =>
+    (c >= 0x30 && c <= 0x39) ||
+    (c >= 0x41 && c <= 0x5A) ||
+    (c >= 0x61 && c <= 0x7A) ||
+    c == 0x5F ||
+    c == 0x24;
+
+/// 在语法高亮 spans 中把 [word]（按 Verilog 标识符词边界匹配）的所有
+/// 出现改涂高亮底色（琥珀底黑字，保留原字族字号）——SimWave「跳转到
+/// Verilog」的信号名高亮（所有用到该信号的 .v 文件共用）。
+List<TextSpan> highlightWordOccurrences(List<TextSpan> spans, String word) {
+  if (word.isEmpty) return spans;
+  return [for (final s in spans) _highlightInSpan(s, word)];
+}
+
+TextSpan _highlightInSpan(TextSpan span, String word) {
+  final children = span.children;
+  if (children != null && children.isNotEmpty) {
+    return TextSpan(
+      style: span.style,
+      children: [
+        for (final c in children)
+          c is TextSpan ? _highlightInSpan(c, word) : c,
+      ],
+    );
+  }
+  final text = span.text ?? '';
+  if (!text.contains(word)) return span;
+  final hi = (span.style ?? const TextStyle()).copyWith(
+    backgroundColor: const Color(0xFFFFB300),
+    color: Colors.black,
+  );
+  final parts = <TextSpan>[];
+  var i = 0;
+  while (i < text.length) {
+    final idx = text.indexOf(word, i);
+    if (idx < 0) {
+      parts.add(TextSpan(text: text.substring(i), style: span.style));
+      break;
+    }
+    final before = idx > 0 ? text.codeUnitAt(idx - 1) : 0;
+    final end = idx + word.length;
+    final after = end < text.length ? text.codeUnitAt(end) : 0;
+    if (_isVerilogIdChar(before) || _isVerilogIdChar(after)) {
+      // 非词边界（如 in_data2 中的 in_data）：跳过该处继续找下一个。
+      parts.add(TextSpan(text: text.substring(i, end), style: span.style));
+      i = end;
+      continue;
+    }
+    if (idx > i) {
+      parts.add(TextSpan(text: text.substring(i, idx), style: span.style));
+    }
+    parts.add(TextSpan(text: word, style: hi));
+    i = end;
+  }
+  return parts.length == 1 ? parts[0] : TextSpan(children: parts);
+}
 
 /// IP 标签页的生成选项（由视图层解析 `gip:<id>@<vendor>` key + 会话缓存
 /// 传入；页面内可经「生成选项」重开对话框换厂商/参数）。
@@ -48,6 +126,10 @@ class IpGeneratorPage extends StatefulWidget {
 
 class _IpGeneratorPageState extends State<IpGeneratorPage> {
   late IpGenOptions _options;
+
+  /// 一键仿真激励参数（工具栏「仿真激励参数」对话框指定；会话缓存
+  /// [sessionIpSimStimulus] 回填，默认与历史固定行为一致）。
+  late IpSimStimulus _stimulus;
   String _selectedFile = '';
   Map<String, String>? _files;
   String? _error;
@@ -70,6 +152,8 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   void initState() {
     super.initState();
     _options = widget.options;
+    _stimulus =
+        sessionIpSimStimulus[widget.groupId] ?? const IpSimStimulus();
     _reload();
   }
 
@@ -82,7 +166,8 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   Future<Map<String, String>> _buildFiles() async {
     final state = context.read<IspStudioState>();
     final group = state.graph.groups.firstWhere((g) => g.id == widget.groupId);
-    return buildGroupIpFiles(state.graph, group, _options);
+    return buildGroupIpFiles(state.graph, group, _options,
+        stimulus: _stimulus);
   }
 
   Future<void> _reload() async {
@@ -107,6 +192,18 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   }
 
   Future<void> _runSim() async {
+    // 一键仿真先弹激励参数对话框（确认按钮「开始仿真」）：用户指定/确认
+    // 激励参数后再跑；取消则整个中止（不打开终端面板）。
+    final s =
+        await showIpStimulusDialog(context, initial: _stimulus, confirmText: '开始仿真');
+    if (s == null || !mounted) return;
+    if (s != _stimulus) {
+      sessionIpSimStimulus[widget.groupId] = s;
+      setState(() {
+        _stimulus = s;
+        _files = null;
+      });
+    }
     if (_files == null) await _reload();
     if (_files == null) return;
     setState(() {
@@ -116,11 +213,9 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
       _simResult = null;
     });
     try {
-      // openWaveform: false —— 波形改由内嵌「仿真波形」标签页（Surfer
-      // WASM）展示，外部查看器经标签页工具栏按钮手动打开。
+      // 波形由内嵌「仿真波形」标签页展示（vcdData 登记 SimWaveStore）。
       final r = await runIpSimulation(
         _files!,
-        openWaveform: false,
         onOutput: (c) {
           if (mounted) {
             setState(() => _simLog.write(c));
@@ -135,13 +230,14 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
       );
       if (!mounted) return;
       setState(() => _simResult = r);
-      // 登记波形并打开/激活内嵌波形标签页。
+      // 登记波形（附来源编组/厂商，Signal 右键「跳转到Verilog」用）
+      // 并打开/激活内嵌波形标签页。
       final vcd = r.vcdData;
       if (r.success && vcd != null) {
         SimWaveStore.instance.registerWave(
           vcd,
-          sucl: _files?['wave.sucl'],
-          gtkw: _files?['wave.gtkw'],
+          groupId: widget.groupId,
+          vendor: _options.vendor,
         );
         context.read<IspStudioState>().openWaveTab();
       }
@@ -252,10 +348,18 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   }
 
   /// 工具栏：与 C 代码页同一风格——左侧白色 codicon 图标按钮
-  ///（生成选项 settings-gear / 导出IP包 git-stash-pop / 一键仿真 play，
-  /// 悬停 tooltip 显示功能名），右侧为信息区（编组名 + 组 id +
-  /// 编组·IP + 厂商徽标 + 只读标识）。
+  ///（生成选项 settings-gear / 导出IP包 git-stash-pop / 一键仿真 play
+  ///（先弹激励参数对话框）/ 电路图浏览 circuit-board，悬停 tooltip
+  /// 显示功能名），右侧为信息区（编组名 + 组 id + 编组·IP +
+  /// 厂商徽标 + 资源估算 + 激励摘要 + 只读标识）。
   Widget _buildToolbar(IspNodeGroup group, IspStudioState state) {
+    // 资源估算摘要（纯规划计算，随生成选项联动；估算口径见
+    // ip_gen_plan.dart IpResourceEstimate）。
+    var estSummary = '';
+    try {
+      estSummary =
+          planGroupIp(state.graph, group, _options).resources.summary();
+    } catch (_) {}
     return ispTabToolbarRow(
       children: [
         ispTabIconButton(
@@ -269,12 +373,12 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
           icon: ispTabAssetIcon('icons/git-stash-pop.png'),
         ),
         ispTabIconButton(
-          tooltip: '一键仿真',
+          tooltip: '一键仿真（先配置激励参数）',
           onTap: _simRunning ? null : _runSim,
           icon: ispTabAssetIcon('icons/play.png',
               color: _simRunning ? Colors.white38 : Colors.white),
         ),
-        // 电路图浏览：yosys + netlistsvg 渲染 RTL 电路图（新标签页）。
+        // 电路图浏览：yosys 出网表 JSON + 应用自研布局渲染 RTL 电路图（新标签页）。
         ispTabIconButton(
           tooltip: '电路图浏览',
           onTap: () => context
@@ -282,6 +386,38 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
               .openSchematicTab(widget.groupId, _options.vendor),
           icon: ispTabAssetIcon('icons/circuit-board.png'),
         ),
+        // SimWave「跳转到Verilog」的信号名高亮指示（× 清除）。
+        if (state.ipCodeHighlight != null) ...[
+          const SizedBox(width: 6),
+          Container(
+            height: 22,
+            padding: const EdgeInsets.only(left: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3A2E1A),
+              borderRadius: BorderRadius.circular(3),
+              border: Border.all(color: const Color(0xFFFFB300)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '高亮 ${state.ipCodeHighlight}',
+                  style: const TextStyle(
+                      fontSize: 11, color: Color(0xFFFFCC80)),
+                ),
+                InkWell(
+                  onTap: () => state.setIpCodeHighlight(null),
+                  child: const Padding(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Icon(Icons.close,
+                        size: 12, color: Color(0xFFFFCC80)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         const Spacer(),
         Text(
           '${group.name} (${widget.groupId})',
@@ -298,6 +434,30 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
         Text(
           _options.vendor.shortName,
           style: const TextStyle(fontSize: 11, color: Color(0xFF4EC9B0)),
+        ),
+        const SizedBox(width: 8),
+        // 资源估算摘要（粗估，随生成选项联动）。
+        if (estSummary.isNotEmpty)
+          Flexible(
+            child: Text(
+              estSummary,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        const SizedBox(width: 8),
+        // 当前激励参数摘要（非默认时亮黄色提示引起注意；默认参数灰显）。
+        Flexible(
+          child: Text(
+            '激励 ${_stimulus.summary()}',
+            style: TextStyle(
+              fontSize: 11,
+              color: _stimulus.isDefault
+                  ? Colors.grey
+                  : const Color(0xFFFFFF00),
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         const SizedBox(width: 8),
         ispTabToolbarReadOnly(),
@@ -334,12 +494,35 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     if (_files == null || _selectedFile.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
+    // SimWave「跳转到Verilog」高亮词：当前文件不含该信号时自动切到
+    // 首个含它的 .v 文件（所有 .v 文件中的出现都高亮）。
+    final hl = context.watch<IspStudioState>().ipCodeHighlight;
+    if (hl != null) {
+      final cur = _files![_selectedFile] ?? '';
+      if (!containsVerilogWord(cur, hl)) {
+        for (final f in _files!.keys) {
+          if (f.endsWith('.v') && containsVerilogWord(_files![f]!, hl)) {
+            if (f != _selectedFile) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _selectedFile = f);
+              });
+            }
+            break;
+          }
+        }
+      }
+    }
     final text = _files![_selectedFile]!.trim();
-    final spans = SyntaxHighlighter.highlightText(
+    // Markdown 文档（README.md）默认预览渲染，可切换源码视图。
+    if (_selectedFile.endsWith('.md')) {
+      return MarkdownView(text: text);
+    }
+    var spans = SyntaxHighlighter.highlightText(
       text,
       'v',
       baseStyle: kCodeBrowserStyle,
     );
+    if (hl != null) spans = highlightWordOccurrences(spans, hl);
     return CodeArea(spans: spans);
   }
 
@@ -422,11 +605,7 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     return [
       CodeFileGroup('仿真', [
         for (final f in files.keys)
-          if (f.startsWith('tb_') ||
-              f.startsWith('golden_') ||
-              f.endsWith('.gtkw') ||
-              f.endsWith('.sucl'))
-            f,
+          if (f.startsWith('tb_') || f.startsWith('golden_')) f,
       ]),
       CodeFileGroup('核心/顶层', [
         for (final f in files.keys)

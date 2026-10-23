@@ -44,8 +44,25 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# 打包用的 ffmpeg 二进制（约 100MB，不入库；缺失时重新放入 tools/ffmpeg/ 即可）
-/tools/ffmpeg/*.exe
+# 随安装包分发的 ffmpeg 整目录（bin DLL + include 头文件，约 124MB，不入库；
+# 重建方式见 tools/README.md）
+/tools/ffmpeg/
+
+# 打包机本地下载缓存（Inno Setup/gtkwave 安装包，不入库）
+/winpack_setup/
+
+# temp 下的下载/解压/编译产物（不入库）
+/temp/7zr.exe
+/temp/dart-sdk-linux-x64.zip
+/temp/ffmpeg-9.0.2-full_build-shared.7z
+/temp/ffmpeg_shared_extract/
+/temp/ispflowRAW/
+/temp/objs/
+/temp/objs_grp_adjust/
+/temp/objs_grp_sse/
+/temp/surfer_wasm.zip
+/temp/surfer_wasm_extract/
+/temp/surfer_win.zip
 
 # 大体积 RAW 图像测试素材（约 950MB，不入库）
 /BayerRGGB/
@@ -88,13 +105,20 @@ Linux_setup/Output/
 # scratch 下的二进制产物（dll）
 /scratch/*.dll
 
-# 随安装包分发的 Icarus Verilog / Surfer 二进制（约 62MB，不入库；缺失时从
-# C:\iverilog 与 C:\surfer 重新拷入 tools/ 即可，详见 tools/README.md）
-/tools/iverilog/
-/tools/surfer/
+# scratch 下的编译/诊断输出目录与大体积素材（不入库）
+/scratch/cc_win_check*/
+/scratch/cc_win_frames/
+/scratch/cc_win_diag/
+/scratch/c_ref_check/
+/scratch/*.mp4
+/scratch/*.gray
+/scratch/*.tgz
 
-# 电路图浏览工具链（yosys 子集 + node.exe + netlistsvg npm 包，约 100MB，
-# 不入库；重建方式见 tools/README.md）
+# 随安装包分发的 Icarus Verilog 二进制（约 62MB，不入库；缺失时从
+# C:\iverilog 重新拷入 tools/ 即可，详见 tools/README.md）
+/tools/iverilog/
+
+# 电路图浏览工具链（yosys 子集，约 15MB，不入库；重建方式见 tools/README.md）
+# netlistsvg/ 已移除：电路图布局与绘制改由应用自研完成，不再需要 Node.js。
 /tools/yosys/
-/tools/netlistsvg/
 

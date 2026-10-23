@@ -306,8 +306,8 @@ class IspStudioState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 打开（或激活）仿真波形标签页（Surfer WASM 内嵌，key 前缀 'wave:'；
-  /// 全局单例，每次一键仿真后内容经 WaveServer 广播刷新）。
+  /// 打开（或激活）仿真波形标签页（Flutter 原生波形查看器，key 前缀
+  /// 'wave:'；全局单例，每次一键仿真后内容经 SimWaveStore 广播刷新）。
   void openWaveTab() {
     const key = 'wave:sim';
     final i = openCodeTabs.indexOf(key);
@@ -317,6 +317,18 @@ class IspStudioState extends ChangeNotifier {
       openCodeTabs.add(key);
       activeTab = openCodeTabs.length;
     }
+    notifyListeners();
+  }
+
+  /// IP 代码页的信号名高亮词（SimWave Signal 右键「跳转到Verilog」
+  /// 设置：所有用到该信号的 .v 文件中的出现都高亮；工具栏高亮指示
+  /// 可手动清除；null=关闭）。
+  String? ipCodeHighlight;
+
+  /// 设置/清除 IP 代码页的信号名高亮词。
+  void setIpCodeHighlight(String? name) {
+    if (ipCodeHighlight == name) return;
+    ipCodeHighlight = name;
     notifyListeners();
   }
 
@@ -1478,6 +1490,17 @@ class IspStudioState extends ChangeNotifier {
   }
 
   void endNodeResize() {}
+
+  /// 全选节点：画布空白右键菜单「全选节点」（有节点时可用）。
+  void selectAllNodes() {
+    selectedNodeIds
+      ..clear()
+      ..addAll(graph.nodes.keys);
+    selectedNodeId = selectedNodeIds.firstOrNull;
+    selectedConnectionId = null;
+    selectedConnectionIds.clear();
+    notifyListeners();
+  }
 
   void selectNode(String? id, {bool multiSelect = false}) {
     // 编组联动：点选组内任一成员等同于选中/取消整组。

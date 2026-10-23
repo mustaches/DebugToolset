@@ -299,8 +299,13 @@ class IspGraph {
         x: (m['x'] as num).toDouble(),
         y: (m['y'] as num).toDouble(),
         width: (m['width'] as num?)?.toDouble() ?? kNodeWidth,
-        extraHeight:
-            (m['extraHeight'] as num?)?.toDouble() ?? kDefaultNodeExtraHeight,
+        // 视频输出节点尺寸固定（无拖动手柄）：旧版存档的 234/244/264
+        //（总高 360/370/390）统一迁移为 254（总高 380）。
+        extraHeight: typeId == 'video_output' &&
+                {234.0, 244.0, 264.0}.contains(
+                    (m['extraHeight'] as num?)?.toDouble() ?? 234)
+            ? 254
+            : (m['extraHeight'] as num?)?.toDouble() ?? kDefaultNodeExtraHeight,
         name: name,
         paramValues: Map<String, Object?>.from(m['params'] as Map? ?? const {}),
       );

@@ -89,7 +89,7 @@ class IspEditorTabBar extends StatelessWidget {
                               ),
               title: _tabTitle(state, tab),
               tooltip: tab.startsWith('wave:')
-                  ? '仿真波形（Surfer 内嵌）'
+                  ? 'SimWave(VCD)（内嵌波形查看器）'
                   : '$tab — 只读代码',
               active: state.activeTab == i + 1,
               onTap: () => state.setActiveTab(i + 1),
@@ -125,7 +125,7 @@ class IspEditorTabBar extends StatelessWidget {
       );
     }
 
-    if (tab.startsWith('wave:')) return '仿真波形';
+    if (tab.startsWith('wave:')) return 'SimWave(VCD)';
     if (tab.startsWith('sch:')) {
       final (groupId, vendor) = splitVendor(tab.substring(4));
       for (final g in state.graph.groups) {

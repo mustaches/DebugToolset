@@ -30,6 +30,7 @@ import '../pipeline/c_def_index.dart';
 import '../pipeline/node_c_code.dart' show loadCRefFile;
 import '../pipeline/video_source.dart';
 import 'code_browser.dart';
+import 'markdown_view.dart';
 import 'tab_toolbar.dart';
 
 /// 校验编组能否导出 C 代码；不可导出时弹错误对话框并返回 false。
@@ -287,18 +288,21 @@ class _GroupCodePageState extends State<GroupCodePage> {
   }
 
   /// 文件清单分组：顶层（isp_pipeline_* / 黑盒 isp_pipe_*_bb）/ 节点封装 /
-  /// 算法参考（c_ref，isp_common.* 与各算法 isp_* 文件），组内保持生成顺序。
-  /// 黑盒无节点封装组（单文件自含），分组自动为空。
+  /// 算法参考（c_ref，isp_common.* 与各算法 isp_* 文件）/ 文档（.md），组内
+  /// 保持生成顺序。黑盒无节点封装组（单文件自含），分组自动为空。
   List<CodeFileGroup> _groupsOf(Map<String, String> files) {
     final top = <String>[];
     final wrappers = <String>[];
     final cRef = <String>[];
+    final docs = <String>[];
     for (final f in files.keys) {
       if (f.startsWith('isp_pipeline_') ||
           (f.startsWith('isp_pipe_') && f.contains('_bb.'))) {
         top.add(f);
       } else if (f.startsWith('isp_')) {
         cRef.add(f);
+      } else if (f.endsWith('.md')) {
+        docs.add(f);
       } else {
         wrappers.add(f);
       }
@@ -307,6 +311,7 @@ class _GroupCodePageState extends State<GroupCodePage> {
       CodeFileGroup('顶层', top),
       CodeFileGroup('节点封装', wrappers),
       CodeFileGroup('算法参考（c_ref）', cRef),
+      CodeFileGroup('文档', docs),
     ];
   }
 
@@ -508,14 +513,19 @@ class _GroupCodePageState extends State<GroupCodePage> {
     final trimmed = {
       for (final e in displayFiles.entries) e.key: e.value.trim(),
     };
+    // .md 文档（如目标微架构说明 *_code_micro.md）走 Markdown 预览渲染，
+    // 组件自带源码切换，天然绕开 C 高亮与「定义预览」。
+    final isMd = selected.endsWith('.md');
     // 悬停「定义预览」函数/宏定义索引：含 main.c，使 stub 里对 top 层 run 的
     // 调用也能预览。
     final refIndex = indexCDefs(trimmed);
-    final spans = SyntaxHighlighter.highlightText(
-      trimmed[selected]!,
-      'c',
-      baseStyle: kCodeBrowserStyle,
-    );
+    final spans = isMd
+        ? null
+        : SyntaxHighlighter.highlightText(
+            trimmed[selected]!,
+            'c',
+            baseStyle: kCodeBrowserStyle,
+          );
     return Container(
       color: const Color(0xFF1E1E1E),
       // 编译工具栏（右侧信息区）+ 文件清单 + 代码区/终端面板（公共组件）。
@@ -557,19 +567,21 @@ class _GroupCodePageState extends State<GroupCodePage> {
           ],
           highlightGroupTitles: true,
         ),
-        codeArea: CodeArea(
-          spans: spans,
-          controller: _codeCtl,
-          plainText: trimmed[selected],
-          currentFile: selected,
-          refIndex: refIndex,
-          refContents: trimmed,
-          // 点预览标题栏「Go to REF」：切左侧文件清单选中项 + 代码区滚到定义行。
-          onGoToRef: (file, line) {
-            setState(() => _selectedFile = file);
-            _codeCtl.jumpTo(line);
-          },
-        ),
+        codeArea: isMd
+            ? MarkdownView(text: trimmed[selected]!)
+            : CodeArea(
+                spans: spans!,
+                controller: _codeCtl,
+                plainText: trimmed[selected],
+                currentFile: selected,
+                refIndex: refIndex,
+                refContents: trimmed,
+                // 点预览标题栏「Go to REF」：切左侧文件清单选中项 + 代码区滚到定义行。
+                onGoToRef: (file, line) {
+                  setState(() => _selectedFile = file);
+                  _codeCtl.jumpTo(line);
+                },
+              ),
         filesLoader: () async => {
           ...files,
           if (winOk) ...{

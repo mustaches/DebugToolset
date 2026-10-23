@@ -1,0 +1,6586 @@
+/// 自研 RTL 网表电路图：由 [NetlistModule]（yosys 网表模型）分层布局并
+/// 绘制成 Vivado Elaborated Design 版式的电路图——端口五边形符号、RTL
+/// 标准单元符号（异形逻辑门/梯形 MUX/带时钟三角的 DFF/IEC 运算符框）、
+/// 实例名在上/类型在下/针脚名带位宽/针脚短线接实际轮廓、按列分道的
+/// 正交连线、线旁网名标注、常量引脚直接标常量值、总线加粗。
+///
+/// 与旧链路（yosys → netlistsvg/ELK → SVG → flutter_svg + SVG 命中模型）
+/// 的差别：布局与绘制全在 Dart 侧，不依赖 Node/ELK/SVG；单元可悬停高亮
+/// 其相连网络、可点击（子模块实例下钻 / 逻辑单元跳源码行）；导出 SVG/PNG
+/// 复用同一布局模型，所见即所得。
+library;
+
+import 'dart:async';
+import 'dart:isolate';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+import '../codegen/netlist_model.dart';
+import '../codegen/netlist_symbols.dart';
+import 'ip_block_diagram.dart' show SchPalette, schFitView;
+
+/// 统一布局网格：pin、连接点、通道与走线端点全部落在 15px 整数倍上。
+const nlRoutingGrid = 15.0;
+const _kGrid = nlRoutingGrid;
+double _gridCeil(double v) => (v / _kGrid).ceil() * _kGrid;
+double _gridFloor(double v) => (v / _kGrid).floor() * _kGrid;
+double _gridRound(double v) => (v / _kGrid).round() * _kGrid;
+
+/// 网表图布局常量。10px 字体连同上下行距至少需要 20px 行高；
+/// 行高与留白均为 Grid 的整数倍，避免文字裁切并维持连接点对齐。
+const _kPinRowH = 2 * _kGrid;
+const _kPinPadV = _kGrid;
+const _kPinPadH = 5.0;
+
+/// 元件 pin 的强制外延伸：符号轮廓 → `pos` 先沿 pin 方向直行一个 Grid，
+/// 对应走线的折弯、交叉与分支只能出现在 `pos` 或其外侧。
+const _kStub = _kGrid;
+
+/// 展开容器的留白：顶部标题带 + 左右边缘针脚区 + 底部余量。
+const _kContainerHead = 2 * _kGrid;
+const _kContainerPadX = 2 * _kGrid;
+const _kContainerPadY = 2 * _kGrid;
+
+/// 竖道相对列边缘的**让位**（针脚短线 + 余量）：竖道不得落在短线端上，
+/// 否则会看成一整列针脚都被这根线连着。
+const _kStubClear = _kGrid;
+const _kNameH = 2 * _kGrid;
+const _kTypeH = 2 * _kGrid;
+const _kMinBlockW = 10 * _kGrid;
+const _kMaxBlockW = 24 * _kGrid;
+const _kLaneGap = _kGrid;
+const _kMinLaneW = 3 * _kGrid;
+const _kTrackGap = _kGrid; // 顶部走线轨道间距
+const _kNetClearance = _kGrid; // 不同网平行中心线的最小间距（防视觉覆盖）
+const _kColGap = 3 * _kGrid;
+const _kRowGap = 2 * _kGrid;
+const _kMargin = 2 * _kGrid;
+const _kPortGlyphH = _kGrid;
+const _kPortGlyphW = 3 * _kGrid;
+const _kPortTextGap = _kGrid;
+const _kPlus = _kGrid;
+const _kBoxBorder = 0.5;
+
+/// 网表图中的一个块（单元或端口组）。
+class NlBlock {
+  /// 单元名（yosys）；端口组为 `#in`/`#out`。
+  final String id;
+
+  /// 块上方文字（单元实例名 / 空）。
+  final String title;
+
+  /// 块下方文字（类型短名 / 空）。
+  final String subtitle;
+
+  final bool isIo;
+  final bool isInput;
+
+  /// 引用的网表单元（端口组为 null）。
+  final NetlistCell? cell;
+
+  final List<NlPin> ins;
+  final List<NlPin> outs;
+
+  /// 布局：列（拓扑层级，输入 -1、输出 max+1）、行、位置尺寸。
+  int column = 0;
+  int row = 0;
+  Offset origin = Offset.zero;
+  Offset boxOrigin = Offset.zero;
+  Size boxSize = Size.zero;
+  Size size = Size.zero;
+
+  NlBlock({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    this.isIo = false,
+    this.isInput = true,
+    this.cell,
+    this.ins = const [],
+    this.outs = const [],
+  });
+
+  /// ---- 层级「原位展开」（Vivado 风格）----
+  /// 展开后的容器：内部子模型（null = 折叠或非实例）。
+  NetlistDiagramModel? sub;
+
+  /// 子模型在容器内的平移（已含外框与针脚区留白）。
+  Offset subOffset = Offset.zero;
+
+  /// 容器外框尺寸（= [boxSize]）；子模型整体平移后绘制于其中。
+  bool get isContainer => sub != null;
+
+  /// 展开容器时可直接使用的内层命中信息（浅层缓存，绘制/命中遍历用）。
+  List<NlWire> get subWires => sub?.wires ?? const [];
+
+  /// 容器边缘针脚 → 子模块端口 的连接短线。
+  final List<(Offset, Offset)> subLinks = [];
+}
+
+/// 一层走线/针脚（含该层相对画布原点的平移）——供绘制与命中测试遍历
+/// 展开容器内部的层级。
+class NlLevel {
+  final List<NlBlock> blocks;
+  final List<NlWire> wires;
+  final List<NlPin> pins;
+  final List<NlPin> ports;
+  final Offset offset;
+
+  const NlLevel({
+    required this.blocks,
+    required this.wires,
+    required this.pins,
+    required this.ports,
+    required this.offset,
+  });
+}
+
+/// 块针脚（含显示名、位宽、是否常量/总线）。
+class NlPin {
+  /// yosys 端口名。
+  final String port;
+
+  /// 显示名（端口名 + 位宽范围）。
+  final String display;
+
+  final int width;
+  final bool isBus;
+
+  /// 该引脚接的常量值文本（非常量引脚为 null）。
+  final String? constText;
+
+  /// 该引脚连的网名列表（用于连线标注；常量引脚为空）。
+  final List<String> netNames;
+
+  /// 该引脚涉及的比特（布线用）。
+  final List<int> bits;
+
+  /// 引脚内的真实网段（名称、位段范围和对应比特；用于拆分单比特/总线）。
+  final List<NetlistNet> nets;
+
+  /// 方向（输入/输出/双向）。
+  final NetlistPortDir dir;
+
+  /// 是否为顶层端口针脚（端口符号 + 名称在符号外侧 + 方向标注）。
+  final bool isPort;
+
+  /// 输入端口（端口符号朝向用；输出/双向为 false）。
+  bool get isPortInput => isPort && dir == NetlistPortDir.input;
+
+  /// 属主块标题（网名派生用：`<实例>_<端口>`）。
+  String ownerTitle = '';
+
+  /// 针脚节点 / 块边缘点（布局期填充）。
+  Offset pos = Offset.zero;
+  Offset edge = Offset.zero;
+
+  /// 彩色网线的首个折弯参考点：从 [pos] 沿 pin 方向再向外一个 Grid；
+  /// 外部走线从 [pos] 连到此处后才允许折弯。顶层端口与 [pos] 相同。
+  Offset routePos = Offset.zero;
+
+  /// 非等宽连接时，显示在该负载分支旁的上游实际位域标签（可空）。
+  String? branchLabel;
+  Offset branchLabelAt = Offset.zero;
+  double branchLabelWidth = 0;
+
+  NlPin({
+    required this.port,
+    required this.display,
+    required this.width,
+    required this.bits,
+    this.nets = const [],
+    this.isBus = false,
+    this.constText,
+    this.netNames = const [],
+    this.dir = NetlistPortDir.input,
+    this.isPort = false,
+  });
+}
+
+/// 网表图的一条**网**走线：一个驱动引脚 → 它的全部负载引脚。
+///
+/// 扇出**不拆成 N 根独立走线**：同一根网只占**一条竖道 + 一条顶部轨道**，
+/// 各负载用 T 型分支接到干线上（[segments] 即干线与分支的线段集合，同轴
+/// 重叠段已合并）——这样多负载看起来是一条线分出几个短叉，而不是一片
+/// 平行线。
+class NlWire {
+  /// 驱动引脚。
+  final NlPin from;
+
+  /// 该网的全部负载引脚（顺序稳定：按块列/行序）。
+  final List<NlPin> loads;
+
+  /// 整网的可读名；普通网只标一次，非等宽分支另见 [branchLabels]。
+  final String label;
+
+  /// 该走线实际承载的比特；线宽只由这个集合的位数决定。
+  final List<int> bits;
+  final bool isBus;
+
+  /// 走线段（水平/垂直，共线重叠已合并）。
+  List<(Offset, Offset)> segments = const [];
+
+  /// 每个当前线段对应的原始段序号；手动绕行插入折线后仍可追溯段身份。
+  /// 空列表表示与原始段一一对应。
+  List<int> segmentOrigins = const [];
+
+  /// 最终几何中实际通过上下轨道到达的负载数，供候选方案去重。
+  int trackLoads = 0;
+
+  /// 同网 T 型/十字分支点（方向数 ≥3）；绘制为 6px 实心圆。
+  List<Offset> junctions = const [];
+
+  /// 网名标注锚点（基线锚点：左端 x + 基线 y）。
+  Offset labelAt = Offset.zero;
+
+  /// 网名文本估算宽度（绘制层加底色遮罩用）。
+  double labelWidth = 0;
+
+  /// 非等宽连接时各负载分支的上游实际位域标签；非空时替代组合长标签。
+  final Map<NlPin, String> branchLabels = {};
+
+  NlWire(this.from, this.loads, this.label, {required this.bits})
+    : isBus = bits.length > 1;
+
+  /// 该网是否涉及某块（悬停高亮用：驱动块或任一负载块）。
+  bool touches(NlBlock b) =>
+      b.outs.contains(from) || loads.any((l) => b.ins.contains(l));
+}
+
+/// 用于占用计算与几何检查的针脚连接段：`edge → pos` 是灰色针脚短线，
+/// `pos → routePos` 是对应网在折弯前必须保留的一个 Grid 彩色首段。
+List<(Offset, Offset)> nlWirePinStubs(NlWire wire) => [
+  if ((wire.from.edge - wire.from.pos).distance > 0.01)
+    (wire.from.edge, wire.from.pos),
+  if ((wire.from.pos - wire.from.routePos).distance > 0.01)
+    (wire.from.pos, wire.from.routePos),
+  for (final load in wire.loads) ...[
+    if ((load.edge - load.pos).distance > 0.01) (load.edge, load.pos),
+    if ((load.pos - load.routePos).distance > 0.01) (load.pos, load.routePos),
+  ],
+];
+
+/// 页内网名（含位域）是否可见：默认一律隐藏，只有高亮网才显示；
+/// 静态导出模式没有高亮状态，沿用文档模式的全标签输出。
+bool nlWireLabelVisible({required bool active, required bool exportMode}) =>
+    active || exportMode;
+
+/// 常量参数文本的 x 坐标：左侧 pin 放到标记左侧，避免文本进入元件块；
+/// 右侧及底边 pin 仍放在标记右侧。Canvas 与 SVG 共用。
+double nlConstLabelX(NlPin p, double textWidth) =>
+    p.pos.dx < p.edge.dx ? p.pos.dx - 13 - textWidth : p.pos.dx + 13;
+
+/// 常量标记的气泡文本：第一行按 MSB→LSB 列出各段 pin 位域，
+/// 第二行按相同顺序列出常量值；单段常量同样保持两行格式。
+String nlConstTooltip(NlPin p) {
+  if (p.constText == null) return '';
+  if (p.nets.isEmpty) return p.constText!;
+  final ranges = <String>[];
+  final values = <String>[];
+  var offset = 0;
+  for (final net in p.nets) {
+    final lo = offset;
+    final hi = offset + net.bits.length - 1;
+    ranges.add(lo == hi ? '[$lo]' : '[$hi:$lo]');
+    values.add(net.name);
+    offset += net.bits.length;
+  }
+  return '${ranges.reversed.join(' ')}\n${values.reversed.join(' | ')}';
+}
+
+/// 网表图模型（块 + 连线 + 画布尺寸 + 常量标记）。
+class NetlistDiagramModel {
+  final List<NlBlock> blocks;
+  final List<NlWire> wires;
+  final Size canvasSize;
+
+  /// 模块名与规模统计（状态栏显示）。
+  final String moduleName;
+  final int cellCount;
+
+  /// 走线统计（调优用）：轨道条数 / 通道 Z 负载数 / 轨道负载数。
+  final int trackCount;
+  final int zLoadCount;
+  final int trackLoadCount;
+
+  /// 实际横竖交叉数，以及多轮优化的接受轮数、候选评估数与收敛状态。
+  final int crossingCount;
+  final int optimizationRounds;
+  final int optimizationEvaluations;
+  final bool optimizationConverged;
+
+  /// 生成当前布局的可序列化方案；手动模式从这里继续编辑。
+  final NlRoutingPlan routingPlan;
+
+  /// 与当前最优评分相同（交叉数、折点数与总长度均相同）的全部不同布局，含首选布局。
+  final List<NetlistDiagramModel> optimizationVariants;
+
+  const NetlistDiagramModel({
+    required this.blocks,
+    required this.wires,
+    required this.canvasSize,
+    required this.moduleName,
+    required this.cellCount,
+    this.trackCount = 0,
+    this.zLoadCount = 0,
+    this.trackLoadCount = 0,
+    this.crossingCount = 0,
+    this.optimizationRounds = 0,
+    this.optimizationEvaluations = 0,
+    this.optimizationConverged = true,
+    this.routingPlan = const NlRoutingPlan(),
+    this.optimizationVariants = const [],
+  });
+
+  /// 展开容器后的**层级扁平化**：本层 + 各展开容器内部的层（含平移）。
+  /// 绘制与命中测试按层遍历即可，无需了解层级细节。
+  List<NlLevel> flattened() {
+    final out = <NlLevel>[];
+    void walk(NetlistDiagramModel m, Offset off, int depth) {
+      out.add(
+        NlLevel(
+          blocks: m.blocks,
+          wires: m.wires,
+          pins: [
+            for (final b in m.blocks)
+              if (!b.isIo) ...[...b.ins, ...b.outs],
+          ],
+          ports: [
+            for (final b in m.blocks)
+              if (b.isIo) ...[...b.ins, ...b.outs],
+          ],
+          offset: off,
+        ),
+      );
+      if (depth <= 0) return;
+      for (final b in m.blocks) {
+        final s = b.sub;
+        if (s == null) continue;
+        walk(s, off + b.subOffset, depth - 1);
+      }
+    }
+
+    walk(this, Offset.zero, 6);
+    return out;
+  }
+
+  /// 所有块（含展开容器内部的块），按层序。
+  List<NlBlock> allBlocksRecursive() {
+    final out = <NlBlock>[];
+    void walk(NetlistDiagramModel m, int depth) {
+      out.addAll(m.blocks);
+      if (depth <= 0) return;
+      for (final b in m.blocks) {
+        final s = b.sub;
+        if (s != null) walk(s, depth - 1);
+      }
+    }
+
+    walk(this, 6);
+    return out;
+  }
+}
+
+/// 多轮走线优化选项。默认按最佳优先搜索持续展开候选状态；
+/// [maxRounds] 是状态展开数的安全上限，0 表示单次布局；
+/// [maxWiresPerRound] 是起始候选网数量，默认 0 表示全量；设为非零时，
+/// 停滞才会逐步扩大候选范围。[alternateWireLimits] 是额外搜索起点，
+/// 各起点独立收敛后按同一三级评分合并最优结果。[candidateWorkers]
+/// 控制每个起点内同时计算的候选布局数量，1/0 表示不并行候选。
+class NlRoutingOptimizationOptions {
+  final int maxRounds;
+  final int maxWiresPerRound;
+  final List<int> alternateWireLimits;
+  final int candidateWorkers;
+  final bool tryRouteModes;
+  final bool tryLaneOrderVariants;
+  final bool tryBlockMoves;
+
+  /// 是否尝试拆线重布：对高冲突网对成对强制改变路径模式，
+  /// 解开单网候选无法逃脱的局部最优。
+  final bool tryRipUpReroute;
+
+  /// 是否启用 **Sifting 行序优化**：对每列取交叉贡献最高的若干块，依次尝试
+  /// 把它插到该列每一个位置（标准列内单块移位），外加整列反转/上移/下移
+  /// 等列级扰动。候选一律由外层最佳优先搜索按**真实几何**评分验收——
+  /// 简化走线模型的预测最优并不等于几何最优（见 docs/decisions.md）。
+  ///
+  /// **默认关闭**，实测依据（真实 32 单元网表，docs/decisions.md 有记录）：
+  /// - 只有布局、无布线候选时：交叉 140 → 123（−12%）、折点 160 → 156、
+  ///   长度 69915 → 67260，耗时约 5 s —— 对大网表 / 受限轮数很有价值；
+  /// - 与完整布线搜索同时开启：两条独立轨迹都收敛到 115，合并后结果不变，
+  ///   但多一个起点使墙钟 +12 s —— 此时行序已被路由器候选覆盖，
+  ///   故不作为默认。需要时（大网表、`maxRounds` 受限、只跑布局）显式打开。
+  final bool trySifting;
+
+  /// 每次展开最多参与 Sifting 的块数（0 = 全量，按交叉贡献降序截断）。
+  final int siftingBlocks;
+
+  /// 是否启用 **「镜像 × 上下移动/交换」联合邻域**。
+  ///
+  /// 动机（用户观察）：单独镜像某个符号、或单独把它上下一格，交叉净变化常常
+  /// 为 0（一根下来、另一根上去），被评分剪掉；但**两者组合**能把「输入针脚
+  /// 顺序」与「驱动行序」同时对齐，一次消掉 2–3 处交叉。这类耦合移动是单步
+  /// 邻域到不了的，正是既有搜索卡在 115 的原因之一。
+  ///
+  /// 候选族：镜像、镜像×列内任一位置、镜像×成对交换、双镜像×交换。
+  /// 与 Sifting 一样只产候选，由真实几何评分（交叉→折点→长度）择优，
+  /// 并作为**独立搜索起点**合并（注入主轨迹会扰动贪心路径，实测 115→116）。
+  final bool tryMirror;
+
+  /// 每次展开最多参与镜像联合邻域的块数（0 = 全量）。
+  final int mirrorBlocks;
+
+  /// 单网弯折预算：候选布局中任一网折点数超过该值即按无法布通淘汰
+  /// （硬过滤，不进入评分）。0 表示不限制。默认值经真实网表回归校准，
+  /// 见 docs/decisions.md。
+  final int maxBendsPerWire;
+
+  const NlRoutingOptimizationOptions({
+    this.maxRounds = 128,
+    this.maxWiresPerRound = 0,
+    this.alternateWireLimits = const [1],
+    this.candidateWorkers = 8,
+    this.tryRouteModes = true,
+    this.tryLaneOrderVariants = true,
+    this.tryBlockMoves = true,
+    this.tryRipUpReroute = true,
+    this.trySifting = false,
+    this.siftingBlocks = 6,
+    this.tryMirror = false,
+    this.mirrorBlocks = 6,
+    this.maxBendsPerWire = 0,
+  }) : assert(maxRounds >= 0),
+       assert(maxWiresPerRound >= 0),
+       assert(candidateWorkers >= 0),
+       assert(siftingBlocks >= 0),
+       assert(mirrorBlocks >= 0);
+
+  const NlRoutingOptimizationOptions.singlePass()
+    : maxRounds = 0,
+      maxWiresPerRound = 0,
+      alternateWireLimits = const [],
+      candidateWorkers = 0,
+      tryRouteModes = false,
+      tryLaneOrderVariants = false,
+      tryBlockMoves = false,
+      tryRipUpReroute = false,
+      trySifting = false,
+      siftingBlocks = 0,
+      tryMirror = false,
+      mirrorBlocks = 0,
+      maxBendsPerWire = 0;
+}
+
+enum NlRouteMode { auto, local, track, localLeft, localRight }
+
+class NlRoutingPlan {
+  final int laneVariant;
+  final Map<String, NlRouteMode> routeModes;
+  final Map<String, int> blockOffsets;
+  final Map<String, int> blockXOffsets;
+  final Map<String, int> laneOffsets;
+
+  /// 手动段覆盖：`wireRouteKey|规范化线段` → 以 Grid 为单位的偏移。
+  /// 垂直段修改 X，水平段修改 Y。
+  final Map<String, int> manualSegments;
+
+  /// **Sifting 行序覆盖**：列号 → 该列块的 id 顺序。
+  /// 未列出的列沿用默认排序；列内未列出的块按默认相对顺序排在末尾。
+  /// 只记录与默认顺序不同的列（空 map 即默认布局）。
+  final Map<int, List<String>> rowOrders;
+
+  /// **引脚任意排序**：块 id → 左侧输入针脚在列内的槽位顺序（端口名列表）。
+  /// 原理图允许针脚按任意顺序排列，用于消掉「针脚顺序 vs 驱动行序反相关」
+  /// 这一类交叉；未列出的块按默认顺序（或 [flips] 镜像后的顺序）。
+  /// 与 [flips] 正交：flips 是「整体反序」，本表是「任意排列」，可叠加。
+  final Map<String, List<String>> pinOrders;
+
+  /// **符号上下镜像**：块 id 集合（针脚槽位上下互换）。
+  /// 与行序/位置正交的独立维度——不搬块、只改「哪个针脚落在哪一行」，
+  /// 用于消掉「输入针脚顺序 vs 驱动行序反相关」这一类交叉。
+  final Set<String> flips;
+
+  const NlRoutingPlan({
+    this.laneVariant = 0,
+    this.routeModes = const {},
+    this.blockOffsets = const {},
+    this.blockXOffsets = const {},
+    this.laneOffsets = const {},
+    this.manualSegments = const {},
+    this.rowOrders = const {},
+    this.flips = const {},
+    this.pinOrders = const {},
+  });
+
+  NlRoutingPlan copyWith({
+    int? laneVariant,
+    Map<String, NlRouteMode>? routeModes,
+    Map<String, int>? blockOffsets,
+    Map<String, int>? blockXOffsets,
+    Map<String, int>? laneOffsets,
+    Map<String, int>? manualSegments,
+    Map<int, List<String>>? rowOrders,
+    Set<String>? flips,
+    Map<String, List<String>>? pinOrders,
+  }) {
+    return NlRoutingPlan(
+      laneVariant: laneVariant ?? this.laneVariant,
+      routeModes: routeModes ?? this.routeModes,
+      blockOffsets: blockOffsets ?? this.blockOffsets,
+      blockXOffsets: blockXOffsets ?? this.blockXOffsets,
+      laneOffsets: laneOffsets ?? this.laneOffsets,
+      manualSegments: manualSegments ?? this.manualSegments,
+      rowOrders: rowOrders ?? this.rowOrders,
+      flips: flips ?? this.flips,
+      pinOrders: pinOrders ?? this.pinOrders,
+    );
+  }
+
+  String get signature {
+    final keys = routeModes.keys.toList()..sort();
+    final blocks = blockOffsets.keys.toList()..sort();
+    final xBlocks = blockXOffsets.keys.toList()..sort();
+    final lanes = laneOffsets.keys.toList()..sort();
+    final manual = manualSegments.keys.toList()..sort();
+    final rows = rowOrders.keys.toList()..sort();
+    return '$laneVariant|${keys.map((k) => '$k=${routeModes[k]!.name}').join('|')}'
+        '|${blocks.map((k) => '$k=${blockOffsets[k]}').join('|')}'
+        '|${xBlocks.map((k) => '$k=${blockXOffsets[k]}').join('|')}'
+        '|${lanes.map((k) => '$k=${laneOffsets[k]}').join('|')}'
+        '|${manual.map((k) => '$k=${manualSegments[k]}').join('|')}'
+        '|${rows.map((k) => '$k=${rowOrders[k]!.join(',')}').join(';')}'
+        '|F:${(flips.toList()..sort()).join(',')}'
+        '|P:${(pinOrders.keys.toList()..sort()).map((k) => '$k=${pinOrders[k]!.join(',')}').join(';')}';
+  }
+
+  Map<String, Object?> toJson() => {
+    'laneVariant': laneVariant,
+    'routeModes': {for (final e in routeModes.entries) e.key: e.value.name},
+    'blockOffsets': blockOffsets,
+    'blockXOffsets': blockXOffsets,
+    'laneOffsets': laneOffsets,
+    'manualSegments': manualSegments,
+    'rowOrders': {
+      for (final e in rowOrders.entries) '${e.key}': e.value,
+    },
+    'flips': flips.toList(),
+    'pinOrders': {
+      for (final e in pinOrders.entries) e.key: e.value,
+    },
+  };
+
+  factory NlRoutingPlan.fromJson(Map<String, Object?> json) {
+    Map<String, int> offsets(String key) => <String, int>{
+      if (json[key] is Map)
+        for (final e in (json[key] as Map).entries)
+          if (e.value is num) '${e.key}': (e.value as num).toInt(),
+    };
+    final modes = <String, NlRouteMode>{};
+    if (json['routeModes'] is Map) {
+      final names = NlRouteMode.values.asNameMap();
+      for (final e in (json['routeModes'] as Map).entries) {
+        modes['${e.key}'] = names['${e.value}'] ?? NlRouteMode.auto;
+      }
+    }
+    final rowOrders = <int, List<String>>{};
+    if (json['rowOrders'] is Map) {
+      for (final e in (json['rowOrders'] as Map).entries) {
+        final col = int.tryParse('${e.key}');
+        if (col == null || e.value is! List) continue;
+        rowOrders[col] = [for (final id in e.value as List) '$id'];
+      }
+    }
+    final flips = <String>{};
+    if (json['flips'] is List) {
+      for (final id in json['flips'] as List) {
+        flips.add('$id');
+      }
+    }
+    final pinOrders = <String, List<String>>{};
+    if (json['pinOrders'] is Map) {
+      for (final e in (json['pinOrders'] as Map).entries) {
+        if (e.value is! List) continue;
+        pinOrders['${e.key}'] = [for (final p in e.value as List) '$p'];
+      }
+    }
+    return NlRoutingPlan(
+      laneVariant: json['laneVariant'] is num
+          ? (json['laneVariant'] as num).toInt()
+          : 0,
+      routeModes: modes,
+      blockOffsets: offsets('blockOffsets'),
+      blockXOffsets: offsets('blockXOffsets'),
+      laneOffsets: offsets('laneOffsets'),
+      manualSegments: offsets('manualSegments'),
+      rowOrders: rowOrders,
+      flips: flips,
+      pinOrders: pinOrders,
+    );
+  }
+}
+
+/// 为当前方案生成元件纵/横向微调候选，优先处理源/目标纵向距离最大的块。
+List<NlRoutingPlan> _nlBlockMoveCandidates(
+  NetlistDiagramModel model,
+  NlRoutingPlan current,
+) {
+  final candidates = <({NlBlock block, double detour})>[];
+  for (final block in model.blocks) {
+    if (block.isIo || block.isContainer) continue;
+    var detour = 0.0;
+    var hasVertical = false;
+    for (final wire in model.wires.where((w) => w.touches(block))) {
+      detour += wire.loads.fold<double>(
+        0,
+        (sum, load) => sum + (wire.from.routePos.dy - load.routePos.dy).abs(),
+      );
+      hasVertical |= wire.segments.any(
+        (s) =>
+            (s.$1.dx - s.$2.dx).abs() < 0.01 &&
+            (s.$1.dy - s.$2.dy).abs() > 0.01,
+      );
+    }
+    if (hasVertical && detour > 0.01) {
+      candidates.add((block: block, detour: detour));
+    }
+  }
+  candidates.sort((a, b) {
+    final result = b.detour.compareTo(a.detour);
+    if (result != 0) return result;
+    return a.block.id.compareTo(b.block.id);
+  });
+  final plans = <NlRoutingPlan>[];
+  for (final candidate in candidates.take(2)) {
+    for (final delta in const [-2, -1, 1, 2]) {
+      final offsets = <String, int>{...current.blockOffsets};
+      final next = (offsets[candidate.block.id] ?? 0) + delta;
+      if (next == 0) {
+        offsets.remove(candidate.block.id);
+      } else {
+        offsets[candidate.block.id] = next;
+      }
+      plans.add(
+        NlRoutingPlan(
+          laneVariant: current.laneVariant,
+          routeModes: current.routeModes,
+          blockOffsets: offsets,
+          blockXOffsets: current.blockXOffsets,
+          laneOffsets: current.laneOffsets,
+        ),
+      );
+    }
+    for (final delta in const [-3, -2, -1, 1, 2, 3]) {
+      final offsets = <String, int>{...current.blockXOffsets};
+      final next = (offsets[candidate.block.id] ?? 0) + delta;
+      if (next == 0) {
+        offsets.remove(candidate.block.id);
+      } else {
+        offsets[candidate.block.id] = next;
+      }
+      plans.add(
+        NlRoutingPlan(
+          laneVariant: current.laneVariant,
+          routeModes: current.routeModes,
+          blockOffsets: current.blockOffsets,
+          blockXOffsets: offsets,
+          laneOffsets: current.laneOffsets,
+        ),
+      );
+    }
+  }
+  return plans;
+}
+
+/// 为高交叉网生成竖道左右偏移候选，用于绕开局部交叉而不移动元件。
+List<NlRoutingPlan> _nlLaneOffsetCandidates(
+  NetlistDiagramModel model,
+  NlRoutingPlan current,
+) {
+  final crossingCounts = nlWireCrossingCounts(model.wires);
+  final candidates = <({NlWire wire, int crossings, int segments})>[];
+  for (var i = 0; i < model.wires.length; i++) {
+    final wire = model.wires[i];
+    if (crossingCounts[i] == 0) continue;
+    final hasVertical = wire.segments.any(
+      (s) =>
+          (s.$1.dx - s.$2.dx).abs() < 0.01 && (s.$1.dy - s.$2.dy).abs() > 0.01,
+    );
+    if (hasVertical) {
+      candidates.add((
+        wire: wire,
+        crossings: crossingCounts[i],
+        segments: wire.segments.length,
+      ));
+    }
+  }
+  candidates.sort((a, b) {
+    var result = b.crossings.compareTo(a.crossings);
+    if (result != 0) return result;
+    result = b.segments.compareTo(a.segments);
+    if (result != 0) return result;
+    return _nlWireRouteKey(a.wire).compareTo(_nlWireRouteKey(b.wire));
+  });
+  final plans = <NlRoutingPlan>[];
+  for (final candidate in candidates.take(2)) {
+    final key = _nlWireRouteKey(candidate.wire);
+    // 偏移范围按该网参与的交叉数自适应：高冲突网给 ±5 Grid，
+    // 其余维持 ±3；无法布通的偏移仍由几何检查淘汰（回退上限不变）。
+    final maxDelta = 3;
+    for (var delta = -maxDelta; delta <= maxDelta; delta++) {
+      if (delta == 0) continue;
+      final offsets = <String, int>{...current.laneOffsets};
+      final next = (offsets[key] ?? 0) + delta;
+      if (next == 0) {
+        offsets.remove(key);
+      } else {
+        offsets[key] = next;
+      }
+      plans.add(
+        NlRoutingPlan(
+          laneVariant: current.laneVariant,
+          routeModes: current.routeModes,
+          blockOffsets: current.blockOffsets,
+          blockXOffsets: current.blockXOffsets,
+          laneOffsets: offsets,
+        ),
+      );
+    }
+  }
+  return plans;
+}
+
+/// 直线连线的超边拓扑：**星形**（每网连到质心）或**团**（全对相连）。
+/// 用户可切换：它决定「直线总长」这个布局目标函数的取值口径。
+enum NlNetTopology { star, clique }
+
+/// **直线连线总长**：按 [topology] 累加每条网各 pin 之间的直线距离。
+///
+/// 这是"解析布局"阶段真正要最小化的目标（而不是正交走线长度）：
+/// - 团（clique）：每对 pin 都直线相连，`Σ_{i<j} |p_i − p_j|`；
+/// - 星形（star）：每网取 pin 的质心作 Steiner 点近似，`Σ_i |p_i − c|`。
+double netlistStraightLength(
+  NetlistDiagramModel model, {
+  NlNetTopology topology = NlNetTopology.star,
+}) {
+  var total = 0.0;
+  for (final w in model.wires) {
+    final pts = <Offset>[w.from.pos, for (final l in w.loads) l.pos];
+    if (pts.length < 2) continue;
+    if (topology == NlNetTopology.clique) {
+      for (var i = 0; i < pts.length; i++) {
+        for (var j = i + 1; j < pts.length; j++) {
+          total += (pts[i] - pts[j]).distance;
+        }
+      }
+      continue;
+    }
+    var cx = 0.0;
+    var cy = 0.0;
+    for (final p in pts) {
+      cx += p.dx;
+      cy += p.dy;
+    }
+    cx /= pts.length;
+    cy /= pts.length;
+    for (final p in pts) {
+      total += (p - Offset(cx, cy)).distance;
+    }
+  }
+  return total;
+}
+
+/// **热力均衡度**：把画布均分为 [cells]×[cells] 格，统计每格内的线段数，
+/// 返回 `P95/P50` 与标准差（越大越"堆在一处"，越小越均衡）。
+({double p95OverP50, double stdDev, int maxCellCount}) netlistHeatBalance(
+  NetlistDiagramModel model, {
+  int cells = 16,
+}) {
+  final w = math.max(1.0, model.canvasSize.width);
+  final h = math.max(1.0, model.canvasSize.height);
+  final counts = List<int>.filled(cells * cells, 0);
+  for (final wire in model.wires) {
+    for (final (a, b) in wire.segments) {
+      // 按线段中点落格（足够反映分布；精确切格对均衡度影响不大）。
+      final mx = ((a.dx + b.dx) / 2).clamp(0.0, w - 0.001);
+      final my = ((a.dy + b.dy) / 2).clamp(0.0, h - 0.001);
+      final ix = (mx / w * cells).floor().clamp(0, cells - 1);
+      final iy = (my / h * cells).floor().clamp(0, cells - 1);
+      counts[iy * cells + ix]++;
+    }
+  }
+  final sorted = [...counts]..sort();
+  double pct(double p) => sorted[(p * (sorted.length - 1)).round()].toDouble();
+  final p50 = pct(0.5);
+  final p95 = pct(0.95);
+  final mean = counts.isEmpty
+      ? 0.0
+      : counts.reduce((a, b) => a + b) / counts.length;
+  var variance = 0.0;
+  for (final c in counts) {
+    variance += (c - mean) * (c - mean);
+  }
+  return (
+    p95OverP50: p50 <= 0 ? (p95 > 0 ? 999.0 : 0.0) : p95 / p50,
+    stdDev: math.sqrt(variance / counts.length),
+    maxCellCount: sorted.isEmpty ? 0 : sorted.last,
+  );
+}
+
+/// **M2 迭代版解析 y 布局**：中位数排序 + 合法化 + 重解，迭代到收敛。
+///
+/// 上一版只排序一次，排序后端口位置变了、目标 y 已过期（实测直线长先降 5%
+/// 又在叠加细节后回升）。这里的做法是标准的**中位数迭代**：
+/// 1. 用当前模型按列做中位数排序 → 得到新的行序（合法化由构建器完成：
+///    块按实际高度 + 间距落槽，天然是"高度感知"的）；
+/// 2. 用新行序重建模型，**用新的 pin 位置重算中位数**，得到下一轮行序；
+/// 3. 只接受**直线总长严格下降**的迭代，收敛或达 [iterations] 即停。
+NlRoutingPlan nlIterativeAnalyticPlan(
+  NetlistModule module, {
+  int iterations = 4,
+  Set<String> expanded = const {},
+  NetlistModule? Function(String cellType)? resolve,
+  String idPrefix = '',
+  int depth = 0,
+  NlNetTopology topology = NlNetTopology.star,
+}) {
+  NetlistDiagramModel build(NlRoutingPlan plan) => _buildNetlistDiagramModelOnce(
+    module,
+    expanded: expanded,
+    resolve: resolve,
+    idPrefix: idPrefix,
+    depth: depth,
+    plan: plan,
+  );
+
+  var plan = const NlRoutingPlan();
+  var model = build(plan);
+  var best = netlistStraightLength(model, topology: topology);
+  for (var i = 0; i < iterations; i++) {
+    final analytic = nlAnalyticRowOrderPlan(model);
+    if (analytic.rowOrders.isEmpty) break;
+    final next = NlRoutingPlan(rowOrders: analytic.rowOrders);
+    if (next.signature == plan.signature) break;
+    final nextModel = build(next);
+    final nextLength = netlistStraightLength(nextModel, topology: topology);
+    if (nextLength >= best - 0.01) break; // 只接受改善
+    plan = next;
+    model = nextModel;
+    best = nextLength;
+  }
+  return plan;
+}
+
+/// **M2 首版解析 y 布局**（1-D L1 直线长最小化的排序解）。
+///
+/// 约束：只改**行序**（`rowOrders`），列分配与块间距不动——对应"只优化 y"。
+/// 做法：每列的块按「与其相连的所有针脚的 y 中位数」排序。1-D 的
+/// `min Σ |y_i − y_j|`（团）与 `min Σ |y_i − c|`（星形）最优解都由中位数给出，
+/// 因此在"块必须落在离散槽位"的约束下，**按目标 y 排序就是该列的最优行序**。
+/// 输出直接可作为 `routingPlan` 起点，也可作为候选参与搜索。
+NlRoutingPlan nlAnalyticRowOrderPlan(NetlistDiagramModel model) {
+  final byCol = <int, List<NlBlock>>{};
+  for (final b in model.blocks) {
+    if (b.isIo || b.column < 0) continue;
+    (byCol[b.column] ??= []).add(b);
+  }
+  // 每块的目标 y = 相连针脚 y 的中位数。
+  final target = <String, double>{};
+  for (final entry in byCol.entries) {
+    for (final b in entry.value) {
+      final ys = <double>[];
+      for (final w in model.wires) {
+        if (!w.touches(b)) continue;
+        ys.add(w.from.pos.dy);
+        for (final l in w.loads) {
+          ys.add(l.pos.dy);
+        }
+      }
+      if (ys.isEmpty) {
+        target[b.id] = b.origin.dy;
+        continue;
+      }
+      ys.sort();
+      target[b.id] = ys[ys.length ~/ 2];
+    }
+  }
+  final rowOrders = <int, List<String>>{};
+  for (final entry in byCol.entries) {
+    if (entry.value.length < 2) continue;
+    final list = [...entry.value]..sort((a, b) {
+      final d = target[a.id]!.compareTo(target[b.id]!);
+      return d != 0 ? d : a.id.compareTo(b.id);
+    });
+    rowOrders[entry.key] = [for (final b in list) b.id];
+  }
+  return NlRoutingPlan(rowOrders: rowOrders);
+}
+
+/// 候选硬性合法性：不同网不得共线/重叠、走线不得穿块体。
+///
+/// 三级评分只看「交叉 → 折点 → 长度」，**看不见几何违规**——上一轮引脚
+/// 重排后的候选就出现过两根不同网被布到同一水平段（`水平间距不足/重叠`）
+/// 却因分数更好而被接受的情况。故这两类必须作为硬过滤显式校验；
+/// 15px Grid 与针脚直行由构建器内部保证（违反时抛 `StateError`）。
+bool _nlCandidateIsValid(NetlistDiagramModel model) =>
+    nlFindNetOverlaps(model.wires).isEmpty &&
+    nlFindBlockCrossings(model).isEmpty;
+
+/// **「符号上下镜像 × 元件上下移动/交换」联合邻域候选**。
+///
+/// 单独镜像 / 单独移动常常各自中性（一处交叉下去、另一处上来，净变化 0 被
+/// 评分剪掉），但两者**组合**能同时对齐「输入针脚顺序」与「驱动行序」，
+/// 一次消掉多处交叉——这类耦合移动是任何单步邻域都到不了的。
+///
+/// 候选族（每个块）：① 纯镜像；② 镜像 + 挪到该列任一位置；
+/// ③ 镜像 + 与同列某块交换；④ 双镜像 + 交换。
+/// 与 Sifting 一致：只产候选，由外层按真实几何评分裁定。
+List<NlRoutingPlan> _nlMirrorMoveCandidates(
+  NetlistDiagramModel model,
+  NlRoutingPlan current, {
+  int maxBlocks = 0,
+  int maxPositionsPerColumn = 6,
+}) {
+  bool mirrorable(NlBlock b) {
+    final cell = b.cell;
+    if (cell == null) return false;
+    if (netlistSymbolKindOf(cell) == NetlistSymbolKind.flipFlop) return false;
+    if (b.ins.length < 2) return false;
+    // 含 MUX（翻转后底边 S 会移到顶边、短线朝上）；DFF 仍排除。
+    return true;
+  }
+
+  final orderOf = <int, List<NlBlock>>{};
+  for (final b in model.blocks) {
+    if (b.isIo || b.column < 0) continue;
+    (orderOf[b.column] ??= []).add(b);
+  }
+  for (final list in orderOf.values) {
+    list.sort((a, b) => a.row.compareTo(b.row));
+  }
+  final movable = [
+    for (final entry in orderOf.entries)
+      if (entry.value.length > 1)
+        for (final b in entry.value)
+          if (mirrorable(b)) (column: entry.key, block: b),
+  ];
+  if (movable.isEmpty) return const [];
+
+  final crossingCounts = nlWireCrossingCounts(model.wires);
+  final contribution = <String, int>{};
+  for (var i = 0; i < model.wires.length; i++) {
+    final count = crossingCounts[i];
+    if (count == 0) continue;
+    for (final m in movable) {
+      if (model.wires[i].touches(m.block)) {
+        contribution[m.block.id] = (contribution[m.block.id] ?? 0) + count;
+      }
+    }
+  }
+  movable.sort((a, b) {
+    final byScore = (contribution[b.block.id] ?? 0).compareTo(
+      contribution[a.block.id] ?? 0,
+    );
+    if (byScore != 0) return byScore;
+    return a.block.id.compareTo(b.block.id);
+  });
+  final selected = maxBlocks > 0
+      ? movable.take(maxBlocks).toList()
+      : movable;
+
+  final plans = <NlRoutingPlan>[];
+  final seen = <String>{};
+  Set<String> toggled(String id) => current.flips.contains(id)
+      ? ({...current.flips}..remove(id))
+      : {...current.flips, id};
+  void add(Set<String> flips, {int? column, List<String>? order}) {
+    final plan = current.copyWith(
+      flips: flips,
+      rowOrders: (column == null || order == null)
+          ? current.rowOrders
+          : <int, List<String>>{...current.rowOrders, column: order},
+    );
+    if (seen.add(plan.signature)) plans.add(plan);
+  }
+
+  for (final item in selected) {
+    final list = orderOf[item.column]!;
+    final ids = [for (final b in list) b.id];
+    final from = ids.indexOf(item.block.id);
+    if (from < 0) continue;
+    final flipped = toggled(item.block.id);
+    // ① 纯镜像（验证它单独是否中性）。
+    add(flipped);
+    // ② 镜像 + 挪到该列任一位置。
+    final limit = math.min(ids.length, maxPositionsPerColumn);
+    for (var to = 0; to < limit; to++) {
+      if (to == from) continue;
+      final moved = [...ids]..removeAt(from)..insert(to, item.block.id);
+      add(flipped, column: item.column, order: moved);
+    }
+    // ③ 镜像 + 与同列某块交换；④ 双镜像 + 交换。
+    for (var j = 0; j < ids.length; j++) {
+      if (j == from) continue;
+      final other = ids[j];
+      final swapped = [...ids];
+      swapped[from] = other;
+      swapped[j] = item.block.id;
+      add(flipped, column: item.column, order: swapped);
+      add({...flipped, other}, column: item.column, order: swapped);
+    }
+  }
+
+  // ⑤ **跨块组合：镜像 A × 移动/交换 B**（用户手推的解正属此类）。
+  // 单块邻域到不了"镜像一个块、同时搬另一个块"，而这类耦合恰恰能同时
+  // 对齐两处针脚顺序与驱动行序。取贡献最高的前两个块互配。
+  final cross = selected.take(2).toList();
+  if (cross.length == 2) {
+    final a = cross[0];
+    final b = cross[1];
+    final ids = [for (final x in orderOf[b.column]!) x.id];
+    final from = ids.indexOf(b.block.id);
+    final aFlipped = toggled(a.block.id);
+    if (from >= 0) {
+      // B 挪到本列每个位置（A 镜像）。
+      final limit = math.min(ids.length, maxPositionsPerColumn);
+      for (var to = 0; to < limit; to++) {
+        if (to == from) continue;
+        final moved = [...ids]..removeAt(from)..insert(to, b.block.id);
+        add(aFlipped, column: b.column, order: moved);
+      }
+      // B 与同列其它块交换（A 镜像 / 双镜像）。
+      for (var j = 0; j < ids.length; j++) {
+        if (j == from) continue;
+        final other = ids[j];
+        final swapped = [...ids];
+        swapped[from] = other;
+        swapped[j] = b.block.id;
+        add(aFlipped, column: b.column, order: swapped);
+        add({...aFlipped, other}, column: b.column, order: swapped);
+      }
+    }
+  }
+  return plans;
+}
+
+/// **引脚级 Sifting 候选**（规格 B：引脚可任意排序）。
+///
+/// 对每个「侧边输入 ≥3 个针脚」的块，把每个针脚依次试插到本侧每个槽位
+/// （等价于任意排列的邻域），并与「镜像该块」「同时镜像该块」组合。
+/// 作用靶点是「针脚顺序 vs 驱动行序反相关」这一类交叉：引脚顺序本来就是
+/// 原理图自由度，改它不需要移动任何元件。
+List<NlRoutingPlan> _nlPinOrderCandidates(
+  NetlistDiagramModel model,
+  NlRoutingPlan current, {
+  int maxBlocks = 0,
+}) {
+  final crossingCounts = nlWireCrossingCounts(model.wires);
+  final scored = <({NlBlock block, int score})>[];
+  for (final b in model.blocks) {
+    if (b.isIo || b.column < 0 || b.cell == null) continue;
+    final side = [for (final p in b.ins) p.port];
+    if (side.length < 3) continue;
+    var score = 0;
+    for (var i = 0; i < model.wires.length; i++) {
+      final c = crossingCounts[i];
+      if (c > 0 && model.wires[i].touches(b)) score += c;
+    }
+    scored.add((block: b, score: score));
+  }
+  if (scored.isEmpty) return const [];
+  scored.sort((a, b) {
+    final d = b.score.compareTo(a.score);
+    return d != 0 ? d : a.block.id.compareTo(b.block.id);
+  });
+  final selected = maxBlocks > 0 ? scored.take(maxBlocks).toList() : scored;
+
+  final plans = <NlRoutingPlan>[];
+  final seen = <String>{};
+  void add(NlRoutingPlan plan) {
+    if (seen.add(plan.signature)) plans.add(plan);
+  }
+
+  for (final item in selected) {
+    final ports = [for (final p in item.block.ins) p.port];
+    final base = current.pinOrders[item.block.id] ?? ports;
+    for (var from = 0; from < base.length; from++) {
+      for (var to = 0; to < base.length; to++) {
+        if (to == from) continue;
+        final order = [...base]..removeAt(from)..insert(to, base[from]);
+        add(
+          current.copyWith(
+            pinOrders: <String, List<String>>{
+              ...current.pinOrders,
+              item.block.id: order,
+            },
+          ),
+        );
+      }
+    }
+  }
+  return plans;
+}
+
+/// **Sifting 邻域候选**：列内单块移位。
+///
+/// 标准 Sifting（Gansner 等 1993）对每一列取一个节点，试探它在该列的
+/// 每一个位置、保留最优位置，再换下一个节点。这里只负责**产生**这些邻域：
+/// 每个候选都是一份「把某个块插到该列某个位置」的完整行序覆盖，
+/// 是否接受由外层最佳优先搜索按**真实几何**（交叉 → 折点 → 长度）裁定。
+/// 这样做的原因见 docs/decisions.md：简化走线模型的预测最优并不等于
+/// 几何最优（曾出现预测更优、实际交叉 115 → 139 的劣化）。
+///
+/// [maxBlocks] 为 0 表示全量参与，否则按「所连网的交叉贡献」降序截断；
+/// 每列的试探位置上限为 [maxPositionsPerColumn]。
+List<NlRoutingPlan> _nlSiftingCandidates(
+  NetlistDiagramModel model,
+  NlRoutingPlan current, {
+  int maxBlocks = 0,
+  int maxPositionsPerColumn = 8,
+}) {
+  final orderOf = <int, List<NlBlock>>{};
+  for (final b in model.blocks) {
+    if (b.isIo || b.column < 0) continue;
+    (orderOf[b.column] ??= []).add(b);
+  }
+  for (final list in orderOf.values) {
+    list.sort((a, b) => a.row.compareTo(b.row));
+  }
+  final movable = [
+    for (final entry in orderOf.entries)
+      if (entry.value.length > 1)
+        for (final b in entry.value) (column: entry.key, block: b),
+  ];
+  if (movable.isEmpty) return const [];
+
+  // 交叉贡献：块所连的网参与了多少交叉（粗略排序，仅用于挑选试探对象）。
+  final crossingCounts = nlWireCrossingCounts(model.wires);
+  final contribution = <String, int>{};
+  for (var i = 0; i < model.wires.length; i++) {
+    final count = crossingCounts[i];
+    if (count == 0) continue;
+    for (final b in model.allBlocksRecursive()) {
+      if (model.wires[i].touches(b)) {
+        contribution[b.id] = (contribution[b.id] ?? 0) + count;
+      }
+    }
+  }
+  movable.sort((a, b) {
+    final byScore = (contribution[b.block.id] ?? 0).compareTo(
+      contribution[a.block.id] ?? 0,
+    );
+    if (byScore != 0) return byScore;
+    return a.block.id.compareTo(b.block.id);
+  });
+  final selected = maxBlocks > 0
+      ? movable.take(maxBlocks).toList()
+      : movable;
+
+  final plans = <NlRoutingPlan>[];
+  final seen = <String>{};
+  void addOrder(int column, List<String> order) {
+    final plan = current.copyWith(
+      rowOrders: <int, List<String>>{...current.rowOrders, column: order},
+    );
+    if (!seen.add(plan.signature)) return;
+    plans.add(plan);
+  }
+
+  // ---- 列级扰动（整列重排，不只移动单块）----
+  // 实测（docs/decisions.md）：单次布局下整列反转可显著改交叉数，
+  // 而单块移位常常单独无效、组合起来才有效，故两种邻域都要有。
+  for (final entry in orderOf.entries) {
+    final ids = [for (final b in entry.value) b.id];
+    if (ids.length < 2) continue;
+    addOrder(entry.key, ids.reversed.toList());
+    addOrder(entry.key, [ids.last, ...ids.take(ids.length - 1)]);
+    addOrder(entry.key, [...ids.skip(1), ids.first]);
+  }
+  // 所有列同时反转：一次性的大幅扰动，作为「跳出局部最优」的起点。
+  if (orderOf.length > 1) {
+    final allReversed = <int, List<String>>{
+      for (final entry in orderOf.entries)
+        entry.key: [for (final b in entry.value.reversed) b.id],
+    };
+    final plan = current.copyWith(rowOrders: allReversed);
+    if (seen.add(plan.signature)) plans.add(plan);
+  }
+
+  // ---- 单块移位（标准 Sifting 邻域）----
+  for (final item in selected) {
+    final list = orderOf[item.column]!;
+    final ids = [for (final b in list) b.id];
+    final from = ids.indexOf(item.block.id);
+    if (from < 0) continue;
+    final limit = math.min(ids.length, maxPositionsPerColumn);
+    for (var to = 0; to < limit; to++) {
+      if (to == from) continue;
+      final moved = [...ids]..removeAt(from)..insert(to, item.block.id);
+      addOrder(item.column, moved);
+    }
+  }
+  return plans;
+}
+
+/// 逐网对的实际横竖交叉数（每对内部按坐标去重），按贡献降序返回。
+/// 拆线重布用它定位「高冲突网对」：单网改道无效的局部最优，
+/// 往往要成对改变两根网的路径模式才能解开。诊断报告也复用本函数
+/// 解释交叉构成。
+List<({int a, int b, int crossings})> nlWirePairCrossings(
+  List<NlWire> wires,
+) {
+  String keyOf(Offset p) => '${(p.dx * 1000).round()}:${(p.dy * 1000).round()}';
+  final pairs = <({int a, int b, int crossings})>[];
+  for (var i = 0; i < wires.length; i++) {
+    for (var j = i + 1; j < wires.length; j++) {
+      final pair = <String>{};
+      for (final (a, b) in wires[i].segments) {
+        for (final (c, d) in wires[j].segments) {
+          final ah = (a.dy - b.dy).abs() < 0.01;
+          final bh = (c.dy - d.dy).abs() < 0.01;
+          if (ah == bh) continue;
+          final h0 = ah ? a : c, h1 = ah ? b : d;
+          final v0 = ah ? c : a, v1 = ah ? d : b;
+          final x = v0.dx, y = h0.dy;
+          final inH =
+              x >= (h0.dx < h1.dx ? h0.dx : h1.dx) - 0.01 &&
+              x <= (h0.dx > h1.dx ? h0.dx : h1.dx) + 0.01;
+          final inV =
+              y >= (v0.dy < v1.dy ? v0.dy : v1.dy) - 0.01 &&
+              y <= (v0.dy > v1.dy ? v0.dy : v1.dy) + 0.01;
+          if (inH && inV) pair.add(keyOf(Offset(x, y)));
+        }
+      }
+      if (pair.isNotEmpty) {
+        pairs.add((a: i, b: j, crossings: pair.length));
+      }
+    }
+  }
+  pairs.sort((p, q) {
+    var result = q.crossings.compareTo(p.crossings);
+    if (result != 0) return result;
+    result = p.a.compareTo(q.a);
+    if (result != 0) return result;
+    return p.b.compareTo(q.b);
+  });
+  return pairs;
+}
+
+/// 一根网可选的非自动路径模式（auto 由单网候选覆盖，这里不重复）。
+List<NlRouteMode> _nlWireForcedModes(NetlistDiagramModel model, NlWire wire) {
+  final modes = <NlRouteMode>[];
+  if (wire.trackLoads > 0) modes.add(NlRouteMode.local);
+  if (wire.trackLoads < wire.loads.length) modes.add(NlRouteMode.track);
+  if (_nlWireHasSameColumnLoad(model, wire)) {
+    modes
+      ..add(NlRouteMode.localLeft)
+      ..add(NlRouteMode.localRight);
+  }
+  return modes;
+}
+
+/// 拆线重布候选：对贡献交叉最多的前几对「高冲突网对」，成对强制两根网
+/// 同时改变路径模式。单网候选每次只动一根网，两根网互相牵制时会卡局部
+/// 最优；这里两根一起拆再一起重布，方案签名仍由 routeModes 决定，
+/// 自然纳入既有去重体系。
+List<NlRoutingPlan> _nlRipUpRerouteCandidates(
+  NetlistDiagramModel model,
+  NlRoutingPlan current,
+) {
+  final pairs = nlWirePairCrossings(model.wires);
+  if (pairs.isEmpty) return const [];
+  final plans = <NlRoutingPlan>[];
+  for (final pair in pairs.take(3)) {
+    final wa = model.wires[pair.a];
+    final wb = model.wires[pair.b];
+    final keyA = _nlWireRouteKey(wa);
+    final keyB = _nlWireRouteKey(wb);
+    final modesA = _nlWireForcedModes(model, wa);
+    final modesB = _nlWireForcedModes(model, wb);
+    if (modesA.isEmpty || modesB.isEmpty) continue;
+    final combos = <(NlRouteMode, NlRouteMode)>[
+      for (final ma in modesA)
+        for (final mb in modesB) (ma, mb),
+    ]..sort((x, y) {
+      final result = x.$1.index.compareTo(y.$1.index);
+      if (result != 0) return result;
+      return x.$2.index.compareTo(y.$2.index);
+    });
+    for (final (modeA, modeB) in combos.take(9)) {
+      final routeModes = <String, NlRouteMode>{
+        ...current.planModesExcept({keyA, keyB}),
+        keyA: modeA,
+        keyB: modeB,
+      };
+      plans.add(
+        NlRoutingPlan(
+          laneVariant: current.laneVariant,
+          routeModes: routeModes,
+          blockOffsets: current.blockOffsets,
+          blockXOffsets: current.blockXOffsets,
+          laneOffsets: current.laneOffsets,
+        ),
+      );
+    }
+  }
+  return plans;
+}
+
+extension on NlRoutingPlan {
+  /// 返回剔除指定网后的路径模式表（拆线：先拆两根冲突网）。
+  Map<String, NlRouteMode> planModesExcept(Set<String> keys) {
+    final out = <String, NlRouteMode>{...routeModes};
+    for (final key in keys) {
+      out.remove(key);
+    }
+    return out;
+  }
+}
+
+/// 由网表模块构建电路图模型（纯计算，供绘制/导出复用）。
+///
+/// [columns] 可强制列数（默认按单元数取平方根量级）——列越多则每根网的
+/// 跨度越短、越少上网表顶部轨道，但画布越宽。
+/// [expanded] 为**原位展开**的实例单元名集合；[resolve] 用于把实例类型
+/// 解析成子模块（未提供则无法展开）。最佳优先搜索依次按实际交叉数、折点数、
+/// 总走线长度评分；[routingPlan] 可指定手动/学习后的起始方案。
+NetlistDiagramModel buildNetlistDiagramModel(
+  NetlistModule module, {
+  int? columns,
+  Set<String> expanded = const {},
+  NetlistModule? Function(String cellType)? resolve,
+  String idPrefix = '',
+  int depth = 0,
+  NlRoutingOptimizationOptions optimization =
+      const NlRoutingOptimizationOptions(),
+  NlRoutingPlan? routingPlan,
+  void Function(NetlistDiagramModel model)? onProgress,
+}) {
+  NetlistDiagramModel buildOnce(NlRoutingPlan plan) =>
+      _buildNetlistDiagramModelOnce(
+        module,
+        columns: columns,
+        expanded: expanded,
+        resolve: resolve,
+        idPrefix: idPrefix,
+        depth: depth,
+        plan: plan,
+      );
+
+  ({
+    NetlistDiagramModel best,
+    _NlRoutingScore score,
+    Map<String, NetlistDiagramModel> optimal,
+    int evaluations,
+    int rounds,
+    bool converged,
+  })
+  runSearch(
+    int initialLimit, {
+    required int baseRounds,
+    required int baseEvaluations,
+    bool useSifting = false,
+    bool useMirror = false,
+  }) {
+    final baselinePlan = routingPlan ?? const NlRoutingPlan();
+    final baseline = buildOnce(baselinePlan);
+    var best = baseline;
+    var bestScore = _nlRoutingScore(best);
+    final optimal = <String, NetlistDiagramModel>{
+      nlRoutingGeometrySignature(best): best,
+    };
+    final seen = <String>{baselinePlan.signature};
+    final pending =
+        <
+          ({
+            NlRoutingPlan plan,
+            NetlistDiagramModel model,
+            _NlRoutingScore score,
+          })
+        >[(plan: baselinePlan, model: baseline, score: bestScore)];
+    var evaluations = 1;
+    var acceptedRounds = 0;
+    var expandedStates = 0;
+    var stagnation = 0;
+
+    void emitProgress() {
+      if (onProgress == null) return;
+      final rounds = baseRounds + acceptedRounds;
+      final evaluationCount = baseEvaluations + evaluations;
+      final variants = <NetlistDiagramModel>[
+        for (final model in optimal.values)
+          _nlWithOptimizationReport(
+            model,
+            rounds: rounds,
+            evaluations: evaluationCount,
+            converged: false,
+          ),
+      ];
+      onProgress(
+        _nlWithOptimizationReport(
+          best,
+          rounds: rounds,
+          evaluations: evaluationCount,
+          converged: false,
+          variants: variants,
+        ),
+      );
+    }
+
+    if (baseEvaluations == 0 && optimization.maxRounds > 0) {
+      emitProgress();
+    }
+
+    int wireLimit() {
+      final base = initialLimit;
+      if (base == 0 || stagnation >= 3) return 0;
+      return base * (1 << stagnation);
+    }
+
+    // 最佳优先搜索：同分状态也进入队列，可穿过平台期；停滞时逐步放大
+    // 每轮候选网范围。只有没有不劣于最优值的可展开状态时才真正收敛。
+    while (pending.isNotEmpty && expandedStates < optimization.maxRounds) {
+      // 三级评分并列时按 P95 单网弯折排序：引导搜索优先展开「总量小、
+      // 单网不乱」的同分状态（不影响收敛判定，仅决定展开顺序）。
+      final decorated = [
+        for (final s in pending) (state: s, p95: _nlRoutingP95Bends(s.model)),
+      ]..sort((a, b) {
+        final result = _nlRoutingScoreCompare(a.state.score, b.state.score);
+        if (result != 0) return result;
+        final p95 = a.p95.compareTo(b.p95);
+        if (p95 != 0) return p95;
+        return a.state.plan.signature.compareTo(b.state.plan.signature);
+      });
+      pending
+        ..clear()
+        ..addAll([for (final d in decorated) d.state]);
+      final current = pending.removeAt(0);
+      if (_nlRoutingScoreCompare(current.score, bestScore) > 0) continue;
+      expandedStates++;
+      var improved = false;
+
+      void tryPlan(NlRoutingPlan plan) {
+        if (!seen.add(plan.signature)) return;
+        evaluations++;
+        try {
+          final candidate = buildOnce(plan);
+          // 硬性合法性：评分看不见几何违规，必须先挡掉。
+          if (!_nlCandidateIsValid(candidate)) return;
+          // 单网弯折预算硬过滤：超预算候选按无法布通淘汰，不进队列。
+          if (optimization.maxBendsPerWire > 0 &&
+              candidate.wires.any(
+                (w) => nlWireBendCount(w) > optimization.maxBendsPerWire,
+              )) {
+            return;
+          }
+          final score = _nlRoutingScore(candidate);
+          final comparison = _nlRoutingScoreCompare(score, bestScore);
+          if (comparison > 0) return;
+          pending.add((plan: plan, model: candidate, score: score));
+          final geometry = nlRoutingGeometrySignature(candidate);
+          if (comparison == 0) {
+            optimal[geometry] ??= candidate;
+            return;
+          }
+          best = candidate;
+          bestScore = score;
+          optimal
+            ..clear()
+            ..[geometry] = candidate;
+          improved = true;
+        } on StateError {
+          // 替代路径也必须满足全部几何约束；无法布通的候选直接淘汰。
+        }
+      }
+
+      if (optimization.tryLaneOrderVariants &&
+          (expandedStates == 1 || stagnation > 0)) {
+        for (var variant = 0; variant < 4; variant++) {
+          tryPlan(
+            NlRoutingPlan(
+              laneVariant: variant,
+              routeModes: current.plan.routeModes,
+            ),
+          );
+        }
+      }
+      // Sifting：列内单块移位 + 列级重排邻域。只在该起点显式启用时产生
+      // （Sifting 作为独立起点与主轨迹合并，注入主轨迹会扰动贪心路径）。
+      if (useSifting && (expandedStates <= 2 || stagnation > 0)) {
+        for (final plan in _nlSiftingCandidates(
+          current.model,
+          current.plan,
+          maxBlocks: optimization.siftingBlocks,
+        )) {
+          tryPlan(plan);
+        }
+      }
+      // 镜像 × 上下移动/交换 联合邻域（同样只在该起点启用时产生）。
+      if (useMirror && (expandedStates <= 2 || stagnation > 0)) {
+        for (final plan in _nlMirrorMoveCandidates(
+          current.model,
+          current.plan,
+          maxBlocks: optimization.mirrorBlocks,
+        )) {
+          tryPlan(plan);
+        }
+        // 引脚级 Sifting（规格 B：引脚任意排序，可与镜像叠加）。
+        for (final plan in _nlPinOrderCandidates(
+          current.model,
+          current.plan,
+          maxBlocks: optimization.mirrorBlocks,
+        )) {
+          tryPlan(plan);
+        }
+      }
+      final limit = wireLimit();
+      if (optimization.tryRouteModes) {
+        final crossingCounts = nlWireCrossingCounts(current.model.wires);
+        final candidates =
+            <({NlWire wire, int crossings, int segments, double length})>[];
+        for (var i = 0; i < current.model.wires.length; i++) {
+          final wire = current.model.wires[i];
+          final hasVertical = wire.segments.any(
+            (s) =>
+                (s.$1.dx - s.$2.dx).abs() < 0.01 &&
+                (s.$1.dy - s.$2.dy).abs() > 0.01,
+          );
+          if (!hasVertical) continue;
+          candidates.add((
+            wire: wire,
+            crossings: crossingCounts[i],
+            segments: wire.segments.length,
+            length: wire.segments.fold<double>(
+              0,
+              (sum, s) => sum + (s.$2 - s.$1).distance,
+            ),
+          ));
+        }
+        candidates.sort((a, b) {
+          var result = b.crossings.compareTo(a.crossings);
+          if (result != 0) return result;
+          result = b.segments.compareTo(a.segments);
+          if (result != 0) return result;
+          result = b.length.compareTo(a.length);
+          if (result != 0) return result;
+          return _nlWireRouteKey(a.wire).compareTo(_nlWireRouteKey(b.wire));
+        });
+        final selected = limit == 0 ? candidates : candidates.take(limit);
+        for (final item in selected) {
+          final wire = item.wire;
+          final key = _nlWireRouteKey(wire);
+          final modes = <NlRouteMode>{NlRouteMode.auto};
+          if (wire.trackLoads > 0) modes.add(NlRouteMode.local);
+          if (wire.trackLoads < wire.loads.length) {
+            modes.add(NlRouteMode.track);
+          }
+          if (_nlWireHasSameColumnLoad(current.model, wire)) {
+            modes
+              ..add(NlRouteMode.localLeft)
+              ..add(NlRouteMode.localRight);
+          }
+          for (final mode in modes) {
+            final routeModes = <String, NlRouteMode>{
+              ...current.plan.routeModes,
+            };
+            if (mode == NlRouteMode.auto) {
+              routeModes.remove(key);
+            } else {
+              routeModes[key] = mode;
+            }
+            tryPlan(
+              NlRoutingPlan(
+                laneVariant: current.plan.laneVariant,
+                routeModes: routeModes,
+              ),
+            );
+          }
+        }
+      }
+      if (optimization.tryBlockMoves) {
+        for (final plan in _nlBlockMoveCandidates(
+          current.model,
+          current.plan,
+        )) {
+          tryPlan(plan);
+        }
+        for (final plan in _nlLaneOffsetCandidates(
+          current.model,
+          current.plan,
+        )) {
+          tryPlan(plan);
+        }
+      }
+      // 拆线重布：单网候选停滞时成对拆掉高冲突网对，解开互相牵制的
+      // 局部最优；只在停滞阶段触发，避免每轮展开量爆炸。
+      if (optimization.tryRipUpReroute && stagnation > 0) {
+        for (final plan in _nlRipUpRerouteCandidates(
+          current.model,
+          current.plan,
+        )) {
+          tryPlan(plan);
+        }
+      }
+
+      if (improved) {
+        acceptedRounds++;
+        stagnation = 0;
+        emitProgress();
+      } else {
+        stagnation++;
+      }
+      pending.removeWhere(
+        (state) => _nlRoutingScoreCompare(state.score, bestScore) > 0,
+      );
+      if (!improved && optimization.tryRouteModes && limit != 0) {
+        pending.add(current);
+      }
+    }
+
+    final searchConverged =
+        optimization.maxRounds == 0 ||
+        !pending.any(
+          (state) => _nlRoutingScoreCompare(state.score, bestScore) <= 0,
+        );
+    return (
+      best: best,
+      score: bestScore,
+      optimal: optimal,
+      evaluations: evaluations,
+      rounds: acceptedRounds,
+      converged: searchConverged,
+    );
+  }
+
+  // 每个起点是 (候选网范围, 是否启用 Sifting)。默认把 Sifting 作为
+  // **独立起点**：它与原轨迹互不干扰，最后按三级评分合并——把它注入
+  // 同一条轨迹会扰动贪心路径（实测真实网表 115 → 116 的回归）。
+  final starts = <({int limit, bool sifting, bool mirror})>[
+    if (optimization.maxRounds == 0)
+      (limit: optimization.maxWiresPerRound, sifting: false, mirror: false)
+    else ...[
+      (limit: optimization.maxWiresPerRound, sifting: false, mirror: false),
+      for (final l in optimization.alternateWireLimits)
+        (limit: l, sifting: false, mirror: false),
+      if (optimization.trySifting || optimization.tryMirror)
+        (
+          limit: 0,
+          sifting: optimization.trySifting,
+          mirror: optimization.tryMirror,
+        ),
+    ],
+  ];
+  NetlistDiagramModel? bestOverall;
+  _NlRoutingScore? bestOverallScore;
+  var overallOptimal = <String, NetlistDiagramModel>{};
+  var evaluations = 0;
+  var acceptedRounds = 0;
+  var converged = true;
+  for (final start in starts) {
+    final result = runSearch(
+      start.limit,
+      useSifting: start.sifting,
+      useMirror: start.mirror,
+      baseRounds: acceptedRounds,
+      baseEvaluations: evaluations,
+    );
+    evaluations += result.evaluations;
+    acceptedRounds += result.rounds;
+    converged = converged && result.converged;
+    final comparison = bestOverallScore == null
+        ? -1
+        : _nlRoutingScoreCompare(result.score, bestOverallScore);
+    if (comparison < 0) {
+      bestOverall = result.best;
+      bestOverallScore = result.score;
+      overallOptimal = result.optimal;
+    } else if (comparison == 0) {
+      for (final entry in result.optimal.entries) {
+        overallOptimal[entry.key] ??= entry.value;
+      }
+    }
+  }
+
+  final variants = <NetlistDiagramModel>[
+    for (final model in overallOptimal.values)
+      _nlWithOptimizationReport(
+        model,
+        rounds: acceptedRounds,
+        evaluations: evaluations,
+        converged: converged,
+      ),
+  ];
+  return _nlWithOptimizationReport(
+    bestOverall!,
+    rounds: acceptedRounds,
+    evaluations: evaluations,
+    converged: converged,
+    variants: variants,
+  );
+}
+
+typedef NlOptimizationProgress = void Function(NetlistDiagramModel model);
+typedef NlOptimizationStarter =
+    NlOptimizationTask Function(
+      NetlistModule module, {
+      required Set<String> expanded,
+      required NlOptimizationProgress onProgress,
+    });
+
+/// 后台优化任务句柄：可等待最终模型，也可在切换模块或退出时取消。
+class NlOptimizationTask {
+  final Future<NetlistDiagramModel> result;
+  final void Function() cancel;
+
+  const NlOptimizationTask({required this.result, required this.cancel});
+}
+
+class _NlOptimizationCancelled implements Exception {
+  const _NlOptimizationCancelled();
+
+  @override
+  String toString() => '布线优化已取消';
+}
+
+class _NlOptimizationIsolateMessage {
+  final int start;
+  final NetlistDiagramModel? model;
+  final bool done;
+  final String? error;
+  final String? stackTrace;
+
+  const _NlOptimizationIsolateMessage({
+    required this.start,
+    this.model,
+    this.done = false,
+    this.error,
+    this.stackTrace,
+  });
+}
+
+Future<NetlistDiagramModel?> _nlCandidateCompute(
+  Map<String, Object?> args,
+) async {
+  try {
+    return _buildNetlistDiagramModelOnce(
+      args['module'] as NetlistModule,
+      columns: args['columns'] as int?,
+      idPrefix: args['idPrefix'] as String,
+      depth: args['depth'] as int,
+      plan: args['plan'] as NlRoutingPlan,
+    );
+  } on StateError {
+    return null;
+  }
+}
+
+/// 单个搜索起点的候选并行版本：同一状态的候选分批并行计算，结果仍按
+/// 原顺序接受，保证与同步搜索的路径和评分一致。
+Future<NetlistDiagramModel> _buildNetlistDiagramModelParallelCandidates(
+  NetlistModule module, {
+  int? columns,
+  String idPrefix = '',
+  int depth = 0,
+  required NlRoutingOptimizationOptions optimization,
+  NlRoutingPlan? routingPlan,
+  void Function(NetlistDiagramModel model)? onProgress,
+}) async {
+  NetlistDiagramModel buildOnce(NlRoutingPlan plan) =>
+      _buildNetlistDiagramModelOnce(
+        module,
+        columns: columns,
+        idPrefix: idPrefix,
+        depth: depth,
+        plan: plan,
+      );
+
+  final baselinePlan = routingPlan ?? const NlRoutingPlan();
+  var best = buildOnce(baselinePlan);
+  var bestScore = _nlRoutingScore(best);
+  final optimal = <String, NetlistDiagramModel>{
+    nlRoutingGeometrySignature(best): best,
+  };
+  final seen = <String>{baselinePlan.signature};
+  final pending =
+      <
+        ({NlRoutingPlan plan, NetlistDiagramModel model, _NlRoutingScore score})
+      >[(plan: baselinePlan, model: best, score: bestScore)];
+  var evaluations = 1;
+  var acceptedRounds = 0;
+  var expandedStates = 0;
+  var stagnation = 0;
+
+  void emitProgress() {
+    if (onProgress == null) return;
+    final variants = <NetlistDiagramModel>[
+      for (final model in optimal.values)
+        _nlWithOptimizationReport(
+          model,
+          rounds: acceptedRounds,
+          evaluations: evaluations,
+          converged: false,
+        ),
+    ];
+    onProgress(
+      _nlWithOptimizationReport(
+        best,
+        rounds: acceptedRounds,
+        evaluations: evaluations,
+        converged: false,
+        variants: variants,
+      ),
+    );
+  }
+
+  if (optimization.maxRounds > 0) emitProgress();
+
+  int wireLimit() {
+    final base = optimization.maxWiresPerRound;
+    if (base == 0 || stagnation >= 3) return 0;
+    return base * (1 << stagnation);
+  }
+
+  Future<List<NetlistDiagramModel?>> evaluate(List<NlRoutingPlan> plans) async {
+    final workers = optimization.candidateWorkers;
+    final out = <NetlistDiagramModel?>[];
+    if (workers <= 1) {
+      for (final plan in plans) {
+        try {
+          out.add(buildOnce(plan));
+        } on StateError {
+          out.add(null);
+        }
+      }
+      return out;
+    }
+    for (var offset = 0; offset < plans.length; offset += workers) {
+      final end = math.min(offset + workers, plans.length);
+      final models = await Future.wait([
+        for (final plan in plans.sublist(offset, end))
+          compute(_nlCandidateCompute, {
+            'module': module,
+            'columns': columns,
+            'idPrefix': idPrefix,
+            'depth': depth,
+            'plan': plan,
+          }),
+      ]);
+      out.addAll(models);
+    }
+    return out;
+  }
+
+  while (pending.isNotEmpty && expandedStates < optimization.maxRounds) {
+    // 与同步搜索一致：三级评分并列时按 P95 单网弯折决定展开顺序。
+    final decorated = [
+      for (final s in pending) (state: s, p95: _nlRoutingP95Bends(s.model)),
+    ]..sort((a, b) {
+      final result = _nlRoutingScoreCompare(a.state.score, b.state.score);
+      if (result != 0) return result;
+      final p95 = a.p95.compareTo(b.p95);
+      if (p95 != 0) return p95;
+      return a.state.plan.signature.compareTo(b.state.plan.signature);
+    });
+    pending
+      ..clear()
+      ..addAll([for (final d in decorated) d.state]);
+    final current = pending.removeAt(0);
+    if (_nlRoutingScoreCompare(current.score, bestScore) > 0) continue;
+    expandedStates++;
+    final limit = wireLimit();
+    final plans = <NlRoutingPlan>[];
+
+    void addPlan(NlRoutingPlan plan) {
+      if (seen.add(plan.signature)) {
+        evaluations++;
+        plans.add(plan);
+      }
+    }
+
+    if (optimization.tryLaneOrderVariants &&
+        (expandedStates == 1 || stagnation > 0)) {
+      for (var variant = 0; variant < 4; variant++) {
+        addPlan(
+          NlRoutingPlan(
+            laneVariant: variant,
+            routeModes: current.plan.routeModes,
+          ),
+        );
+      }
+    }
+    // Sifting：列内单块移位邻域（与同步搜索同一策略与评分口径）。
+    if (optimization.trySifting &&
+        (expandedStates <= 2 || stagnation > 0)) {
+      for (final plan in _nlSiftingCandidates(
+        current.model,
+        current.plan,
+        maxBlocks: optimization.siftingBlocks,
+      )) {
+        addPlan(plan);
+      }
+    }
+    // 镜像 × 上下移动/交换 联合邻域：耦合移动，单步邻域到不了。
+    if (optimization.tryMirror &&
+        (expandedStates <= 2 || stagnation > 0)) {
+      for (final plan in _nlMirrorMoveCandidates(
+        current.model,
+        current.plan,
+        maxBlocks: optimization.mirrorBlocks,
+      )) {
+        addPlan(plan);
+      }
+      // 引脚级 Sifting（规格 B：引脚任意排序，可与镜像叠加）。
+      for (final plan in _nlPinOrderCandidates(
+        current.model,
+        current.plan,
+        maxBlocks: optimization.mirrorBlocks,
+      )) {
+        addPlan(plan);
+      }
+    }
+    if (optimization.tryRouteModes) {
+      final crossingCounts = nlWireCrossingCounts(current.model.wires);
+      final candidates =
+          <({NlWire wire, int crossings, int segments, double length})>[];
+      for (var i = 0; i < current.model.wires.length; i++) {
+        final wire = current.model.wires[i];
+        final hasVertical = wire.segments.any(
+          (s) =>
+              (s.$1.dx - s.$2.dx).abs() < 0.01 &&
+              (s.$1.dy - s.$2.dy).abs() > 0.01,
+        );
+        if (!hasVertical) continue;
+        candidates.add((
+          wire: wire,
+          crossings: crossingCounts[i],
+          segments: wire.segments.length,
+          length: wire.segments.fold<double>(
+            0,
+            (sum, s) => sum + (s.$2 - s.$1).distance,
+          ),
+        ));
+      }
+      candidates.sort((a, b) {
+        var result = b.crossings.compareTo(a.crossings);
+        if (result != 0) return result;
+        result = b.segments.compareTo(a.segments);
+        if (result != 0) return result;
+        result = b.length.compareTo(a.length);
+        if (result != 0) return result;
+        return _nlWireRouteKey(a.wire).compareTo(_nlWireRouteKey(b.wire));
+      });
+      final selected = limit == 0 ? candidates : candidates.take(limit);
+      for (final item in selected) {
+        final wire = item.wire;
+        final key = _nlWireRouteKey(wire);
+        final modes = <NlRouteMode>{NlRouteMode.auto};
+        if (wire.trackLoads > 0) modes.add(NlRouteMode.local);
+        if (wire.trackLoads < wire.loads.length) {
+          modes.add(NlRouteMode.track);
+        }
+        if (_nlWireHasSameColumnLoad(current.model, wire)) {
+          modes
+            ..add(NlRouteMode.localLeft)
+            ..add(NlRouteMode.localRight);
+        }
+        for (final mode in modes) {
+          final routeModes = <String, NlRouteMode>{...current.plan.routeModes};
+          if (mode == NlRouteMode.auto) {
+            routeModes.remove(key);
+          } else {
+            routeModes[key] = mode;
+          }
+          addPlan(
+            NlRoutingPlan(
+              laneVariant: current.plan.laneVariant,
+              routeModes: routeModes,
+            ),
+          );
+        }
+      }
+    }
+    if (optimization.tryBlockMoves) {
+      for (final plan in _nlBlockMoveCandidates(current.model, current.plan)) {
+        addPlan(plan);
+      }
+      for (final plan in _nlLaneOffsetCandidates(current.model, current.plan)) {
+        addPlan(plan);
+      }
+    }
+    // 与同步搜索一致：停滞阶段成对拆掉高冲突网对（拆线重布）。
+    if (optimization.tryRipUpReroute && stagnation > 0) {
+      for (final plan in _nlRipUpRerouteCandidates(current.model, current.plan)) {
+        addPlan(plan);
+      }
+    }
+
+    final models = await evaluate(plans);
+    var improved = false;
+    for (var i = 0; i < plans.length; i++) {
+      final candidate = models[i];
+      if (candidate == null) continue;
+      // 硬性合法性：与同步搜索同口径，非法几何直接淘汰。
+      if (!_nlCandidateIsValid(candidate)) continue;
+      // 单网弯折预算硬过滤：与同步搜索口径一致，超预算候选直接淘汰。
+      if (optimization.maxBendsPerWire > 0 &&
+          candidate.wires.any(
+            (w) => nlWireBendCount(w) > optimization.maxBendsPerWire,
+          )) {
+        continue;
+      }
+      final score = _nlRoutingScore(candidate);
+      final comparison = _nlRoutingScoreCompare(score, bestScore);
+      if (comparison > 0) continue;
+      pending.add((plan: plans[i], model: candidate, score: score));
+      final geometry = nlRoutingGeometrySignature(candidate);
+      if (comparison == 0) {
+        optimal[geometry] ??= candidate;
+        continue;
+      }
+      best = candidate;
+      bestScore = score;
+      optimal
+        ..clear()
+        ..[geometry] = candidate;
+      improved = true;
+    }
+    if (improved) {
+      acceptedRounds++;
+      stagnation = 0;
+      emitProgress();
+    } else {
+      stagnation++;
+    }
+    pending.removeWhere(
+      (state) => _nlRoutingScoreCompare(state.score, bestScore) > 0,
+    );
+    if (!improved && optimization.tryRouteModes && limit != 0) {
+      pending.add(current);
+    }
+  }
+
+  final converged =
+      optimization.maxRounds == 0 ||
+      !pending.any(
+        (state) => _nlRoutingScoreCompare(state.score, bestScore) <= 0,
+      );
+  final variants = <NetlistDiagramModel>[
+    for (final model in optimal.values)
+      _nlWithOptimizationReport(
+        model,
+        rounds: acceptedRounds,
+        evaluations: evaluations,
+        converged: converged,
+      ),
+  ];
+  return _nlWithOptimizationReport(
+    best,
+    rounds: acceptedRounds,
+    evaluations: evaluations,
+    converged: converged,
+    variants: variants,
+  );
+}
+
+Future<void> _nlOptimizationIsolateMain(Map<String, Object?> args) async {
+  final sendPort = args['sendPort'] as SendPort;
+  final start = args['start'] as int;
+  try {
+    final optimization = args['optimization'] as NlRoutingOptimizationOptions;
+    void onProgress(NetlistDiagramModel model) {
+      sendPort.send(_NlOptimizationIsolateMessage(start: start, model: model));
+    }
+
+    final model = optimization.candidateWorkers > 1
+        ? await _buildNetlistDiagramModelParallelCandidates(
+            args['module'] as NetlistModule,
+            columns: args['columns'] as int?,
+            optimization: optimization,
+            routingPlan: args['routingPlan'] as NlRoutingPlan?,
+            idPrefix: args['idPrefix'] as String,
+            depth: args['depth'] as int,
+            onProgress: onProgress,
+          )
+        : buildNetlistDiagramModel(
+            args['module'] as NetlistModule,
+            columns: args['columns'] as int?,
+            optimization: optimization,
+            routingPlan: args['routingPlan'] as NlRoutingPlan?,
+            idPrefix: args['idPrefix'] as String,
+            depth: args['depth'] as int,
+            onProgress: onProgress,
+          );
+    sendPort.send(
+      _NlOptimizationIsolateMessage(start: start, model: model, done: true),
+    );
+  } catch (error, stackTrace) {
+    sendPort.send(
+      _NlOptimizationIsolateMessage(
+        start: start,
+        done: true,
+        error: error.toString(),
+        stackTrace: stackTrace.toString(),
+      ),
+    );
+  }
+}
+
+/// 在后台 isolate 执行多轮布线优化，并逐轮回传当前最优模型。
+/// [expanded] 为空时完全后台执行；展开容器时保留现有同步回退路径。
+NlOptimizationTask startNetlistDiagramModelOptimization(
+  NetlistModule module, {
+  int? columns,
+  Set<String> expanded = const {},
+  NetlistModule? Function(String cellType)? resolve,
+  String idPrefix = '',
+  int depth = 0,
+  NlRoutingOptimizationOptions optimization =
+      const NlRoutingOptimizationOptions(),
+  NlRoutingPlan? routingPlan,
+  required NlOptimizationProgress onProgress,
+}) {
+  if (expanded.isNotEmpty) {
+    return NlOptimizationTask(
+      result: Future(
+        () => buildNetlistDiagramModel(
+          module,
+          columns: columns,
+          expanded: expanded,
+          resolve: resolve,
+          idPrefix: idPrefix,
+          depth: depth,
+          optimization: optimization,
+          routingPlan: routingPlan,
+          onProgress: onProgress,
+        ),
+      ),
+      cancel: () {},
+    );
+  }
+
+  final port = ReceivePort();
+  final completer = Completer<NetlistDiagramModel>();
+  final isolates = <Isolate>[];
+  var cancelled = false;
+
+  void cancel() {
+    if (cancelled) return;
+    cancelled = true;
+    for (final isolate in isolates) {
+      isolate.kill();
+    }
+    port.close();
+    if (!completer.isCompleted) {
+      completer.completeError(const _NlOptimizationCancelled());
+    }
+  }
+
+  NetlistDiagramModel mergeModels(
+    Iterable<NetlistDiagramModel> models, {
+    required bool converged,
+  }) {
+    final list = models.toList();
+    var best = list.first;
+    var bestScore = _nlRoutingScore(best);
+    var evaluations = 0;
+    var rounds = 0;
+    final optimal = <String, NetlistDiagramModel>{};
+    for (final model in list) {
+      evaluations += model.optimizationEvaluations;
+      rounds += model.optimizationRounds;
+      final score = _nlRoutingScore(model);
+      final comparison = _nlRoutingScoreCompare(score, bestScore);
+      if (comparison < 0) {
+        best = model;
+        bestScore = score;
+        optimal.clear();
+      }
+      if (comparison > 0) continue;
+      final variants = model.optimizationVariants.isEmpty
+          ? [model]
+          : model.optimizationVariants;
+      for (final variant in variants) {
+        optimal[nlRoutingGeometrySignature(variant)] ??= variant;
+      }
+    }
+    final variants = <NetlistDiagramModel>[
+      for (final model in optimal.values)
+        _nlWithOptimizationReport(
+          model,
+          rounds: rounds,
+          evaluations: evaluations,
+          converged: converged,
+        ),
+    ];
+    return _nlWithOptimizationReport(
+      best,
+      rounds: rounds,
+      evaluations: evaluations,
+      converged: converged,
+      variants: variants,
+    );
+  }
+
+  Future<void> run() async {
+    final latest = <int, NetlistDiagramModel>{};
+    final results = <int, NetlistDiagramModel>{};
+    // 每个起点是 (候选网范围, 是否启用 Sifting)；Sifting 独立成起点，
+    // 与原轨迹按三级评分合并（原因见同步路径的注释）。
+    final starts = <({int limit, bool sifting, bool mirror})>[
+      if (optimization.maxRounds == 0)
+        (limit: optimization.maxWiresPerRound, sifting: false, mirror: false)
+      else ...[
+        (limit: optimization.maxWiresPerRound, sifting: false, mirror: false),
+        for (final l in optimization.alternateWireLimits)
+          (limit: l, sifting: false, mirror: false),
+        if (optimization.trySifting || optimization.tryMirror)
+          (
+            limit: 0,
+            sifting: optimization.trySifting,
+            mirror: optimization.tryMirror,
+          ),
+      ],
+    ];
+    try {
+      for (var index = 0; index < starts.length; index++) {
+        if (cancelled) break;
+        final start = starts[index];
+        final options = NlRoutingOptimizationOptions(
+          maxRounds: optimization.maxRounds,
+          maxWiresPerRound: start.limit,
+          alternateWireLimits: const [],
+          candidateWorkers: optimization.candidateWorkers,
+          tryRouteModes: optimization.tryRouteModes,
+          tryLaneOrderVariants: optimization.tryLaneOrderVariants,
+          tryBlockMoves: optimization.tryBlockMoves,
+          tryRipUpReroute: optimization.tryRipUpReroute,
+          trySifting: start.sifting,
+          siftingBlocks: optimization.siftingBlocks,
+          tryMirror: start.mirror,
+          mirrorBlocks: optimization.mirrorBlocks,
+          maxBendsPerWire: optimization.maxBendsPerWire,
+        );
+        final isolate = await Isolate.spawn(_nlOptimizationIsolateMain, {
+          'sendPort': port.sendPort,
+          'start': index,
+          'module': module,
+          'columns': columns,
+          'optimization': options,
+          'routingPlan': routingPlan,
+          'idPrefix': idPrefix,
+          'depth': depth,
+        });
+        isolates.add(isolate);
+      }
+      await for (final raw in port) {
+        if (raw is! _NlOptimizationIsolateMessage) continue;
+        final model = raw.model;
+        if (model != null) {
+          latest[raw.start] = model;
+          if (!raw.done) {
+            onProgress(mergeModels(latest.values, converged: false));
+            continue;
+          }
+          results[raw.start] = model;
+          if (results.length == starts.length) {
+            final converged = results.values.every(
+              (model) => model.optimizationConverged,
+            );
+            final merged = mergeModels(results.values, converged: converged);
+            if (!completer.isCompleted) completer.complete(merged);
+            break;
+          }
+          continue;
+        }
+        if (!completer.isCompleted) {
+          completer.completeError(
+            StateError(raw.error ?? '布线优化失败'),
+            raw.stackTrace == null
+                ? null
+                : StackTrace.fromString(raw.stackTrace!),
+          );
+        }
+        break;
+      }
+      if (!completer.isCompleted && !cancelled) {
+        completer.completeError(StateError('布线优化 isolate 异常退出'));
+      }
+    } catch (error, stackTrace) {
+      if (!completer.isCompleted) {
+        completer.completeError(error, stackTrace);
+      }
+    } finally {
+      port.close();
+      for (final isolate in isolates) {
+        isolate.kill();
+      }
+    }
+  }
+
+  run();
+  return NlOptimizationTask(result: completer.future, cancel: cancel);
+}
+
+NetlistDiagramModel _buildNetlistDiagramModelOnce(
+  NetlistModule module, {
+  int? columns,
+  Set<String> expanded = const {},
+  NetlistModule? Function(String cellType)? resolve,
+  String idPrefix = '',
+  int depth = 0,
+  required NlRoutingPlan plan,
+}) {
+  final blocks = <String, NlBlock>{};
+  final cellBlocks = <NetlistCell, NlBlock>{};
+
+  // ---- 单元块 ----
+  for (final c in module.cells) {
+    final b = NlBlock(
+      id: '$idPrefix${c.name}',
+      title: c.label,
+      subtitle: c.typeLabel,
+      cell: c,
+      ins: [
+        for (final p in c.ins)
+          NlPin(
+            port: p.port,
+            display: p.display,
+            width: p.width,
+            bits: [for (final n in p.nets) ...n.bits],
+            nets: p.nets,
+            isBus: p.width > 1,
+            constText: p.isConst ? p.nets.map((n) => n.name).join('|') : null,
+            netNames: [
+              for (final n in p.nets)
+                if (!n.isConst) n.display,
+            ],
+          ),
+      ],
+      outs: [
+        for (final p in c.outs)
+          NlPin(
+            port: p.port,
+            display: p.display,
+            width: p.width,
+            bits: [for (final n in p.nets) ...n.bits],
+            nets: p.nets,
+            isBus: p.width > 1,
+            constText: p.isConst ? p.nets.map((n) => n.name).join('|') : null,
+            netNames: [
+              for (final n in p.nets)
+                if (!n.isConst) n.display,
+            ],
+          ),
+      ],
+    );
+    blocks[c.name] = b;
+    cellBlocks[c] = b;
+  }
+
+  // ---- 层级「原位展开」：把展开的实例块变成**容器**（内部递归构建子模型）----
+  // 容器尺寸 = 子模型画布 + 外框留白 + 边缘针脚区；子模型整体平移进容器内。
+  // 父级的网仍旧接容器边缘同排针脚（针脚就是实例的针脚，名与位宽不变）。
+  if (expanded.isNotEmpty && resolve != null && depth < 3) {
+    for (final c in module.cells) {
+      if (!c.isInstance || !expanded.contains(c.name)) continue;
+      final child =
+          resolve(c.type) ??
+          (c.moduleRef == null ? null : resolve(c.moduleRef!));
+      if (child == null || child.cells.isEmpty) continue;
+      final b = blocks[c.name];
+      if (b == null) continue;
+      b.sub = _buildNetlistDiagramModelOnce(
+        child,
+        expanded: expanded,
+        resolve: resolve,
+        idPrefix: '$idPrefix${c.name}/',
+        depth: depth + 1,
+        plan: const NlRoutingPlan(),
+      );
+    }
+  }
+
+  // ---- 顶层端口（输入在左；输出与双向在右，符号与标注区分方向）----
+  final inPins = <NlPin>[
+    for (final p in module.inputs)
+      NlPin(
+        port: p.name,
+        display: p.name,
+        width: p.net.width,
+        bits: p.net.bits,
+        nets: [p.net],
+        isBus: p.net.width > 1,
+        netNames: [p.name],
+        dir: p.dir,
+        isPort: true,
+      ),
+  ];
+  final outPins = <NlPin>[
+    for (final p in module.outputs)
+      NlPin(
+        port: p.name,
+        display: p.name,
+        width: p.net.width,
+        bits: p.net.bits,
+        nets: [p.net],
+        isBus: p.net.width > 1,
+        netNames: [p.name],
+        dir: p.dir,
+        isPort: true,
+      ),
+    // 双向端口与输出同列（Vivado Elaborated Design 同惯例），符号为六边形
+    // 并标 `IO`。
+    for (final p in module.inouts)
+      NlPin(
+        port: p.name,
+        display: p.name,
+        width: p.net.width,
+        bits: p.net.bits,
+        nets: [p.net],
+        isBus: p.net.width > 1,
+        netNames: [p.name],
+        dir: p.dir,
+        isPort: true,
+      ),
+  ];
+  final inBlock = NlBlock(
+    id: '#in',
+    title: '',
+    subtitle: '',
+    isIo: true,
+    isInput: true,
+    outs: inPins,
+  );
+  final outBlock = NlBlock(
+    id: '#out',
+    title: '',
+    subtitle: '',
+    isIo: true,
+    isInput: false,
+    ins: outPins,
+  );
+
+  // ---- 比特 → 驱动引脚 / 负载引脚 ----
+  final driver = <int, NlPin>{};
+  for (final b in blocks.values) {
+    for (final p in b.outs) {
+      for (final bit in p.bits) {
+        driver.putIfAbsent(bit, () => p);
+      }
+    }
+  }
+  for (final p in inPins) {
+    for (final bit in p.bits) {
+      driver[bit] = p;
+    }
+  }
+  // 双向端口也要登记为「驱动方」，否则 inout 网没有任何驱动方 → **连线
+  // 完全不画**（端口悬空在画布上）。画法上是「端口 → 被连引脚」的直线。
+  for (final p in outPins) {
+    if (p.dir != NetlistPortDir.inout) continue;
+    for (final bit in p.bits) {
+      driver.putIfAbsent(bit, () => p);
+    }
+  }
+
+  // ---- 多驱动负载针脚按连续位域拆分 ----
+  // 例如 B[23:0] 的三个字节来自不同 MUX 时，拆成 B[23:16]、B[15:8]、
+  // B[7:0] 三个独立针脚；单驱动总线和双向端口保持原对象。
+  List<NlPin> splitLoadPin(NlPin p) {
+    if (p.dir == NetlistPortDir.inout || p.bits.length < 2) return [p];
+    final drivers = <NlPin?>{for (final bit in p.bits) driver[bit]};
+    if (drivers.length <= 1) return [p];
+    final fallback = NetlistNet(name: '', bits: p.bits);
+    final netOf = <int, NetlistNet>{
+      for (final net in p.nets.isEmpty ? [fallback] : p.nets)
+        for (final bit in net.bits) bit: net,
+    };
+    final runs = <({List<int> bits, NetlistNet net, int lo, int hi})>[];
+    var start = 0;
+    for (var i = 1; i <= p.bits.length; i++) {
+      final newRun =
+          i == p.bits.length ||
+          !identical(driver[p.bits[i]], driver[p.bits[start]]) ||
+          !identical(netOf[p.bits[i]], netOf[p.bits[start]]);
+      if (!newRun) continue;
+      runs.add((
+        bits: p.bits.sublist(start, i),
+        net: netOf[p.bits[start]] ?? fallback,
+        lo: start,
+        hi: i - 1,
+      ));
+      start = i;
+    }
+    runs.sort((a, b) => b.lo.compareTo(a.lo));
+    return [
+      for (final run in runs)
+        NlPin(
+          port: p.port,
+          display: run.lo == 0 && run.hi == p.bits.length - 1
+              ? p.display
+              : run.lo == run.hi
+              ? '${p.port}[${run.lo}]'
+              : '${p.port}[${run.hi}:${run.lo}]',
+          width: run.bits.length,
+          bits: run.bits,
+          nets: [run.net],
+          isBus: run.bits.length > 1,
+          constText: run.net.isConst ? run.net.name : null,
+          netNames: [if (!run.net.isConst) run.net.display],
+          dir: p.dir,
+          isPort: p.isPort,
+        ),
+    ];
+  }
+
+  for (final b in blocks.values) {
+    final split = [for (final p in b.ins) ...splitLoadPin(p)];
+    b.ins
+      ..clear()
+      ..addAll(split);
+  }
+  final splitOutPins = [for (final p in outPins) ...splitLoadPin(p)];
+  outPins
+    ..clear()
+    ..addAll(splitOutPins);
+
+  final pinOwner = <NlPin, NlBlock>{};
+  for (final b in blocks.values) {
+    for (final p in [...b.ins, ...b.outs]) {
+      pinOwner[p] = b;
+      // 网名派生用（`<实例>_<端口>`）：须在建网之前登记。
+      p.ownerTitle = b.title;
+    }
+  }
+  // **顶层端口也必须登记属主**：否则 `colOfPin` 对端口退化成 -1、行序恒为 0
+  // ——输出端口的网会被误判成「远列」而全部绕顶部轨道（附图那种"上去再下来"
+  // 的乱线），端口与针脚也对不齐、网名标签错行。
+  for (final p in inBlock.outs) {
+    pinOwner[p] = inBlock;
+  }
+  for (final p in outBlock.ins) {
+    pinOwner[p] = outBlock;
+  }
+
+  // ---- 网：按实际比特段与负载集合聚合 ----
+  // 单比特接入总线针脚的一位时仍是一条单信号网；同一输出总线的多个
+  // 命名段若连接同一组负载，则仍合并为完整总线，不画成无意义的平行线。
+  final loadPinsByDriverBit = <int, Set<NlPin>>{};
+  void addLoad(NlPin load) {
+    for (final bit in load.bits) {
+      final d = driver[bit];
+      if (d == null || identical(d, load)) continue;
+      (loadPinsByDriverBit[bit] ??= <NlPin>{}).add(load);
+    }
+  }
+
+  for (final b in blocks.values) {
+    for (final p in b.ins) {
+      addLoad(p);
+    }
+  }
+  for (final p in outPins) {
+    addLoad(p);
+  }
+
+  final sourcePins = <NlPin>[
+    for (final b in blocks.values) ...b.outs,
+    ...inPins,
+    for (final p in outPins)
+      if (p.dir == NetlistPortDir.inout) p,
+  ];
+  bool sameLoads(Set<NlPin> a, Set<NlPin> b) =>
+      a.length == b.length && a.every(b.contains);
+  final wires = <NlWire>[];
+  for (final from in sourcePins) {
+    final groups = <({List<int> bits, Set<NlPin> loads})>[];
+    final sourceNets = from.nets.isEmpty
+        ? [NetlistNet(name: '', bits: from.bits)]
+        : from.nets;
+    for (final net in sourceNets) {
+      final bits = [
+        for (final bit in net.bits)
+          if (identical(driver[bit], from)) bit,
+      ];
+      if (bits.isEmpty) continue;
+      // 只保留真正连接到当前负载的比特；否则 17bit 输出只接低 8 位时，
+      // 走线仍会错误携带全部 17 位，位域标签也无法确定。
+      final connectedBits = [
+        for (final bit in bits)
+          if ((loadPinsByDriverBit[bit]?.isNotEmpty ?? false)) bit,
+      ];
+      if (connectedBits.isEmpty) continue;
+      final loads = <NlPin>{
+        for (final bit in connectedBits) ...loadPinsByDriverBit[bit]!,
+      };
+      var index = -1;
+      for (var i = 0; i < groups.length; i++) {
+        if (sameLoads(groups[i].loads, loads)) {
+          index = i;
+          break;
+        }
+      }
+      if (index < 0) {
+        groups.add((bits: connectedBits, loads: loads));
+      } else {
+        for (final bit in connectedBits) {
+          if (!groups[index].bits.contains(bit)) groups[index].bits.add(bit);
+        }
+      }
+    }
+    for (final group in groups) {
+      final loads = group.loads.toList();
+      wires.add(
+        NlWire(
+          from,
+          loads,
+          _netLabelForBits(from, group.bits, loads),
+          bits: group.bits,
+        ),
+      );
+    }
+  }
+
+  // ---- 分层：BFS 最短路径（环按首次到达定层）----
+  // 不能用「最长路径 + 迭代松弛」：时序反馈环会让互相依赖的单元层层加码
+  // （实测 32 个单元被推到几十层），压缩后全挤进首列、右侧留下成片空列。
+  final level = <NlBlock, int>{};
+  final cellDeps = <NlBlock, Set<NlBlock>>{};
+  final cellLoads = <NlBlock, Set<NlBlock>>{};
+  for (final w in wires) {
+    final a = pinOwner[w.from];
+    if (a == null || a.isIo) continue;
+    for (final l in w.loads) {
+      final b = pinOwner[l];
+      if (b == null || identical(a, b)) continue;
+      (cellDeps[b] ??= {}).add(a);
+      (cellLoads[a] ??= {}).add(b);
+    }
+  }
+  final bfsOrder = <NlBlock>[];
+  for (final b in blocks.values) {
+    if (b.isIo) continue;
+    if ((cellDeps[b] ?? const <NlBlock>{}).isEmpty) {
+      level[b] = 0;
+      bfsOrder.add(b);
+    }
+  }
+  var head = 0;
+  while (head < bfsOrder.length) {
+    final b = bfsOrder[head++];
+    for (final n in cellLoads[b] ?? const <NlBlock>{}) {
+      if (level.containsKey(n)) continue;
+      level[n] = (level[b] ?? 0) + 1;
+      bfsOrder.add(n);
+    }
+  }
+  // 无源可达的纯环节点（无外部输入的自反馈）：按已知依赖定层。
+  for (final b in blocks.values) {
+    if (b.isIo || level.containsKey(b)) continue;
+    var lv = 0;
+    for (final d in cellDeps[b] ?? const <NlBlock>{}) {
+      lv = math.max(lv, (level[d] ?? 0) + 1);
+    }
+    level[b] = lv;
+  }
+  var maxLevel = 0;
+  for (final b in blocks.values) {
+    if (b.isIo) continue;
+    maxLevel = math.max(maxLevel, level[b] ?? 0);
+  }
+
+  // ---- 列分配：层级压缩到有限列数 ----
+  // 纯最长路径分层会把长链展成 1:N 的不可读长条（实测 32 单元 → 28 列、
+  // 16905×602），这里把层级等比压缩到 6~14 列（按单元数的平方根量级），
+  // 列内再按依赖平均行序排序，得到接近 2:1~4:1 的版式。
+  final allBlocks = [
+    inBlock,
+    for (final c in module.cells) blocks[c.name]!,
+    outBlock,
+  ];
+  final idealCols = math.sqrt(math.max(1, module.cells.length) * 4.0).round();
+  final maxCols = math.max(
+    1,
+    math.min(maxLevel + 1, (columns ?? idealCols).clamp(6, 24)),
+  );
+  int colOfLevel(int lv) => maxLevel + 1 <= maxCols
+      ? lv
+      : (lv * maxCols ~/ (maxLevel + 1)).clamp(0, maxCols - 1);
+  final colCount = module.cells.isEmpty ? 0 : colOfLevel(maxLevel) + 1;
+  for (final b in blocks.values) {
+    if (b.isIo) continue;
+    b.column = colOfLevel(level[b] ?? 0);
+  }
+  inBlock.column = -1;
+  outBlock.column = colCount;
+
+  /// 单元在列内的排序权重：其驱动单元的平均行序（无驱动则 0）。
+  double sortKey(NlBlock b) {
+    final deps = cellDeps[b];
+    if (deps == null || deps.isEmpty) return 0;
+    var s = 0.0;
+    var n = 0;
+    for (final d in deps) {
+      s += (d.row + 0.5).toDouble();
+      n++;
+    }
+    return n == 0 ? 0 : s / n;
+  }
+
+  // 逐列迭代排序（多趟使行序稳定）。
+  final rowsOf = <int, List<NlBlock>>{};
+  for (final b in blocks.values) {
+    if (b.isIo) continue;
+    (rowsOf[b.column] ??= []).add(b);
+  }
+  for (final e in rowsOf.entries) {
+    e.value.sort((a, b) => a.title.compareTo(b.title));
+  }
+  for (var pass = 0; pass < 4; pass++) {
+    for (var c = 0; c < colCount; c++) {
+      final list = rowsOf[c];
+      if (list == null) continue;
+      for (var i = 0; i < list.length; i++) {
+        list[i].row = i;
+      }
+      list.sort((a, b) {
+        final k = sortKey(a).compareTo(sortKey(b));
+        return k != 0 ? k : a.title.compareTo(b.title);
+      });
+    }
+  }
+  for (final e in rowsOf.entries) {
+    for (var i = 0; i < e.value.length; i++) {
+      e.value[i].row = i;
+    }
+  }
+
+  // ---- Sifting 行序覆盖（优化器给出的列内顺序）----
+  if (plan.rowOrders.isNotEmpty) {
+    for (final entry in plan.rowOrders.entries) {
+      final list = rowsOf[entry.key];
+      if (list == null || list.length < 2) continue;
+      final byId = <String, NlBlock>{for (final b in list) b.id: b};
+      final ordered = <NlBlock>[];
+      for (final id in entry.value) {
+        final b = byId.remove(id);
+        if (b != null) ordered.add(b);
+      }
+      // 未列出的块保持默认相对顺序，排在后面。
+      ordered.addAll(byId.values);
+      if (ordered.length != list.length) continue;
+      rowsOf[entry.key] = ordered;
+      for (var i = 0; i < ordered.length; i++) {
+        ordered[i].row = i;
+      }
+    }
+  }
+
+  // ---- 块尺寸 ----
+  Size boxSizeOf(NlBlock b) {
+    final sub = b.sub;
+    if (sub != null) {
+      // 容器：子模型画布 + 外框留白（顶部标题带 + 左右边缘针脚区 + 底部余量）。
+      return Size(
+        sub.canvasSize.width + _kContainerPadX * 2,
+        _kContainerHead + sub.canvasSize.height + _kContainerPadY,
+      );
+    }
+    final rows = math.max(1, math.max(b.ins.length, b.outs.length));
+    var w = netlistSymbolMinWidth(b.cell);
+    for (final p in [...b.ins, ...b.outs]) {
+      w = math.max(w, _tw(p.display, 10) * 2 + 34);
+    }
+    w = _gridCeil(math.min(w, _kMaxBlockW));
+    if (b.ins.any((p) => netlistSymbolIsBottomPin(b.cell, p.port)) &&
+        (w / _kGrid).round().isOdd) {
+      w += _kGrid;
+    }
+    var h = _kPinPadV * 2 + rows * _kPinRowH;
+    if (b.outs.length == 1 && netlistSymbolCentersOutput(b.cell)) {
+      // 组合符号本体最小 4 Grid 高，避免 NOT 等单输入门被压成扁平三角形；
+      // 2 Grid 针脚行使输出中心与对称分布的输入针脚仍保持 Grid 对齐。
+      h = math.max(h, 4 * _kGrid);
+    }
+    return Size(w, h);
+  }
+
+  for (final b in allBlocks) {
+    b.boxSize = boxSizeOf(b);
+    b.size = Size(b.boxSize.width, _kNameH + b.boxSize.height + _kTypeH);
+  }
+
+  // ---- 通道分道（**按网**，不按负载）：右通道 + 左通道（轨道线进入列）----
+  int colOfPin(NlPin p) {
+    final o = pinOwner[p];
+    return o == null ? -1 : o.column;
+  }
+
+  /// 引脚的纵向序号：块内行序；**顶层端口用其相连针脚所在块的行序**
+  /// （端口纵向对齐针脚后二者同行，据此可判定该网是否需要折弯）。
+  int rowOfPin(NlPin p) {
+    final o = pinOwner[p];
+    if (o != null && !o.isIo) return o.row;
+    for (final w in wires) {
+      if (identical(w.from, p)) {
+        final lo = w.loads.isEmpty ? null : pinOwner[w.loads.first];
+        return lo?.row ?? 0;
+      }
+      for (final l in w.loads) {
+        if (identical(l, p)) return pinOwner[w.from]?.row ?? 0;
+      }
+    }
+    return 0;
+  }
+
+  /// 网的目标列分组：列 → 该列上的负载引脚。
+  final loadsByCol = <NlWire, Map<int, List<NlPin>>>{};
+  for (final w in wires) {
+    final m = <int, List<NlPin>>{};
+    for (final l in w.loads) {
+      (m[colOfPin(l)] ??= []).add(l);
+    }
+    loadsByCol[w] = m;
+  }
+
+  final pinIdx = <NlPin, int>{};
+  for (final b in allBlocks) {
+    for (var i = 0; i < b.ins.length; i++) {
+      pinIdx[b.ins[i]] = i;
+    }
+    for (var i = 0; i < b.outs.length; i++) {
+      pinIdx[b.outs[i]] = i;
+    }
+  }
+
+  // ---- 列内「绝对行号」模型（**不需要坐标**）：判定跨列横线会不会穿过
+  // 中间列的块体。行号按「块内针脚行 + 块间距」累计，与真实 y 同序；
+  // 判定留 ±1 行余量 → 只会保守地退回轨道，绝不会画出穿块的线。
+  final rowStartOf = <NlBlock, int>{};
+  final blockRows = <NlBlock, int>{};
+  for (var c = 0; c < colCount; c++) {
+    var r = 0;
+    for (final b in rowsOf[c] ?? const <NlBlock>[]) {
+      final rows = math.max(1, math.max(b.ins.length, b.outs.length));
+      rowStartOf[b] = r;
+      blockRows[b] = rows;
+      r += rows + 2; // 2 行 ≈ 块间距
+    }
+  }
+
+  int absRowOfPin(NlPin p) {
+    final o = pinOwner[p];
+    if (o != null && !o.isIo) {
+      return (rowStartOf[o] ?? 0) + (pinIdx[p] ?? 0);
+    }
+    // 顶层端口：跟随其相连针脚的行。
+    for (final w in wires) {
+      if (identical(w.from, p)) {
+        return w.loads.isEmpty ? 0 : absRowOfPin(w.loads.first);
+      }
+      for (final l in w.loads) {
+        if (identical(l, p)) return absRowOfPin(w.from);
+      }
+    }
+    return 0;
+  }
+
+  /// 第 col 列在 absRow 行上是否有块体（±1 行余量）。
+  bool colBlocked(int col, int absRow) {
+    for (final b in rowsOf[col] ?? const <NlBlock>[]) {
+      final s = rowStartOf[b] ?? 0;
+      final e = s + (blockRows[b] ?? 1) - 1;
+      if (absRow >= s - 1 && absRow <= e + 1) return true;
+    }
+    return false;
+  }
+
+  /// 列 a..b（含端点）之间的横向走廊在该行是否畅通。
+  bool corridorFree(int a, int b, int absRow) {
+    if (b < a) return true;
+    for (var c = a; c <= b; c++) {
+      if (colBlocked(c, absRow)) return false;
+    }
+    return true;
+  }
+
+  // ---- 负载走线方式分类（**决定线乱不乱的关键**）----
+  // - `zR`：源列**右通道**竖道 + 直线到位——前向相邻列，或跨列但中间列的
+  //   走廊在该负载行上空闲（**不必上顶部轨道**：这是消掉顶部"梳子"的主路径）；
+  // - `zL`：源列**左通道**竖道——同列优先（保留长轨道作单网回退）、
+  //   回向相邻列（如输出侧端口驱动块右缘引脚）；
+  // - `tl`：其余（同列回退、回环、走廊被占）→ 顶部轨道，按目标列分组。
+  final zR = <NlWire, List<NlPin>>{};
+  final zL = <NlWire, List<NlPin>>{};
+  final tl = <NlWire, Map<int, List<NlPin>>>{};
+  final rightOf = <int, List<NlWire>>{};
+  final leftOf = <int, List<(NlWire, int)>>{};
+  final trackWires = <NlWire>[];
+  for (final w in wires) {
+    final sc = colOfPin(w.from);
+    final rl = <NlPin>[];
+    final ll = <NlPin>[];
+    final tmap = <int, List<NlPin>>{};
+    for (final e in (loadsByCol[w] ?? const <int, List<NlPin>>{}).entries) {
+      final dc = e.key;
+      for (final l in e.value) {
+        if (dc == sc + 1) {
+          rl.add(l);
+        } else if (dc == sc - 1) {
+          ll.add(l);
+        } else if (dc == sc) {
+          // 同列优先尝试局部左通道，同时保留长轨道作为单网回退。
+          ll.add(l);
+          (tmap[dc] ??= []).add(l);
+        } else if (dc > sc + 1 &&
+            corridorFree(sc + 1, dc - 1, absRowOfPin(l))) {
+          rl.add(l); // 走廊 Z：横线走中间列的空档，不进顶部轨道
+        } else {
+          (tmap[dc] ??= []).add(l);
+        }
+      }
+    }
+
+    // 多轮优化的单网替代方案：强制全部走局部通道或轨道；同列局部方案
+    // 还可指定左右侧。分类只改变候选拓扑，后续仍逐段执行全部几何检查。
+    final mode = plan.routeModes[_nlWireRouteKey(w)] ?? NlRouteMode.auto;
+    void addTrack(NlPin load) {
+      final c = colOfPin(load);
+      final list = tmap[c] ??= <NlPin>[];
+      if (!list.contains(load)) list.add(load);
+    }
+
+    void addLocal(NlPin load, {required bool right}) {
+      final list = right ? rl : ll;
+      if (!list.contains(load)) list.add(load);
+    }
+
+    if (mode == NlRouteMode.track) {
+      for (final load in [...rl, ...ll]) {
+        addTrack(load);
+      }
+      rl.clear();
+      ll.clear();
+    } else if (mode != NlRouteMode.auto) {
+      final pending = <NlPin>[
+        for (final ls in tmap.values)
+          for (final load in ls) load,
+      ];
+      tmap.clear();
+      for (final load in pending) {
+        final dc = colOfPin(load);
+        final right = dc == sc ? mode == NlRouteMode.localRight : dc > sc;
+        addLocal(load, right: right);
+      }
+      if (mode == NlRouteMode.localRight) {
+        for (final load in ll.where((l) => colOfPin(l) == sc).toList()) {
+          ll.remove(load);
+          addLocal(load, right: true);
+        }
+      } else if (mode == NlRouteMode.localLeft) {
+        for (final load in rl.where((l) => colOfPin(l) == sc).toList()) {
+          rl.remove(load);
+          addLocal(load, right: false);
+        }
+      }
+    }
+    if (rl.isNotEmpty) zR[w] = rl;
+    if (ll.isNotEmpty) zL[w] = ll;
+    if (tmap.isNotEmpty) {
+      tl[w] = tmap;
+      trackWires.add(w);
+      for (final c in tmap.keys) {
+        if (!(ll.isNotEmpty && c == sc)) {
+          (leftOf[c] ??= []).add((w, c));
+        }
+      }
+    }
+    if (ll.isNotEmpty) {
+      (leftOf[sc] ??= []).add((w, sc));
+    }
+    // 竖道按「网」足额分配（宁可多留一条，也不能让两根网共用同一条竖道
+    // ——那在图上会被读成同一条线/误连）。
+    if (rl.isNotEmpty || tmap.isNotEmpty) {
+      (rightOf[sc] ??= []).add(w);
+    }
+  }
+
+  int orderOf(NlPin p) => rowOfPin(p) * 100 + (pinIdx[p] ?? 0);
+
+  /// 目的行序（越小越靠上）：作为竖道交换优化的确定性初始顺序。
+  int destKeyOf(NlWire w) {
+    var m = 1 << 20;
+    for (final l in w.loads) {
+      m = math.min(m, absRowOfPin(l));
+    }
+    return m;
+  }
+
+  // 全局行号把不同列的短列居中关系也计入，可在最终坐标生成前比较上下方向。
+  final colRowH = <int, int>{};
+  var maxRows = 1;
+  for (var c = 0; c < colCount; c++) {
+    var r = 0;
+    for (final b in rowsOf[c] ?? const <NlBlock>[]) {
+      r += (blockRows[b] ?? 1) + 2;
+    }
+    colRowH[c] = r;
+    maxRows = math.max(maxRows, r);
+  }
+
+  double globalRowOfPin(NlPin p) {
+    final c = colOfPin(p);
+    final center = (c < 0 || c >= colCount)
+        ? 0.0
+        : (maxRows - (colRowH[c] ?? 0)) / 2;
+    return center + absRowOfPin(p);
+  }
+
+  double trackCost(NlWire w, double trackRow) {
+    var cost = (globalRowOfPin(w.from) - trackRow).abs();
+    for (final ls in (tl[w] ?? const <int, List<NlPin>>{}).values) {
+      for (final l in ls) {
+        cost += (globalRowOfPin(l) - trackRow).abs();
+      }
+    }
+    return cost;
+  }
+
+  // 轨道方向优先服从数据流的上下关系：源在负载上方就走下带，反之走上带；
+  // 多负载取中位数，源与负载正中持平或完全同行时才用总纵向距离决胜。
+  final trackBottom = <NlWire, bool>{};
+  for (final w in trackWires) {
+    final rows = <double>[
+      for (final ls in (tl[w] ?? const <int, List<NlPin>>{}).values)
+        for (final l in ls) globalRowOfPin(l),
+    ]..sort();
+    var bottom = trackCost(w, maxRows.toDouble()) < trackCost(w, 0);
+    if (rows.isNotEmpty) {
+      final middle = rows.length ~/ 2;
+      final median = rows.length.isOdd
+          ? rows[middle]
+          : (rows[middle - 1] + rows[middle]) / 2;
+      final source = globalRowOfPin(w.from);
+      if (source < median) {
+        bottom = true;
+      } else if (source > median) {
+        bottom = false;
+      }
+    }
+    trackBottom[w] = bottom;
+  }
+
+  // 四种初始顺序给局部交换提供不同起点，最终仍由实际坐标评分择优。
+  final sourceOrdered = plan.laneVariant == 1 || plan.laneVariant == 3;
+  for (final e in rightOf.entries) {
+    int primary(NlWire w) => sourceOrdered ? orderOf(w.from) : destKeyOf(w);
+    int secondary(NlWire w) => sourceOrdered ? destKeyOf(w) : orderOf(w.from);
+    e.value.sort((a, b) {
+      var k = primary(a).compareTo(primary(b));
+      if (k != 0) return k;
+      k = secondary(a).compareTo(secondary(b));
+      if (k != 0) return k;
+      return _nlWireRouteKey(a).compareTo(_nlWireRouteKey(b));
+    });
+    if (plan.laneVariant >= 2) {
+      final reversed = e.value.reversed.toList();
+      e.value
+        ..clear()
+        ..addAll(reversed);
+    }
+  }
+  // 左通道两种条目：`(网, 目标列)`（轨道进入列）与 `(网, 源列)`（回向 Z）。
+  // 排序键要同时兼容（后者在源列上没有负载，取目的行序）。
+  int leftKeyOf((NlWire, int) e) {
+    final ls = loadsByCol[e.$1]?[e.$2];
+    if (ls != null && ls.isNotEmpty) return orderOf(ls.first);
+    return destKeyOf(e.$1) * 100;
+  }
+
+  for (final e in leftOf.entries) {
+    int primary((NlWire, int) entry) =>
+        sourceOrdered ? orderOf(entry.$1.from) : leftKeyOf(entry);
+    int secondary((NlWire, int) entry) =>
+        sourceOrdered ? leftKeyOf(entry) : orderOf(entry.$1.from);
+    e.value.sort((a, b) {
+      var k = primary(a).compareTo(primary(b));
+      if (k != 0) return k;
+      k = secondary(a).compareTo(secondary(b));
+      if (k != 0) return k;
+      k = _nlWireRouteKey(a.$1).compareTo(_nlWireRouteKey(b.$1));
+      if (k != 0) return k;
+      return a.$2.compareTo(b.$2);
+    });
+    if (plan.laneVariant >= 2) {
+      final reversed = e.value.reversed.toList();
+      e.value
+        ..clear()
+        ..addAll(reversed);
+    }
+  }
+
+  // 用归一化左右位置描述每条简化 Z 走线，再交换竖道顺序以直接减少
+  // 预测横竖交叉；通道数量和最终 Grid 坐标不变，异网不重叠约束不受影响。
+  double relativeX(int channelCol, int targetCol) {
+    final delta = targetCol - channelCol;
+    if (delta == 0) return 0;
+    return delta > 0 ? 1000.0 + delta : -1000.0 + delta;
+  }
+
+  double trackRowOf(NlWire w) =>
+      (trackBottom[w] ?? false) ? maxRows.toDouble() : 0.0;
+
+  _NlLanePath rightPath(NlWire w) {
+    final sc = colOfPin(w.from);
+    final targets = <(double, double)>[
+      for (final l in zR[w] ?? const <NlPin>[])
+        (relativeX(sc, colOfPin(l)), globalRowOfPin(l)),
+    ];
+    final cols = (tl[w] ?? const <int, List<NlPin>>{}).keys.toList();
+    if (cols.isNotEmpty) {
+      final xs = [for (final c in cols) relativeX(sc, c)];
+      final lo = xs.reduce(math.min), hi = xs.reduce(math.max);
+      targets.add((lo, trackRowOf(w)));
+      if (hi - lo > 0.01) targets.add((hi, trackRowOf(w)));
+    }
+    return (sourceX: 0, sourceY: globalRowOfPin(w.from), targets: targets);
+  }
+
+  for (final e in rightOf.entries) {
+    _optimizeNlLaneOrder(e.value, rightPath, false);
+  }
+  for (final e in leftOf.entries) {
+    final channelCol = e.key;
+    _optimizeNlLaneOrder<(NlWire, int)>(e.value, (entry) {
+      final w = entry.$1;
+      final sourceCol = colOfPin(w.from);
+      final local = sourceCol == channelCol && (zL[w]?.isNotEmpty ?? false);
+      if (local) {
+        return (
+          sourceX: 0.0,
+          sourceY: globalRowOfPin(w.from),
+          targets: <(double, double)>[
+            for (final l in zL[w] ?? const <NlPin>[])
+              (relativeX(channelCol, colOfPin(l)), globalRowOfPin(l)),
+          ],
+        );
+      }
+      return (
+        sourceX: relativeX(channelCol, sourceCol),
+        sourceY: trackRowOf(w),
+        targets: <(double, double)>[
+          for (final l in tl[w]?[channelCol] ?? const <NlPin>[])
+            (0.0, globalRowOfPin(l)),
+        ],
+      );
+    }, true);
+  }
+  // 通道宽度必须**含针脚短线的让位**：竖道若落在针脚短线端上，就会
+  // 看起来贴着/穿过一整列针脚（误连观感），所以竖道从短线之外
+  // 起步，这段间隙也要算进通道宽度。
+  double chanW(int n) =>
+      n == 0 ? 0.0 : _kStubClear + math.max(_kMinLaneW, n * _kLaneGap);
+  final rwCache = <int, double>{};
+  final lwCache = <int, double>{};
+  double rw(int c) => rwCache[c] ??= chanW(rightOf[c]?.length ?? 0);
+  double lw(int c) => lwCache[c] ??= chanW(leftOf[c]?.length ?? 0);
+
+  // ---- 列 x 游标（列间预留「右通道 + 下一列左通道」）----
+  var maxInTextW = 0.0, maxOutTextW = 0.0;
+  for (final p in inPins) {
+    maxInTextW = math.max(maxInTextW, _tw(p.display, 10));
+  }
+  for (final p in outPins) {
+    maxOutTextW = math.max(maxOutTextW, _tw(p.display, 10));
+  }
+  maxInTextW = _gridCeil(maxInTextW);
+  maxOutTextW = _gridCeil(maxOutTextW);
+  const inTextLeft = _kMargin;
+  final inGlyphX = inTextLeft + maxInTextW + _kPortTextGap;
+  final inputAreaRight = inGlyphX + _kPortGlyphW;
+
+  final colX = <int, double>{};
+  final colW = <int, double>{};
+  var cursor = inputAreaRight + rw(-1) + lw(0) + _kColGap;
+  for (var c = 0; c < colCount; c++) {
+    colX[c] = cursor;
+    var w = _kMinBlockW;
+    for (final b in rowsOf[c] ?? const <NlBlock>[]) {
+      w = math.max(w, b.boxSize.width);
+    }
+    colW[c] = w;
+    cursor += w + rw(c) + lw(c + 1) + _kColGap;
+  }
+  final outputAreaLeft = cursor;
+  final canvasW =
+      outputAreaLeft +
+      _kPortGlyphW +
+      _kPortTextGap +
+      math.max(maxOutTextW, 2 * _kGrid) +
+      _kMargin;
+
+  double rightLaneX(int col, int idx) {
+    if (col >= colCount) {
+      // 输出侧端口作驱动：竖道放端口区左侧、**左通道之外**，避免与轨道
+      // 进入列的左通道叠线。
+      return outputAreaLeft - lw(colCount) - _kLaneGap * (idx + 1);
+    }
+    final right = col < 0
+        ? inputAreaRight
+        : (colX[col] ?? 0) + (colW[col] ?? 0);
+    return right + _kStubClear + _kLaneGap * (idx + 1);
+  }
+
+  double leftLaneX(int col, int idx) {
+    final x = colX[col];
+    if (x == null) return outputAreaLeft - _kLaneGap * (idx + 1);
+    // 让开该列**输入针脚短线**（短线端在 `x - _kStub`）。
+    return x - _kStubClear - _kLaneGap * (idx + 1);
+  }
+
+  final pinPosXs = <double>{};
+  double avoidPinPosX(double x, int direction) {
+    var result = x;
+    for (var i = 0; i < 64; i++) {
+      final blockedByBlock = allBlocks.any((b) {
+        if (b.isIo || b.boxSize.width <= 0) return false;
+        final left = b.boxOrigin.dx;
+        final right = left + b.boxSize.width;
+        return result > left - 1.0 && result < right + 1.0;
+      });
+      if (!blockedByBlock && !pinPosXs.contains(result)) return result;
+      result += direction * _kGrid;
+    }
+    throw StateError('竖道无法避开元件块与 pin 节点：x=$result');
+  }
+
+  // ---- 轨道分配（**一网一轨道**；区间着色：x 区间不重叠的网共用轨道）----
+  final trackOf = <NlWire, int>{};
+  final trackEndTop = <double>[];
+  final trackEndBot = <double>[];
+  double rightLaneXOf(NlWire w) {
+    final offset = plan.laneOffsets[_nlWireRouteKey(w)] ?? 0;
+    return avoidPinPosX(
+      rightLaneX(colOfPin(w.from), rightOf[colOfPin(w.from)]?.indexOf(w) ?? 0) +
+          offset * _kGrid,
+      offset < 0 ? -1 : 1,
+    );
+  }
+
+  double leftLaneXOf(NlWire w, int col) {
+    final list = leftOf[col];
+    final i = list == null ? 0 : list.indexWhere((e) => identical(e.$1, w));
+    final offset = plan.laneOffsets[_nlWireRouteKey(w)] ?? 0;
+    return avoidPinPosX(
+      leftLaneX(col, i < 0 ? 0 : i) + offset * _kGrid,
+      offset > 0 ? 1 : -1,
+    );
+  }
+
+  for (final w in trackWires) {
+    final lx = rightLaneXOf(w);
+    var x0 = lx, x1 = lx;
+    for (final c in (tl[w] ?? const <int, List<NlPin>>{}).keys) {
+      final rx = leftLaneXOf(w, c);
+      x0 = math.min(x0, rx);
+      x1 = math.max(x1, rx);
+    }
+    final trackEnd = (trackBottom[w] ?? false) ? trackEndBot : trackEndTop;
+    var t = -1;
+    for (var i = 0; i < trackEnd.length; i++) {
+      if (trackEnd[i] + _kLaneGap <= x0) {
+        t = i;
+        break;
+      }
+    }
+    if (t < 0) {
+      t = trackEnd.length;
+      trackEnd.add(x1);
+    } else {
+      trackEnd[t] = x1;
+    }
+    trackOf[w] = t;
+  }
+  final bandTopH = trackEndTop.isEmpty
+      ? 0.0
+      : trackEndTop.length * _kTrackGap + _kGrid;
+  final bandBotH = trackEndBot.isEmpty
+      ? 0.0
+      : trackEndBot.length * _kTrackGap + _kGrid;
+  final topY = _kMargin + bandTopH;
+
+  // ---- 列内纵向布局（短列相对最高列居中）----
+  final colHeights = <int, double>{};
+  for (var c = 0; c < colCount; c++) {
+    var h = 0.0;
+    var first = true;
+    for (final b in rowsOf[c] ?? const <NlBlock>[]) {
+      if (!first) h += _kRowGap;
+      h += b.size.height;
+      first = false;
+    }
+    colHeights[c] = h;
+  }
+  final maxColH = colHeights.values.isEmpty
+      ? 0.0
+      : colHeights.values.fold<double>(0, math.max);
+
+  /// 块区底部（底部轨道带从这之下开始）。
+  final contentBottom = topY + maxColH;
+  for (var c = 0; c < colCount; c++) {
+    var y =
+        topY + _gridRound(math.max(0.0, (maxColH - (colHeights[c] ?? 0)) / 2));
+    for (final b in rowsOf[c] ?? const <NlBlock>[]) {
+      // 不同宽度的元件按列中心线居中，并以 Grid 下取整保留左侧通道空间。
+      final blockX = _gridFloor(colX[c]! + (colW[c]! - b.boxSize.width) / 2);
+      b.origin = Offset(blockX, y);
+      b.boxOrigin = Offset(blockX, y + _kNameH);
+      y += b.size.height + _kRowGap;
+    }
+  }
+
+  // ---- 针脚坐标（组合逻辑单输出居中，MUX 选择端在底边）----
+  for (final b in allBlocks) {
+    if (b.isIo) continue;
+    final symbolRect = Rect.fromLTWH(
+      b.boxOrigin.dx,
+      b.boxOrigin.dy,
+      b.boxSize.width,
+      b.boxSize.height,
+    );
+    final centeredSingleOutput =
+        b.outs.length == 1 && netlistSymbolCentersOutput(b.cell);
+    final sideIns = [
+      for (final p in b.ins)
+        if (!netlistSymbolIsBottomPin(b.cell, p.port)) p,
+    ];
+    // **符号上下镜像**：针脚槽位上下互换（`plan.flips` 含该块时）。
+    // 默认对所有多输入符号生效（含 MUX——翻转后底边 S 针脚移到顶边、
+    // 短线朝上；如需保留"底边 S"惯例可在外层不把该块放进 flips）。
+    // DFF 保持不镜像（时钟三角与 D/CLK/ARST 的阅读顺序惯例）。
+    final flipPins = plan.flips.contains(b.id) &&
+        netlistSymbolKindOf(b.cell) != NetlistSymbolKind.flipFlop;
+    final inputY = <NlPin, double>{};
+    // 槽位优先级：pinOrders 显式顺序 > flips 镜像反序 > 默认顺序。
+    final pinOrder = plan.pinOrders[b.id];
+    for (var i = 0; i < sideIns.length; i++) {
+      var slot = flipPins ? sideIns.length - 1 - i : i;
+      if (pinOrder != null) {
+        final idx = pinOrder.indexOf(sideIns[i].port);
+        if (idx >= 0 && idx < sideIns.length) slot = idx;
+      }
+      if (centeredSingleOutput) {
+        final row = slot - (sideIns.length - 1) / 2;
+        inputY[sideIns[i]] = symbolRect.center.dy + row * _kPinRowH;
+      } else {
+        inputY[sideIns[i]] =
+            b.boxOrigin.dy + _kPinPadV + slot * _kPinRowH + _kPinRowH / 2;
+      }
+    }
+    for (final p in b.ins) {
+      if (netlistSymbolIsBottomPin(b.cell, p.port)) {
+        // 底边针脚（MUX 的 S）：镜像时移到顶边，短线朝上。
+        final y = flipPins ? symbolRect.top : symbolRect.bottom;
+        final outward = flipPins ? -_kStub : _kStub;
+        p.edge = Offset(symbolRect.center.dx, y);
+        p.pos = Offset(symbolRect.center.dx, y + outward);
+        p.routePos = p.pos + Offset(0, flipPins ? -_kGrid : _kGrid);
+        continue;
+      }
+      final y = inputY[p]!;
+      final edgeX = _gridRound(netlistSymbolInputEdgeX(b.cell, symbolRect, y));
+      p.edge = Offset(edgeX, y);
+      p.pos = Offset(b.boxOrigin.dx - _kStub, y);
+      p.routePos = p.pos - const Offset(_kGrid, 0);
+    }
+    for (var i = 0; i < b.outs.length; i++) {
+      // 整块上下镜像时，右侧输出针脚同样上下反序（单输出为恒等）。
+      final slot = flipPins ? b.outs.length - 1 - i : i;
+      final y = centeredSingleOutput
+          ? symbolRect.center.dy
+          : b.boxOrigin.dy + _kPinPadV + slot * _kPinRowH + _kPinRowH / 2;
+      b.outs[i].edge = Offset(symbolRect.right, y);
+      b.outs[i].pos = Offset(symbolRect.right + _kStub, y);
+      b.outs[i].routePos = b.outs[i].pos + const Offset(_kGrid, 0);
+    }
+  }
+  pinPosXs.addAll([
+    for (final b in allBlocks)
+      for (final p in [...b.ins, ...b.outs]) p.pos.dx,
+  ]);
+
+  // ---- 所有网的直达走廊：移动阻挡块，而不是在目标 pos 上折回 ----
+  // 把挡在「通道 → 目标 pin」水平路径上的块移到列内最近的空闲 Grid 行；
+  // 若它自身也是其它直达目标，评分会同步更新其目标行，随后再对齐顶层端口。
+  // 块体与其它 pin 的短线都计入冲突；无法改善时仍由后面的 pickY 做局部
+  // 折线回退，任何约束都不放宽。
+  final directLoads = <({NlWire wire, NlPin load, double tx})>[];
+  for (final w in wires) {
+    for (final l in w.loads) {
+      double? tx;
+      if ((zR[w] ?? const <NlPin>[]).contains(l)) {
+        tx = rightLaneXOf(w);
+      } else if ((zL[w] ?? const <NlPin>[]).contains(l)) {
+        tx = leftLaneXOf(w, colOfPin(w.from));
+      } else {
+        final c = colOfPin(l);
+        if ((tl[w] ?? const <int, List<NlPin>>{})[c]?.contains(l) ?? false) {
+          tx = leftLaneXOf(w, c);
+        }
+      }
+      if (tx != null) directLoads.add((wire: w, load: l, tx: tx));
+    }
+  }
+  bool intervalsOverlap(double a0, double a1, double b0, double b1) {
+    final aLo = math.min(a0, a1), aHi = math.max(a0, a1);
+    final bLo = math.min(b0, b1), bHi = math.max(b0, b1);
+    return aLo < bHi - 0.01 && bLo < aHi - 0.01;
+  }
+
+  int issuesOf(NlBlock b, double dy, [NlBlock? moved, double movedDy = 0]) {
+    var count = 0;
+    for (final t in directLoads) {
+      final targetDy = identical(pinOwner[t.load], moved) ? movedDy : 0.0;
+      final y = t.load.routePos.dy + targetDy;
+      final lo = math.min(t.tx, t.load.routePos.dx);
+      final hi = math.max(t.tx, t.load.routePos.dx);
+      final bx0 = b.boxOrigin.dx, bx1 = bx0 + b.boxSize.width;
+      if (hi > bx0 + 0.5 && lo < bx1 - 0.5) {
+        final by0 = b.boxOrigin.dy + dy;
+        final by1 = by0 + b.boxSize.height;
+        if (y > by0 - 1.0 && y < by1 + 1.0) count++;
+      }
+      for (final p in [...b.ins, ...b.outs]) {
+        if (identical(p, t.wire.from) ||
+            identical(p, t.load) ||
+            t.wire.loads.contains(p)) {
+          continue;
+        }
+        for (final py in [p.pos.dy + dy, p.routePos.dy + dy]) {
+          if ((py - y).abs() > 0.01) continue;
+          if (intervalsOverlap(lo, hi, p.edge.dx, p.routePos.dx)) count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  int totalIssues(NlBlock? moved, double dy) {
+    var count = 0;
+    for (final b in allBlocks) {
+      if (b.isIo) continue;
+      count += issuesOf(b, identical(b, moved) ? dy : 0.0, moved, dy);
+    }
+    return count;
+  }
+
+  /// 元件移动不得翻转源/目标的上下关系，避免为了对齐反而引入反向绕线。
+  int directionFlipsOf(NlBlock? moved, double movedDy) {
+    var flips = 0;
+    for (final t in directLoads) {
+      final oldSourceY = t.wire.from.routePos.dy;
+      final oldTargetY = t.load.routePos.dy;
+      if ((oldSourceY - oldTargetY).abs() < 0.01) continue;
+      final sourceDy = identical(pinOwner[t.wire.from], moved) ? movedDy : 0.0;
+      final targetDy = identical(pinOwner[t.load], moved) ? movedDy : 0.0;
+      final sourceY = oldSourceY + sourceDy;
+      final targetY = oldTargetY + targetDy;
+      if ((oldSourceY < oldTargetY && sourceY > targetY + 0.01) ||
+          (oldSourceY > oldTargetY && sourceY < targetY - 0.01)) {
+        flips++;
+      }
+    }
+    return flips;
+  }
+
+  double totalScore(NlBlock? moved, double dy) {
+    final flips = directionFlipsOf(moved, dy);
+    if (flips > 0) return 1e9 + flips;
+    return totalIssues(moved, dy).toDouble();
+  }
+
+  bool freeAt(NlBlock b, double dy) {
+    final y = b.origin.dy + dy;
+    if (y < topY || y + b.size.height > topY + maxColH + 0.01) {
+      return false;
+    }
+    for (final other in rowsOf[b.column] ?? const <NlBlock>[]) {
+      if (identical(other, b)) continue;
+      final otherTop = other.origin.dy;
+      final otherBottom = otherTop + other.size.height;
+      if (y < otherBottom + _kRowGap - 0.01 &&
+          otherTop < y + b.size.height + _kRowGap - 0.01) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void moveBlock(NlBlock b, double dy) {
+    b.origin = Offset(b.origin.dx, b.origin.dy + dy);
+    b.boxOrigin = Offset(b.boxOrigin.dx, b.boxOrigin.dy + dy);
+    final rect = Rect.fromLTWH(
+      b.boxOrigin.dx,
+      b.boxOrigin.dy,
+      b.boxSize.width,
+      b.boxSize.height,
+    );
+    for (final p in b.ins) {
+      final y = p.edge.dy + dy;
+      final x = netlistSymbolIsBottomPin(b.cell, p.port)
+          ? rect.center.dx
+          : _gridRound(netlistSymbolInputEdgeX(b.cell, rect, y));
+      p.edge = Offset(x, y);
+      p.pos = Offset(p.pos.dx, y);
+      p.routePos = Offset(p.routePos.dx, y);
+    }
+    for (final p in b.outs) {
+      final y = p.edge.dy + dy;
+      p.edge = Offset(rect.right, y);
+      p.pos = Offset(p.pos.dx, y);
+      p.routePos = Offset(p.routePos.dx, y);
+    }
+  }
+
+  void moveBlockX(NlBlock b, double dx) {
+    b.origin = Offset(b.origin.dx + dx, b.origin.dy);
+    b.boxOrigin = Offset(b.boxOrigin.dx + dx, b.boxOrigin.dy);
+    final rect = Rect.fromLTWH(
+      b.boxOrigin.dx,
+      b.boxOrigin.dy,
+      b.boxSize.width,
+      b.boxSize.height,
+    );
+    for (final p in b.ins) {
+      final y = p.edge.dy;
+      final x = netlistSymbolIsBottomPin(b.cell, p.port)
+          ? rect.center.dx
+          : _gridRound(netlistSymbolInputEdgeX(b.cell, rect, y));
+      p.edge = Offset(x, y);
+      p.pos = Offset(p.pos.dx + dx, y);
+      p.routePos = Offset(p.routePos.dx + dx, y);
+    }
+    for (final p in b.outs) {
+      final y = p.edge.dy;
+      p.edge = Offset(rect.right, y);
+      p.pos = Offset(p.pos.dx + dx, y);
+      p.routePos = Offset(p.routePos.dx + dx, y);
+    }
+  }
+
+  bool blockRectFree(NlBlock b) {
+    final rect = Rect.fromLTWH(
+      b.boxOrigin.dx,
+      b.boxOrigin.dy,
+      b.boxSize.width,
+      b.boxSize.height,
+    );
+    for (final other in rowsOf[b.column] ?? const <NlBlock>[]) {
+      if (identical(other, b) || other.isIo) continue;
+      final otherRect = Rect.fromLTWH(
+        other.boxOrigin.dx,
+        other.boxOrigin.dy,
+        other.boxSize.width,
+        other.boxSize.height,
+      );
+      if (rect.overlaps(otherRect)) return false;
+    }
+    return true;
+  }
+
+  // 元件位置候选：先记录原始 pin 行，再应用方案中的纵向偏移。
+  final basePinY = <NlPin, double>{
+    for (final b in allBlocks)
+      for (final p in [...b.ins, ...b.outs]) p: p.edge.dy,
+  };
+  if (plan.blockOffsets.isNotEmpty || plan.blockXOffsets.isNotEmpty) {
+    for (final entry in plan.blockOffsets.entries) {
+      final block = allBlocks.firstWhere(
+        (b) => b.id == entry.key,
+        orElse: () => throw StateError('未知元件位置候选：${entry.key}'),
+      );
+      if (block.isContainer) {
+        throw StateError('展开容器不支持位置候选：${entry.key}');
+      }
+      moveBlock(block, entry.value * _kGrid);
+    }
+    for (final entry in plan.blockXOffsets.entries) {
+      final block = allBlocks.firstWhere(
+        (b) => b.id == entry.key,
+        orElse: () => throw StateError('未知元件位置候选：${entry.key}'),
+      );
+      if (block.isContainer) {
+        throw StateError('展开容器不支持位置候选：${entry.key}');
+      }
+      moveBlockX(block, entry.value * _kGrid);
+    }
+    for (final b in allBlocks) {
+      if (b.isIo || b.isContainer) continue;
+      if (!freeAt(b, 0) || !blockRectFree(b)) {
+        throw StateError('元件位置候选导致块体重叠或越界：${b.title}');
+      }
+    }
+    pinPosXs
+      ..clear()
+      ..addAll([
+        for (final b in allBlocks)
+          for (final p in [...b.ins, ...b.outs]) p.pos.dx,
+      ]);
+    for (final t in directLoads) {
+      final oldSourceY = basePinY[t.wire.from]!;
+      final oldTargetY = basePinY[t.load]!;
+      if ((oldSourceY - oldTargetY).abs() < 0.01) continue;
+      final sourceY = t.wire.from.routePos.dy;
+      final targetY = t.load.routePos.dy;
+      if ((oldSourceY < oldTargetY && sourceY > targetY + 0.01) ||
+          (oldSourceY > oldTargetY && sourceY < targetY - 0.01)) {
+        throw StateError('元件位置候选翻转源/目标上下方向：${t.wire.label}');
+      }
+    }
+  }
+
+  for (var pass = 0; pass < 6 && directLoads.isNotEmpty; pass++) {
+    var bestScore = totalScore(null, 0);
+    var bestAbs = double.infinity;
+    NlBlock? bestBlock;
+    var bestDy = 0.0;
+    final deltas = <double>[
+      0,
+      for (var d = _kPinRowH; d <= maxColH; d += _kPinRowH) ...[-d, d],
+    ];
+    for (final b in allBlocks) {
+      if (b.isIo || b.isContainer) continue;
+      if (issuesOf(b, 0) == 0) continue;
+      for (final dy in deltas.skip(1)) {
+        if (!freeAt(b, dy)) continue;
+        final score = totalScore(b, dy);
+        final better =
+            score < bestScore ||
+            (score == bestScore && bestBlock != null && dy.abs() < bestAbs);
+        if (!better) continue;
+        bestScore = score;
+        bestAbs = dy.abs();
+        bestBlock = b;
+        bestDy = dy;
+      }
+    }
+    if (bestBlock == null) break;
+    moveBlock(bestBlock, bestDy);
+  }
+  // ---- 展开容器：子模型落位 + 边缘针脚对齐子模块端口 ----
+  // 容器针脚与子模型对应端口**同一水平线**，中间用一小段短线相连
+  // （父级连线只接容器边缘，不必钻进容器内部）。
+  for (final b in allBlocks) {
+    final sub = b.sub;
+    if (sub == null) continue;
+    b.subOffset = b.boxOrigin + const Offset(_kContainerPadX, _kContainerHead);
+    // 子模型的端口针脚（左输入 / 右输出+双向）。
+    NlPin? inner(String port, bool input) {
+      final blk = input ? sub.blocks.first : sub.blocks.last;
+      for (final p in (input ? blk.outs : blk.ins)) {
+        if (p.port == port || p.display == port) return p;
+      }
+      return null;
+    }
+
+    for (var i = 0; i < b.ins.length; i++) {
+      final ip = inner(b.ins[i].port, true);
+      if (ip == null) continue;
+      final y = b.subOffset.dy + ip.pos.dy;
+      b.ins[i].edge = Offset(b.boxOrigin.dx, y);
+      b.ins[i].pos = Offset(b.boxOrigin.dx - _kStub, y);
+      b.ins[i].routePos = b.ins[i].pos - const Offset(_kGrid, 0);
+      b.subLinks.add((b.ins[i].edge, b.subOffset + ip.pos));
+    }
+    for (var i = 0; i < b.outs.length; i++) {
+      final ip = inner(b.outs[i].port, false);
+      if (ip == null) continue;
+      final y = b.subOffset.dy + ip.pos.dy;
+      b.outs[i].edge = Offset(b.boxOrigin.dx + b.boxSize.width, y);
+      b.outs[i].pos = Offset(b.boxOrigin.dx + b.boxSize.width + _kStub, y);
+      b.outs[i].routePos = b.outs[i].pos + const Offset(_kGrid, 0);
+      b.subLinks.add((b.outs[i].edge, b.subOffset + ip.pos));
+    }
+  }
+
+  // 端口纵向对齐相连针脚 ----
+  double yOf(NlPin p, {required bool asSource}) {
+    if (asSource) {
+      // 优先对齐**相邻列**上的负载针脚：该跳会走简单 Z 并退化成直线；
+      // （多负载网若对齐到远列负载，相邻列那跳反而要多一次折弯）。
+      NlPin? adj, any;
+      for (final w in wires) {
+        if (!identical(w.from, p)) continue;
+        for (final l in w.loads) {
+          any ??= l;
+          if (colOfPin(l) == colOfPin(p) + 1) {
+            adj ??= l;
+          }
+        }
+      }
+      final t = adj ?? any;
+      if (t != null) return t.pos.dy;
+    } else {
+      // p 是**负载**（顶层输出端口）：对齐到驱动引脚所在的行。
+      for (final w in wires) {
+        for (final l in w.loads) {
+          if (identical(l, p)) return w.from.pos.dy;
+        }
+      }
+    }
+    return topY;
+  }
+
+  var maxInY = topY, maxOutY = topY;
+  final inPlaced = <(NlPin, double)>[
+    for (final p in inPins) (p, yOf(p, asSource: true)),
+  ]..sort((a, b) => a.$2.compareTo(b.$2));
+  var prevY = double.negativeInfinity;
+  for (final (p, y0) in inPlaced) {
+    final y = math.max(y0, prevY + _kPortGlyphH);
+    p.pos = Offset(inGlyphX + _kPortGlyphW, y);
+    p.edge = p.pos;
+    p.routePos = p.pos;
+    prevY = y;
+    maxInY = math.max(maxInY, y);
+  }
+  final outPlaced = <(NlPin, double)>[
+    for (final p in outPins) (p, yOf(p, asSource: false)),
+  ]..sort((a, b) => a.$2.compareTo(b.$2));
+  prevY = double.negativeInfinity;
+  for (final (p, y0) in outPlaced) {
+    final y = math.max(y0, prevY + _kPortGlyphH);
+    p.pos = Offset(outputAreaLeft, y);
+    p.edge = p.pos;
+    p.routePos = p.pos;
+    prevY = y;
+    maxOutY = math.max(maxOutY, y);
+  }
+  inBlock.boxOrigin = Offset(inTextLeft, topY);
+  inBlock.origin = inBlock.boxOrigin;
+  inBlock.boxSize = Size(inputAreaRight - inTextLeft, maxInY - topY);
+  inBlock.size = inBlock.boxSize;
+  outBlock.boxOrigin = Offset(outputAreaLeft, topY);
+  outBlock.origin = outBlock.boxOrigin;
+  outBlock.boxSize = Size(
+    _kPortGlyphW + _kPortTextGap + maxOutTextW,
+    maxOutY - topY,
+  );
+  outBlock.size = outBlock.boxSize;
+
+  // ---- 走线几何：一根网 = 干线（竖道/轨道）+ 各负载 T 型分支 ----
+  // 标签避让：先占位块体，再逐网挑不与已有标签重叠的候选段。
+  final takenLabels = <Rect>[
+    for (final b in allBlocks)
+      if (!b.isIo && b.boxSize.width > 0)
+        Rect.fromLTWH(
+          b.boxOrigin.dx,
+          b.boxOrigin.dy,
+          b.boxSize.width,
+          b.boxSize.height,
+        ),
+  ];
+
+  // **走线占用（按网区分）**：同网可以共享/合并干线；不同网的水平段、
+  // 垂直段都不得共线或近平行到线宽互相覆盖，只允许横竖十字交叉。
+  // `null` 属主表示端口符号等所有网都必须避让的保留区。
+  final horizOcc = <double, List<(NlWire?, double, double)>>{};
+  final vertOcc = <double, List<(NlWire?, double, double)>>{};
+  bool freeSpan(
+    Map<double, List<(NlWire?, double, double)>> occ,
+    NlWire wire,
+    double axis,
+    double a,
+    double b,
+  ) {
+    final lo = math.min(a, b), hi = math.max(a, b);
+    for (final entry in occ.entries) {
+      // 中心线同轴或间距不足一个 Grid 都视为占用，防止总线/单信号线宽视觉覆盖。
+      if ((entry.key - axis).abs() >= _kNetClearance) continue;
+      for (final s in entry.value) {
+        if (s.$1 != null && identical(s.$1, wire)) continue;
+        if (s.$2 < hi - 0.01 && s.$3 > lo + 0.01) return false;
+      }
+    }
+    return true;
+  }
+
+  void occupySpan(
+    Map<double, List<(NlWire?, double, double)>> occ,
+    NlWire? wire,
+    double axis,
+    double a,
+    double b,
+  ) {
+    (occ[axis] ??= []).add((wire, math.min(a, b), math.max(a, b)));
+  }
+
+  void occupySegment(NlWire wire, Offset a, Offset b) {
+    if ((a.dy - b.dy).abs() < 0.01) {
+      occupySpan(horizOcc, wire, a.dy, a.dx, b.dx);
+    } else if ((a.dx - b.dx).abs() < 0.01) {
+      occupySpan(vertOcc, wire, a.dx, a.dy, b.dy);
+    }
+  }
+
+  // 端口符号区先占位：任何横线都不得从端口符号上穿过（否则看着像线接到了
+  // 端口上或从端口底下钻过去）。直连段从端口**连接点**起步，与符号区仅相切。
+  for (final p in [...inPins, ...outPins]) {
+    final left = p.isPortInput ? p.pos.dx - _kPortGlyphW : p.pos.dx;
+    occupySpan(horizOcc, null, p.pos.dy, left, left + _kPortGlyphW);
+  }
+
+  // 针脚短线与 pos → routePos 首段都纳入间距占用：其它网不得共线或靠近。
+  for (final w in wires) {
+    for (final (a, b) in nlWirePinStubs(w)) {
+      occupySegment(w, a, b);
+    }
+  }
+  // pos 是针脚节点，不允许与 pin 方向垂直的走线经过：侧向 pin 禁止竖线
+  // 穿越，底边 pin 禁止横线穿越。±1px 保留区间连“恰好终止于 pos”的
+  // 候选也会排除，且 null 属主使同网同样不能违规穿越。
+  for (final b in allBlocks) {
+    if (b.isIo) continue;
+    for (final p in [...b.ins, ...b.outs]) {
+      if ((p.pos.dy - p.edge.dy).abs() < 0.01) {
+        occupySpan(vertOcc, null, p.pos.dx, p.pos.dy - 1.0, p.pos.dy + 1.0);
+      } else {
+        occupySpan(horizOcc, null, p.pos.dy, p.pos.dx - 1.0, p.pos.dx + 1.0);
+      }
+    }
+  }
+
+  /// 横段 `[x0,x1]` 在该 y 上是否会穿过**块体矩形**（几何阶段坐标已定，
+  /// 与行号模型相比这是权威判据：列高不同时跨列行号并不对齐）。
+  bool yClearOfBlocks(double y, double x0, double x1) {
+    final lo = math.min(x0, x1), hi = math.max(x0, x1);
+    for (final b in allBlocks) {
+      if (b.isIo || b.boxSize.width <= 0) continue;
+      final bx0 = b.boxOrigin.dx, bx1 = bx0 + b.boxSize.width;
+      if (hi <= bx0 + 0.5 || lo >= bx1 - 0.5) continue; // x 向不重叠
+      final by0 = b.boxOrigin.dy, by1 = by0 + b.boxSize.height;
+      if (y > by0 - 1.0 && y < by1 + 1.0) return false;
+    }
+    return true;
+  }
+
+  /// 竖折是否穿过块体或落在其边框上；底边针脚外延伸只与底边相切，
+  /// 不进入块体内部，侧边框上的竖折一律视为违规。
+  bool xClearOfBlocks(double x, double y0, double y1) {
+    final lo = math.min(y0, y1), hi = math.max(y0, y1);
+    for (final b in allBlocks) {
+      if (b.isIo || b.boxSize.width <= 0) continue;
+      final by0 = b.boxOrigin.dy, by1 = by0 + b.boxSize.height;
+      if (hi <= by0 + 0.5 || lo >= by1 - 0.5) continue;
+      final bx0 = b.boxOrigin.dx, bx1 = bx0 + b.boxSize.width;
+      if (x >= bx0 - 0.5 && x <= bx1 + 0.5) return false;
+    }
+    return true;
+  }
+
+  var overflowY = double.negativeInfinity;
+  final routingBottom = math.max(contentBottom, math.max(maxInY, maxOutY));
+
+  /// 为横段挑一个不与**其他网**重叠、也不穿过块体的 y；端部竖折同时
+  /// 检查垂直占用和块体。候选统一为 15px 网格，局部放不下时使用块区/轨道
+  /// 之外的新行（画布随 [overflowY] 加高），绝不以重叠作为兜底。
+  double pickY(
+    NlWire wire,
+    double want,
+    double x0,
+    double x1, {
+    bool jogStart = false,
+    bool jogEnd = false,
+  }) {
+    final lo = math.min(x0, x1), hi = math.max(x0, x1);
+    bool ok(double y) {
+      if (!freeSpan(horizOcc, wire, y, lo, hi) || !yClearOfBlocks(y, lo, hi)) {
+        return false;
+      }
+      if ((y - want).abs() < 0.01) return true;
+      if (jogStart &&
+          (!freeSpan(vertOcc, wire, x0, want, y) ||
+              !xClearOfBlocks(x0, want, y))) {
+        return false;
+      }
+      if (jogEnd &&
+          (!freeSpan(vertOcc, wire, x1, want, y) ||
+              !xClearOfBlocks(x1, want, y))) {
+        return false;
+      }
+      return true;
+    }
+
+    if (ok(want)) return want;
+    // 先围绕目标行双向找最近的网格行；旧实现局部失败后只向下找，
+    // 针脚竖折若已被其它网向下占用，会在上方仍有空位时无谓失败。
+    for (var i = 1; i <= 128; i++) {
+      final down = want + i * _kGrid;
+      if (ok(down)) return down;
+      final up = want - i * _kGrid;
+      if (up >= _kMargin && ok(up)) return up;
+    }
+    for (var i = 1; i <= 128; i++) {
+      final y = routingBottom + bandBotH + i * _kTrackGap;
+      if (!ok(y)) continue;
+      overflowY = math.max(overflowY, y);
+      return y;
+    }
+    final verticalBlockers = [
+      for (final e in vertOcc.entries)
+        if ((e.key - x1).abs() < _kNetClearance)
+          for (final s in e.value)
+            if (s.$1 == null || !identical(s.$1, wire))
+              '${s.$1?.from.ownerTitle}/${s.$1?.from.port} '
+                  '@${e.key}[${s.$2},${s.$3}]',
+    ];
+    throw StateError(
+      '走线无法满足无重叠/无穿块约束：'
+      '${wire.from.ownerTitle}/${wire.from.port} ${wire.label} '
+      'want=$want x=[$x0,$x1] jog=[$jogStart,$jogEnd] '
+      'vBlock=${verticalBlockers.take(12).join(';')}',
+    );
+  }
+
+  /// 该网是否为「驱动与全部负载同行、无轨道」的直连形态。
+  bool isStraightNet(NlWire w) =>
+      trackOf[w] == null &&
+      (zL[w] == null || zL[w]!.isEmpty) &&
+      (zR[w] ?? const <NlPin>[]).every(
+        (l) => (l.routePos.dy - w.from.routePos.dy).abs() < 0.01,
+      );
+
+  final localSuccess = <NlWire, bool>{};
+  final triedRightLocal = <NlWire, bool>{};
+  void genGeom(NlWire w, {required bool straightOnly, int attempt = 0}) {
+    w.trackLoads = 0;
+    final horizBackup = {
+      for (final e in horizOcc.entries) e.key: [...e.value],
+    };
+    final vertBackup = {
+      for (final e in vertOcc.entries) e.key: [...e.value],
+    };
+    final overflowBackup = overflowY;
+    try {
+      final segs = <(Offset, Offset)>[];
+      void seg(Offset a, Offset b) {
+        if ((a - b).distance < 0.01) return;
+        segs.add((a, b));
+        occupySegment(w, a, b);
+      }
+
+      final straight = isStraightNet(w);
+      if (straightOnly != straight) return;
+      final sc = colOfPin(w.from);
+      final rl = zR[w];
+      final ll = zL[w];
+      final tmap = tl[w] ?? const <int, List<NlPin>>{};
+      final rx = (rl != null && rl.isNotEmpty) || tmap.isNotEmpty
+          ? rightLaneXOf(w)
+          : 0.0;
+      final lx = (ll != null && ll.isNotEmpty) ? leftLaneXOf(w, sc) : 0.0;
+      final from = w.from.routePos;
+      seg(w.from.pos, from);
+
+      /// 先画 pos → routePos 的一个 Grid 首段，再从 routePos 接入通道。
+      /// 若 routePos 上的竖折被其它网封死，在通道与 routePos 之间选择
+      /// Grid 逃逸折点；所有段仍逐一经过异网间距和块体禁入检查。
+      double loadBranch(NlPin l, double tx) {
+        final route = l.routePos;
+        seg(l.pos, route);
+        try {
+          final yl = pickY(w, route.dy, tx, route.dx, jogEnd: true);
+          if ((yl - route.dy).abs() > 0.01) {
+            seg(Offset(route.dx, yl), route);
+          }
+          seg(Offset(tx, yl), Offset(route.dx, yl));
+          return yl;
+        } on StateError {
+          final direction = (route.dx - tx).sign;
+          final steps = ((route.dx - tx).abs() / _kGrid).floor();
+          for (var i = 1; i <= 128 && steps > 1; i++) {
+            for (final yl in [route.dy + i * _kGrid, route.dy - i * _kGrid]) {
+              if (yl < _kMargin) continue;
+              for (var k = 1; k < steps; k++) {
+                // 先向通道侧找，碰到 pos/edge 时同步尝试 pin 外侧；
+                // 不允许为了逃避免线而退回针脚短线或元件框。
+                for (final jogX in [
+                  route.dx - direction * k * _kGrid,
+                  route.dx + direction * k * _kGrid,
+                ]) {
+                  if (!freeSpan(horizOcc, w, yl, tx, jogX) ||
+                      !yClearOfBlocks(yl, tx, jogX) ||
+                      !freeSpan(vertOcc, w, jogX, route.dy, yl) ||
+                      !xClearOfBlocks(jogX, route.dy, yl) ||
+                      !freeSpan(horizOcc, w, route.dy, jogX, route.dx) ||
+                      !yClearOfBlocks(route.dy, jogX, route.dx)) {
+                    continue;
+                  }
+                  seg(Offset(tx, yl), Offset(jogX, yl));
+                  seg(Offset(jogX, yl), Offset(jogX, route.dy));
+                  seg(Offset(jogX, route.dy), route);
+                  if (yl > routingBottom + bandBotH) {
+                    overflowY = math.max(overflowY, yl);
+                  }
+                  return yl;
+                }
+              }
+            }
+          }
+          rethrow;
+        }
+      }
+
+      if (straight) {
+        // 同网的多个直连负载共享干线；只有其他网已经占用时才错行。
+        for (final l in rl ?? const <NlPin>[]) {
+          final route = l.routePos;
+          final y = pickY(
+            w,
+            from.dy,
+            from.dx,
+            route.dx,
+            jogStart: true,
+            jogEnd: true,
+          );
+          if ((y - from.dy).abs() > 0.01) {
+            seg(Offset(from.dx, from.dy), Offset(from.dx, y));
+            seg(Offset(from.dx, y), Offset(route.dx, y));
+            seg(Offset(route.dx, y), route);
+          } else {
+            seg(from, route);
+          }
+          seg(l.pos, route);
+        }
+        w.segments = _mergeSegments(segs);
+        w.junctions = nlFindJunctions(w.segments);
+        _placeBranchLabels(w, takenLabels);
+        _placeLabel(w, takenLabels);
+        return;
+      }
+
+      // 右通道 Z（前向相邻列 + 走廊跨列）：横段错到行间，两端各接竖折。
+      if (rl != null && rl.isNotEmpty) {
+        final yDrv = pickY(w, from.dy, from.dx, rx, jogStart: true);
+        if ((yDrv - from.dy).abs() > 0.01) {
+          seg(from, Offset(from.dx, yDrv));
+        }
+        seg(Offset(from.dx, yDrv), Offset(rx, yDrv));
+        final ys = <double>[yDrv];
+        for (final l in rl) {
+          ys.add(loadBranch(l, rx));
+        }
+        seg(Offset(rx, ys.reduce(math.min)), Offset(rx, ys.reduce(math.max)));
+      }
+      // 左侧局部通道失败后的右侧局部通道已成功，不必再上长轨道。
+      if (triedRightLocal[w] == true) localSuccess[w] = true;
+
+      // 左通道 Z（回向相邻列：如输出侧端口驱动块右缘引脚）。
+      if (ll != null && ll.isNotEmpty) {
+        final yDrv = pickY(w, from.dy, lx, from.dx, jogEnd: true);
+        if ((yDrv - from.dy).abs() > 0.01) {
+          seg(from, Offset(from.dx, yDrv));
+        }
+        seg(Offset(lx, yDrv), Offset(from.dx, yDrv));
+        final ys = <double>[yDrv];
+        for (final l in ll) {
+          ys.add(loadBranch(l, lx));
+        }
+        seg(Offset(lx, ys.reduce(math.min)), Offset(lx, ys.reduce(math.max)));
+      }
+      if (ll != null && ll.isNotEmpty && tl[w] != null) {
+        localSuccess[w] = true;
+      }
+
+      // 轨道负载：驱动 → 竖道上行/下行 → 轨道横穿（上带或下带）→ 各目标列
+      // 左通道竖道 → 该列各负载（每列只一条竖道 + 各负载短分支）。
+      final t = trackOf[w];
+      if (t != null && localSuccess[w] != true) {
+        w.trackLoads = tmap.values.fold<int>(0, (n, ls) => n + ls.length);
+        final ty = (trackBottom[w] ?? false)
+            ? contentBottom + _kTrackGap * (t + 1)
+            : _kMargin + _kTrackGap * (t + 1);
+        final yDrv = pickY(w, from.dy, from.dx, rx, jogStart: true);
+        if ((yDrv - from.dy).abs() > 0.01) {
+          seg(from, Offset(from.dx, yDrv));
+        }
+        seg(Offset(from.dx, yDrv), Offset(rx, yDrv));
+        seg(Offset(rx, yDrv), Offset(rx, ty));
+        final cols = tmap.keys.toList()..sort();
+        final laneXs = [for (final c in cols) leftLaneXOf(w, c)];
+        if (laneXs.isNotEmpty) {
+          seg(
+            Offset(math.min(rx, laneXs.reduce(math.min)), ty),
+            Offset(math.max(rx, laneXs.reduce(math.max)), ty),
+          );
+        }
+        for (var i = 0; i < cols.length; i++) {
+          final c = cols[i];
+          final tx = laneXs[i];
+          final ls = tmap[c]!;
+          final ys = <double>[ty];
+          for (final l in ls) {
+            ys.add(loadBranch(l, tx));
+          }
+          seg(Offset(tx, ys.reduce(math.min)), Offset(tx, ys.reduce(math.max)));
+        }
+      }
+      w.segments = _mergeSegments(segs);
+      w.junctions = nlFindJunctions(w.segments);
+      _placeBranchLabels(w, takenLabels);
+      _placeLabel(w, takenLabels);
+    } on StateError {
+      if (tl[w] == null || attempt >= 4) rethrow;
+      horizOcc
+        ..clear()
+        ..addAll(horizBackup);
+      vertOcc
+        ..clear()
+        ..addAll(vertBackup);
+      overflowY = overflowBackup;
+      // 同列左侧局部通道不可行时，先改试右侧局部通道；两侧都失败
+      // 才回退到原有长轨道，其它网不受影响。
+      if (zL[w] != null && zR[w] == null && triedRightLocal[w] != true) {
+        triedRightLocal[w] = true;
+        zR[w] = zL[w]!;
+        zL.remove(w);
+        localSuccess[w] = false;
+        genGeom(w, straightOnly: straightOnly, attempt: attempt + 1);
+        return;
+      }
+      zL.remove(w);
+      zR.remove(w);
+      localSuccess[w] = false;
+      genGeom(w, straightOnly: straightOnly, attempt: attempt + 1);
+    }
+  }
+
+  // 扇出负载按目标列、纵坐标排序，分支从共享干线上依次发出，不再按
+  // 单元发现顺序上下乱跳。
+  int loadOrder(NlPin a, NlPin b) {
+    final byCol = colOfPin(a).compareTo(colOfPin(b));
+    if (byCol != 0) return byCol;
+    final byY = a.pos.dy.compareTo(b.pos.dy);
+    return byY != 0 ? byY : a.display.compareTo(b.display);
+  }
+
+  for (final w in wires) {
+    w.loads.sort(loadOrder);
+    zR[w]?.sort(loadOrder);
+    zL[w]?.sort(loadOrder);
+    for (final ls in (tl[w] ?? const <int, List<NlPin>>{}).values) {
+      ls.sort(loadOrder);
+    }
+  }
+
+  // 轨道横段先登记，后续 Z 走线不会误入其他网的轨道；真正生成线段时
+  // 同网重复登记不影响结果。
+  for (final w in trackWires) {
+    final t = trackOf[w]!;
+    final ty = (trackBottom[w] ?? false)
+        ? contentBottom + _kTrackGap * (t + 1)
+        : _kMargin + _kTrackGap * (t + 1);
+    final rx = rightLaneXOf(w);
+    final xs = <double>[
+      rx,
+      for (final c in (tl[w] ?? const <int, List<NlPin>>{}).keys)
+        leftLaneXOf(w, c),
+    ];
+    occupySpan(horizOcc, w, ty, xs.reduce(math.min), xs.reduce(math.max));
+  }
+
+  // 通道竖道在布线前按网预留：主干竖段此前只在末尾补画，可能与先生成
+  // 的其它网针脚竖折共线。整段预留后，其它网的竖折/逃逸折点会主动避开；
+  // 属主网自身仍可在该 x 上合并任意主干与分支。
+  for (final e in rightOf.entries) {
+    for (var i = 0; i < e.value.length; i++) {
+      occupySpan(vertOcc, e.value[i], rightLaneX(e.key, i), -1e6, 1e6);
+    }
+  }
+  for (final e in leftOf.entries) {
+    for (var i = 0; i < e.value.length; i++) {
+      occupySpan(vertOcc, e.value[i].$1, leftLaneX(e.key, i), -1e6, 1e6);
+    }
+  }
+
+  // 两趟：直连网先占针脚行，其余网再避让。
+  for (final w in wires) {
+    genGeom(w, straightOnly: true);
+  }
+  for (final w in wires) {
+    genGeom(w, straightOnly: false);
+  }
+
+  final canvasH = math.max(
+    routingBottom + bandBotH + _kMargin,
+    overflowY + _kTrackGap + _kMargin,
+  );
+
+  // 兜底硬约束：竖道偏移会把竖道推离预留槽位，逐段占用检查可能漏掉
+  // 异网同轴重叠；带偏移的候选一律复检，重叠几何按无法布通淘汰。
+  if (plan.laneOffsets.isNotEmpty &&
+      _nlHasNetOverlapFor(wires, plan.laneOffsets.keys.toSet())) {
+    throw StateError('异网重叠（竖道偏移冲突）');
+  }
+
+  return NetlistDiagramModel(
+    blocks: allBlocks,
+    wires: wires,
+    canvasSize: Size(canvasW, canvasH),
+    moduleName: module.name,
+    cellCount: module.cells.length,
+    trackCount: trackEndTop.length + trackEndBot.length,
+    zLoadCount:
+        zR.values.fold<int>(0, (a, l) => a + l.length) +
+        zL.values.fold<int>(0, (a, l) => a + l.length),
+    trackLoadCount: tl.values.fold<int>(
+      0,
+      (a, m) => a + m.values.fold<int>(0, (x, l) => x + l.length),
+    ),
+    crossingCount: nlWireCrossingCount(wires),
+    routingPlan: plan,
+  );
+}
+
+/// 一根网的显示名：优先取覆盖当前比特集合最多的**可读**网段，保留实际
+/// 位段范围；全是 yosys 生成名时退回 `<实例>_<端口>` 派生名。
+///
+/// 与顶层端口完整同名的网**返回空串**（端口外侧已有名字）；部分位段必须
+/// 保留范围标签，否则多个驱动源接到同一总线时无法区分各自占用哪些位。
+String _netLabelForBits(NlPin from, List<int> bits, List<NlPin> loads) {
+  bool readable(String n) =>
+      n.isNotEmpty && !n.contains(r'$') && !n.contains(RegExp(r'\.v:\d+'));
+  final wanted = bits.toSet();
+  int coverage(NetlistNet net) {
+    var n = 0;
+    for (final bit in net.bits) {
+      if (wanted.contains(bit)) n++;
+    }
+    return n;
+  }
+
+  // 优先选择覆盖当前比特集合最多的真实网段。驱动端优先用于同覆盖的
+  // 平局，因此部分位段会保留 `n1_res_l[7:0]` 这样的精确范围。
+  var name = '';
+  var best = 0;
+  for (final owner in [from, ...loads]) {
+    for (final net in owner.nets) {
+      if (net.isConst || !readable(net.name)) continue;
+      final score = coverage(net);
+      if (score > best) {
+        best = score;
+        name = net.display;
+      }
+    }
+  }
+  if (name.isEmpty) {
+    name = '${from.ownerTitle}_${from.port}';
+    // 无真实可读名时，部分位段也保留范围，避免同一针脚的派生网混淆。
+    if (bits.length < from.bits.length) {
+      for (final net in from.nets) {
+        if (net.range.isNotEmpty && wanted.every(net.bits.contains)) {
+          name += net.range;
+          break;
+        }
+      }
+    }
+  }
+  // 非等宽连接：标注源输出在本次连接中实际使用的连续位域，例如
+  // `n1_hwrap[16:0]` 只取低 8 位时标为 `n1_hwrap[7:0]`。
+  final positions = [for (final bit in bits) from.bits.indexOf(bit)]..sort();
+  var usedRange = '';
+  if (positions.isNotEmpty &&
+      positions.length < from.bits.length &&
+      positions.last - positions.first + 1 == positions.length) {
+    final lo = positions.first, hi = positions.last;
+    usedRange = lo == hi ? '[$lo]' : '[$hi:$lo]';
+  }
+  if (usedRange.isNotEmpty) {
+    NetlistNet? source;
+    for (final net in from.nets) {
+      if (net.isConst ||
+          !readable(net.name) ||
+          !wanted.every(net.bits.contains)) {
+        continue;
+      }
+      // 同源别名覆盖相同时取更宽的原始网，以便保留源总线名称。
+      if (source == null || net.bits.length > source.bits.length) {
+        source = net;
+      }
+    }
+    if (source != null) {
+      name = source.range == usedRange
+          ? source.display
+          : '${source.name}$usedRange';
+    } else if (!RegExp(r'\[\d+(?::\d+)?\]$').hasMatch(name)) {
+      name += usedRange;
+    }
+  }
+  // 完整端口名已画在符号外侧，不重复标注；部分位段（如 `n[7:0]`）
+  // 即使与端口同基名也必须保留，否则无法区分各驱动源占用的比特。
+  final base = name.replaceFirst(RegExp(r'\[\d+(?::\d+)?\]$'), '');
+  final hasRange = base != name;
+  for (final p in [from, ...loads]) {
+    if (!p.isPort) continue;
+    if (p.display == name) return '';
+    if (!hasRange) {
+      final pbase = p.display.replaceFirst(RegExp(r'\[\d+(?::\d+)?\]$'), '');
+      if (p.port == base || pbase == base) return '';
+    }
+  }
+  return name;
+}
+
+/// 计算某个负载分支应显示的上游实际位域：按该负载实际使用的源输出
+/// 比特位置求连续范围，避免把整段源位域误标到位宽不同的下游输入上。
+String _sourceLabelForLoad(NlWire wire, NlPin load) {
+  if (load.width == wire.from.bits.length || wire.label.isEmpty) return '';
+  final positions = <int>[
+    for (final bit in wire.bits)
+      if (load.bits.contains(bit)) wire.from.bits.indexOf(bit),
+  ]..sort();
+  if (positions.isEmpty) return '';
+  var range = '';
+  if (positions.last - positions.first + 1 == positions.length) {
+    final lo = positions.first, hi = positions.last;
+    range = lo == hi ? '[$lo]' : '[$hi:$lo]';
+  }
+  if (range.isEmpty) return wire.label;
+  final base = wire.label.replaceFirst(RegExp(r'\[\d+(?::\d+)?\]$'), '');
+  return '$base$range';
+}
+
+/// 文本宽度近似（布局期无画布，按字号 × 字符数估算）。
+double _tw(String s, double size) => s.runes.length * size * 0.56;
+
+/// 网名锚点（基线锚点：左端 x + 基线 y）与宽度。
+///
+/// 候选段**按离驱动端的远近排序**（Vivado 惯例：网名贴驱动端/针脚旁），
+/// 并做**矩形避让**（先占位块体与已放标签）——这样顶部轨道带里不会再堆出
+/// 一团互相压盖的标签（轨道段通常离驱动端最远，只在别处放不下时才用）。
+void _placeLabel(NlWire w, List<Rect> taken) {
+  if (w.label.isEmpty || w.branchLabels.isNotEmpty) {
+    w.labelAt = Offset.zero;
+    w.labelWidth = 0;
+    return;
+  }
+  w.labelWidth = _tw(w.label, 9.5);
+  Rect rectOf(Offset a, Offset b) {
+    final midX = (a.dx + b.dx) / 2;
+    final x0 = math.max(math.min(a.dx, b.dx), midX - w.labelWidth / 2);
+    final y = a.dy - 3; // 基线
+    return Rect.fromLTWH(x0 - 2, y - 11, w.labelWidth + 4, 13);
+  }
+
+  final cands = <(Offset, Offset)>[];
+  for (final (a, b) in w.segments) {
+    if ((a.dy - b.dy).abs() > 0.01) continue;
+    if ((a.dx - b.dx).abs() < w.labelWidth + 8) continue;
+    cands.add((a, b));
+  }
+  cands.sort(
+    (p, q) => (p.$1.dx - w.from.pos.dx).abs().compareTo(
+      (q.$1.dx - w.from.pos.dx).abs(),
+    ),
+  );
+
+  for (final c in cands.take(4)) {
+    final r = rectOf(c.$1, c.$2);
+    if (taken.any((t) => t.overlaps(r))) continue;
+    taken.add(r);
+    w.labelAt = Offset(r.left + 2, r.top + 11);
+    return;
+  }
+  if (cands.isNotEmpty) {
+    final r = rectOf(cands.first.$1, cands.first.$2);
+    taken.add(r);
+    w.labelAt = Offset(r.left + 2, r.top + 11);
+    return;
+  }
+  // 没有足够长的水平段：退回驱动端上方（仍占位以避免叠字）。
+  w.labelAt = Offset(w.from.pos.dx + 5, w.from.pos.dy - 3);
+  taken.add(
+    Rect.fromLTWH(w.labelAt.dx - 2, w.labelAt.dy - 11, w.labelWidth + 4, 13),
+  );
+}
+
+/// 为非等宽连接的每个负载计算并摆放上游实际位域标签，优先放在该分支
+/// 的水平线段附近；组合长标签在存在分支标签时不再显示。
+void _placeBranchLabels(NlWire w, List<Rect> taken) {
+  w.branchLabels.clear();
+  for (final p in w.loads) {
+    p.branchLabel = null;
+    p.branchLabelAt = Offset.zero;
+    p.branchLabelWidth = 0;
+    final text = _sourceLabelForLoad(w, p);
+    if (text.isEmpty) continue;
+    w.branchLabels[p] = text;
+    p.branchLabel = text;
+    final width = _tw(text, 9.5);
+    p.branchLabelWidth = width;
+    final pinSide = (p.routePos.dx - p.edge.dx).sign;
+    double nearLoad(double anchor) {
+      if (pinSide < 0) return anchor - width - 5;
+      if (pinSide > 0) return anchor + 5;
+      return anchor - width / 2;
+    }
+
+    final cands = <(Offset, Offset)>[];
+    for (final (a, b) in w.segments) {
+      if ((a.dy - b.dy).abs() > 0.01) continue;
+      if ((a.dx - b.dx).abs() < width + 8) continue;
+      if (_distToSeg(p.routePos, a, b) > 0.01 &&
+          _distToSeg(p.pos, a, b) > 0.01) {
+        continue;
+      }
+      cands.add((a, b));
+    }
+    cands.sort((p0, q0) {
+      double distance((Offset, Offset) segment) =>
+          ((segment.$1.dx + segment.$2.dx) / 2 - p.routePos.dx).abs();
+      return distance(p0).compareTo(distance(q0));
+    });
+
+    var placed = false;
+    for (final (a, b) in cands.take(4)) {
+      final lo = math.min(a.dx, b.dx);
+      final hi = math.max(a.dx, b.dx);
+      final anchor = _distToSeg(p.routePos, a, b) <= 0.01
+          ? p.routePos.dx
+          : p.pos.dx;
+      final x0 = nearLoad(anchor).clamp(lo, hi - width).toDouble();
+      final r = Rect.fromLTWH(x0 - 2, a.dy - 14, width + 4, 13);
+      if (taken.any((t) => t.overlaps(r))) continue;
+      taken.add(r);
+      p.branchLabelAt = Offset(r.left + 2, r.top + 11);
+      placed = true;
+      break;
+    }
+    if (placed) continue;
+    for (final d in const [0.0, 10.0, 20.0, 30.0, 40.0, 60.0, 80.0]) {
+      final at = Offset(nearLoad(p.routePos.dx), p.routePos.dy - 3 - d);
+      final r = Rect.fromLTWH(at.dx - 2, at.dy - 11, width + 4, 13);
+      if (taken.any((t) => t.overlaps(r))) continue;
+      taken.add(r);
+      p.branchLabelAt = at;
+      placed = true;
+      break;
+    }
+    if (!placed) {
+      final at = Offset(nearLoad(p.routePos.dx), p.routePos.dy - 3);
+      taken.add(Rect.fromLTWH(at.dx - 2, at.dy - 11, width + 4, 13));
+      p.branchLabelAt = at;
+    }
+  }
+}
+
+String _nlWireRouteKey(NlWire wire) =>
+    '${wire.from.ownerTitle}/${wire.from.port}[${wire.bits.join(',')}]';
+
+/// 每根网参与的实际横竖交叉数（每对网内部按坐标去重），用于候选排序。
+List<int> nlWireCrossingCounts(List<NlWire> wires) {
+  final counts = List<int>.filled(wires.length, 0);
+  for (var i = 0; i < wires.length; i++) {
+    for (var j = i + 1; j < wires.length; j++) {
+      final pair = <(double, double)>{};
+      for (final (a, b) in wires[i].segments) {
+        for (final (c, d) in wires[j].segments) {
+          final ah = (a.dy - b.dy).abs() < 0.01;
+          final bh = (c.dy - d.dy).abs() < 0.01;
+          if (ah == bh) continue;
+          final h0 = ah ? a : c, h1 = ah ? b : d;
+          final v0 = ah ? c : a, v1 = ah ? d : b;
+          final x = v0.dx, y = h0.dy;
+          final inH =
+              x >= math.min(h0.dx, h1.dx) - 0.01 &&
+              x <= math.max(h0.dx, h1.dx) + 0.01;
+          final inV =
+              y >= math.min(v0.dy, v1.dy) - 0.01 &&
+              y <= math.max(v0.dy, v1.dy) + 0.01;
+          if (inH && inV) pair.add((x, y));
+        }
+      }
+      counts[i] += pair.length;
+      counts[j] += pair.length;
+    }
+  }
+  return counts;
+}
+
+/// 实际走线的横竖交叉数（按网对与坐标去重），供多轮优化统一评分。
+int nlWireCrossingCount(List<NlWire> wires) =>
+    nlWireCrossingCounts(wires).fold<int>(0, (a, n) => a + n) ~/ 2;
+
+/// 统计一根网的实际折点：普通 L 转角与同网 T/十字分支点各计 1 个，
+/// 同一坐标只计一次；直线经过 pin 或不同网交叉不计折点。
+int nlWireBendCount(NlWire wire) {
+  String keyOf(Offset p) => '${(p.dx * 1000).round()}:${(p.dy * 1000).round()}';
+  final endpointDirections = <String, int>{};
+  void addEndpoint(Offset p, int direction) {
+    final key = keyOf(p);
+    endpointDirections[key] = (endpointDirections[key] ?? 0) | direction;
+  }
+
+  for (final (a, b) in wire.segments) {
+    final horizontal = (a.dy - b.dy).abs() < 0.01;
+    final vertical = (a.dx - b.dx).abs() < 0.01;
+    if (!horizontal && !vertical) continue;
+    final direction = horizontal ? 1 : 2;
+    addEndpoint(a, direction);
+    addEndpoint(b, direction);
+  }
+  return <String>{
+    for (final entry in endpointDirections.entries)
+      if (entry.value == 3) entry.key,
+    for (final junction in wire.junctions) keyOf(junction),
+  }.length;
+}
+
+/// 整个布局的折点数，供多轮优化与同分布局校验使用。
+int nlRoutingBendCount(NetlistDiagramModel model) =>
+    model.wires.fold<int>(0, (sum, wire) => sum + nlWireBendCount(wire));
+
+/// 手动优化与学习共用的完整评价：三级指标 + 全部几何硬约束。
+class NlRoutingMetrics {
+  final int crossings;
+  final int bends;
+  final double length;
+  final List<String> violations;
+
+  const NlRoutingMetrics({
+    required this.crossings,
+    required this.bends,
+    required this.length,
+    required this.violations,
+  });
+
+  bool get isValid => violations.isEmpty;
+
+  /// 与自动优化完全一致：交叉数 → 折点数 → 总长度。
+  int compareTo(NlRoutingMetrics other) {
+    var result = crossings.compareTo(other.crossings);
+    if (result != 0) return result;
+    result = bends.compareTo(other.bends);
+    if (result != 0) return result;
+    if ((length - other.length).abs() < 0.01) return 0;
+    return length.compareTo(other.length);
+  }
+}
+
+NlRoutingMetrics evaluateNetlistRouting(
+  NetlistDiagramModel model, {
+  bool checkPinStubs = true,
+}) {
+  var length = 0.0;
+  for (final wire in model.wires) {
+    for (final (a, b) in wire.segments) {
+      length += (b - a).distance;
+    }
+  }
+  return NlRoutingMetrics(
+    crossings: model.crossingCount,
+    bends: nlRoutingBendCount(model),
+    length: length,
+    violations: [
+      ...nlFindBlockCrossings(model),
+      ...nlFindNetOverlaps(model.wires),
+      ...nlFindGridViolations(model),
+      if (checkPinStubs) ...nlFindPinStubViolations(model),
+    ],
+  );
+}
+
+typedef _NlRoutingScore = ({int crossings, int bends, double length});
+
+/// P95 单网弯折数（最近秩）：只用于同分状态的展开排序，
+/// 不进入三级收敛评分，也不参与收敛判定。
+int _nlRoutingP95Bends(NetlistDiagramModel model) {
+  final bends = [for (final w in model.wires) nlWireBendCount(w)]..sort();
+  if (bends.isEmpty) return 0;
+  final idx = (0.95 * bends.length).ceil() - 1;
+  return bends[idx.clamp(0, bends.length - 1)];
+}
+
+_NlRoutingScore _nlRoutingScore(NetlistDiagramModel model) {
+  var length = 0.0;
+  for (final wire in model.wires) {
+    for (final (a, b) in wire.segments) {
+      length += (b - a).distance;
+    }
+  }
+  return (
+    crossings: model.crossingCount,
+    bends: nlRoutingBendCount(model),
+    length: length,
+  );
+}
+
+/// 收敛只按用户指定的三级目标：先最少交叉，再最少折点，最后最短总走线。
+int _nlRoutingScoreCompare(_NlRoutingScore a, _NlRoutingScore b) {
+  var result = a.crossings.compareTo(b.crossings);
+  if (result != 0) return result;
+  result = a.bends.compareTo(b.bends);
+  if (result != 0) return result;
+  if ((a.length - b.length).abs() < 0.01) return 0;
+  return a.length.compareTo(b.length);
+}
+
+/// 布局同一性用于同分去重：比较块、pin 与规范化走线段，不比较标签位置。
+String nlRoutingGeometrySignature(NetlistDiagramModel model) {
+  String n(double value) => value.toStringAsFixed(2);
+  String segmentKey((Offset, Offset) segment) {
+    var a = segment.$1, b = segment.$2;
+    if (a.dx > b.dx || (a.dx == b.dx && a.dy > b.dy)) {
+      final tmp = a;
+      a = b;
+      b = tmp;
+    }
+    return '${n(a.dx)},${n(a.dy)}-${n(b.dx)},${n(b.dy)}';
+  }
+
+  final out = StringBuffer(
+    '${n(model.canvasSize.width)}x${n(model.canvasSize.height)}',
+  );
+  for (final block in model.blocks) {
+    out.write(
+      '|B${block.id}:${n(block.boxOrigin.dx)},${n(block.boxOrigin.dy)},'
+      '${n(block.boxSize.width)},${n(block.boxSize.height)}',
+    );
+    for (final pin in [...block.ins, ...block.outs]) {
+      out.write(
+        ':${pin.port}@${n(pin.edge.dx)},${n(pin.edge.dy)},'
+        '${n(pin.pos.dx)},${n(pin.pos.dy)},'
+        '${n(pin.routePos.dx)},${n(pin.routePos.dy)}',
+      );
+    }
+  }
+  for (final wire in model.wires) {
+    out.write('|W${_nlWireRouteKey(wire)}');
+    final segments = wire.segments.map(segmentKey).toList()..sort();
+    for (final segment in segments) {
+      out.write(':$segment');
+    }
+  }
+  return out.toString();
+}
+
+NetlistDiagramModel _nlWithOptimizationReport(
+  NetlistDiagramModel model, {
+  required int rounds,
+  required int evaluations,
+  required bool converged,
+  List<NetlistDiagramModel> variants = const [],
+}) {
+  return NetlistDiagramModel(
+    blocks: model.blocks,
+    wires: model.wires,
+    canvasSize: model.canvasSize,
+    moduleName: model.moduleName,
+    cellCount: model.cellCount,
+    trackCount: model.trackCount,
+    zLoadCount: model.zLoadCount,
+    trackLoadCount: model.trackLoadCount,
+    crossingCount: model.crossingCount,
+    optimizationRounds: rounds,
+    optimizationEvaluations: evaluations,
+    optimizationConverged: converged,
+    routingPlan: model.routingPlan,
+    optimizationVariants: variants,
+  );
+}
+
+bool _nlWireHasSameColumnLoad(NetlistDiagramModel model, NlWire wire) {
+  int? columnOf(NlPin pin) {
+    for (final block in model.blocks) {
+      if (block.ins.contains(pin) || block.outs.contains(pin)) {
+        return block.column;
+      }
+    }
+    return null;
+  }
+
+  final sourceCol = columnOf(wire.from);
+  if (sourceCol == null) return false;
+  return wire.loads.any((load) => columnOf(load) == sourceCol);
+}
+
+/// 竖道排序用的简化 Z 走线：源横段 → 竖道 → 各目标横段。
+/// 坐标只表达左右与上下关系，用于比较交叉数量，不是最终画布坐标。
+typedef _NlLanePath = ({
+  double sourceX,
+  double sourceY,
+  List<(double, double)> targets,
+});
+
+/// 两条简化 Z 走线在不同竖道上的横竖交叉数。
+int _nlLanePathCrossings(_NlLanePath a, double ax, _NlLanePath b, double bx) {
+  int verticalHits(
+    _NlLanePath vertical,
+    double vx,
+    _NlLanePath horizontal,
+    double hx,
+  ) {
+    var lo = vertical.sourceY, hi = vertical.sourceY;
+    for (final target in vertical.targets) {
+      lo = math.min(lo, target.$2);
+      hi = math.max(hi, target.$2);
+    }
+    if (hi - lo < 0.01) return 0;
+    var hits = 0;
+    bool crosses(double x0, double x1, double y) {
+      if ((x1 - x0).abs() < 0.01) return false;
+      return vx > math.min(x0, x1) - 0.01 &&
+          vx < math.max(x0, x1) + 0.01 &&
+          y > lo - 0.01 &&
+          y < hi + 0.01;
+    }
+
+    if (crosses(horizontal.sourceX, hx, horizontal.sourceY)) hits++;
+    for (final target in horizontal.targets) {
+      if (crosses(hx, target.$1, target.$2)) hits++;
+    }
+    return hits;
+  }
+
+  return verticalHits(a, ax, b, bx) + verticalHits(b, bx, a, ax);
+}
+
+int _nlLaneOrderCost<T>(List<T> items, Map<T, _NlLanePath> paths, bool left) {
+  var cost = 0;
+  double laneX(int index) =>
+      left ? -(index + 1).toDouble() : (index + 1).toDouble();
+  for (var i = 0; i < items.length; i++) {
+    for (var j = i + 1; j < items.length; j++) {
+      cost += _nlLanePathCrossings(
+        paths[items[i]]!,
+        laneX(i),
+        paths[items[j]]!,
+        laneX(j),
+      );
+    }
+  }
+  return cost;
+}
+
+/// 小通道精确化的网数上限。2026-10-18 实测（详见 docs/decisions.md）：
+/// 简化 Z 模型的**预测**交叉精确最优，落到真实几何反而劣化实际交叉数
+/// （真实网表 115 → 139）——模型最优 ≠ 几何最优。保留子集 DP 实现
+/// （下方分支）供后续结合真实评分重试，当前恒 0 即完全走交换启发式。
+const int _kExactLaneOrderMax = 0;
+
+/// 在当前竖道顺序上做确定性的交换优化；只接受严格减少预测交叉数的交换。
+/// 通道内网数 ≤ [_kExactLaneOrderMax] 时改用子集 DP 求**精确**最少交叉：
+/// 逐对方向代价只取决于左右相对位置，DP 按「最左 |S| 条竖道」递推，
+/// 结果不劣于交换启发式且完全确定（并列时取原始序号较小的排列）。
+void _optimizeNlLaneOrder<T>(
+  List<T> items,
+  _NlLanePath Function(T) pathOf,
+  bool left,
+) {
+  if (items.length < 2) return;
+  final paths = <T, _NlLanePath>{for (final item in items) item: pathOf(item)};
+
+  if (items.length <= _kExactLaneOrderMax) {
+    final n = items.length;
+    // dirCost[i][j]：i 的竖道在 j 左侧时的网对预测交叉数。
+    final dirCost = List<List<int>>.generate(
+      n,
+      (i) => List<int>.filled(n, 0),
+    );
+    for (var i = 0; i < n; i++) {
+      for (var j = 0; j < n; j++) {
+        if (i == j) continue;
+        // 通道内竖道位置远小于目标归一化左右值（±1000 量级），
+        // 代价只与「谁更靠左」有关，与具体间隔无关。
+        dirCost[i][j] = left
+            ? _nlLanePathCrossings(paths[items[i]]!, -2.0, paths[items[j]]!, -1.0)
+            : _nlLanePathCrossings(paths[items[i]]!, 1.0, paths[items[j]]!, 2.0);
+      }
+    }
+    // sumCost[S][x] = Σ_{y∈S} dirCost[y][x]，O(2ⁿ·n) 预处理。
+    final size = 1 << n;
+    final sumCost = List<List<int>>.generate(
+      size,
+      (_) => List<int>.filled(n, 0),
+    );
+    for (var s = 1; s < size; s++) {
+      final lsb = s & -s;
+      final x = lsb.bitLength - 1;
+      final prev = s ^ lsb;
+      for (var y = 0; y < n; y++) {
+        sumCost[s][y] = (prev == 0 ? 0 : sumCost[prev][y]) + dirCost[x][y];
+      }
+    }
+    const inf = 1 << 30;
+    final dp = List<int>.filled(size, inf);
+    final parent = List<int>.filled(size, -1);
+    dp[0] = 0;
+    for (var s = 1; s < size; s++) {
+      // 并列时保留先找到的（x 升序），保证确定性。
+      for (var x = 0; x < n; x++) {
+        final bit = 1 << x;
+        if ((s & bit) == 0) continue;
+        final cand = dp[s ^ bit] + sumCost[s ^ bit][x];
+        if (cand < dp[s]) {
+          dp[s] = cand;
+          parent[s] = x;
+        }
+      }
+    }
+    final order = <int>[];
+    var s = size - 1;
+    while (s != 0) {
+      final x = parent[s];
+      order.add(x);
+      s ^= 1 << x;
+    }
+    final arranged = [for (final i in order) items[i]];
+    items
+      ..clear()
+      ..addAll(arranged);
+    return;
+  }
+
+  var best = _nlLaneOrderCost(items, paths, left);
+  void swap(int i, int j) {
+    final tmp = items[i];
+    items[i] = items[j];
+    items[j] = tmp;
+  }
+
+  for (var pass = 0; pass < items.length * 2; pass++) {
+    var bestI = -1, bestJ = -1;
+    var candidate = best;
+    for (var i = 0; i < items.length; i++) {
+      for (var j = i + 1; j < items.length; j++) {
+        swap(i, j);
+        final score = _nlLaneOrderCost(items, paths, left);
+        swap(i, j);
+        if (score < candidate) {
+          candidate = score;
+          bestI = i;
+          bestJ = j;
+        }
+      }
+    }
+    if (bestI < 0) return;
+    swap(bestI, bestJ);
+    best = candidate;
+  }
+}
+
+/// 合并同轴重叠/相邻线段（同一根网的多段竖道/横道合成一条，避免重线）。
+/// 非水平/垂直的段（异常兜底）**原样保留**——静默丢段会让连线凭空消失。
+List<(Offset, Offset)> _mergeSegments(List<(Offset, Offset)> segs) {
+  const eps = 0.01;
+  final horiz = <double, List<(double, double)>>{};
+  final vert = <double, List<(double, double)>>{};
+  final odd = <(Offset, Offset)>[];
+  for (final (a, b) in segs) {
+    if ((a.dy - b.dy).abs() < eps) {
+      final x0 = math.min(a.dx, b.dx), x1 = math.max(a.dx, b.dx);
+      (horiz[a.dy] ??= []).add((x0, x1));
+    } else if ((a.dx - b.dx).abs() < eps) {
+      final y0 = math.min(a.dy, b.dy), y1 = math.max(a.dy, b.dy);
+      (vert[a.dx] ??= []).add((y0, y1));
+    } else {
+      odd.add((a, b));
+    }
+  }
+
+  final out = <(Offset, Offset)>[...odd];
+  void flush(Map<double, List<(double, double)>> m, bool vertical) {
+    for (final e in m.entries) {
+      final spans = e.value..sort((p, q) => p.$1.compareTo(q.$1));
+      var lo = spans.first.$1, hi = spans.first.$2;
+      for (final s in spans.skip(1)) {
+        if (s.$1 <= hi + eps) {
+          hi = math.max(hi, s.$2);
+        } else {
+          out.add(
+            vertical
+                ? (Offset(e.key, lo), Offset(e.key, hi))
+                : (Offset(lo, e.key), Offset(hi, e.key)),
+          );
+          lo = s.$1;
+          hi = s.$2;
+        }
+      }
+      out.add(
+        vertical
+            ? (Offset(e.key, lo), Offset(e.key, hi))
+            : (Offset(lo, e.key), Offset(hi, e.key)),
+      );
+    }
+  }
+
+  flush(horiz, false);
+  flush(vert, true);
+  return out;
+}
+
+/// 同网分支圆点直径（Canvas/SVG 共用）。
+const nlNetJunctionDiameter = 6.0;
+
+/// 从最终线段集合求 T 型/十字分支点：点上必须至少有三个不同走向；
+/// 普通 L 折点、直线经过针脚和不同网交叉都不会被误标。
+List<Offset> nlFindJunctions(List<(Offset, Offset)> segs) {
+  const eps = 0.01;
+  final points = <String, Offset>{};
+  void addPoint(Offset p) {
+    final key = '${(p.dx * 1000).round()}:${(p.dy * 1000).round()}';
+    points[key] = p;
+  }
+
+  final horizontal = <(Offset, Offset)>[];
+  final vertical = <(Offset, Offset)>[];
+  for (final (a, b) in segs) {
+    addPoint(a);
+    addPoint(b);
+    if ((a.dy - b.dy).abs() < eps) {
+      horizontal.add((a, b));
+    } else if ((a.dx - b.dx).abs() < eps) {
+      vertical.add((a, b));
+    }
+  }
+  for (final (a, b) in horizontal) {
+    final y = a.dy;
+    for (final (c, d) in vertical) {
+      final x = c.dx;
+      if (x >= math.min(a.dx, b.dx) - eps &&
+          x <= math.max(a.dx, b.dx) + eps &&
+          y >= math.min(c.dy, d.dy) - eps &&
+          y <= math.max(c.dy, d.dy) + eps) {
+        addPoint(Offset(x, y));
+      }
+    }
+  }
+
+  final out = <Offset>[];
+  for (final p in points.values) {
+    final dirs = <String>{};
+    for (final (a, b) in segs) {
+      if ((a.dy - b.dy).abs() < eps && (p.dy - a.dy).abs() < eps) {
+        final lo = math.min(a.dx, b.dx), hi = math.max(a.dx, b.dx);
+        if (p.dx < lo - eps || p.dx > hi + eps) continue;
+        if (p.dx > lo + eps) dirs.add('L');
+        if (p.dx < hi - eps) dirs.add('R');
+      } else if ((a.dx - b.dx).abs() < eps && (p.dx - a.dx).abs() < eps) {
+        final lo = math.min(a.dy, b.dy), hi = math.max(a.dy, b.dy);
+        if (p.dy < lo - eps || p.dy > hi + eps) continue;
+        if (p.dy > lo + eps) dirs.add('U');
+        if (p.dy < hi - eps) dirs.add('D');
+      }
+    }
+    if (dirs.length >= 3) out.add(p);
+  }
+  out.sort((a, b) {
+    final byY = a.dy.compareTo(b.dy);
+    return byY != 0 ? byY : a.dx.compareTo(b.dx);
+  });
+  return out;
+}
+
+/// 点是否落在线段上（含合并线段的内部）。
+bool nlOnSegments(List<(Offset, Offset)> segs, Offset p) {
+  for (final (a, b) in segs) {
+    if ((a.dy - b.dy).abs() < 0.01 &&
+        (p.dy - a.dy).abs() < 0.01 &&
+        p.dx >= math.min(a.dx, b.dx) - 0.01 &&
+        p.dx <= math.max(a.dx, b.dx) + 0.01) {
+      return true;
+    }
+    if ((a.dx - b.dx).abs() < 0.01 &&
+        (p.dx - a.dx).abs() < 0.01 &&
+        p.dy >= math.min(a.dy, b.dy) - 0.01 &&
+        p.dy <= math.max(a.dy, b.dy) + 0.01) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// 找出与块体矩形相交的走线段。
+List<String> nlFindBlockCrossings(NetlistDiagramModel model) {
+  final out = <String>[];
+  for (final b in model.blocks) {
+    if (b.isIo || b.boxSize.width <= 0) continue;
+    final box = Rect.fromLTWH(
+      b.boxOrigin.dx,
+      b.boxOrigin.dy,
+      b.boxSize.width,
+      b.boxSize.height,
+    );
+    for (final w in model.wires) {
+      for (final (p, q) in w.segments) {
+        final seg = Rect.fromLTRB(
+          math.min(p.dx, q.dx),
+          math.min(p.dy, q.dy),
+          math.max(p.dx, q.dx),
+          math.max(p.dy, q.dy),
+        );
+        final hit =
+            seg.left < box.right - 0.5 &&
+            seg.right > box.left + 0.5 &&
+            seg.top < box.bottom - 0.5 &&
+            seg.bottom > box.top + 0.5;
+        if (hit) {
+          out.add(
+            '走线穿过块体 ${b.title}（${b.cell?.type ?? '-'}） '
+            'seg=(${p.dx.toStringAsFixed(1)},${p.dy.toStringAsFixed(1)})'
+            '-(${q.dx.toStringAsFixed(1)},${q.dy.toStringAsFixed(1)}) '
+            'box=(${box.left.toStringAsFixed(1)},${box.top.toStringAsFixed(1)})'
+            '-(${box.right.toStringAsFixed(1)},${box.bottom.toStringAsFixed(1)})',
+          );
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/// 快速判定指定网的走线是否与其它网共线重叠/间距不足（首个命中即返回）。
+/// 竖道偏移只移动 offsetKeys 中的网，重叠必涉及被移动的网，因此只扫这些
+/// 网即可，避免每次候选构建都做全量 O(Σ段²) 扫描。
+bool _nlHasNetOverlapFor(List<NlWire> wires, Set<String> offsetKeys) {
+  List<(Offset, Offset)> segmentsOf(NlWire w) => [
+    ...nlWirePinStubs(w),
+    ...w.segments,
+  ];
+  final moved = [for (final w in wires) if (offsetKeys.contains(_nlWireRouteKey(w))) w];
+  for (final a in moved) {
+    for (final b in wires) {
+      if (identical(a, b)) continue;
+      for (final (p, q) in segmentsOf(a)) {
+        for (final (r, s) in segmentsOf(b)) {
+          final ah = (p.dy - q.dy).abs() < 0.01;
+          final bh = (r.dy - s.dy).abs() < 0.01;
+          if (ah != bh) continue;
+          final axisA = ah ? p.dy : p.dx;
+          final axisB = ah ? r.dy : r.dx;
+          if ((axisA - axisB).abs() >= _kNetClearance) continue;
+          final alo = ah ? math.min(p.dx, q.dx) : math.min(p.dy, q.dy);
+          final ahi = ah ? math.max(p.dx, q.dx) : math.max(p.dy, q.dy);
+          final blo = ah ? math.min(r.dx, s.dx) : math.min(r.dy, s.dy);
+          final bhi = ah ? math.max(r.dx, s.dx) : math.max(r.dy, s.dy);
+          if (alo < bhi - 0.01 && blo < ahi - 0.01) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/// 找出不同网之间共线重叠或平行间距不足的走线段；针脚短线也计入。
+List<String> nlFindNetOverlaps(List<NlWire> wires) {
+  final out = <String>[];
+  List<(Offset, Offset)> segmentsOf(NlWire w) => [
+    ...nlWirePinStubs(w),
+    ...w.segments,
+  ];
+  for (var i = 0; i < wires.length; i++) {
+    for (var j = i + 1; j < wires.length; j++) {
+      final a = wires[i], b = wires[j];
+      for (final (p, q) in segmentsOf(a)) {
+        for (final (r, s) in segmentsOf(b)) {
+          final ah = (p.dy - q.dy).abs() < 0.01;
+          final bh = (r.dy - s.dy).abs() < 0.01;
+          if (ah != bh) continue;
+          final axisA = ah ? p.dy : p.dx;
+          final axisB = ah ? r.dy : r.dx;
+          if ((axisA - axisB).abs() >= _kNetClearance) continue;
+          final alo = ah ? math.min(p.dx, q.dx) : math.min(p.dy, q.dy);
+          final ahi = ah ? math.max(p.dx, q.dx) : math.max(p.dy, q.dy);
+          final blo = ah ? math.min(r.dx, s.dx) : math.min(r.dy, s.dy);
+          final bhi = ah ? math.max(r.dx, s.dx) : math.max(r.dy, s.dy);
+          if (alo < bhi - 0.01 && blo < ahi - 0.01) {
+            out.add(
+              '${ah ? '水平' : '垂直'}间距不足/重叠 '
+              'axis=${axisA.toStringAsFixed(1)} vs ${axisB.toStringAsFixed(1)} '
+              'A=(${p.dx.toStringAsFixed(1)},${p.dy.toStringAsFixed(1)})-'
+              '(${q.dx.toStringAsFixed(1)},${q.dy.toStringAsFixed(1)}) '
+              'B=(${r.dx.toStringAsFixed(1)},${r.dy.toStringAsFixed(1)})-'
+              '(${s.dx.toStringAsFixed(1)},${s.dy.toStringAsFixed(1)}) '
+              '(${a.label} / ${b.label})',
+            );
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/// 检查符号边界、pin、连接点、分支点和全部走线端点是否符合 Grid。
+List<String> nlFindGridViolations(NetlistDiagramModel model) {
+  final out = <String>[];
+  bool offGrid(double v) => (v % _kGrid).abs() > 0.001;
+  void check(Offset p, String what) {
+    if (offGrid(p.dx) || offGrid(p.dy)) {
+      out.add('$what=(${p.dx.toStringAsFixed(2)},${p.dy.toStringAsFixed(2)})');
+    }
+  }
+
+  check(Offset(model.canvasSize.width, model.canvasSize.height), 'canvas');
+  for (final block in model.blocks) {
+    check(block.boxOrigin, '${block.title}.boxOrigin');
+    check(
+      Offset(
+        block.boxOrigin.dx + block.boxSize.width,
+        block.boxOrigin.dy + block.boxSize.height,
+      ),
+      '${block.title}.boxBottomRight',
+    );
+    if (block.isContainer) check(block.subOffset, '${block.title}.subOffset');
+    for (final (a, b) in block.subLinks) {
+      check(a, '${block.title}.subLink.a');
+      check(b, '${block.title}.subLink.b');
+    }
+    for (final p in [...block.ins, ...block.outs]) {
+      check(p.pos, '${block.title}.${p.port}.pos');
+      check(p.routePos, '${block.title}.${p.port}.routePos');
+      check(p.edge, '${block.title}.${p.port}.edge');
+    }
+  }
+  for (final wire in model.wires) {
+    for (final (a, b) in wire.segments) {
+      check(a, '${wire.label}.a');
+      check(b, '${wire.label}.b');
+    }
+    for (final p in wire.junctions) {
+      check(p, '${wire.label}.junction');
+    }
+  }
+  return out;
+}
+
+/// 检查 pin 外延伸、彩色首段以及首段内不得提前折弯/分支。
+List<String> nlFindPinStubViolations(NetlistDiagramModel model) {
+  final out = <String>[];
+  const eps = 0.01;
+  bool onSeg(Offset p, Offset a, Offset b) => nlOnSegments([(a, b)], p);
+  bool entersStub(NlPin pin, Offset a, Offset b) {
+    final edge = pin.edge, pos = pin.pos;
+    final horizontal = (edge.dy - pos.dy).abs() < eps;
+    if (horizontal && (a.dy - b.dy).abs() < eps) {
+      if ((a.dy - edge.dy).abs() >= eps) return false;
+      final lo = math.max(math.min(edge.dx, pos.dx), math.min(a.dx, b.dx));
+      final hi = math.min(math.max(edge.dx, pos.dx), math.max(a.dx, b.dx));
+      return lo < hi - eps;
+    }
+    if (!horizontal && (a.dx - b.dx).abs() < eps) {
+      if ((a.dx - edge.dx).abs() >= eps) return false;
+      final lo = math.max(math.min(edge.dy, pos.dy), math.min(a.dy, b.dy));
+      final hi = math.min(math.max(edge.dy, pos.dy), math.max(a.dy, b.dy));
+      return lo < hi - eps;
+    }
+    Offset? cross;
+    if (horizontal && (a.dx - b.dx).abs() < eps) {
+      cross = Offset(a.dx, edge.dy);
+    } else if (!horizontal && (a.dy - b.dy).abs() < eps) {
+      cross = Offset(edge.dx, a.dy);
+    }
+    if (cross == null) return false;
+    final atPos = (cross - pos).distance < eps;
+    return !atPos && onSeg(cross, edge, pos) && onSeg(cross, a, b);
+  }
+
+  for (final block in model.blocks) {
+    if (block.isIo) continue;
+    for (final pin in [...block.ins, ...block.outs]) {
+      final delta = pin.pos - pin.edge;
+      // 顶/底边针脚（含**镜像后移到顶边的 MUX S**）：竖向短线，只要求
+      // 朝符号外侧且长度 ≥1 Grid——方向由实际边决定，不再按"底边必然朝下"
+      // 的惯例判定（否则镜像后的顶边针脚会被误判违规）。
+      final centerX = block.boxOrigin.dx + block.boxSize.width / 2;
+      final verticalEdge = (pin.edge.dx - centerX).abs() < 1.5;
+      final input = block.ins.contains(pin);
+      final valid = verticalEdge
+          ? delta.dx.abs() < eps && delta.dy.abs() >= _kGrid - eps
+          : input
+          ? delta.dy.abs() < eps && delta.dx <= -_kGrid + eps
+          : delta.dy.abs() < eps && delta.dx >= _kGrid - eps;
+      if (!valid) {
+        out.add(
+          '${block.title}.${pin.port} 短线方向/长度违规 '
+          'edge=${pin.edge} pos=${pin.pos}',
+        );
+      }
+      final routeDelta = pin.routePos - pin.pos;
+      final routeValid = verticalEdge
+          ? routeDelta.dx.abs() < eps && routeDelta.dy.abs() >= _kGrid - eps
+          : input
+          ? routeDelta.dy.abs() < eps && routeDelta.dx <= -_kGrid + eps
+          : routeDelta.dy.abs() < eps && routeDelta.dx >= _kGrid - eps;
+      if (!routeValid) {
+        out.add(
+          '${block.title}.${pin.port} 外部首段方向/长度违规 '
+          'pos=${pin.pos} routePos=${pin.routePos}',
+        );
+      }
+      for (final wire in model.wires) {
+        final connected =
+            identical(wire.from, pin) ||
+            wire.loads.any((l) => identical(l, pin));
+        if (!connected) continue;
+        final coversOut = wire.segments.any(
+          (s) => onSeg(pin.pos, s.$1, s.$2) && onSeg(pin.routePos, s.$1, s.$2),
+        );
+        if (!coversOut) {
+          out.add('${block.title}.${pin.port} 缺少 pos → routePos 完整直行首段');
+        }
+        final horizontalOut = delta.dy.abs() < eps;
+        for (final (a, b) in wire.segments) {
+          final perpendicular = horizontalOut
+              ? (a.dx - b.dx).abs() < eps && (a.dy - b.dy).abs() > eps
+              : (a.dy - b.dy).abs() < eps && (a.dx - b.dx).abs() > eps;
+          if (perpendicular && onSeg(pin.pos, a, b)) {
+            out.add('${block.title}.${pin.port} 在 pos 上提前折弯/交叉 seg=($a)-($b)');
+          }
+          if (entersStub(pin, a, b)) {
+            out.add(
+              '${block.title}.${pin.port} 在一个 Grid 短线内提前折弯/分支 '
+              'seg=($a)-($b)',
+            );
+          }
+        }
+        for (final junction in wire.junctions) {
+          if ((junction - pin.pos).distance >= eps &&
+              onSeg(junction, pin.edge, pin.pos)) {
+            out.add('${block.title}.${pin.port} 在一个 Grid 短线内出现分支点');
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/// 网表电路图组件：CustomPaint 画端口/针脚/连线，Positioned 块承载单元
+/// 信息；悬停高亮相连网络；点子模块实例「＋」下钻、点逻辑单元跳源码。
+class NetlistDiagram extends StatefulWidget {
+  final NetlistDiagramModel model;
+
+  /// 点击单元回调（实例下钻 / 逻辑单元跳源码）。
+  final void Function(NetlistCell cell)? onTapCell;
+
+  /// 外部缩放控制器（工具栏共用）。
+  final TransformationController? controller;
+
+  /// 视口尺寸上报（「适应窗口」用）。
+  final void Function(Size viewport)? onViewport;
+
+  /// 配色：false = 暗色（默认），true = Vivado 浅色。
+  final bool light;
+
+  /// 配色覆盖（含字体族；导出位图用）。
+  final SchPalette? palette;
+
+  /// 外部选中的网（显示其网名；null = 不显示）。
+  final NlWire? selectedNet;
+
+  /// 点选网回调（点空白处传 null）——宿主可用来联动高亮源码/波形。
+  final void Function(NlWire? net)? onNetSelected;
+
+  /// 切换某实例块的**原位展开**（＋/－）。
+  final void Function(NetlistCell cell)? onToggleExpand;
+
+  /// 手动布线模式：命中自由线段并拖动，关闭画布平移和其它点选行为。
+  final bool manualRouting;
+  final void Function(NlWire wire, int segmentIndex)? onManualDragStart;
+  final void Function(NlWire wire, int segmentIndex, int delta)?
+  onManualDragUpdate;
+  final void Function(NlWire wire, int segmentIndex, int delta)?
+  onManualDragEnd;
+  final void Function(NlBlock block)? onManualBlockDragStart;
+  final void Function(NlBlock block, int delta)? onManualBlockDragUpdate;
+  final void Function(NlBlock block, int delta)? onManualBlockDragEnd;
+
+  /// 直线连线预览（默认开启）：只画块 + pin + 每网直线，不画正交走线。
+  final bool straightPreview;
+
+  /// 直线预览的超边拓扑：团=全对相连（默认），星形=各 pin 到质心。
+  final NlNetTopology straightTopology;
+
+  const NetlistDiagram({
+    super.key,
+    required this.model,
+    this.onTapCell,
+    this.controller,
+    this.onViewport,
+    this.light = false,
+    this.palette,
+    this.selectedNet,
+    this.onNetSelected,
+    this.onToggleExpand,
+    this.manualRouting = false,
+    this.onManualDragStart,
+    this.onManualDragUpdate,
+    this.onManualDragEnd,
+    this.onManualBlockDragStart,
+    this.onManualBlockDragUpdate,
+    this.onManualBlockDragEnd,
+    this.straightPreview = true,
+    this.straightTopology = NlNetTopology.clique,
+  });
+
+  @override
+  State<NetlistDiagram> createState() => _NetlistDiagramState();
+}
+
+class _NetlistDiagramState extends State<NetlistDiagram> {
+  late final TransformationController _ctrl =
+      widget.controller ?? TransformationController();
+  Size? _fittedFor;
+  NlBlock? _hoverBlock;
+  NlBlock? _hoverExpand;
+
+  /// 鼠标悬停到的网（临时显示网名）与点选固定的网，含所在层的平移。
+  (NlWire, Offset)? _hoverNet;
+  (NlWire, Offset)? _pinnedNet;
+
+  /// 展平后的各层（顶层 + 展开容器内部）。
+  late List<NlLevel> _levels = widget.model.flattened();
+
+  /// 上一次 pointer down（时刻、位置、命中的块）——用于 Listener 侧识别双击。
+  (DateTime, Offset, NlBlock?)? _lastDownAt;
+
+  ({NlWire wire, int index, Offset start, bool horizontal})? _manualDrag;
+  int _manualDragDelta = 0;
+  ({NlBlock block, Offset start})? _manualBlockDrag;
+  int _manualBlockDelta = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pinnedNet = _locateNet(widget.selectedNet);
+  }
+
+  /// 在展平的各层里定位某根网（拿到它所在层的平移，悬停/选中的高亮与
+  /// 网名绘制都要用）。
+  (NlWire, Offset)? _locateNet(NlWire? w) {
+    if (w == null) return null;
+    for (final lv in _levels) {
+      for (final x in lv.wires) {
+        if (identical(x, w)) return (w, lv.offset);
+      }
+    }
+    return null;
+  }
+
+  @override
+  void didUpdateWidget(NetlistDiagram old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.model, widget.model)) {
+      _levels = widget.model.flattened();
+      _hoverExpand = null;
+      _hoverNet = null;
+      _pinnedNet = null;
+    }
+    if (!identical(old.selectedNet, widget.selectedNet)) {
+      _pinnedNet = _locateNet(widget.selectedNet);
+    }
+    if (!widget.manualRouting) {
+      _manualDrag = null;
+      _manualBlockDrag = null;
+    }
+  }
+
+  /// 命中容差（画布坐标，随缩放反向补偿：缩小时更容易命中）。
+  double get _hitTol {
+    final s = _ctrl.value.getMaxScaleOnAxis();
+    return (5.0 / (s <= 0 ? 1 : s)).clamp(1.5, 40.0);
+  }
+
+  void _updateHover(Offset p) {
+    final hit = nlWireAtLevels(_levels, p, _hitTol);
+    if (hit?.$1 == _hoverNet?.$1) return;
+    setState(() => _hoverNet = hit);
+  }
+
+  void _onPointerDown(Offset p) {
+    if (widget.manualRouting) {
+      final block = nlBlockAt(_levels, p);
+      if (block != null) {
+        _manualBlockDelta = 0;
+        _manualBlockDrag = (block: block, start: p);
+        _manualDrag = null;
+        widget.onManualBlockDragStart?.call(block);
+        return;
+      }
+      final hit = nlWireSegmentAtLevels(_levels, p, _hitTol);
+      _manualDragDelta = 0;
+      if (hit != null) {
+        final horizontal = (hit.segment.$1.dy - hit.segment.$2.dy).abs() < 0.01;
+        _manualBlockDrag = null;
+        _manualDrag = (
+          wire: hit.wire,
+          index: hit.index,
+          start: p,
+          horizontal: horizontal,
+        );
+        widget.onManualDragStart?.call(hit.wire, hit.index);
+      } else {
+        _manualDrag = null;
+      }
+      return;
+    }
+    // 先看是否点在实例块左上角的 ＋/− 上（原位展开/收起）。
+    final cell = nlExpandTargetAt(_levels, p);
+    if (cell != null) {
+      _lastDownAt = null;
+      widget.onToggleExpand?.call(cell);
+      return;
+    }
+    // 双击块 → 进入整页下钻（在 Listener 里自己判定，不依赖层叠手势）。
+    final now = DateTime.now();
+    final last = _lastDownAt;
+    if (last != null &&
+        now.difference(last.$1) < const Duration(milliseconds: 350) &&
+        (last.$2 - p).distance < 8) {
+      final blk = nlBlockAt(_levels, p) ?? last.$3;
+      _lastDownAt = null;
+      if (blk?.cell != null && blk!.cell!.isInstance) {
+        widget.onTapCell?.call(blk.cell!);
+        return;
+      }
+    }
+    _lastDownAt = (now, p, nlBlockAt(_levels, p));
+    _togglePin(p);
+  }
+
+  void _onPointerMove(Offset p) {
+    final blockDrag = _manualBlockDrag;
+    if (blockDrag != null) {
+      final delta = ((p.dy - blockDrag.start.dy) / nlRoutingGrid).round();
+      if (delta != _manualBlockDelta) {
+        _manualBlockDelta = delta;
+        widget.onManualBlockDragUpdate?.call(blockDrag.block, delta);
+      }
+      return;
+    }
+    final drag = _manualDrag;
+    if (drag == null) return;
+    final delta = drag.horizontal
+        ? ((p.dy - drag.start.dy) / nlRoutingGrid).round()
+        : ((p.dx - drag.start.dx) / nlRoutingGrid).round();
+    if (delta == _manualDragDelta) return;
+    _manualDragDelta = delta;
+    widget.onManualDragUpdate?.call(drag.wire, drag.index, delta);
+  }
+
+  void _onPointerUp() {
+    final blockDrag = _manualBlockDrag;
+    if (blockDrag != null) {
+      widget.onManualBlockDragEnd?.call(blockDrag.block, _manualBlockDelta);
+      _manualBlockDrag = null;
+      _manualBlockDelta = 0;
+      return;
+    }
+    final drag = _manualDrag;
+    if (drag == null) return;
+    widget.onManualDragEnd?.call(drag.wire, drag.index, _manualDragDelta);
+    _manualDrag = null;
+    _manualDragDelta = 0;
+  }
+
+  void _onPointerCancel() {
+    _manualDrag = null;
+    _manualDragDelta = 0;
+    _manualBlockDrag = null;
+    _manualBlockDelta = 0;
+  }
+
+  void _togglePin(Offset p) {
+    final hit = nlWireAtLevels(_levels, p, _hitTol);
+    final same =
+        hit != null && _pinnedNet != null && identical(hit.$1, _pinnedNet!.$1);
+    final next = (hit == null || same) ? null : hit;
+    setState(() => _pinnedNet = next);
+    widget.onNetSelected?.call(next?.$1);
+  }
+
+  @override
+  void dispose() {
+    if (widget.controller == null) _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette =
+        widget.palette ??
+        (widget.light ? SchPalette.vivadoLight : SchPalette.dark);
+    return LayoutBuilder(
+      builder: (context, cons) {
+        final viewport = Size(cons.maxWidth, cons.maxHeight);
+        widget.onViewport?.call(viewport);
+        if (_fittedFor != widget.model.canvasSize &&
+            viewport.width >= 200 &&
+            viewport.height >= 200) {
+          _fittedFor = widget.model.canvasSize;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            schFitView(_ctrl, viewport, widget.model.canvasSize);
+          });
+        }
+        final hover = _hoverBlock;
+        // 悬停/点选的网（含悬停单元的相连网）才显示网名——跨层用同一套
+        // 块/网对象，展开容器内外一视同仁。
+        final hiWires = <NlWire>[
+          if (hover != null)
+            ..._levels.expand((lv) => lv.wires).where((w) => w.touches(hover)),
+        ];
+        final active = <NlWire>{
+          if (_hoverNet != null) _hoverNet!.$1,
+          if (_pinnedNet != null) _pinnedNet!.$1,
+          ...hiWires,
+        };
+        return ColoredBox(
+          color: palette.canvasBg,
+          child: InteractiveViewer(
+            transformationController: _ctrl,
+            constrained: false,
+            panEnabled: !widget.manualRouting,
+            minScale: 0.02,
+            maxScale: 8,
+            boundaryMargin: const EdgeInsets.all(double.infinity),
+            child: SizedBox(
+              width: widget.model.canvasSize.width,
+              height: widget.model.canvasSize.height,
+              // 命中测试放在被变换的子层里 → localPosition 已是画布坐标。
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerHover: (e) => _updateHover(e.localPosition),
+                onPointerDown: (e) => _onPointerDown(e.localPosition),
+                onPointerMove: (e) => _onPointerMove(e.localPosition),
+                onPointerUp: (_) => _onPointerUp(),
+                onPointerCancel: (_) => _onPointerCancel(),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    CustomPaint(
+                      size: widget.model.canvasSize,
+                      painter: NetlistWirePainter(
+                        _levels,
+                        hover: hover,
+                        active: active,
+                        palette: palette,
+                        drawLabels: false,
+                        straightPreview: widget.straightPreview,
+                        straightTopology: widget.straightTopology,
+                      ),
+                    ),
+                    for (final b in widget.model.blocks)
+                      if (!b.isIo) _positionedBlock(b, palette),
+                    // 常量参数平时不显示，悬停到对应 10×10 标记时以气泡显示。
+                    for (final lv in _levels)
+                      for (final p in lv.pins)
+                        if (p.constText != null)
+                          Positioned(
+                            left: lv.offset.dx + p.pos.dx,
+                            top: lv.offset.dy + p.pos.dy - 5,
+                            child: Tooltip(
+                              message: nlConstTooltip(p),
+                              waitDuration: const Duration(milliseconds: 300),
+                              child: const SizedBox(width: 10, height: 10),
+                            ),
+                          ),
+                    // 网名与位域始终置于所有元件块及展开容器之上，避免被符号遮挡。
+                    IgnorePointer(
+                      key: const ValueKey('nl-label-layer'),
+                      child: CustomPaint(
+                        size: widget.model.canvasSize,
+                        painter: NetlistWirePainter(
+                          _levels,
+                          hover: hover,
+                          active: active,
+                          palette: palette,
+                          labelsOnly: true,
+                          straightPreview: widget.straightPreview,
+                          straightTopology: widget.straightTopology,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 顶层块（自带定位）。
+  Widget _positionedBlock(NlBlock b, SchPalette palette) => Positioned(
+    left: b.origin.dx,
+    top: b.origin.dy,
+    child: _blockContent(b, palette),
+  );
+
+  /// 实例框左上角的展开/收起按钮：两种状态共用居中几何与悬停反馈。
+  Widget _expandButton(NlBlock b, SchPalette palette) {
+    final cell = b.cell;
+    if (cell == null) return const SizedBox.shrink();
+    final expanded = b.isContainer;
+    final hovered = identical(_hoverExpand, b);
+    final color = hovered ? palette.hover : const Color(0xFFFFFFFF);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hoverExpand = b),
+      onExit: (_) => setState(() {
+        if (identical(_hoverExpand, b)) _hoverExpand = null;
+      }),
+      child: Tooltip(
+        message: expanded ? '收起实例' : '展开实例',
+        waitDuration: const Duration(milliseconds: 600),
+        child: GestureDetector(
+          key: ValueKey('${expanded ? 'nl-minus' : 'nl-plus'}-${b.id}'),
+          onTap: () => widget.onToggleExpand?.call(cell),
+          child: Container(
+            width: _kPlus,
+            height: _kPlus,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: hovered
+                  ? palette.hover.withValues(alpha: 0.16)
+                  : palette.canvasBg,
+              border: Border.all(color: color, width: _kBoxBorder),
+            ),
+            child: Icon(
+              expanded ? Icons.remove : Icons.add,
+              size: 8,
+              color: color,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 块内容（**不含定位**）——顶层与展开容器内部共用；容器内部由调用方
+  /// 用 `Positioned` 按子模型坐标摆放（避免双重 Positioned）。
+  Widget _blockContent(NlBlock b, SchPalette palette) {
+    final cell = b.cell;
+    final sub = b.sub;
+    // 展开容器：外框 + 标题带 + 内部子模型（子模型的块递归渲染，
+    // 线/针脚/端口由 painter 按层绘制）。
+    if (sub != null) {
+      final inside = <Widget>[
+        for (final cb in sub.blocks)
+          if (!cb.isIo)
+            Positioned(
+              left: b.subOffset.dx + cb.origin.dx - b.origin.dx,
+              top: b.subOffset.dy + cb.origin.dy - b.origin.dy,
+              child: _blockContent(cb, palette),
+            ),
+      ];
+      return MouseRegion(
+        onEnter: (_) => setState(() => _hoverBlock = b),
+        onExit: (_) => setState(() => _hoverBlock = null),
+        child: Tooltip(
+          message:
+              '${b.title} · ${b.subtitle} · 已展开（点击 − 收起，'
+              '双击进入子模块）',
+          waitDuration: const Duration(milliseconds: 600),
+          child: GestureDetector(
+            onDoubleTap: () => _drill(cell),
+            child: SizedBox(
+              width: b.size.width,
+              height: b.size.height,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: 0,
+                    top: _kNameH,
+                    child: Container(
+                      width: b.boxSize.width,
+                      height: b.boxSize.height,
+                      decoration: BoxDecoration(
+                        // 半透明底：容器内部由 painter 画的走线/端口要能透出来
+                        // （widget 在 CustomPaint 之上，不透明底会整块盖住）。
+                        color: palette.canvasBg.withValues(alpha: 0.45),
+                        border: Border.all(
+                          color: identical(_hoverBlock, b)
+                              ? palette.hover
+                              : palette.blockBorder,
+                          width: _kBoxBorder,
+                        ),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                  // 标题带：实例名 · 模块名。
+                  Positioned(
+                    left: 0,
+                    top: _kNameH,
+                    width: b.boxSize.width,
+                    height: _kContainerHead,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: _kPlus + 8),
+                        child: Text(
+                          '${b.title}  ·  ${b.subtitle}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            color: palette.instanceText,
+                            fontFamily: palette.fontFamily,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  ...inside,
+                  // 「−」收起：与折叠态「＋」一样放在容器框内左上角。
+                  Positioned(
+                    left: 3,
+                    top: _kNameH + 3,
+                    child: _expandButton(b, palette),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final fill = netlistCellFill(cell?.kind, palette);
+    final box = cell != null && !cell.isInstance
+        ? SizedBox(
+            width: b.boxSize.width,
+            height: b.boxSize.height,
+            child: CustomPaint(
+              painter: NetlistCellPainter(
+                block: b,
+                hover: identical(_hoverBlock, b),
+                palette: palette,
+              ),
+            ),
+          )
+        : Container(
+            width: b.boxSize.width,
+            height: b.boxSize.height,
+            decoration: BoxDecoration(
+              color: fill,
+              border: Border.all(
+                color: identical(_hoverBlock, b)
+                    ? palette.hover
+                    : palette.blockBorder,
+                width: _kBoxBorder,
+              ),
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: Stack(
+              children: [
+                // 左上「＋」：点它**原位展开**这个实例块（逻辑单元无此图标）。
+                if (cell != null && cell.isInstance)
+                  Positioned(left: 3, top: 3, child: _expandButton(b, palette)),
+                Padding(
+                  padding: const EdgeInsets.only(
+                    left: _kPinPadH,
+                    right: _kPinPadH,
+                    top: _kPinPadV,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            left: (cell?.isInstance ?? false) ? _kPlus + 3 : 0,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (final p in b.ins)
+                                SizedBox(
+                                  height: _kPinRowH,
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      p.display,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.clip,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: palette.pinText,
+                                        fontFamily: palette.fontFamily,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            for (final p in b.outs)
+                              SizedBox(
+                                height: _kPinRowH,
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Text(
+                                    p.display,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.clip,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: palette.pinText,
+                                      fontFamily: palette.fontFamily,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+
+    final content = SizedBox(
+      width: b.size.width,
+      height: b.size.height,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: _kNameH,
+            child: Center(
+              child: Text(
+                b.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: palette.instanceText,
+                  fontFamily: palette.fontFamily,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+          box,
+          SizedBox(
+            height: _kTypeH,
+            child: Center(
+              child: Text(
+                b.subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: palette.moduleText,
+                  fontFamily: palette.fontFamily,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final tip = cell == null
+        ? null
+        : '${cell.typeLabel} · ${cell.desc}'
+              '${cell.source == null ? '' : ' · ${cell.source}'}'
+              '${cell.memId == null ? '' : ' · ${cell.memId}'}';
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoverBlock = b),
+      onExit: (_) => setState(() => _hoverBlock = null),
+      child: Tooltip(
+        message: tip ?? '',
+        waitDuration: const Duration(milliseconds: 600),
+        child: cell == null
+            ? content
+            : cell.isInstance
+            // 实例块：单击 = 原位展开/收起，双击 = 进入整页；
+            // 不能与 InkWell 的 tap 识别器嵌套（双击会被单点吃掉）。
+            ? GestureDetector(
+                onTap: () => widget.onToggleExpand?.call(cell),
+                onDoubleTap: () => _drill(cell),
+                child: content,
+              )
+            : InkWell(
+                onTap: () => widget.onTapCell?.call(cell),
+                child: content,
+              ),
+      ),
+    );
+  }
+
+  /// 双击块：进入整页下钻视图（原有行为）。
+  void _drill(NetlistCell? cell) {
+    if (cell == null || !cell.isInstance) return;
+    widget.onTapCell?.call(cell);
+  }
+}
+
+/// 标准单元符号绘制：轮廓与 SVG 共用 [buildNetlistSymbol]，这里只负责
+/// 配色和文字度量。
+class NetlistCellPainter extends CustomPainter {
+  final NlBlock block;
+  final bool hover;
+  final SchPalette palette;
+
+  const NetlistCellPainter({
+    required this.block,
+    required this.hover,
+    required this.palette,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final pins = <NetlistSymbolPin>[
+      for (final p in block.ins)
+        NetlistSymbolPin(
+          port: p.port,
+          display: p.display,
+          edge: p.edge - block.boxOrigin,
+          isInput: true,
+        ),
+      for (final p in block.outs)
+        NetlistSymbolPin(
+          port: p.port,
+          display: p.display,
+          edge: p.edge - block.boxOrigin,
+          isInput: false,
+        ),
+    ];
+    final geometry = buildNetlistSymbol(block.cell, rect, pins: pins);
+    final fill = netlistCellFill(block.cell?.kind, palette);
+    final border = hover ? palette.hover : palette.blockBorder;
+    final stroke = Paint()
+      ..color = border
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _kBoxBorder
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(geometry.outline.toPath(), Paint()..color = fill);
+    canvas.drawPath(geometry.outline.toPath(), stroke);
+    for (final detail in geometry.details) {
+      canvas.drawPath(detail.toPath(), stroke);
+    }
+    for (final bubble in geometry.bubbles) {
+      canvas.drawCircle(bubble.center, bubble.radius, Paint()..color = fill);
+      canvas.drawCircle(bubble.center, bubble.radius, stroke);
+    }
+
+    final label = geometry.centerLabel;
+    if (label != null && label.isNotEmpty) {
+      final tp = _text(label, geometry.centerLabelSize, palette.pinText);
+      tp.paint(
+        canvas,
+        Offset(rect.center.dx - tp.width / 2, rect.center.dy - tp.height / 2),
+      );
+    }
+    for (final p in pins) {
+      final tp = _text(p.display, 10, palette.pinText);
+      final at = netlistSymbolPinLabelTopLeft(
+        geometry.kind,
+        p,
+        rect,
+        Size(tp.width, tp.height),
+      );
+      tp.paint(canvas, at);
+    }
+  }
+
+  TextPainter _text(String text, double fontSize, Color color) => TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: fontSize,
+        color: color,
+        fontFamily: palette.fontFamily,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+
+  @override
+  bool shouldRepaint(NetlistCellPainter old) =>
+      !identical(old.block, block) ||
+      old.hover != hover ||
+      old.palette != palette;
+}
+
+/// 单元块配色（按类别区分，Vivado 风格淡色）。
+Color netlistCellFill(NetlistCellKind? kind, SchPalette p) {
+  final light =
+      identical(p, SchPalette.vivadoLight) ||
+      p.canvasBg.computeLuminance() > 0.5;
+  switch (kind) {
+    case NetlistCellKind.seq:
+      return light ? const Color(0xFFD8E6F7) : const Color(0xFF233247);
+    case NetlistCellKind.mem:
+      return light ? const Color(0xFFF3E7C8) : const Color(0xFF3A3320);
+    case NetlistCellKind.arith:
+      return light ? const Color(0xFFDCEFDC) : const Color(0xFF20372A);
+    case NetlistCellKind.compare:
+      return light ? const Color(0xFFF7E3D0) : const Color(0xFF3A2C20);
+    case NetlistCellKind.mux:
+      return light ? const Color(0xFFE8E0F5) : const Color(0xFF2E2740);
+    case NetlistCellKind.logic:
+      return light ? const Color(0xFFE7E7E7) : const Color(0xFF2B2B2B);
+    case NetlistCellKind.shift:
+      return light ? const Color(0xFFDFF0F0) : const Color(0xFF203636);
+    case NetlistCellKind.instance:
+      return light ? const Color(0xFFDCE7F5) : const Color(0xFF252526);
+    case NetlistCellKind.other:
+    case null:
+      return p.blockFill;
+  }
+}
+
+/// 绘制连线、针脚短线、端口五边形与网名标注。
+///
+/// **所有网名与位域默认都不画**；仅 [active] 里的高亮网（鼠标悬停、点选
+/// 或悬停单元的相连网）显示其完整标签，且底板**半透明**。
+/// [showLabels] 为导出模式：全部标注。
+class NetlistWirePainter extends CustomPainter {
+  /// 展平后的各层（顶层 + 展开容器内部各层，含平移）。
+  final List<NlLevel> levels;
+  final NlBlock? hover;
+
+  /// 需要显示网名的网（悬停/选中的网络）。
+  final Set<NlWire> active;
+  final SchPalette palette;
+  final bool showLabels;
+
+  /// true 时只绘制网名标签，供置于元件块之上的独立图层使用。
+  final bool labelsOnly;
+
+  /// false 时跳过本层标签（配合独立的最顶层标签图层，避免重复绘制）。
+  final bool drawLabels;
+
+  /// 直线连线预览：不画正交走线，只画块 + pin + 每网直线。
+  final bool straightPreview;
+
+  /// 直线预览的超边拓扑：团=全对相连（默认），星形=各 pin 到质心。
+  final NlNetTopology straightTopology;
+
+  NetlistWirePainter(
+    this.levels, {
+    this.hover,
+    this.active = const {},
+    this.palette = SchPalette.dark,
+    this.showLabels = false,
+    this.labelsOnly = false,
+    this.drawLabels = true,
+    this.straightPreview = true,
+    this.straightTopology = NlNetTopology.clique,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 直线连线预览：不画任何正交走线，只画块 + pin + 每网直线（星/团）。
+    if (straightPreview) {
+      for (final lv in levels) {
+        canvas.save();
+        canvas.translate(lv.offset.dx, lv.offset.dy);
+        paintNetlistStraightPreview(
+          canvas,
+          lv.blocks,
+          lv.wires,
+          palette,
+          topology: straightTopology,
+          active: active,
+          body: !labelsOnly,
+          labels: !labelsOnly && drawLabels,
+        );
+        canvas.restore();
+      }
+      return;
+    }
+    final stubPaint = Paint()
+      ..color = palette.blockBorder
+      ..strokeWidth = _kBoxBorder;
+    final dotPaint = Paint()..color = palette.blockBorder;
+    final linkPaint = Paint()
+      ..color = palette.blockBorder
+      ..strokeWidth = _kBoxBorder;
+    final labeled = <NlWire>{};
+
+    for (final lv in levels) {
+      canvas.save();
+      canvas.translate(lv.offset.dx, lv.offset.dy);
+
+      if (!labelsOnly) {
+        for (final p in lv.pins) {
+          // 针脚自身短线保持灰色；对应网只画到外部节点 pos，不进入 edge。
+          canvas.drawLine(p.edge, p.pos, stubPaint);
+          canvas.drawRect(
+            Rect.fromCenter(center: p.edge, width: 3.0, height: 3.0),
+            dotPaint,
+          );
+        }
+        // 常量引脚：短线末端画常量标记；参数值由对应 Tooltip 悬停显示。
+        for (final p in lv.pins) {
+          if (p.constText == null) continue;
+          final r = Rect.fromLTWH(p.pos.dx, p.pos.dy - 5, 10, 10);
+          canvas.drawRect(
+            r,
+            Paint()
+              ..color = palette.canvasBg
+              ..style = PaintingStyle.fill,
+          );
+          canvas.drawRect(
+            r,
+            Paint()
+              ..color = palette.cellConst
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = _kBoxBorder,
+          );
+        }
+
+        // 展开容器：边缘针脚 → 子模块端口 的连接短线。
+        for (final b in lv.blocks) {
+          for (final (a, c) in b.subLinks) {
+            canvas.drawLine(a, c, linkPaint);
+          }
+        }
+      }
+
+      for (final pass in [false, true]) {
+        for (final w in lv.wires) {
+          final sel = active.contains(w);
+          final hi = sel || (hover != null && w.touches(hover!));
+          if (pass != hi) continue;
+          _paintWire(
+            canvas,
+            w,
+            hover == null || hi || sel,
+            selected: sel || (hover != null && hi),
+            body: !labelsOnly,
+            showLabel:
+                drawLabels &&
+                nlWireLabelVisible(active: sel, exportMode: showLabels) &&
+                labeled.add(w),
+          );
+        }
+      }
+      if (!labelsOnly) {
+        for (final p in lv.ports) {
+          _paintPort(canvas, p);
+        }
+      }
+      canvas.restore();
+    }
+  }
+
+  void _paintPort(Canvas canvas, NlPin p) {
+    // 方向语义（对齐 Vivado Elaborated Design 的数据流方向）：
+    // - **输入**（左侧）：符号贴线端在外、**尖端朝右**（指向设计内部）；
+    // - **输出**（右侧）：贴线端为平边、**尖端朝右**（指向设计外部）；
+    // - **双向**：六边形（两端都是尖），贴线端在左。
+    final left = p.isPortInput ? p.pos.dx - _kPortGlyphW : p.pos.dx;
+    final rect = Rect.fromLTWH(
+      left,
+      p.pos.dy - _kPortGlyphH / 2,
+      _kPortGlyphW,
+      _kPortGlyphH,
+    );
+    final tip = _kPortGlyphH / 2;
+    final path = Path();
+    if (p.dir == NetlistPortDir.inout) {
+      path
+        ..moveTo(rect.left + tip, rect.top)
+        ..lineTo(rect.right - tip, rect.top)
+        ..lineTo(rect.right, rect.center.dy)
+        ..lineTo(rect.right - tip, rect.bottom)
+        ..lineTo(rect.left + tip, rect.bottom)
+        ..lineTo(rect.left, rect.center.dy)
+        ..close();
+    } else if (p.isPortInput) {
+      path
+        ..moveTo(rect.left, rect.top)
+        ..lineTo(rect.right - tip, rect.top)
+        ..lineTo(rect.right, rect.center.dy)
+        ..lineTo(rect.right - tip, rect.bottom)
+        ..lineTo(rect.left, rect.bottom)
+        ..close();
+    } else {
+      path
+        ..moveTo(rect.left, rect.top)
+        ..lineTo(rect.right - tip, rect.top)
+        ..lineTo(rect.right, rect.center.dy)
+        ..lineTo(rect.right - tip, rect.bottom)
+        ..lineTo(rect.left, rect.bottom)
+        ..close();
+    }
+    final fill = switch (p.dir) {
+      NetlistPortDir.input => palette.portFill,
+      NetlistPortDir.output => palette.portFillOut,
+      NetlistPortDir.inout => palette.portFillInout,
+    };
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = fill
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = palette.portBorder
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _kBoxBorder,
+    );
+    // 符号内方向标注（`I` / `O` / `IO`）。
+    final mk = TextPainter(
+      text: TextSpan(
+        text: p.dir.label,
+        style: TextStyle(
+          fontSize: p.dir == NetlistPortDir.inout ? 7.5 : 8.5,
+          height: 1.0,
+          fontWeight: FontWeight.w600,
+          color: palette.portBorder,
+          fontFamily: palette.fontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    mk.paint(
+      canvas,
+      Offset(rect.center.dx - mk.width / 2, rect.center.dy - mk.height / 2),
+    );
+    final tp = TextPainter(
+      text: TextSpan(
+        text: p.display,
+        style: TextStyle(
+          fontSize: 10,
+          color: palette.portText,
+          fontFamily: palette.fontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final x = p.isPortInput
+        ? rect.left - _kPortTextGap - tp.width
+        : rect.right + _kPortTextGap;
+    tp.paint(canvas, Offset(x, rect.center.dy - tp.height / 2));
+  }
+
+  void _paintWire(
+    Canvas canvas,
+    NlWire w,
+    bool primary, {
+    bool body = true,
+    bool showLabel = true,
+    bool selected = false,
+  }) {
+    final base = w.isBus ? palette.wireBus : palette.wire;
+    final color = primary ? base : palette.wireDim;
+    final paint = Paint()
+      ..color = selected
+          ? palette.hover
+          : (hover != null && primary ? palette.hover : color)
+      ..strokeWidth = selected
+          ? (w.isBus ? 2.8 : 1.9)
+          : (primary ? (w.isBus ? 2.2 : 1.3) : 1.0)
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.miter
+      ..strokeCap = StrokeCap.square;
+    if (body) {
+      // 网线终止于外部 pin 节点 pos；edge → pos 仅由灰色针脚短线绘制。
+      for (final (a, b) in w.segments) {
+        canvas.drawLine(a, b, paint);
+      }
+      // 同网 T 型/十字分支点：6px 实心圆；不同网交叉不加点。
+      final endPaint = Paint()..color = paint.color;
+      for (final p in w.junctions) {
+        canvas.drawCircle(p, nlNetJunctionDiameter / 2, endPaint);
+      }
+      // 端点方块：驱动端与各负载端。
+      canvas.drawRect(
+        Rect.fromCenter(center: w.from.pos, width: 3.0, height: 3.0),
+        endPaint,
+      );
+      for (final l in w.loads) {
+        canvas.drawRect(
+          Rect.fromCenter(center: l.pos, width: 3.0, height: 3.0),
+          endPaint,
+        );
+      }
+    }
+    if (!showLabel || w.label.isEmpty) return;
+    void paintLabel(String text, Offset at) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            fontSize: 9.5,
+            color: primary ? palette.netLabel : palette.wireDim,
+            fontFamily: palette.fontFamily,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final top = Offset(at.dx, at.dy - tp.height + 2);
+      // 底板：**半透明**（下层的线与块隐约可见，仍能看清文字）+ 细描边。
+      final rr = RRect.fromRectAndRadius(
+        Rect.fromLTWH(top.dx - 3, top.dy - 2, tp.width + 6, tp.height + 4),
+        const Radius.circular(2.5),
+      );
+      canvas.drawRRect(
+        rr,
+        Paint()..color = palette.canvasBg.withValues(alpha: 0.82),
+      );
+      canvas.drawRRect(
+        rr,
+        Paint()
+          ..color = palette.netLabel.withValues(alpha: 0.45)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+      tp.paint(canvas, top);
+    }
+
+    if (w.branchLabels.isEmpty) {
+      paintLabel(w.label, w.labelAt);
+      return;
+    }
+    for (final p in w.loads) {
+      final text = w.branchLabels[p];
+      if (text == null || text.isEmpty) continue;
+      paintLabel(text, p.branchLabelAt);
+    }
+  }
+
+  @override
+  bool shouldRepaint(NetlistWirePainter old) =>
+      !identical(old.levels, levels) ||
+      old.hover != hover ||
+      old.palette != palette ||
+      old.showLabels != showLabels ||
+      old.labelsOnly != labelsOnly ||
+      old.drawLabels != drawLabels ||
+      !_sameNets(old.active, active);
+}
+
+/// 命中测试（多层）：返回距 [p] 最近且在 `tol` 内的网及其所在层的平移。
+(NlWire, Offset)? nlWireAtLevels(
+  List<NlLevel> levels,
+  Offset p, [
+  double tol = 5,
+]) {
+  for (final lv in levels) {
+    final w = nlWireAt(lv.wires, p - lv.offset, tol);
+    if (w != null) return (w, lv.offset);
+  }
+  return null;
+}
+
+/// 命中测试：返回包含 `p` 的块（跨层，用块体矩形判定）。
+NlBlock? nlBlockAt(List<NlLevel> levels, Offset p) {
+  for (final lv in levels) {
+    for (final b in lv.blocks) {
+      if (b.isIo || b.boxSize.width <= 0) continue;
+      final r = Rect.fromLTWH(
+        lv.offset.dx + b.boxOrigin.dx,
+        lv.offset.dy + b.boxOrigin.dy,
+        b.boxSize.width,
+        b.boxSize.height,
+      );
+      if (r.contains(p)) return b;
+    }
+  }
+  return null;
+}
+
+/// 展开/收起命中测试：`p` 是否落在某实例框内左上角的 `＋`/`−` 方块内。
+/// 返回该实例单元（无则 null）。抽成纯函数便于单测与在 Listener 里直接命中
+/// （避免与拖拽、层叠手势竞争）。
+NetlistCell? nlExpandTargetAt(List<NlLevel> levels, Offset p) {
+  const box = _kPlus + 4;
+  for (final lv in levels) {
+    for (final b in lv.blocks) {
+      final cell = b.cell;
+      if (cell == null || !cell.isInstance) continue;
+      final base = lv.offset + b.boxOrigin + const Offset(3, 3);
+      final r = Rect.fromLTWH(base.dx - 2, base.dy - 2, box, box);
+      if (r.contains(p)) return cell;
+    }
+  }
+  return null;
+}
+
+/// 集合是否同一批网（`setEquals` 需要 foundation 显式导入，这里自足实现）。
+bool _sameNets(Set<NlWire> a, Set<NlWire> b) =>
+    a.length == b.length && a.every(b.contains);
+
+class NlWireSegmentHit {
+  final NlWire wire;
+  final int index;
+  final (Offset, Offset) segment;
+
+  const NlWireSegmentHit(this.wire, this.index, this.segment);
+}
+
+/// 手动模式线段命中：返回最近的网、段序号和线段，含展开层平移。
+NlWireSegmentHit? nlWireSegmentAtLevels(
+  List<NlLevel> levels,
+  Offset p, [
+  double tol = 5,
+]) {
+  NlWireSegmentHit? best;
+  var bestD = tol;
+  for (final level in levels) {
+    final local = p - level.offset;
+    for (final wire in level.wires) {
+      for (var i = 0; i < wire.segments.length; i++) {
+        final segment = wire.segments[i];
+        final distance = _distToSeg(local, segment.$1, segment.$2);
+        if (distance <= bestD) {
+          bestD = distance;
+          best = NlWireSegmentHit(wire, i, segment);
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/// 命中测试：返回距 [p] 最近且在 `tol` 内的网（供悬停/点选显示网名）。
+NlWire? nlWireAt(List<NlWire> wires, Offset p, [double tol = 5]) {
+  NlWire? best;
+  var bestD = tol;
+  for (final w in wires) {
+    for (final (a, b) in w.segments) {
+      final d = _distToSeg(p, a, b);
+      if (d <= bestD) {
+        bestD = d;
+        best = w;
+      }
+    }
+  }
+  return best;
+}
+
+double _distToSeg(Offset p, Offset a, Offset b) {
+  final dx = b.dx - a.dx, dy = b.dy - a.dy;
+  final len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return (p - a).distance;
+  final t = (((p.dx - a.dx) * dx + (p.dy - a.dy) * dy) / len2).clamp(0.0, 1.0);
+  return (p - Offset(a.dx + dx * t, a.dy + dy * t)).distance;
+}
+
+/// 绘制直线预览：块体矩形 + pin 端点 + 每网按 [topology] 的直线。
+///
+/// [active] 中的网（悬停/点选及其相连网）用高亮色加粗，并在驱动端标注网名；
+/// [body] 为 false 时只画标签（配合最顶层透明标签层，避免重复绘制块与线）。
+void paintNetlistStraightPreview(
+  Canvas canvas,
+  List<NlBlock> blocks,
+  List<NlWire> wires,
+  SchPalette palette, {
+  NlNetTopology topology = NlNetTopology.clique,
+  Set<NlWire> active = const {},
+  bool body = true,
+  bool labels = true,
+}) {
+  if (body) {
+    for (final b in blocks) {
+      if (b.isIo) continue;
+      final rect = Rect.fromLTWH(
+        b.boxOrigin.dx,
+        b.boxOrigin.dy,
+        b.boxSize.width,
+        b.boxSize.height,
+      );
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = netlistCellFill(b.cell?.kind, palette)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = palette.blockBorder
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+    }
+    final line = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (final w in wires) {
+      final pts = [w.from.pos, for (final l in w.loads) l.pos];
+      if (pts.length < 2) continue;
+      final hit = active.contains(w);
+      line
+        ..color = hit ? palette.hover : (w.isBus ? palette.wireBus : palette.wire)
+        ..strokeWidth = hit ? (w.isBus ? 2.8 : 2.0) : (w.isBus ? 1.6 : 1.0);
+      if (topology == NlNetTopology.clique) {
+        for (var i = 0; i < pts.length; i++) {
+          for (var j = i + 1; j < pts.length; j++) {
+            canvas.drawLine(pts[i], pts[j], line);
+          }
+        }
+        continue;
+      }
+      var cx = 0.0;
+      var cy = 0.0;
+      for (final q in pts) {
+        cx += q.dx;
+        cy += q.dy;
+      }
+      final c = Offset(cx / pts.length, cy / pts.length);
+      for (final q in pts) {
+        canvas.drawLine(q, c, line);
+      }
+    }
+    final dot = Paint()..color = palette.pinText;
+    for (final b in blocks) {
+      for (final pin in [...b.ins, ...b.outs]) {
+        canvas.drawRect(
+          Rect.fromCenter(center: pin.pos, width: 4, height: 4),
+          dot,
+        );
+      }
+    }
+  }
+  if (!labels) return;
+  for (final w in wires) {
+    if (!active.contains(w) || w.label.isEmpty) continue;
+    final tp = TextPainter(
+      text: TextSpan(
+        text: w.label,
+        style: TextStyle(
+          fontSize: 9.5,
+          color: palette.netLabel,
+          fontFamily: palette.fontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    var at = w.from.pos + const Offset(5, -12);
+    if (at.dx + tp.width > w.from.pos.dx + 220) {
+      at = w.from.pos + Offset(-tp.width - 5, -12);
+    }
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(at.dx - 2, at.dy - 1, tp.width + 4, tp.height + 2),
+        const Radius.circular(2),
+      ),
+      Paint()..color = palette.canvasBg.withValues(alpha: 0.82),
+    );
+    tp.paint(canvas, at);
+  }
+}

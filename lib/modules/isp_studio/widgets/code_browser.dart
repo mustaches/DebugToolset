@@ -768,9 +768,11 @@ class CFileList extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11,
                   fontFamily: 'Consolas',
+                  // 选中项文件名用纯黄色加粗显示，与背景形成强对比。
                   color: isSelected
-                      ? const Color(0xFFD4D4D4)
+                      ? const Color(0xFFFFFF00)
                       : const Color(0xFF9D9D9D),
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),

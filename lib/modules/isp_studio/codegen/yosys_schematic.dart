@@ -1,33 +1,77 @@
-/// Yosys + netlistsvg 电路图渲染管线：把 IP 包 `.v` 文件写临时目录 →
-/// `yosys（read_verilog → hierarchy → proc → opt_clean → write_json）`
-/// 出 RTL 级网表 JSON → `node netlistsvg` 布局生成 SVG。仿
-/// iverilog_sim.dart 的探测与进程模式（内置 tools/ 优先，PATH 兜底；
-/// 工具缺失时返回 missingTool，UI 提示安装，功能其余部分不受影响）。
+/// 电路图网表提取管线（**自研渲染的数据来源**）：把 IP 包 `.v` 文件写工作
+/// 目录 → `yosys（read_verilog → hierarchy -top → proc → opt_clean →
+/// write_json）` 出 RTL 级层级网表 JSON → 由 [YosysNetlist] 在 Dart 侧解析
+/// 成可绘制的模块/单元/引脚/总线，交给 `widgets/netlist_diagram.dart` 自研
+/// 布局与绘制。
 ///
-/// 只做到 RTL 级（触发器/运算器/选择器单元框图，适合浏览生成逻辑），
-/// 不做 synth/abc 门级映射。
+/// 与旧链路（`yosys → node netlistsvg/ELK → SVG → flutter_svg`）的差别：
+/// - **不 flatten**：保留模块层级（顶层是端口 + 子模块实例，可下钻），且
+///   真实信号名（`n1_hv17`/`n1_hsum`）不被 `$flatten\u_core.` 前缀污染；
+/// - **不依赖 Node/ELK/SVG**：布局与绘制全在 Dart 侧，无 `<style>` 块兼容
+///   问题、无 ELK 超大画布/1:18 长条问题、悬停高亮与点击无需解析 SVG 命中
+///   模型、导出 SVG/PNG 由同一布局模型生成（所见即所得）。
+///
+/// 只做到 RTL 级（触发器/运算器/选择器/ROM 读口等标准单元符号，适合浏览
+/// 生成逻辑），不做 synth/abc 门级映射。
 library;
 
 import 'dart:convert' show utf8;
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter_svg/flutter_svg.dart' show SvgBytesLoader;
+import 'package:vector_graphics/vector_graphics.dart';
+
+import 'netlist_model.dart';
+
+/// 解析 SVG 根元素的 width/height 属性（自研导出的 SVG 必带；外部 SVG 也要
+/// 能取尺寸）。解析失败或尺寸非正返回 null。
+({double w, double h})? parseSvgSize(String svg) {
+  final m = RegExp(r'<svg\b[^>]*>').firstMatch(svg);
+  if (m == null) return null;
+  final tag = m.group(0)!;
+  double? attr(String name) {
+    final a = RegExp('$name="([0-9.]+)').firstMatch(tag);
+    return a == null ? null : double.tryParse(a.group(1)!);
+  }
+
+  final w = attr('width'), h = attr('height');
+  if (w == null || h == null || w <= 0 || h <= 0) return null;
+  return (w: w, h: h);
+}
+
+/// SVG 字节栅格化为 PNG 字节（暗色底铺底，与应用内暗色预览同风格；
+/// 按固有尺寸 × [scale] 输出；「导出PNG」用）。经 vector_graphics
+/// 离屏绘制，不经 widget 树。
+Future<Uint8List> rasterizeSvgPng(
+  Uint8List svgBytes, {
+  double scale = 2,
+}) async {
+  final info = await vg.loadPicture(SvgBytesLoader(svgBytes), null);
+  final w = (info.size.width * scale).ceil();
+  final h = (info.size.height * scale).ceil();
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder)
+    ..drawRect(
+      ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+      ui.Paint()..color = const ui.Color(0xFF1E1E1E),
+    )
+    ..scale(scale.toDouble());
+  canvas.drawPicture(info.picture);
+  info.picture.dispose();
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(w, h);
+  picture.dispose();
+  final data = await image.toByteData(format: ui.ImageByteFormat.png);
+  return data!.buffer.asUint8List();
+}
 
 /// Yosys 可执行文件。
 class YosysToolchain {
   final String exe;
 
   const YosysToolchain(this.exe);
-}
-
-/// netlistsvg 工具链：Node.js 运行时 + netlistsvg 包目录（其下
-/// `node_modules/netlistsvg/bin/netlistsvg.js` 为入口）。
-class NetlistsvgToolchain {
-  final String nodeExe;
-
-  /// netlistsvg.js 入口的绝对路径。
-  final String netlistsvgJs;
-
-  const NetlistsvgToolchain(this.nodeExe, this.netlistsvgJs);
 }
 
 /// 随应用打包的工具目录（相对工作目录，与 tools/ffmpeg 同口径；安装版中
@@ -39,7 +83,8 @@ String _bundledToolDir(String rel) => '${Directory.current.path}\\$rel';
 /// PATH 各目录与 oss-cad-suite 常见安装根。未找到返回 null。
 /// [searchDirs] 可注入（测试用）。
 YosysToolchain? detectYosys({List<String>? searchDirs}) {
-  final dirs = searchDirs ??
+  final dirs =
+      searchDirs ??
       [
         _bundledToolDir(r'tools\yosys\bin'),
         ...?Platform.environment['PATH']?.split(';'),
@@ -54,109 +99,44 @@ YosysToolchain? detectYosys({List<String>? searchDirs}) {
   return null;
 }
 
-/// 探测 netlistsvg：应用内置 tools/netlistsvg（node.exe + npm 安装的包）
-/// 优先；其次 PATH 的 node + 工作目录 tools/netlistsvg 的包（node.exe
-/// 未拷贝但本机装有 Node.js 的开发机场景）。均未找到返回 null。
-NetlistsvgToolchain? detectNetlistsvg({String? packageDir, String? nodeExe}) {
-  final pkgDir = packageDir ?? _bundledToolDir(r'tools\netlistsvg');
-  final js =
-      '$pkgDir\\node_modules\\netlistsvg\\bin\\netlistsvg.js';
-  if (!File(js).existsSync()) return null;
-  final candidates = [
-    ?nodeExe,
-    '$pkgDir\\node.exe',
-    ...?Platform.environment['PATH']
-        ?.split(';')
-        .map((d) => d.isEmpty ? '' : '$d\\node.exe'),
-  ];
-  for (final exe in candidates) {
-    if (exe.isNotEmpty && File(exe).existsSync()) {
-      return NetlistsvgToolchain(exe, js);
-    }
-  }
-  return null;
-}
-
-/// netlistsvg 产出的 SVG 依赖 `<style>` 块 CSS，而 flutter_svg /
-/// vector_graphics 不支持样式块：把关键规则内联为呈现属性——
-/// 根元素补 `fill="none" stroke="#000"`（可继承，否则 cell 矩形默认
-/// 填充成全黑块）；`<text>` 补 fill/stroke/字号字族与 text-anchor
-/// （.nodelabel 居中、.inputPortLabel 右对齐）；`.splitjoinBody`
-/// （分叉/汇合黑点）补实心填充。
-String adaptNetlistsvgSvg(String svg) {
-  // 元素标签补属性（兼容自闭合 `/>` 收尾）。
-  String amend(String tag, String attrs) {
-    final selfClose = tag.endsWith('/>');
-    final body = tag.substring(0, tag.length - (selfClose ? 2 : 1));
-    return '$body$attrs${selfClose ? '/>' : '>'}';
-  }
-
-  var out = svg.replaceFirst('<svg ', '<svg fill="none" stroke="#000" ');
-  out = out.replaceAllMapped(RegExp(r'<text\b[^>]*>'), (m) {
-    final tag = m.group(0)!;
-    final buf = StringBuffer();
-    final hasFill = tag.contains('fill:') || tag.contains('fill=');
-    if (!hasFill) buf.write(' fill="#000" stroke="none"');
-    if (!tag.contains('font-size')) {
-      buf.write(' font-size="10" font-weight="bold"');
-    }
-    if (!tag.contains('font-family')) buf.write(' font-family="monospace"');
-    if (!tag.contains('text-anchor')) {
-      if (tag.contains('inputPortLabel')) {
-        buf.write(' text-anchor="end"');
-      } else if (tag.contains('nodelabel')) {
-        buf.write(' text-anchor="middle"');
-      }
-    }
-    return amend(tag, buf.toString());
-  });
-  // 分叉/汇合块实心黑（CSS .splitjoinBody{fill:#000}）。
-  out = out.replaceAllMapped(
-      RegExp(
-          r'<(path|rect|circle|ellipse)\b[^>]*class="[^"]*splitjoinBody[^"]*"[^>]*>'),
-      (m) {
-    final tag = m.group(0)!;
-    if (tag.contains('fill:') || tag.contains('fill=')) return tag;
-    return amend(tag, ' fill="#000"');
-  });
-  return out;
-}
-
-/// 电路图渲染结果。
-class SchRenderResult {
+/// 网表提取结果：解析后的层级网表 + 顶层模块名 + 全程日志。
+class SchNetlistResult {
   final bool success;
 
-  /// 生成的 SVG 内容（成功时非 null）。
-  final Uint8List? svgBytes;
+  /// 解析后的网表（成功时非 null）。
+  final YosysNetlist? netlist;
 
-  /// 管线全程日志（写文件清单 + 两进程流式输出）。
+  /// 顶层模块名（用于默认视图与「回顶层」）。
+  final String? topModule;
+
+  /// 管线全程日志（写文件清单 + yosys 流式输出）。
   final String log;
 
-  /// 缺失的工具名（'yosys' / 'netlistsvg' / 'node'），未缺失为 null。
+  /// 缺失的工具名（'yosys'），未缺失为 null。
   final String? missingTool;
 
-  /// 产出的 SVG 文件路径（成功时非 null，供「导出SVG」复用同一份产物）。
-  final String? svgPath;
+  /// 网表 JSON 产物路径（调试/排查用，成功时非 null）。
+  final String? netJsonPath;
 
-  const SchRenderResult({
+  const SchNetlistResult({
     required this.success,
-    this.svgBytes,
+    this.netlist,
+    this.topModule,
     required this.log,
     this.missingTool,
-    this.svgPath,
+    this.netJsonPath,
   });
 }
 
-/// 渲染电路图：把 [files]（IP 包「文件名→内容」）中的 `.v` 写入工作目录 →
-/// yosys 出网表 JSON → netlistsvg 出 SVG。[topName] 为顶层模块名（一般取
-/// 最外层封装，见 [schematicTopModule]）；[onOutput] 流式回调日志。
-/// 工具链注入参数供测试；缺省探测内置 tools/。
-Future<SchRenderResult> renderSchematic(
+/// 提取电路图网表：把 [files]（IP 包「文件名→内容」）中的 `.v` 写入工作
+/// 目录 → yosys 出**层级**网表 JSON（不 flatten）→ Dart 侧解析。
+/// [topName] 为顶层模块名（一般取 [schematicTopModule]）；[onOutput] 流式
+/// 回调日志。工具链注入参数供测试；缺省探测内置 tools/。
+Future<SchNetlistResult> extractSchematicNetlist(
   Map<String, String> files, {
   required String topName,
   void Function(String chunk)? onOutput,
   YosysToolchain? yosys,
-  NetlistsvgToolchain? netlistsvg,
   Duration timeout = const Duration(minutes: 2),
 }) async {
   final log = StringBuffer();
@@ -167,17 +147,11 @@ Future<SchRenderResult> renderSchematic(
 
   final tc = yosys ?? detectYosys();
   if (tc == null) {
-    return SchRenderResult(
-        success: false,
-        log: '未检测到 yosys（tools/yosys 或 PATH）',
-        missingTool: 'yosys');
-  }
-  final nl = netlistsvg ?? detectNetlistsvg();
-  if (nl == null) {
-    return SchRenderResult(
-        success: false,
-        log: '未检测到 netlistsvg 或 Node.js（tools/netlistsvg）',
-        missingTool: 'netlistsvg');
+    return SchNetlistResult(
+      success: false,
+      log: '未检测到 yosys（tools/yosys 或 PATH）',
+      missingTool: 'yosys',
+    );
   }
 
   // 工作目录：scratch/ip_sch/<top>（开发机）；不可写时（安装版运行于
@@ -186,7 +160,7 @@ Future<SchRenderResult> renderSchematic(
   final dir = await _workDir(topName);
   try {
     await Directory(dir).create(recursive: true);
-    // 清掉上次渲染的残留（同名编组重渲染）。
+    // 清掉上次提取的残留（同名编组重提）。
     await for (final f in Directory(dir).list()) {
       try {
         await f.delete(recursive: true);
@@ -195,47 +169,66 @@ Future<SchRenderResult> renderSchematic(
     final sources = <String>[];
     for (final e in files.entries) {
       if (!e.key.endsWith('.v')) continue;
-      await File('$dir${Platform.pathSeparator}${e.key}')
-          .writeAsString(e.value);
+      await File(
+        '$dir${Platform.pathSeparator}${e.key}',
+      ).writeAsString(e.value);
       // tb_ 测试台不参与综合。
       if (!e.key.startsWith('tb_')) sources.add(e.key);
     }
     emit('源文件：$sources\n顶层模块：$topName\n\n');
 
     const netJson = 'net.json';
-    final yosysScript = 'read_verilog ${sources.join(' ')}; '
+    // 不 flatten：保留层级（顶层 = 端口 + 子模块实例，可下钻）与真实信号名。
+    final yosysScript =
+        'read_verilog ${sources.join(' ')}; '
         'hierarchy -top $topName; proc; opt_clean; write_json $netJson';
     emit('> yosys -p "$yosysScript"\n');
     final yosysCode = await _runStep(
-        tc.exe, ['-p', yosysScript], dir, emit, timeout);
-    if (yosysCode != 0 || !File('$dir${Platform.pathSeparator}$netJson').existsSync()) {
+      tc.exe,
+      ['-p', yosysScript],
+      dir,
+      emit,
+      timeout,
+    );
+    final netPath = '$dir${Platform.pathSeparator}$netJson';
+    if (yosysCode != 0 || !File(netPath).existsSync()) {
       emit('\nyosys 失败（退出码 $yosysCode）\n');
-      return SchRenderResult(success: false, log: log.toString());
+      return SchNetlistResult(success: false, log: log.toString());
     }
 
-    const svgName = 'sch.svg';
-    emit('\n> node netlistsvg.js $netJson -o $svgName\n');
-    final nlCode = await _runStep(
-        nl.nodeExe, [nl.netlistsvgJs, netJson, '-o', svgName],
-        dir, emit, timeout);
-    final svgFile = File('$dir${Platform.pathSeparator}$svgName');
-    if (nlCode != 0 || !svgFile.existsSync()) {
-      emit('\nnetlistsvg 失败（退出码 $nlCode）\n');
-      return SchRenderResult(success: false, log: log.toString());
+    // Dart 侧解析（非逻辑单元——ROM 初始化 / 层次调试 / 形式断言——由
+    // 模型层 `NetlistCell.isDrawable` 跳过，无需再改 JSON）。
+    final json = await File(netPath).readAsString();
+    final YosysNetlist netlist;
+    try {
+      netlist = YosysNetlist.parse(json);
+    } catch (e) {
+      emit('\n网表解析失败：$e\n');
+      return SchNetlistResult(success: false, log: log.toString());
     }
-    final bytes = await svgFile.readAsBytes();
-    // netlistsvg 的 SVG 依赖 <style> 块 CSS，flutter_svg/vector_graphics
-    // 不支持：内联为呈现属性（见 adaptNetlistsvgSvg）。
-    final adapted = utf8.encode(adaptNetlistsvgSvg(utf8.decode(bytes)));
-    emit('\n电路图已生成：${svgFile.path}\n');
-    return SchRenderResult(
-        success: true,
-        svgBytes: adapted,
-        log: log.toString(),
-        svgPath: svgFile.path);
+    final top = netlist.module(topName);
+    if (top == null) {
+      emit(
+        '\n网表里找不到顶层模块 $topName'
+        '（现有：${netlist.modules.keys.join('、')}）\n',
+      );
+      return SchNetlistResult(success: false, log: log.toString());
+    }
+    emit(
+      '解析完成：${netlist.modules.length} 个模块，'
+      '顶层 ${top.name}：${top.cells.length} 个单元、'
+      '${top.ports.length} 个端口\n',
+    );
+    return SchNetlistResult(
+      success: true,
+      netlist: netlist,
+      topModule: top.name,
+      log: log.toString(),
+      netJsonPath: netPath,
+    );
   } catch (e) {
-    emit('\n渲染过程出错：$e\n');
-    return SchRenderResult(success: false, log: log.toString());
+    emit('\n提取异常：$e\n');
+    return SchNetlistResult(success: false, log: log.toString());
   }
 }
 
@@ -263,8 +256,9 @@ String schematicTopModule(Map<String, String> files, {String? vendorHint}) {
 /// 工作目录选择：优先 `工作目录/scratch/ip_sch/<top>`；不可写回退
 /// %LOCALAPPDATA%\DebugToolSet\ip_sch\<top>（再退系统临时目录）。
 Future<String> _workDir(String topName) async {
-  final scratch =
-      Directory('${Directory.current.path}\\scratch\\ip_sch\\$topName');
+  final scratch = Directory(
+    '${Directory.current.path}\\scratch\\ip_sch\\$topName',
+  );
   try {
     scratch.createSync(recursive: true);
     final probe = File('${scratch.path}\\.probe');
@@ -287,8 +281,13 @@ Future<String> _workDir(String topName) async {
   }
 }
 
-Future<int> _runStep(String exe, List<String> args, String workDir,
-    void Function(String) emit, Duration timeout) async {
+Future<int> _runStep(
+  String exe,
+  List<String> args,
+  String workDir,
+  void Function(String) emit,
+  Duration timeout,
+) async {
   final Process proc;
   try {
     proc = await Process.start(exe, args, workingDirectory: workDir);
@@ -298,10 +297,13 @@ Future<int> _runStep(String exe, List<String> args, String workDir,
   }
   final outDone = proc.stdout.transform(utf8.decoder).forEach(emit);
   final errDone = proc.stderr.transform(utf8.decoder).forEach(emit);
-  final code = await proc.exitCode.timeout(timeout, onTimeout: () {
-    proc.kill();
-    return -2;
-  });
+  final code = await proc.exitCode.timeout(
+    timeout,
+    onTimeout: () {
+      proc.kill();
+      return -2;
+    },
+  );
   await Future.wait([outDone, errDone]);
   return code;
 }

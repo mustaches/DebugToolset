@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import '../models/isp_graph.dart';
 import '../pipeline/isp_kernels.dart';
 import 'ip_gen_plan.dart';
+import 'ip_stimulus.dart';
 import 'ip_target.dart';
 import 'node_v_stream.dart';
 
@@ -24,13 +25,19 @@ int fnv1a32(List<int> bytes) {
   return h;
 }
 
-/// golden 测试帧尺寸（小图，仿真快；后续可参数化）。
+/// golden 测试帧默认尺寸（小图，仿真快）；现由 [IpSimStimulus] 参数化，
+/// 此处保留为默认值（`IpSimStimulus()` 默认构造同值：64×8×6 帧）。
 const int kIpSimW = 64;
-const int kIpSimH = 48;
+const int kIpSimH = 8;
+const int kIpSimFrames = 6;
 
 /// 内存生成 Verilog IP 包文件集：文件名 → 内容（键顺序即写盘顺序）。
+/// [stimulus] 为一键仿真激励参数（帧尺寸/帧数/图案/种子/握手压力率），
+/// 仅影响 tb/golden 生成物；null 取默认（与历史固定行为一致）。
 Map<String, String> buildGroupIpFiles(
-    IspGraph graph, IspNodeGroup group, IpGenOptions options) {
+    IspGraph graph, IspNodeGroup group, IpGenOptions options,
+    {IpSimStimulus? stimulus}) {
+  final stim = stimulus ?? const IpSimStimulus();
   final plan = planGroupIp(graph, group, options);
   final top = plan.topName;
   final pb = plan.pixBits;
@@ -60,22 +67,22 @@ Map<String, String> buildGroupIpFiles(
     }
   }
 
-  // ---- golden：输入帧（LCG）+ 期望 FNV-1a ----
-  final (goldenIn, goldenHash) = _buildGolden(plan, graph, group);
+  // ---- golden：输入激励帧 + 期望 FNV-1a（图案/尺寸/帧数由 stim 决定）----
+  final (goldenIn, goldenHash) = _buildGolden(plan, graph, group, stim);
 
   final files = <String, String>{
     '${top}_core.v': _coreV(plan, roms.toString(), datapath.toString()),
     '${top}_top.v': _topV(plan),
-    'tb_$top.v': _tbV(plan, goldenHash),
+    'tb_$top.v': _tbV(plan, goldenHash, stim),
     'golden_in.hex': goldenIn,
     'golden_hash.txt': '0x${goldenHash.toRadixString(16).padLeft(8, '0')}\n',
-    'wave.gtkw': _gtkw(plan),
-    'wave.sucl': _sucl(plan),
-    'README.md': _readme(plan),
+    'README.md': _readme(plan, stim),
   };
   if (options.vendor.isVivado) {
     files['${top}_axis.v'] = _axisV(plan);
     files['package_ip.tcl'] = _packageIpTcl(plan);
+    // 定制界面（xgui）：打包时由 package_ip.tcl 拷入组件目录。
+    files['xgui/${top}_v1_0.tcl'] = _xguiTcl(plan);
   } else if (options.vendor.isLibero) {
     files['${top}_libero.v'] = _liberoV(plan);
   }
@@ -83,12 +90,15 @@ Map<String, String> buildGroupIpFiles(
 }
 
 /// 写盘 IP 包到 [dir]（创建目录），返回已写文件路径列表。
+/// 键可带子目录（如 xgui/xxx.tcl），父目录自动创建。
 Future<List<String>> exportGroupIpPackage(
     Map<String, String> files, String dir) async {
   await Directory(dir).create(recursive: true);
   final out = <String>[];
   for (final e in files.entries) {
     final p = '$dir${Platform.pathSeparator}${e.key}';
+    // 键含子目录（xgui/）：先建父目录。
+    await File(p).parent.create(recursive: true);
     await File(p).writeAsString(e.value);
     out.add(p);
   }
@@ -121,7 +131,11 @@ ${_headerComment(plan)}// 核心模块：通用像素流 in→out（带 ready �
 `timescale 1ns/1ps
 module ${top}_core #(
     parameter integer PIX_BITS  = $pb,
-    parameter integer MAX_WIDTH = ${plan.options.maxWidth}
+    parameter integer MAX_WIDTH = ${plan.options.maxWidth},
+    // 优化策略预留（0 面积 / 1 平衡 / 2 性能）：当前白名单为点操作
+    //（II=1 恒等），窗口算子落地后经 generate-if 分档生效。
+    parameter integer GSTRATEGY = ${plan.options.gstrategy},
+    parameter integer FOLD      = ${plan.options.fold}
 ) (
     input  wire                   clk,
     input  wire                   rst_n,
@@ -179,7 +193,9 @@ ${_headerComment(plan)}// 顶层装配：VIN_TYPE=none（直通）时直接透�
 `timescale 1ns/1ps
 module ${top}_top #(
     parameter integer PIX_BITS  = $pb,
-    parameter integer MAX_WIDTH = ${plan.options.maxWidth}
+    parameter integer MAX_WIDTH = ${plan.options.maxWidth},
+    parameter integer GSTRATEGY = ${plan.options.gstrategy},
+    parameter integer FOLD      = ${plan.options.fold}
 ) (
     input  wire                   clk,
     input  wire                   rst_n,
@@ -196,7 +212,9 @@ module ${top}_top #(
 );
   ${top}_core #(
       .PIX_BITS(PIX_BITS),
-      .MAX_WIDTH(MAX_WIDTH)
+      .MAX_WIDTH(MAX_WIDTH),
+      .GSTRATEGY(GSTRATEGY),
+      .FOLD(FOLD)
   ) u_core (
       .clk(clk), .rst_n(rst_n),
       .in_valid(in_valid), .in_ready(in_ready),
@@ -218,7 +236,9 @@ ${_headerComment(plan)}// Vivado AXI4-Stream 封装：像素流 → AXI4-Stream�
 `timescale 1ns/1ps
 module ${top}_axis #(
     parameter integer PIX_BITS  = $pb,
-    parameter integer MAX_WIDTH = ${plan.options.maxWidth}
+    parameter integer MAX_WIDTH = ${plan.options.maxWidth},
+    parameter integer GSTRATEGY = ${plan.options.gstrategy},
+    parameter integer FOLD      = ${plan.options.fold}
 ) (
     input  wire                   aclk,
     input  wire                   aresetn,
@@ -235,7 +255,9 @@ module ${top}_axis #(
 );
   ${top}_core #(
       .PIX_BITS(PIX_BITS),
-      .MAX_WIDTH(MAX_WIDTH)
+      .MAX_WIDTH(MAX_WIDTH),
+      .GSTRATEGY(GSTRATEGY),
+      .FOLD(FOLD)
   ) u_core (
       .clk(aclk), .rst_n(aresetn),
       .in_valid(s_axis_tvalid), .in_ready(s_axis_tready),
@@ -257,7 +279,9 @@ ${_headerComment(plan)}// Libero 裸流封装：valid/ready + sof/eol 直通（S
 `timescale 1ns/1ps
 module ${top}_libero #(
     parameter integer PIX_BITS  = $pb,
-    parameter integer MAX_WIDTH = ${plan.options.maxWidth}
+    parameter integer MAX_WIDTH = ${plan.options.maxWidth},
+    parameter integer GSTRATEGY = ${plan.options.gstrategy},
+    parameter integer FOLD      = ${plan.options.fold}
 ) (
     input  wire                   clk,
     input  wire                   rst_n,
@@ -274,7 +298,9 @@ module ${top}_libero #(
 );
   ${top}_core #(
       .PIX_BITS(PIX_BITS),
-      .MAX_WIDTH(MAX_WIDTH)
+      .MAX_WIDTH(MAX_WIDTH),
+      .GSTRATEGY(GSTRATEGY),
+      .FOLD(FOLD)
   ) u_core (
       .clk(clk), .rst_n(rst_n),
       .in_valid(in_valid), .in_ready(in_ready),
@@ -286,21 +312,34 @@ endmodule
 ''';
 }
 
-String _tbV(IpPlan plan, int goldenHash) {
+String _tbV(IpPlan plan, int goldenHash, IpSimStimulus stim) {
   final top = plan.topName;
   final pb = plan.pixBits;
   final bw = 3 * pb;
   final hashHex = goldenHash.toRadixString(16).padLeft(8, '0');
+  final seedHex = (stim.seed & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0');
   return '''
 // 一键仿真 testbench：读 golden_in.hex 喂核心 → 收集输出 → FNV-1a 对拍
 // golden_hash.txt（期望值内嵌为 EXPECTED_HASH，EXACT 模式逐位一致）。
+// 激励参数（应用内「仿真激励参数」对话框指定，重新生成可改）：
+//   帧 ${stim.width}×${stim.height} × ${stim.frames} 帧，帧间隔 ${stim.frameGapCycles} 拍，
+//   图案=${stim.pattern.displayName}，
+//   种子=0x$seedHex，输入气泡率=${stim.inGapPct}%，输出背压率=${stim.outStallPct}%。
 `timescale 1ns/1ps
 module tb_$top;
   localparam integer PIX_BITS = $pb;
-  localparam integer W  = $kIpSimW;
-  localparam integer H  = $kIpSimH;
-  localparam integer N  = W * H;
+  localparam integer W  = ${stim.width};
+  localparam integer H  = ${stim.height};
+  localparam integer FRAMES = ${stim.frames};
+  // 帧间隔（时钟周期数）：帧与帧之间插入的 in_valid 空闲拍数（0=连续）。
+  localparam integer FRAME_GAP = ${stim.frameGapCycles};
+  localparam integer N  = W * H * FRAMES;
   localparam [31:0] EXPECTED_HASH = 32'h$hashHex;
+  // 握手压力（%）：输入气泡（in_valid 随机空闲拍）/ 输出背压（out_ready
+  // 随机拉低）；0 = 恒满流/恒接收。随机序列由 SEED 派生，仿真可复现。
+  localparam integer GAP_PCT   = ${stim.inGapPct};
+  localparam integer STALL_PCT = ${stim.outStallPct};
+  localparam [31:0] SEED = 32'h$seedHex;
 
   reg clk = 1'b0, rst_n = 1'b0;
   reg in_valid = 1'b0, in_sof = 1'b0, in_eol = 1'b0;
@@ -322,7 +361,14 @@ module tb_$top;
 
   // 仿真状态变量必须先声明（iverilog 要求声明在使用之前）。
   reg [31:0] fnv;
-  integer i, got;
+  reg [31:0] rng_gap, rng_stall;
+  integer i, f, got;
+
+  // LCG（Numerical Recipes，32 位）：与 Dart 侧激励生成同一种子口径。
+  function [31:0] lcg_next;
+    input [31:0] s;
+    lcg_next = s * 32'd1664525 + 32'd1013904223;
+  endfunction
 
   // FNV-1a：对单个通道值（零扩到 16 位）按小端 2 字节更新。
   function [31:0] fnv_u16;
@@ -347,41 +393,82 @@ module tb_$top;
     end
   endtask
 
-  // 波形转储：vvp 运行产出 wave.vcd，仿真结束后由 GTKWave 打开。
+  // 波形转储：vvp 运行产出 wave.vcd，由内嵌「仿真波形」标签页展示。
   initial begin
     \$dumpfile("wave.vcd");
     \$dumpvars(0, tb_$top);
   end
 
-  always #5 clk = ~clk;
+  ${stim.clkMHz == 100 ? '' : '// CLK 频率 ${fmtClkMHz(stim.clkMHz)} MHz（半周期 ${ipClkHalfNs(stim.clkMHz)} ns，timescale 1ns/1ps）\n  '}always #${ipClkHalfNs(stim.clkMHz)} clk = ~clk;
 
+  // 输出背压：负沿按 STALL_PCT 随机拉低 out_ready（负沿更新，与正沿
+  // 采样错开半拍，无竞争）。
+  always @(negedge clk) begin
+    if (!rst_n || STALL_PCT == 0) begin
+      out_ready <= 1'b1;
+    end else begin
+      rng_stall = lcg_next(rng_stall);
+      out_ready <= (((rng_stall >> 16) % 100) >= STALL_PCT);
+    end
+  end
+
+  // 输出监控：仅在真实传输拍（out_valid & out_ready）计一次哈希。
+  // always 块在正沿读到的是沿前旧值（NBA 尚未生效），背压保持的输出
+  // 不会被重复计数。
+  always @(posedge clk) begin
+    if (rst_n && out_valid && out_ready) begin
+      hash_pixel(out_data);
+      got = got + 1;
+    end
+  end
+
+  // 驱动全部在负沿切换、正沿只读 in_ready 沿前值：输入信号的修改与
+  // 核心的正沿采样错开半拍，彻底避开「正沿后 active 区改 in_valid 与
+  // 核心采样竞争丢像素」的经典竞争。
   initial begin
+    rng_gap = SEED;
+    rng_stall = SEED ^ 32'h9E3779B9;
     // 复位 2 拍。
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
-    @(posedge clk); #1;
+    @(negedge clk);
 
     fnv = 32'h811c9dc5;
     got = 0;
-    // 逐像素喂入（ready 恒高、latency=1 拍），边喂边收。#1 后再采样
-    // out_valid/out_data，避开 NBA 更新竞争（否则采到上一拍旧值）。
-    for (i = 0; i < N; i = i + 1) begin
-      in_data  <= mem[i];
-      in_valid <= 1'b1;
-      in_sof   <= (i == 0);
-      in_eol   <= (i == N - 1);
-      @(posedge clk); #1;
-      if (out_valid) begin hash_pixel(out_data); got = got + 1; end
+    // 逐帧逐像素喂入：sof=帧首像素、eol=行尾像素；帧间连续不停流。
+    // 像素在负沿驱动、下一正沿被采样；正沿后读 in_ready 沿前值判断
+    // 是否被接收，未接收则保持信号再等一拍（背压下不重发不错序）。
+    for (f = 0; f < FRAMES; f = f + 1) begin
+      for (i = 0; i < W * H; i = i + 1) begin
+        in_valid = 1'b1;
+        in_data  = mem[f * W * H + i];
+        in_sof   = (i == 0);
+        in_eol   = (i % W == W - 1);
+        @(posedge clk);
+        while (!in_ready) @(posedge clk);
+        @(negedge clk);
+        // 输入气泡：按 GAP_PCT 概率插入 1 拍空闲。
+        if (GAP_PCT > 0) begin
+          rng_gap = lcg_next(rng_gap);
+          if (((rng_gap >> 16) % 100) < GAP_PCT) begin
+            in_valid = 1'b0; in_sof = 1'b0; in_eol = 1'b0;
+            @(negedge clk);
+          end
+        end
+      end
+      // 帧间隔：帧末像素接收后插入 FRAME_GAP 拍空闲（负沿切换，无竞争）。
+      if (FRAME_GAP > 0 && f + 1 < FRAMES) begin
+        in_valid = 1'b0; in_sof = 1'b0; in_eol = 1'b0;
+        repeat (FRAME_GAP) @(posedge clk);
+        @(negedge clk);
+      end
     end
-    // 收尾：管道末尾 2 拍。
-    in_valid <= 1'b0; in_sof <= 1'b0; in_eol <= 1'b0;
-    repeat (2) begin
-      @(posedge clk); #1;
-      if (out_valid) begin hash_pixel(out_data); got = got + 1; end
-    end
+    // 收尾：停流后等管道排空（点操作 1 拍延迟，4 拍余量充足）。
+    in_valid = 1'b0; in_sof = 1'b0; in_eol = 1'b0;
+    repeat (4) @(posedge clk);
 
     if (got == N && fnv == EXPECTED_HASH)
-      \$display("PASS  frame=%0dx%0d  fnv=%08x", W, H, fnv);
+      \$display("PASS  frame=%0dx%0dx%0d  fnv=%08x", W, H, FRAMES, fnv);
     else
       \$display("FAIL  got=%0d/%0d  fnv=%08x  expected=%08x",
                  got, N, fnv, EXPECTED_HASH);
@@ -391,67 +478,35 @@ endmodule
 ''';
 }
 
-/// GTKWave 保存文件：一键仿真打开 wave.vcd 时自动把时钟/复位与 IP 的
-/// I/O 信号（valid/ready/sof/eol/data）加入波形视图，免去初学者手工
-/// 从信号树逐个拖入。`@22` 段为十六进制显示（数据总线），标量信号
-/// 任何进制显示效果相同。
-String _gtkw(IpPlan plan) {
-  final tb = 'tb_${plan.topName}';
-  final bw = 3 * plan.pixBits;
-  final b = StringBuffer()
-    ..writeln('[timestart] 0')
-    ..writeln('[size] 1280 800')
-    ..writeln('[pos] -1 -1')
-    // zoom=-1 即 Zoom Fit（全帧可见）；其余 26 列为标记位（无）。
-    ..writeln(
-        '*-1.000000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1')
-    ..writeln('@22');
-  for (final s in const [
-    'clk',
-    'rst_n',
-    'in_valid',
-    'in_ready',
-    'in_sof',
-    'in_eol',
-    'out_valid',
-    'out_ready',
-    'out_sof',
-    'out_eol',
-  ]) {
-    b.writeln('$tb.$s');
-  }
-  b
-    ..writeln('$tb.in_data[${bw - 1}:0]')
-    ..writeln('$tb.out_data[${bw - 1}:0]');
-  return b.toString();
+/// Vivado 定制界面（xgui tcl）：分页 + 控件化 + 参数联动，打包时由
+/// package_ip.tcl 拷入组件 xgui/ 目录。标准 init_gui 结构。
+String _xguiTcl(IpPlan plan) {
+  return r'''
+# Vivado Customize IP 定制界面（DebugToolSet ISP Studio 生成）：
+# 分页 + 控件化 + 参数联动（FOLD 仅 GSTRATEGY=0 面积档可编辑，
+# enablement 由打包脚本 package_ip.tcl 的 enablement_tcl_expr 实现）。
+proc init_gui { IPINST } {
+  ipgui::add_param $IPINST -name "Component_Name"
+  set Page0 [ipgui::add_page $IPINST -name "Page0" -display_name {基本配置 General}]
+  ipgui::add_param $IPINST -name "PIX_BITS" -parent $Page0 \
+      -display_name {像素位宽 PIX_BITS} \
+      -tooltip {像素位宽；决定数据通路宽度与 LUT ROM 深度（MAXV=2^PIX_BITS-1）。} \
+      -widget comboBox
+  ipgui::add_param $IPINST -name "MAX_WIDTH" -parent $Page0 \
+      -display_name {最大行宽 MAX_WIDTH} \
+      -tooltip {行缓冲最大行宽，直接决定 BRAM 用量。} \
+      -widget comboBox
+  set Page1 [ipgui::add_page $IPINST -name "Page1" -display_name {优化策略 Optimization}]
+  ipgui::add_param $IPINST -name "GSTRATEGY" -parent $Page1 \
+      -display_name {实现分档 GSTRATEGY} \
+      -tooltip {0 面积优先 / 1 平衡 / 2 性能优先；当前白名单为点操作（II=1），窗口算子落地后分档生效。} \
+      -widget comboBox
+  ipgui::add_param $IPINST -name "FOLD" -parent $Page1 \
+      -display_name {折叠因子 FOLD} \
+      -tooltip {每像素 FOLD 拍、算子复用，吞吐 1/FOLD px/clk；仅 GSTRATEGY=0（面积优先）时可编辑。} \
+      -widget comboBox
 }
-
-/// Surfer 启动命令文件（`.sucl`，经 `surfer wave.vcd --command-file
-/// wave.sucl` 生效）：与 [_gtkw] 同口径地把时钟/复位与 IP I/O 信号
-/// 加入波形视图并 Zoom Fit。Surfer 的变量名不带位宽后缀。
-String _sucl(IpPlan plan) {
-  final tb = 'tb_${plan.topName}';
-  final b = StringBuffer()
-    ..writeln('# 一键仿真自动加载：时钟/复位 + IP I/O 信号')
-    ..writeln('timeline_add');
-  for (final s in const [
-    'clk',
-    'rst_n',
-    'in_valid',
-    'in_ready',
-    'in_sof',
-    'in_eol',
-    'out_valid',
-    'out_ready',
-    'out_sof',
-    'out_eol',
-    'in_data',
-    'out_data',
-  ]) {
-    b.writeln('variable_add $tb.$s');
-  }
-  b.writeln('zoom_fit');
-  return b.toString();
+''';
 }
 
 String _packageIpTcl(IpPlan plan) {
@@ -477,17 +532,47 @@ set_property value_resolve_type user [ipx::get_user_parameters PIX_BITS]
 set_property value ${plan.pixBits} [ipx::get_user_parameters PIX_BITS]
 ipx::add_user_parameter MAX_WIDTH [ipx::current_core]
 set_property value ${plan.options.maxWidth} [ipx::get_user_parameters MAX_WIDTH]
+# 优化策略（当前白名单为点操作，预留窗口算子分档；GUI 可改）。
+ipx::add_user_parameter GSTRATEGY [ipx::current_core]
+set_property value_resolve_type user [ipx::get_user_parameters GSTRATEGY]
+set_property value ${plan.options.gstrategy} [ipx::get_user_parameters GSTRATEGY]
+ipx::add_user_parameter FOLD [ipx::current_core]
+set_property value_resolve_type user [ipx::get_user_parameters FOLD]
+set_property value ${plan.options.fold} [ipx::get_user_parameters FOLD]
+# 取值合法性（组合列表校验，与定制界面下拉同源）：
+set_property value_validation_type list [ipx::get_user_parameters PIX_BITS]
+set_property value_validation_list {8 10 12 14 16} [ipx::get_user_parameters PIX_BITS]
+set_property value_validation_type list [ipx::get_user_parameters MAX_WIDTH]
+set_property value_validation_list {640 1280 1920 2048 4096 8192} [ipx::get_user_parameters MAX_WIDTH]
+set_property value_validation_type list [ipx::get_user_parameters GSTRATEGY]
+set_property value_validation_list {0 1 2} [ipx::get_user_parameters GSTRATEGY]
+set_property value_validation_type list [ipx::get_user_parameters FOLD]
+set_property value_validation_list {1 2 4} [ipx::get_user_parameters FOLD]
+# FOLD 仅面积档（GSTRATEGY=0）可编辑；旧版 Vivado 不支持该属性时静默跳过。
+catch {
+  set_property enablement_tcl_expr {\$GSTRATEGY == 0} \\
+    [ipx::get_model_parameters FOLD -of_objects [ipx::current_core]]
+}
 set_property supported_families {${series.supportedFamilies}} [ipx::current_core]
 ipx::save_core [ipx::current_core]
 ipx::check_integrity [ipx::current_core]
+# 定制界面（xgui tcl）拷入组件目录（Vivado 打开 Customize IP 时读取）：
+set xguiDir "./ip_repo/\$ip_name/xgui"
+file mkdir \$xguiDir
+file copy -force -- "xgui/${top}_v1_0.tcl" \$xguiDir/
 puts "IP 已打包到 ./ip_repo"
 ''';
 }
 
-String _readme(IpPlan plan) {
+String _readme(IpPlan plan, IpSimStimulus stim) {
   final top = plan.topName;
   final v = plan.options.vendor;
-  final romBits = 50 * plan.lutDepth;
+  final est = plan.resources;
+  final strategyName = switch (plan.options.gstrategy) {
+    0 => '面积优先',
+    1 => '平衡',
+    _ => '性能优先',
+  };
   return '''
 # $top（FPGA Verilog IP，ISP Studio 自动生成）
 
@@ -507,6 +592,11 @@ String _readme(IpPlan plan) {
 |---|---|---|
 | `PIX_BITS` | ${plan.pixBits} | 像素位宽；决定数据通路宽度与 LUT ROM 深度（MAXV = 2^PIX_BITS-1） |
 | `MAX_WIDTH` | ${plan.options.maxWidth} | 行缓冲最大行宽（本节点无窗口算子，参数保留） |
+| `GSTRATEGY` | ${plan.options.gstrategy}（$strategyName） | 窗口算子实现分档：0 面积 / 1 平衡 / 2 性能（当前白名单为点操作，预留） |
+| `FOLD` | ${plan.options.fold} | 窗口算子折叠因子（仅面积档生效，预留） |
+
+Vivado 定制界面（双击 IP → Customize IP）为分页 + 控件化界面（基本配置 /
+优化策略两页，`xgui/${top}_v1_0.tcl`），`FOLD` 仅面积档可编辑。
 
 ## 支持节点与定点口径
 
@@ -514,13 +604,23 @@ String _readme(IpPlan plan) {
   Q14 定点 ROM，逐像素 3 查表 + 色环回绕（单次条件加减）+ 2 次整数乘加
   `(in*q+8192)>>14` 后钳位；与 C 侧 `bb_clamp_q14` 逐位一致。
 
-## 资源估算（单节点 multi_band_eq）
+## 资源估算（粗估，随节点类型逐步细化）
 
-- 3 张 ROM：shift（16bit）+ S/L Q14（各 17bit），深度 `2^PIX_BITS`，合计
-  $romBits bit（PIX_BITS=${plan.pixBits}）；
-- 2 个 `17×PIX_BITS` 无符号乘法器（S/L 各一，可绑 DSP 或 LUT）。
+| 项 | 估算 | 说明 |
+|---|---|---|
+| LUT ROM | ${est.romBits} bit（≈${est.bram36k} 块 36K BRAM） | 3 张烘焙表（shift 16bit + S/L Q14 各 17bit）× 深度 2^PIX_BITS |
+| DSP | ≈${est.estDsps} | S/L 两个 Q14 定点乘法器；性能档推断 DSP48，平衡/面积档绑 LUT |
+| 逻辑 LUT | ≈${est.estLuts} | 数据通路 + 握手 + 表取数（乘法器绑 LUT 时含其估算） |
+| 延迟 | ${est.latencyCycles} 拍 | 点操作编组：1 拍流水（无行缓冲） |
+| 吞吐 | ${est.throughputPxPerClk} px/clk | II=1 |
 
 ## 一键仿真
+
+激励参数（应用内「仿真激励参数」对话框指定，随 tb/golden 一并烘焙）：
+帧 ${stim.width}×${stim.height} × ${stim.frames} 帧，帧间隔 ${stim.frameGapCycles} 拍，
+图案 ${stim.pattern.displayName}，
+种子 0x${(stim.seed & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0')}，
+输入气泡率 ${stim.inGapPct}%，输出背压率 ${stim.outStallPct}%。
 
 ```
 iverilog -g2012 -o tb.vvp tb_$top.v ${top}_core.v ${top}_top.v
@@ -540,10 +640,11 @@ ${v.importNote}
 // golden 计算（Dart 侧，与 RTL 逐位一致）
 // ---------------------------------------------------------------------------
 
-/// 生成 golden 输入帧（LCG）+ 期望输出 FNV-1a（EXACT 模式）。输入 3 通道
-/// 打包 {H,S,L}，各通道 LCG 采样到 [0,maxValue]。
+/// 生成 golden 输入激励帧 + 期望输出 FNV-1a（EXACT 模式）。输入 3 通道
+/// 打包 {H,S,L}，逐帧逐像素由 [IpStimulusGen] 按激励参数（图案/尺寸/
+/// 帧数/种子）产出；默认参数下与历史 LCG 序列逐位一致。
 (String, int) _buildGolden(
-    IpPlan plan, IspGraph graph, IspNodeGroup group) {
+    IpPlan plan, IspGraph graph, IspNodeGroup group, IpSimStimulus stim) {
   final mv = plan.maxValue;
   final pb = plan.pixBits;
 
@@ -564,38 +665,33 @@ ${v.importNote}
     }
   }
 
-  // LCG（Numerical Recipes，32 位）。
-  var state = 0x1234_5678;
-  int next() {
-    state = (state * 1664525 + 1013904223) & 0xFFFFFFFF;
-    return state;
-  }
-
-  final nPx = kIpSimW * kIpSimH;
+  final gen = IpStimulusGen(stim, mv);
   final outBytes = <int>[];
   final hexDigits = ((3 * pb + 3) ~/ 4);
   final inLines = StringBuffer();
-  for (var i = 0; i < nPx; i++) {
-    final h = (next() >> 16) & mv;
-    final s = (next() >> 16) & mv;
-    final l = (next() >> 16) & mv;
-    final word = (h << (2 * pb)) | (s << pb) | l;
-    inLines.writeln(word.toRadixString(16).padLeft(hexDigits, '0'));
+  for (var f = 0; f < stim.frames; f++) {
+    for (var y = 0; y < stim.height; y++) {
+      for (var x = 0; x < stim.width; x++) {
+        final (h, s, l) = gen.next(x, y);
+        final word = (h << (2 * pb)) | (s << pb) | l;
+        inLines.writeln(word.toRadixString(16).padLeft(hexDigits, '0'));
 
-    // 期望输出（与 core 组合逻辑同口径）。
-    final hv = h > mv ? mv : h;
-    final shift = shiftLut[hv];
-    var hnew = hv + shift;
-    if (hnew > mv) {
-      hnew -= (mv + 1);
-    } else if (hnew < 0) {
-      hnew += (mv + 1);
-    }
-    final os = _clampQ14(s, sQ14[hv], mv);
-    final ol = _clampQ14(l, lQ14[hv], mv);
-    for (final c in [hnew, os, ol]) {
-      outBytes.add(c & 0xFF);
-      outBytes.add((c >> 8) & 0xFF);
+        // 期望输出（与 core 组合逻辑同口径）。
+        final hv = h > mv ? mv : h;
+        final shift = shiftLut[hv];
+        var hnew = hv + shift;
+        if (hnew > mv) {
+          hnew -= (mv + 1);
+        } else if (hnew < 0) {
+          hnew += (mv + 1);
+        }
+        final os = _clampQ14(s, sQ14[hv], mv);
+        final ol = _clampQ14(l, lQ14[hv], mv);
+        for (final c in [hnew, os, ol]) {
+          outBytes.add(c & 0xFF);
+          outBytes.add((c >> 8) & 0xFF);
+        }
+      }
     }
   }
   return (inLines.toString(), fnv1a32(outBytes));

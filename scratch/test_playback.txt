@@ -1,0 +1,56 @@
+Resolving dependencies...
+Downloading packages...
+  archive 3.6.1 (4.3.0 available)
+  cross_file 0.3.5+5 (0.4.0 available)
+  cupertino_icons 1.0.9 (2.0.0 available)
+  dartssh2 2.22.5 (4.1.0 available)
+  image 4.3.0 (4.10.1 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  package_info_plus 9.0.1 (10.2.2 available)
+  package_info_plus_platform_interface 3.2.1 (4.1.0 available)
+  test_api 0.7.12 (0.7.14 available)
+  win32 5.15.0 (6.4.0 available)
+  xml 6.6.1 (7.1.0 available)
+Got dependencies!
+11 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading G:/DebugToolSet/test/isp_playback_test.dart
+00:00 +0: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +1: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +2: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +3: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +4: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +5: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +6: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +7: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +8: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +9: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +10: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +11: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +12: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +13: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +14: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +15: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +16: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +17: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +18: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +19: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +20: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放推进帧，暂停后停止并刷新状态
+00:00 +21: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 cancelProcessing 停止播放并同步复位 isPlaying
+00:00 +22: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 进入播放清空单次预览的节点后端/耗时标记
+00:01 +23: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 播放中同链仪器随帧刷新
+00:02 +24: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 预览帧数限制预览/播放范围
+00:03 +25: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 单帧源播放退化为普通预览
+00:03 +26: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 视频源设置文件后自动填充播放帧率与预览帧数
+00:03 +27: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 60fps 视频播放实测：丢帧率应接近 0
+播放实测: 取帧 108 上屏 104 丢弃 0 (2.0s, 51.8fps)
+00:05 +28: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 走帧节拍跟随片源真实帧率：预览 fps 参数滞后不误导
+00:12 +29: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 1080p 视频 + 双仪器播放实测（复现用户场景）
+1080p+双仪器实测: 取帧 165 上屏 161 重建 0(前1.5s 0 / 后1.5s 0) (3.1s, 51.8fps, pace 16.7ms, maxProd 42.2ms, maxFetch 34.0ms x0, waitOver 17.2ms)
+00:16 +30: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 视频经中间算子播放：常驻流水线 worker 出帧
+00:22 +31: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 视频经多段色彩均衡器播放：附加区预览/示波器随帧同步
+00:23 +32: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 无预览节点：视频源直连均衡器也可播放（均衡器即播放汇点）
+00:30 +33: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 音频仪器随播放刷新（电平/EQ）
+00:32 +34: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 视频音频：解析音轨、抽取 WAV、MCI 播放控制
+00:32 +35: G:/DebugToolSet/test/isp_playback_test.dart: IspStudioState 连续播放 无音轨视频：hasAudio 为 false，ensureAudioWav 返回 null
+00:32 +36: All tests passed!

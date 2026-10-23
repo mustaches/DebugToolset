@@ -1,0 +1,15 @@
+# 一键仿真自动加载：时钟/复位 + IP I/O 信号
+timeline_add
+variable_add tb_isp_ip_multi_band_eq.clk
+variable_add tb_isp_ip_multi_band_eq.rst_n
+variable_add tb_isp_ip_multi_band_eq.in_valid
+variable_add tb_isp_ip_multi_band_eq.in_ready
+variable_add tb_isp_ip_multi_band_eq.in_sof
+variable_add tb_isp_ip_multi_band_eq.in_eol
+variable_add tb_isp_ip_multi_band_eq.out_valid
+variable_add tb_isp_ip_multi_band_eq.out_ready
+variable_add tb_isp_ip_multi_band_eq.out_sof
+variable_add tb_isp_ip_multi_band_eq.out_eol
+variable_add tb_isp_ip_multi_band_eq.in_data
+variable_add tb_isp_ip_multi_band_eq.out_data
+zoom_fit

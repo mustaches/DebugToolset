@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="423.6" height="154.0" viewBox="0 0 423.6 154.0">
+  <rect x="0" y="0" width="423.6" height="154.0" fill="#ffffff"/>
+  <g stroke="#6e8cae" stroke-width="1">
+    <line x1="133.8" y1="53.0" x2="125.8" y2="53.0"/>
+    <line x1="133.8" y1="69.0" x2="125.8" y2="69.0"/>
+    <line x1="133.8" y1="85.0" x2="125.8" y2="85.0"/>
+    <line x1="268.6" y1="53.0" x2="276.6" y2="53.0"/>
+    <line x1="268.6" y1="69.0" x2="276.6" y2="69.0"/>
+    <line x1="268.6" y1="85.0" x2="276.6" y2="85.0"/>
+    <line x1="268.6" y1="101.0" x2="276.6" y2="101.0"/>
+  </g>
+  <rect x="125.8" y="48.0" width="10" height="10" fill="#ffffff" stroke="#8a6d3b" stroke-width="1"/>
+  <text x="138.8" y="56.0" font-family="SimHei" font-size="9" fill="#8a6d3b">1'b1</text>
+  <path d="M73.8,53.0 L125.8,53.0" fill="none" stroke="#1f8b24" stroke-width="1.3"/>
+  <path d="M73.8,69.0 L125.8,69.0" fill="none" stroke="#14651a" stroke-width="2.2"/>
+  <path d="M73.8,85.0 L125.8,85.0" fill="none" stroke="#1f8b24" stroke-width="1.3"/>
+  <path d="M276.6,53.0 L338.6,53.0" fill="none" stroke="#14651a" stroke-width="2.2"/>
+  <path d="M276.6,69.0 L338.6,69.0" fill="none" stroke="#1f8b24" stroke-width="1.3"/>
+  <path d="M276.6,85.0 L338.6,85.0" fill="none" stroke="#1f8b24" stroke-width="1.3"/>
+  <path d="M276.6,101.0 L338.6,101.0" fill="none" stroke="#1f8b24" stroke-width="1.3"/>
+  <path d="M46.8,45.5 L66.3,45.5 L73.8,53.0 L66.3,60.5 L46.8,60.5 Z" fill="#ffffff" stroke="#4a6b8a" stroke-width="1"/>
+  <text x="60.3" y="56.0" font-family="SimHei" font-size="8.5" font-weight="600" text-anchor="middle" fill="#4a6b8a">I</text>
+  <text x="40.8" y="56.0" font-family="SimHei" font-size="10" text-anchor="end" fill="#10233a">clk</text>
+  <path d="M46.8,61.5 L66.3,61.5 L73.8,69.0 L66.3,76.5 L46.8,76.5 Z" fill="#ffffff" stroke="#4a6b8a" stroke-width="1"/>
+  <text x="60.3" y="72.0" font-family="SimHei" font-size="8.5" font-weight="600" text-anchor="middle" fill="#4a6b8a">I</text>
+  <text x="40.8" y="72.0" font-family="SimHei" font-size="10" text-anchor="end" fill="#10233a">din</text>
+  <path d="M46.8,77.5 L66.3,77.5 L73.8,85.0 L66.3,92.5 L46.8,92.5 Z" fill="#ffffff" stroke="#4a6b8a" stroke-width="1"/>
+  <text x="60.3" y="88.0" font-family="SimHei" font-size="8.5" font-weight="600" text-anchor="middle" fill="#4a6b8a">I</text>
+  <text x="40.8" y="88.0" font-family="SimHei" font-size="10" text-anchor="end" fill="#10233a">en</text>
+  <path d="M338.6,45.5 L358.1,45.5 L365.6,53.0 L358.1,60.5 L338.6,60.5 Z" fill="#fff3e0" stroke="#4a6b8a" stroke-width="1"/>
+  <text x="352.1" y="56.0" font-family="SimHei" font-size="8.5" font-weight="600" text-anchor="middle" fill="#4a6b8a">O</text>
+  <text x="371.6" y="56.0" font-family="SimHei" font-size="10" text-anchor="start" fill="#10233a">dout</text>
+  <path d="M338.6,61.5 L358.1,61.5 L365.6,69.0 L358.1,76.5 L338.6,76.5 Z" fill="#fff3e0" stroke="#4a6b8a" stroke-width="1"/>
+  <text x="352.1" y="72.0" font-family="SimHei" font-size="8.5" font-weight="600" text-anchor="middle" fill="#4a6b8a">O</text>
+  <text x="371.6" y="72.0" font-family="SimHei" font-size="10" text-anchor="start" fill="#10233a">valid</text>
+  <path d="M346.1,77.5 L358.1,77.5 L365.6,85.0 L358.1,92.5 L346.1,92.5 L338.6,85.0 Z" fill="#f3e5f5" stroke="#4a6b8a" stroke-width="1"/>
+  <text x="352.1" y="88.0" font-family="SimHei" font-size="7.5" font-weight="600" text-anchor="middle" fill="#4a6b8a">IO</text>
+  <text x="371.6" y="88.0" font-family="SimHei" font-size="10" text-anchor="start" fill="#10233a">sda</text>
+  <path d="M346.1,93.5 L358.1,93.5 L365.6,101.0 L358.1,108.5 L346.1,108.5 L338.6,101.0 Z" fill="#f3e5f5" stroke="#4a6b8a" stroke-width="1"/>
+  <text x="352.1" y="104.0" font-family="SimHei" font-size="7.5" font-weight="600" text-anchor="middle" fill="#4a6b8a">IO</text>
+  <text x="371.6" y="104.0" font-family="SimHei" font-size="10" text-anchor="start" fill="#10233a">scl</text>
+  <rect x="133.8" y="39.0" width="134.8" height="78.0" rx="2" fill="#dce7f5" stroke="#6e8cae" stroke-width="1"/>
+  <text x="201.2" y="35.0" font-family="SimHei" font-size="10.5" text-anchor="middle" fill="#10233a">u_sub</text>
+  <text x="201.2" y="127.0" font-family="SimHei" font-size="9" text-anchor="middle" fill="#3c4a5a">sub</text>
+  <text x="138.8" y="56.0" font-family="SimHei" font-size="10" fill="#1a1a1a">clk</text>
+  <text x="138.8" y="72.0" font-family="SimHei" font-size="10" fill="#1a1a1a">din[7:0]</text>
+  <text x="138.8" y="88.0" font-family="SimHei" font-size="10" fill="#1a1a1a">en</text>
+  <text x="263.6" y="56.0" font-family="SimHei" font-size="10" text-anchor="end" fill="#1a1a1a">dout[7:0]</text>
+  <text x="263.6" y="72.0" font-family="SimHei" font-size="10" text-anchor="end" fill="#1a1a1a">valid</text>
+  <text x="263.6" y="88.0" font-family="SimHei" font-size="10" text-anchor="end" fill="#1a1a1a">IO sda</text>
+  <text x="263.6" y="104.0" font-family="SimHei" font-size="10" text-anchor="end" fill="#1a1a1a">IO scl</text>
+</svg>

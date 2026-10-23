@@ -187,6 +187,54 @@ String valueAt(VcdSignal sig, int time) {
   return changes[ans].bits;
 }
 
+/// [sig] 上是否存在「值等于 [cursor] 处取值」的上一个/下一个跳变起点
+///（Find Pre/Next Matches 的可用性判定；与查找逻辑同口径：跳变起点
+/// = 值等于目标且前一时刻不等于目标，当前光标所在起点不算，不环绕；
+/// 位串比较经 [busBitsEqual] 规范化——兼容 VCD 省略高位的短记法）。
+bool hasMatchInDirection(VcdSignal sig, int cursor, bool forward) {
+  final changes = sig.changes;
+  if (changes.isEmpty) return false;
+  final target = valueAt(sig, cursor);
+  if (forward) {
+    for (var i = 0; i < changes.length; i++) {
+      if (changes[i].time <= cursor) continue;
+      if (busBitsEqual(changes[i].bits, target) &&
+          (i == 0 || !busBitsEqual(changes[i - 1].bits, target))) {
+        return true;
+      }
+    }
+  } else {
+    for (var i = changes.length - 1; i >= 0; i--) {
+      if (changes[i].time >= cursor) continue;
+      if (busBitsEqual(changes[i].bits, target) &&
+          (i == 0 || !busBitsEqual(changes[i - 1].bits, target))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/// 总线位串的规范化相等：VCD 允许省略高位的右对齐短记法（如 `b0 "`
+/// 表示全 0 向量、`b101 "` 表示值 5）——短串按首字符扩展（数字补
+/// 0，x/z 扩展为全 x/z）至长串长度后逐位比较。两侧解析时已统一
+/// 小写。Find Matches / Bus Search 的匹配比较一律经此（显示侧
+/// [formatBusBits] 按位宽补零，用户照显示输入的值与短记法存储
+/// 也能匹配）。
+bool busBitsEqual(String a, String b) {
+  if (a == b) return true;
+  var short = a, long = b;
+  if (short.length > long.length) {
+    final t = short;
+    short = long;
+    long = t;
+  }
+  if (short.length == long.length) return false;
+  final first = short.isEmpty ? '0' : short[0];
+  final pad = (first == 'x' || first == 'z') ? first : '0';
+  return long == pad * (long.length - short.length) + short;
+}
+
 /// 位串 → 十六进制显示（含 x/z 时整体显示 x/z…与 0/1 混合逐位翻译：
 /// 每 4 位为一组，组内含 x 显示 x、含 z 显示 z）。
 String bitsToHex(String bits) {

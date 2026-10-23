@@ -59,7 +59,13 @@ class MainLayout extends StatelessWidget {
             onTap: () => appState.setModuleIndex(1),
           ),
           _SidebarIcon(
-            iconBuilder: (color) => _OscilloscopeIcon(color: color),
+            iconBuilder: (color) => Image.asset(
+              'icons/oscilloscope.png',
+              width: 22,
+              height: 22,
+              color: color,
+              colorBlendMode: BlendMode.srcIn,
+            ),
             tooltip: '示波器',
             isSelected: appState.selectedModuleIndex == 2,
             onTap: () => appState.setModuleIndex(2),
@@ -373,75 +379,4 @@ class _SidebarIconState extends State<_SidebarIcon> {
       ),
     );
   }
-}
-
-
-/// 示波器侧边栏图标：屏幕 + 底座 + 方波波形
-class _OscilloscopeIcon extends StatelessWidget {
-  final Color color;
-
-  const _OscilloscopeIcon({required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size.square(22),
-      painter: _OscilloscopePainter(color),
-    );
-  }
-}
-
-class _OscilloscopePainter extends CustomPainter {
-  final Color color;
-
-  _OscilloscopePainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.width / 22.0; // 以 22x22 为设计基准等比缩放
-    final stroke = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5 * s
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    // 屏幕（圆角矩形）
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTRB(1.6 * s, 2.4 * s, 20.4 * s, 16.4 * s),
-        Radius.circular(2.6 * s),
-      ),
-      stroke,
-    );
-
-    // 底座
-    canvas.drawLine(Offset(11 * s, 16.4 * s), Offset(11 * s, 19 * s), stroke);
-    canvas.drawLine(Offset(7.6 * s, 19.4 * s), Offset(14.4 * s, 19.4 * s), stroke);
-
-    // 方波波形
-    final wave = Path()
-      ..moveTo(3.6 * s, 9.4 * s)
-      ..lineTo(5.8 * s, 9.4 * s)
-      ..lineTo(5.8 * s, 6.0 * s)
-      ..lineTo(9.6 * s, 6.0 * s)
-      ..lineTo(9.6 * s, 12.8 * s)
-      ..lineTo(13.4 * s, 12.8 * s)
-      ..lineTo(13.4 * s, 6.0 * s)
-      ..lineTo(17.2 * s, 6.0 * s)
-      ..lineTo(17.2 * s, 9.4 * s)
-      ..lineTo(18.6 * s, 9.4 * s);
-    canvas.drawPath(
-      wave,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4 * s
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_OscilloscopePainter oldDelegate) => oldDelegate.color != color;
 }

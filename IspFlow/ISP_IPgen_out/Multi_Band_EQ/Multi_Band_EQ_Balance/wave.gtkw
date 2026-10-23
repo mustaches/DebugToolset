@@ -1,0 +1,17 @@
+[timestart] 0
+[size] 1280 800
+[pos] -1 -1
+*-1.000000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+@22
+tb_isp_ip_multi_band_eq.clk
+tb_isp_ip_multi_band_eq.rst_n
+tb_isp_ip_multi_band_eq.in_valid
+tb_isp_ip_multi_band_eq.in_ready
+tb_isp_ip_multi_band_eq.in_sof
+tb_isp_ip_multi_band_eq.in_eol
+tb_isp_ip_multi_band_eq.out_valid
+tb_isp_ip_multi_band_eq.out_ready
+tb_isp_ip_multi_band_eq.out_sof
+tb_isp_ip_multi_band_eq.out_eol
+tb_isp_ip_multi_band_eq.in_data[23:0]
+tb_isp_ip_multi_band_eq.out_data[23:0]

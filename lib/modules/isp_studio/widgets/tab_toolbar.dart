@@ -18,7 +18,10 @@ Widget ispTabToolbarRow({required List<Widget> children}) {
       border: Border(bottom: BorderSide(color: Color(0xFF3A3A3A))),
     ),
     padding: const EdgeInsets.symmetric(horizontal: 8),
-    child: Row(children: children),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: children,
+    ),
   );
 }
 
@@ -35,22 +38,22 @@ Widget ispTabToolbarReadOnly() {
 }
 
 /// 标签页工具栏的图标按钮：纯图标 + tooltip（悬停显示功能名），紧凑
-/// 尺寸适配 [kIspTabToolbarHeight] 行高（28px 图标，无内边距）。
+/// 尺寸适配 [kIspTabToolbarHeight] 行高。固定 28×28 盒子 + Center 居中，
+/// 不用 IconButton——其默认最小尺寸/内边距随 Flutter 版本变动，曾在 30px
+/// 行高里把图标顶偏，视觉上不在高度方向居中。
 Widget ispTabIconButton({
   Key? key,
   required String tooltip,
   required Widget icon,
   VoidCallback? onTap,
 }) {
-  return IconButton(
-    key: key,
-    tooltip: tooltip,
-    onPressed: onTap,
-    icon: icon,
-    style: IconButton.styleFrom(
-      padding: EdgeInsets.zero,
-      minimumSize: const Size(28, 28),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  return Tooltip(
+    message: tooltip,
+    child: InkWell(
+      key: key,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: SizedBox(width: 28, height: 28, child: Center(child: icon)),
     ),
   );
 }

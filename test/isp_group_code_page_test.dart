@@ -29,13 +29,12 @@ void main() {
   }
 
   /// 叶段中是否存在覆盖 [text] 且黄底黑字（悬停高亮样式）的段。
-  bool hasIdentHl(List<(String, TextStyle?)> leaves, String text) =>
-      leaves.any(
-        (p) =>
-            p.$1 == text &&
-            p.$2?.backgroundColor == const Color(0xFFFFF176) &&
-            p.$2?.color == Colors.black,
-      );
+  bool hasIdentHl(List<(String, TextStyle?)> leaves, String text) => leaves.any(
+    (p) =>
+        p.$1 == text &&
+        p.$2?.backgroundColor == const Color(0xFFFFF176) &&
+        p.$2?.color == Colors.black,
+  );
 
   /// 搭一个可导出 C 的编组：white_balance → gamma。
   (IspStudioState, String) makeGroup() {
@@ -47,18 +46,22 @@ void main() {
     return (state, 'g1');
   }
 
-  Widget wrap(IspStudioState state, String groupId,
-      {GroupCompileRunner? compileRunner,
-      Future<Map<String, String>> Function(IspGraph, IspNodeGroup)?
-          filesBuilder}) {
+  Widget wrap(
+    IspStudioState state,
+    String groupId, {
+    GroupCompileRunner? compileRunner,
+    Future<Map<String, String>> Function(IspGraph, IspNodeGroup)? filesBuilder,
+  }) {
     return ChangeNotifierProvider.value(
       value: state,
       child: MaterialApp(
         home: Scaffold(
-            body: GroupCodePage(
-                groupId: groupId,
-                compileRunner: compileRunner,
-                filesBuilder: filesBuilder)),
+          body: GroupCodePage(
+            groupId: groupId,
+            compileRunner: compileRunner,
+            filesBuilder: filesBuilder,
+          ),
+        ),
       ),
     );
   }
@@ -78,8 +81,7 @@ void main() {
   /// 「Go to REF」悬停测试用假文件集：top 层 isp_pipeline_pipe.c（默认
   /// 选中）第 2 行调用 isp_wb_run，其定义在 wb.c 第 2 行；第 6 行（0-based）
   /// 引用宏 ISP_OK，其定义在 isp_common.h 第 2 行。
-  Future<Map<String, String>> fakeRefFiles(
-      IspGraph graph, IspNodeGroup group) {
+  Future<Map<String, String>> fakeRefFiles(IspGraph graph, IspNodeGroup group) {
     return Future.value({
       'wb.h': '/* wb.h */\n',
       'wb.c': '/* wb.c */\nint isp_wb_run(void) {\n  return 0;\n}\n',
@@ -125,14 +127,14 @@ void main() {
       final title = tester.widget<Text>(find.text(label));
       expect(title.style?.color, Colors.white, reason: label);
       final ancestors = tester.widgetList<Container>(
-        find.ancestor(
-            of: find.text(label), matching: find.byType(Container)),
+        find.ancestor(of: find.text(label), matching: find.byType(Container)),
       );
       expect(
-        ancestors.any((c) =>
-            c.decoration is BoxDecoration &&
-            (c.decoration! as BoxDecoration).color ==
-                const Color(0xFF007ACC)),
+        ancestors.any(
+          (c) =>
+              c.decoration is BoxDecoration &&
+              (c.decoration! as BoxDecoration).color == const Color(0xFF007ACC),
+        ),
         isTrue,
         reason: label,
       );
@@ -146,12 +148,14 @@ void main() {
     for (final file in ['isp_pipeline_pipe.h', 'isp_common.h']) {
       final item = tester.widget<Container>(
         find
-            .ancestor(
-                of: find.text(file), matching: find.byType(Container))
+            .ancestor(of: find.text(file), matching: find.byType(Container))
             .first,
       );
-      expect(item.padding, const EdgeInsets.fromLTRB(32, 4, 10, 4),
-          reason: file);
+      expect(
+        item.padding,
+        const EdgeInsets.fromLTRB(32, 4, 10, 4),
+        reason: file,
+      );
     }
     // 「导出代码」已上移为工具栏图标按钮（tooltip）；「编译」同为图标按钮。
     expect(find.byTooltip('导出代码'), findsOneWidget);
@@ -160,17 +164,23 @@ void main() {
     // 工具栏图标为 codicons PNG（编译 build / 导出 git-stash-pop；本编组
     // 无 Win32 验证入口，无运行验证按钮）。
     expect(
-        find.byWidgetPredicate((w) =>
+      find.byWidgetPredicate(
+        (w) =>
             w is Image &&
             w.image is AssetImage &&
-            (w.image as AssetImage).assetName == 'icons/build.png'),
-        findsOneWidget);
+            (w.image as AssetImage).assetName == 'icons/build.png',
+      ),
+      findsOneWidget,
+    );
     expect(
-        find.byWidgetPredicate((w) =>
+      find.byWidgetPredicate(
+        (w) =>
             w is Image &&
             w.image is AssetImage &&
-            (w.image as AssetImage).assetName == 'icons/git-stash-pop.png'),
-        findsOneWidget);
+            (w.image as AssetImage).assetName == 'icons/git-stash-pop.png',
+      ),
+      findsOneWidget,
+    );
 
     // 点工具栏「编译」弹出编译验证对话框（只做目标选择，不执行编译）。
     await tester.tap(find.byKey(const ValueKey('groupCompileButton')));
@@ -198,18 +208,24 @@ void main() {
     expect(mainTitle.style?.color, Colors.white);
     final mainTitleAncestors = tester.widgetList<Container>(
       find.ancestor(
-          of: find.text('临时main调用（不导出）'), matching: find.byType(Container)),
+        of: find.text('临时main调用（不导出）'),
+        matching: find.byType(Container),
+      ),
     );
     expect(
-      mainTitleAncestors.any((c) =>
-          c.decoration is BoxDecoration &&
-          (c.decoration! as BoxDecoration).color == const Color(0xFFC42B1C)),
+      mainTitleAncestors.any(
+        (c) =>
+            c.decoration is BoxDecoration &&
+            (c.decoration! as BoxDecoration).color == const Color(0xFFC42B1C),
+      ),
       isTrue,
     );
     expect(
-      mainTitleAncestors.any((c) =>
-          c.decoration is BoxDecoration &&
-          (c.decoration! as BoxDecoration).color == const Color(0xFF007ACC)),
+      mainTitleAncestors.any(
+        (c) =>
+            c.decoration is BoxDecoration &&
+            (c.decoration! as BoxDecoration).color == const Color(0xFF007ACC),
+      ),
       isFalse,
     );
     expect(find.text('main.c'), findsOneWidget);
@@ -235,25 +251,23 @@ void main() {
 
     // 行高 = 12 × 1.45 = 17.4；前缀宽度用同款 TextPainter 实测（适配
     // 测试环境 Ahem 字体）。
-    final lineHeight =
-        kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
+    final lineHeight = kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
     TextPainter measure(String s) => TextPainter(
-          text: TextSpan(text: s, style: kCodeBrowserStyle),
-          textDirection: TextDirection.ltr,
-        )..layout();
+      text: TextSpan(text: s, style: kCodeBrowserStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
     final prefix = measure('  return ');
     addTearDown(prefix.dispose);
 
-    final gesture =
-        await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     addTearDown(gesture.removePointer);
     await gesture.addPointer(location: Offset.zero);
 
     // 悬停第 2 行（0-based）`  return isp_wb_run();` 中的 isp_wb_run 上。
-    final codeTopLeft =
-        tester.getTopLeft(find.byType(SelectableText).first);
+    final codeTopLeft = tester.getTopLeft(find.byType(SelectableText).first);
     await gesture.moveTo(
-        codeTopLeft + Offset(prefix.width + 2, 2 * lineHeight + 8));
+      codeTopLeft + Offset(prefix.width + 2, 2 * lineHeight + 8),
+    );
     await tester.pump();
     expect(find.text('Go to REF'), findsOneWidget);
 
@@ -271,10 +285,10 @@ void main() {
     // 悬停非索引标识符（wb.c 第 2 行的 return）不出弹层。
     final indent = measure('  ');
     addTearDown(indent.dispose);
-    final topLeft2 =
-        tester.getTopLeft(find.byType(SelectableText).first);
+    final topLeft2 = tester.getTopLeft(find.byType(SelectableText).first);
     await gesture.moveTo(
-        topLeft2 + Offset(indent.width + 2, 2 * lineHeight + 8));
+      topLeft2 + Offset(indent.width + 2, 2 * lineHeight + 8),
+    );
     await tester.pump();
     expect(find.text('Go to REF'), findsNothing);
 
@@ -283,8 +297,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('悬停分屏预览：出现、空白不收起、右栏悬停保持、× 仅关预览',
-      (tester) async {
+  testWidgets('悬停分屏预览：出现、空白不收起、右栏悬停保持、× 仅关预览', (tester) async {
     final (state, groupId) = makeGroup();
     addTearDown(state.dispose);
 
@@ -295,17 +308,15 @@ void main() {
     // 预览未打开（终端未开）：仅左栏一个 SelectableText。
     expect(find.byType(SelectableText), findsOneWidget);
 
-    final lineHeight =
-        kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
+    final lineHeight = kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
     TextPainter measure(String s) => TextPainter(
-          text: TextSpan(text: s, style: kCodeBrowserStyle),
-          textDirection: TextDirection.ltr,
-        )..layout();
+      text: TextSpan(text: s, style: kCodeBrowserStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
     final prefix = measure('  return ');
     addTearDown(prefix.dispose);
 
-    final gesture =
-        await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     addTearDown(gesture.removePointer);
     await gesture.addPointer(location: Offset.zero);
 
@@ -313,19 +324,22 @@ void main() {
     Offset hoverAt(double dx) =>
         tester.getTopLeft(find.byType(SelectableText).first) +
         Offset(dx, 2 * lineHeight + 8);
-    List<SelectableText> panes() => tester
-        .widgetList<SelectableText>(find.byType(SelectableText))
-        .toList();
+    List<SelectableText> panes() =>
+        tester.widgetList<SelectableText>(find.byType(SelectableText)).toList();
 
     // 1) 悬停 isp_wb_run → 左右分屏：右栏为定义预览，标题栏含函数名、
     // 「文件:行号」与「Go to REF」按钮。
     await gesture.moveTo(hoverAt(prefix.width + 2));
     await tester.pump();
     expect(find.byType(SelectableText), findsNWidgets(2));
-    expect(panes()[0].textSpan!.toPlainText(),
-        contains('int isp_pipeline_pipe_run(void) {'));
-    expect(panes()[1].textSpan!.toPlainText(),
-        contains('int isp_wb_run(void) {'));
+    expect(
+      panes()[0].textSpan!.toPlainText(),
+      contains('int isp_pipeline_pipe_run(void) {'),
+    );
+    expect(
+      panes()[1].textSpan!.toPlainText(),
+      contains('int isp_wb_run(void) {'),
+    );
     expect(find.text('isp_wb_run'), findsOneWidget);
     expect(find.text('wb.c:2'), findsOneWidget);
     expect(find.text('Go to REF'), findsOneWidget);
@@ -364,8 +378,7 @@ void main() {
     expect(shown, contains('return isp_wb_run();'));
   });
 
-  testWidgets('悬停高亮：左栏标识符与右栏定义处黄底黑字，移开保持，新悬停替换',
-      (tester) async {
+  testWidgets('悬停高亮：左栏标识符与右栏定义处黄底黑字，移开保持，新悬停替换', (tester) async {
     final (state, groupId) = makeGroup();
     addTearDown(state.dispose);
 
@@ -374,35 +387,36 @@ void main() {
     await tester.pump();
     expect(find.byType(SelectableText), findsOneWidget);
 
-    final lineHeight =
-        kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
+    final lineHeight = kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
     TextPainter measure(String s) => TextPainter(
-          text: TextSpan(text: s, style: kCodeBrowserStyle),
-          textDirection: TextDirection.ltr,
-        )..layout();
+      text: TextSpan(text: s, style: kCodeBrowserStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
     final prefix = measure('  return ');
     addTearDown(prefix.dispose);
 
-    final gesture =
-        await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     addTearDown(gesture.removePointer);
     await gesture.addPointer(location: Offset.zero);
 
     Offset hoverAt(double dx, [int line = 2]) =>
         tester.getTopLeft(find.byType(SelectableText).first) +
         Offset(dx, line * lineHeight + 8);
-    List<SelectableText> panes() => tester
-        .widgetList<SelectableText>(find.byType(SelectableText))
-        .toList();
+    List<SelectableText> panes() =>
+        tester.widgetList<SelectableText>(find.byType(SelectableText)).toList();
 
     // 悬停 isp_wb_run：左栏该标识符与右栏定义行上的名字都黄底黑字高亮。
     await gesture.moveTo(hoverAt(prefix.width + 2));
     await tester.pump();
     expect(find.byType(SelectableText), findsNWidgets(2));
-    expect(hasIdentHl(collectLeafSpans(panes()[0].textSpan!), 'isp_wb_run'),
-        isTrue);
-    expect(hasIdentHl(collectLeafSpans(panes()[1].textSpan!), 'isp_wb_run'),
-        isTrue);
+    expect(
+      hasIdentHl(collectLeafSpans(panes()[0].textSpan!), 'isp_wb_run'),
+      isTrue,
+    );
+    expect(
+      hasIdentHl(collectLeafSpans(panes()[1].textSpan!), 'isp_wb_run'),
+      isTrue,
+    );
 
     // 移到非索引标识符（return）：高亮粘性保持（isp_wb_run 仍亮），
     // 预览保持不收起。
@@ -412,11 +426,15 @@ void main() {
     await tester.pump();
     expect(find.byType(SelectableText), findsNWidgets(2));
     expect(find.text('wb.c:2'), findsOneWidget);
-    expect(hasIdentHl(collectLeafSpans(panes()[0].textSpan!), 'isp_wb_run'),
-        isTrue);
+    expect(
+      hasIdentHl(collectLeafSpans(panes()[0].textSpan!), 'isp_wb_run'),
+      isTrue,
+    );
     // 右栏定义处高亮同样不随左栏悬停移动变化。
-    expect(hasIdentHl(collectLeafSpans(panes()[1].textSpan!), 'isp_wb_run'),
-        isTrue);
+    expect(
+      hasIdentHl(collectLeafSpans(panes()[1].textSpan!), 'isp_wb_run'),
+      isTrue,
+    );
 
     // 悬停到另一个索引内标识符 isp_pipeline_pipe_run（其定义就在本行，
     // 不切换预览）：旧高亮熄灭、新标识符亮起。
@@ -426,15 +444,22 @@ void main() {
     await tester.pump();
     expect(find.byType(SelectableText), findsNWidgets(2));
     expect(find.text('wb.c:2'), findsOneWidget);
-    expect(hasIdentHl(collectLeafSpans(panes()[0].textSpan!), 'isp_wb_run'),
-        isFalse);
     expect(
-        hasIdentHl(
-            collectLeafSpans(panes()[0].textSpan!), 'isp_pipeline_pipe_run'),
-        isTrue);
+      hasIdentHl(collectLeafSpans(panes()[0].textSpan!), 'isp_wb_run'),
+      isFalse,
+    );
+    expect(
+      hasIdentHl(
+        collectLeafSpans(panes()[0].textSpan!),
+        'isp_pipeline_pipe_run',
+      ),
+      isTrue,
+    );
     // 右栏定义处高亮不随左栏悬停切换变化。
-    expect(hasIdentHl(collectLeafSpans(panes()[1].textSpan!), 'isp_wb_run'),
-        isTrue);
+    expect(
+      hasIdentHl(collectLeafSpans(panes()[1].textSpan!), 'isp_wb_run'),
+      isTrue,
+    );
 
     // × 收尾：回到单栏，主视图仍是 isp_pipeline_pipe.c。
     await tester.tap(find.byIcon(Icons.close));
@@ -456,22 +481,22 @@ void main() {
     await tester.pump();
     expect(find.byType(SelectableText), findsOneWidget);
 
-    final lineHeight =
-        kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
+    final lineHeight = kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
     final prefix = TextPainter(
       text: TextSpan(text: '  return ', style: kCodeBrowserStyle),
       textDirection: TextDirection.ltr,
     )..layout();
     addTearDown(prefix.dispose);
 
-    final gesture =
-        await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     addTearDown(gesture.removePointer);
     await gesture.addPointer(location: Offset.zero);
 
     // 悬停 isp_wb_run 打开分屏预览。
-    await gesture.moveTo(tester.getTopLeft(find.byType(SelectableText)) +
-        Offset(prefix.width + 2, 2 * lineHeight + 8));
+    await gesture.moveTo(
+      tester.getTopLeft(find.byType(SelectableText)) +
+          Offset(prefix.width + 2, 2 * lineHeight + 8),
+    );
     await tester.pump();
     expect(find.byType(SelectableText), findsNWidgets(2));
     expect(find.text('Go to REF'), findsOneWidget);
@@ -500,22 +525,22 @@ void main() {
     await tester.pump();
     expect(find.byType(SelectableText), findsOneWidget);
 
-    final lineHeight =
-        kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
+    final lineHeight = kCodeBrowserStyle.fontSize! * kCodeBrowserStyle.height!;
     final prefix = TextPainter(
       text: TextSpan(text: '  if (', style: kCodeBrowserStyle),
       textDirection: TextDirection.ltr,
     )..layout();
     addTearDown(prefix.dispose);
 
-    final gesture =
-        await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     addTearDown(gesture.removePointer);
     await gesture.addPointer(location: Offset.zero);
 
     // 悬停第 6 行（0-based）`  if (ISP_OK == 0) {` 中的 ISP_OK 上。
-    await gesture.moveTo(tester.getTopLeft(find.byType(SelectableText)) +
-        Offset(prefix.width + 2, 6 * lineHeight + 8));
+    await gesture.moveTo(
+      tester.getTopLeft(find.byType(SelectableText)) +
+          Offset(prefix.width + 2, 6 * lineHeight + 8),
+    );
     await tester.pump();
 
     // 分屏预览出现：右栏为 isp_common.h（含 #define 定义行），标题栏显示
@@ -524,8 +549,10 @@ void main() {
     final panes = tester
         .widgetList<SelectableText>(find.byType(SelectableText))
         .toList();
-    expect(panes[0].textSpan!.toPlainText(),
-        contains('int isp_pipeline_pipe_run(void) {'));
+    expect(
+      panes[0].textSpan!.toPlainText(),
+      contains('int isp_pipeline_pipe_run(void) {'),
+    );
     expect(panes[1].textSpan!.toPlainText(), contains('#define ISP_OK 0'));
     expect(find.text('ISP_OK'), findsOneWidget);
     expect(find.text('isp_common.h:2'), findsOneWidget);
@@ -570,12 +597,15 @@ void main() {
     final (state, groupId) = makeGroup();
     addTearDown(state.dispose);
     Future<Map<String, String>> throwingBuilder(
-        IspGraph graph, IspNodeGroup group) async {
+      IspGraph graph,
+      IspNodeGroup group,
+    ) async {
       throw StateError('节点 X 的输出 out 既不是组内边也不是组输出');
     }
 
-    await tester
-        .pumpWidget(wrap(state, groupId, filesBuilder: throwingBuilder));
+    await tester.pumpWidget(
+      wrap(state, groupId, filesBuilder: throwingBuilder),
+    );
     await tester.pump();
     await tester.pump();
     expect(find.textContaining('生成代码失败'), findsOneWidget);
@@ -620,8 +650,7 @@ void main() {
     expect(state.activeTab, 0);
   });
 
-  testWidgets('页头信息并入工具栏行右侧：单行、与编译按钮同行、统一高度',
-      (tester) async {
+  testWidgets('页头信息并入工具栏行右侧：单行、与编译按钮同行、统一高度', (tester) async {
     final (state, groupId) = makeGroup();
     addTearDown(state.dispose);
 
@@ -642,8 +671,7 @@ void main() {
     // 工具栏行高与主工具栏统一（kIspTabToolbarHeight）：信息文本的首个
     // Container 祖先即工具栏容器（ispTabToolbarRow）。
     final toolbar = find
-        .ancestor(
-            of: find.text('pipe (g1)'), matching: find.byType(Container))
+        .ancestor(of: find.text('pipe (g1)'), matching: find.byType(Container))
         .first;
     expect(tester.getSize(toolbar).height, kIspTabToolbarHeight);
   });
@@ -662,13 +690,19 @@ void main() {
     final divider = find.byType(IspVerticalDragDivider);
     expect(divider, findsOneWidget);
     // 右拖 +100：左栏 190 → 290。
-    await tester.dragFrom(tester.getCenter(divider), const Offset(100, 0),
-        touchSlopX: 0);
+    await tester.dragFrom(
+      tester.getCenter(divider),
+      const Offset(100, 0),
+      touchSlopX: 0,
+    );
     await tester.pump();
     expect(listWidth(), 290);
     // 左拖超下限：钳位到 120。
-    await tester.dragFrom(tester.getCenter(divider), const Offset(-500, 0),
-        touchSlopX: 0);
+    await tester.dragFrom(
+      tester.getCenter(divider),
+      const Offset(-500, 0),
+      touchSlopX: 0,
+    );
     await tester.pump();
     expect(listWidth(), 120);
   });
@@ -678,8 +712,14 @@ void main() {
     addTearDown(state.dispose);
 
     // 文件生成注入假实现（立即返回，不依赖 rootBundle 资产 IO）。
-    await tester.pumpWidget(wrap(state, groupId,
-        compileRunner: fakeCompileOk(), filesBuilder: fakeFiles));
+    await tester.pumpWidget(
+      wrap(
+        state,
+        groupId,
+        compileRunner: fakeCompileOk(),
+        filesBuilder: fakeFiles,
+      ),
+    );
     await tester.pump();
     await tester.pump();
     // 默认无终端面板。
@@ -699,8 +739,9 @@ void main() {
     expect(find.textContaining('fake 输出第二行'), findsOneWidget);
 
     // 终端高度约为代码区的 1/3（Expanded flex 3 : 1）。
-    final termH =
-        tester.getSize(find.byKey(const ValueKey('groupCompileTerminal'))).height;
+    final termH = tester
+        .getSize(find.byKey(const ValueKey('groupCompileTerminal')))
+        .height;
     final codeH = tester.getSize(find.byType(CodeArea)).height;
     expect(codeH / termH, closeTo(3, 0.1));
 
@@ -714,8 +755,11 @@ void main() {
   Future<void> pumpDialog(WidgetTester tester, WslProber prober) {
     sessionCompilerPaths.clear(); // 会话内手动路径，跨用例隔离
     sessionLinuxCrossWslToolchains = null; // WSL 探测缓存，跨用例隔离
-    return tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: GroupCompileDialog(wslProber: prober))));
+    return tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: GroupCompileDialog(wslProber: prober)),
+      ),
+    );
   }
 
   String pathFieldText(WidgetTester tester) =>
@@ -723,7 +767,10 @@ void main() {
 
   testWidgets('Linux 交叉探测：等待态 → 成功回填（不覆盖用户输入）', (tester) async {
     final gate = Completer<List<CToolchain>>();
-    await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) => gate.future);
+    await pumpDialog(
+      tester,
+      ({Duration? startupTimeout, Duration? timeout, onPhase}) => gate.future,
+    );
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
     // 探测中：环形进度 + 等待文案（初始为 WSL 启动阶段），路径框可输入。
@@ -741,7 +788,10 @@ void main() {
 
   testWidgets('Linux 交叉探测：路径框为空时成功回填', (tester) async {
     final gate = Completer<List<CToolchain>>();
-    await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) => gate.future);
+    await pumpDialog(
+      tester,
+      ({Duration? startupTimeout, Duration? timeout, onPhase}) => gate.future,
+    );
     await tester.tap(find.text('Linux 交叉'));
     await tester.pump();
     expect(find.text('正在启动 WSL…'), findsOneWidget);
@@ -756,8 +806,11 @@ void main() {
 
   testWidgets('Linux 交叉探测：超时未找到显示安装提示', (tester) async {
     // fake 探测在阶段二返回空表（等价于 WSL 就绪后探测超时未找到）。
-    await pumpDialog(tester,
-        ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
+    await pumpDialog(tester, ({
+      Duration? startupTimeout,
+      Duration? timeout,
+      onPhase,
+    }) async {
       onPhase?.call('detect');
       return const <CToolchain>[];
     });
@@ -772,8 +825,11 @@ void main() {
 
   testWidgets('Linux 交叉探测：WSL 慢启动后成功（不出超时提示）', (tester) async {
     final gate = Completer<void>();
-    await pumpDialog(tester,
-        ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
+    await pumpDialog(tester, ({
+      Duration? startupTimeout,
+      Duration? timeout,
+      onPhase,
+    }) async {
       // 阶段一「启动中」挂起（模拟 WSL 冷启动慢），放行后进入阶段二并命中。
       onPhase?.call('startup');
       await gate.future;
@@ -795,7 +851,11 @@ void main() {
   });
 
   testWidgets('Linux 交叉探测：WSL 不就绪直接安装提示', (tester) async {
-    await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
+    await pumpDialog(tester, ({
+      Duration? startupTimeout,
+      Duration? timeout,
+      onPhase,
+    }) async {
       onPhase?.call('startup');
       return const <CToolchain>[]; // 阶段一失败（未装 WSL / 冷启动超时未就绪）
     });
@@ -806,7 +866,11 @@ void main() {
   });
 
   testWidgets('Linux 交叉探测：阶段二超时显示常规安装提示', (tester) async {
-    await pumpDialog(tester, ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
+    await pumpDialog(tester, ({
+      Duration? startupTimeout,
+      Duration? timeout,
+      onPhase,
+    }) async {
       onPhase?.call('startup');
       onPhase?.call('detect');
       return const <CToolchain>[]; // 阶段二超时未命中
@@ -819,14 +883,18 @@ void main() {
   });
 
   testWidgets('Linux 交叉：多编译器下拉选择写入路径框', (tester) async {
-    const aarch64 = 'wsl:Ubuntu:/home/fzdl/toolchains/bin/'
+    const aarch64 =
+        'wsl:Ubuntu:/home/fzdl/toolchains/bin/'
         'aarch64-mix210-linux-gcc';
     const riscv =
         'wsl:Ubuntu-24.04:/home/fzdl/toolchains/riscv32-musl/'
         'cc-riscv32-cfg5-musl-20211008-elf/bin/'
         'riscv32-cfg5-musl-20211008-elf-gcc';
-    await pumpDialog(tester,
-        ({Duration? startupTimeout, Duration? timeout, onPhase}) async {
+    await pumpDialog(tester, ({
+      Duration? startupTimeout,
+      Duration? timeout,
+      onPhase,
+    }) async {
       onPhase?.call('startup');
       onPhase?.call('detect');
       return const [
@@ -844,31 +912,39 @@ void main() {
     // 打开下拉，点选 riscv 项 → 写入路径框。
     await tester.tap(find.byType(DropdownButton<String>));
     await tester.pumpAndSettle();
-    await tester.tap(find
-        .widgetWithText(DropdownMenuItem<String>,
-            'riscv32-cfg5-musl-20211008-elf-gcc（wsl: Ubuntu-24.04）')
-        .last);
+    await tester.tap(
+      find
+          .widgetWithText(
+            DropdownMenuItem<String>,
+            'riscv32-cfg5-musl-20211008-elf-gcc（wsl: Ubuntu-24.04）',
+          )
+          .last,
+    );
     await tester.pumpAndSettle();
     expect(pathFieldText(tester), riscv);
   });
 
-  testWidgets('Linux 交叉：探测结果写入会话缓存，重开对话框不再探测',
-      (tester) async {
-    const aarch64 = 'wsl:Ubuntu:/home/fzdl/toolchains/bin/'
+  testWidgets('Linux 交叉：探测结果写入会话缓存，重开对话框不再探测', (tester) async {
+    const aarch64 =
+        'wsl:Ubuntu:/home/fzdl/toolchains/bin/'
         'aarch64-mix210-linux-gcc';
     var probeCount = 0;
-    Future<List<CToolchain>> prober(
-        {Duration? startupTimeout,
-        Duration? timeout,
-        void Function(String phase)? onPhase}) async {
+    Future<List<CToolchain>> prober({
+      Duration? startupTimeout,
+      Duration? timeout,
+      void Function(String phase)? onPhase,
+    }) async {
       probeCount++;
       return const [CToolchain(CCompileTarget.linuxCross, aarch64, {})];
     }
 
     // 重开对话框用（不清会话缓存，模拟程序未退出）。
     Future<void> reopenDialog() {
-      return tester.pumpWidget(MaterialApp(
-          home: Scaffold(body: GroupCompileDialog(wslProber: prober))));
+      return tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: GroupCompileDialog(wslProber: prober)),
+        ),
+      );
     }
 
     // 第一次打开：探测一次，结果写入缓存并呈现。
@@ -905,12 +981,17 @@ void main() {
     addTearDown(state.dispose);
     final gate = Completer<CCompileResult>();
     GroupCompileRunner blockingRunner() {
-      return (files, target, {topName, compilerPath, onOutput}) =>
-          gate.future;
+      return (files, target, {topName, compilerPath, onOutput}) => gate.future;
     }
 
-    await tester.pumpWidget(wrap(state, groupId,
-        compileRunner: blockingRunner(), filesBuilder: fakeFiles));
+    await tester.pumpWidget(
+      wrap(
+        state,
+        groupId,
+        compileRunner: blockingRunner(),
+        filesBuilder: fakeFiles,
+      ),
+    );
     await tester.pump();
     await tester.pump();
 
@@ -924,34 +1005,43 @@ void main() {
     expect(find.text('编译中…'), findsOneWidget);
     // 编译中工具栏「编译」图标按钮禁用（防重复点击）。
     expect(
-        tester
-            .widget<IconButton>(find.byKey(const ValueKey('groupCompileButton')))
-            .onPressed,
-        isNull);
+      tester
+          .widget<InkWell>(find.byKey(const ValueKey('groupCompileButton')))
+          .onTap,
+      isNull,
+    );
     // 终端关闭按钮禁用。
-    final closeInk = tester.widget<InkWell>(find
-        .ancestor(of: find.byIcon(Icons.close), matching: find.byType(InkWell))
-        .first);
+    final closeInk = tester.widget<InkWell>(
+      find
+          .ancestor(
+            of: find.byIcon(Icons.close),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    );
     expect(closeInk.onTap, isNull);
 
     // 放行编译 → 状态转成功，按钮恢复可用。
-    gate.complete(CCompileResult(
-      success: true,
-      exitCode: 0,
-      commandLine: 'fake',
-      output: '',
-      workDir: r'C:\tmp\fake',
-      artifactPath: r'C:\tmp\fake\app.exe',
-      sourceCount: 0,
-    ));
+    gate.complete(
+      CCompileResult(
+        success: true,
+        exitCode: 0,
+        commandLine: 'fake',
+        output: '',
+        workDir: r'C:\tmp\fake',
+        artifactPath: r'C:\tmp\fake\app.exe',
+        sourceCount: 0,
+      ),
+    );
     await tester.pump();
     await tester.pump();
     expect(find.text('成功'), findsOneWidget);
     expect(find.byTooltip('编译'), findsOneWidget);
     expect(
-        tester
-            .widget<IconButton>(find.byKey(const ValueKey('groupCompileButton')))
-            .onPressed,
-        isNotNull);
+      tester
+          .widget<InkWell>(find.byKey(const ValueKey('groupCompileButton')))
+          .onTap,
+      isNotNull,
+    );
   });
 }

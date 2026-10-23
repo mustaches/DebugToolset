@@ -53,7 +53,7 @@
       "x": 1500.0,
       "y": -860.0,
       "width": 860.0,
-      "extraHeight": 234.0,
+      "extraHeight": 254.0,
       "name": "视频输出#1",
       "params": {
         "fps": 60,

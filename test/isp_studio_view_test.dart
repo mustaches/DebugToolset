@@ -696,4 +696,38 @@ void main() {
           closeTo(HSLColor.fromColor(base).lightness, 0.01));
     }
   });
+
+  testWidgets('画布空白右键菜单「全选节点」', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final state = IspStudioState.withDefaultGraph();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: const MaterialApp(home: Scaffold(body: IspStudioView())),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(state.selectedNodeIds, isEmpty);
+
+    // 空白画布处右键（画布矩形右下角，避开右侧属性面板与节点）：
+    // 菜单应含「全选节点」且可用。
+    final canvasRect = tester.getRect(find.byType(IspNodeCanvas));
+    final blankPos =
+        Offset(canvasRect.right - 40, canvasRect.bottom - 40);
+    await tester.tapAt(blankPos, buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    expect(find.text('全选节点'), findsOneWidget);
+    expect(
+      tester
+          .widget<PopupMenuItem<String>>(
+              find.widgetWithText(PopupMenuItem<String>, '全选节点'))
+          .enabled,
+      isTrue,
+    );
+    await tester.tap(find.text('全选节点'));
+    await tester.pumpAndSettle();
+    expect(state.selectedNodeIds.toSet(), state.graph.nodes.keys.toSet());
+  });
 }

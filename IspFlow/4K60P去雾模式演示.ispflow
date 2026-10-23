@@ -21,27 +21,27 @@
     {
       "id": "n4",
       "typeId": "preview",
-      "x": 1420.0,
-      "y": 430.0,
+      "x": 1610.0,
+      "y": 350.0,
       "width": 800.0,
       "extraHeight": 481.0,
       "name": "预览#1",
       "params": {
-        "fps": 30,
-        "frameCount": 15458
+        "fps": 60,
+        "frameCount": 20263
       }
     },
     {
       "id": "n6",
       "typeId": "preview",
-      "x": 2220.0,
-      "y": 430.0,
+      "x": 2410.0,
+      "y": 350.0,
       "width": 800.0,
       "extraHeight": 481.0,
       "name": "预览#2",
       "params": {
-        "fps": 30,
-        "frameCount": 15458
+        "fps": 60,
+        "frameCount": 20263
       }
     },
     {
@@ -108,7 +108,7 @@
       "extraHeight": 160.0,
       "name": "Video#1",
       "params": {
-        "filePath": "",
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\SONY OLED 4K Video ULTRA HD Demo  HDR Test Part 2.mp4",
         "bitDepth": "8",
         "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
       }

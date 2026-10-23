@@ -41,6 +41,44 @@ String groupIpTopName(IspNodeGroup group) {
   );
 }
 
+/// IP 资源/性能估算（v1 粗估口径：随节点类型逐步细化；写入 README 与
+/// IP 页信息区，供选档参考）。
+class IpResourceEstimate {
+  /// LUT ROM 总位数（各烘焙表深度×位宽求和）。
+  final int romBits;
+
+  /// 折算 36Kb BRAM 块数（ROM 经 initial 块初始化，综合可推断为
+  /// BRAM/分布式 ROM，此处仅作规模参考）。
+  final int bram36k;
+
+  /// 逻辑 LUT 粗估（数据通路 + 握手 + 表取数；乘法器绑 LUT 时另计）。
+  final int estLuts;
+
+  /// DSP 粗估（Q14 定点乘法器：性能档推断 DSP48，平衡/面积档绑 LUT）。
+  final int estDsps;
+
+  /// 总延迟（行缓冲行数 + 末级流水拍；点操作编组 = 1 拍流水）。
+  final int latencyCycles;
+
+  /// 吞吐（像素/时钟；点操作恒 II=1，窗口算子面积档为 1/FOLD）。
+  final double throughputPxPerClk;
+
+  const IpResourceEstimate({
+    required this.romBits,
+    required this.bram36k,
+    required this.estLuts,
+    required this.estDsps,
+    required this.latencyCycles,
+    required this.throughputPxPerClk,
+  });
+
+  /// 单行摘要（IP 页信息区/日志用）。
+  String summary() =>
+      'LUT ROM ${romBits / 1024}Kb（≈$bram36k 块 36K BRAM）'
+      '  DSP≈$estDsps  LUT≈$estLuts  延迟 $latencyCycles 拍'
+      '  吞吐 ${throughputPxPerClk}px/clk';
+}
+
 /// IP 生成规划产物（在 [GroupStreamPlan] 之上补 IP 侧信息）。
 class IpPlan {
   /// 整帧版规划（复用）。
@@ -66,6 +104,9 @@ class IpPlan {
 
   final IpGenOptions options;
 
+  /// 资源/性能估算（随选项策略档联动：乘法器推断 DSP 或绑 LUT）。
+  final IpResourceEstimate resources;
+
   const IpPlan({
     required this.cPlan,
     required this.stream,
@@ -75,6 +116,7 @@ class IpPlan {
     required this.lutDepth,
     required this.totalDelay,
     required this.options,
+    required this.resources,
   });
 }
 
@@ -108,6 +150,28 @@ IpPlan planGroupIp(
     pixBits = bits;
   }
   final maxValue = (1 << pixBits) - 1;
+  final lutDepth = maxValue + 1;
+
+  // ---- 资源估算（v1：multi_band_eq lut_fixed——三张烘焙表 + 每像素
+  // S/L 两个 Q14 乘法；乘法器性能档推断 DSP48、平衡/面积档绑 LUT）----
+  var romBits = 0;
+  var eqNodes = 0;
+  for (final id in cPlan.topo) {
+    final n = cPlan.members[id]!;
+    if (n.typeId == 'multi_band_eq') {
+      eqNodes++;
+      romBits += lutDepth * 50; // h int16 + s/l u17（16+17+17 位）
+    }
+  }
+  final perf = options.gstrategy == 2;
+  final est = IpResourceEstimate(
+    romBits: romBits,
+    bram36k: (romBits / 36864).ceil(),
+    estDsps: eqNodes == 0 ? 0 : (perf ? eqNodes * 2 : 0),
+    estLuts: eqNodes == 0 ? 0 : 600 + (perf ? 0 : eqNodes * 700),
+    latencyCycles: stream.maxDelay + 1,
+    throughputPxPerClk: 1.0,
+  );
 
   return IpPlan(
     cPlan: cPlan,
@@ -115,8 +179,9 @@ IpPlan planGroupIp(
     topName: topName,
     pixBits: pixBits,
     maxValue: maxValue,
-    lutDepth: maxValue + 1,
+    lutDepth: lutDepth,
     totalDelay: stream.maxDelay,
     options: options,
+    resources: est,
   );
 }

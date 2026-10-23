@@ -1,0 +1,1522 @@
+/// ISP Studio「电路图」标签页：两种视图——
+/// - **模块框图**（默认）：由编组规划 IR 直绘的模块级框图（实例块 + 端口
+///   针脚 + 网表连线 + 网名标注，Vivado Elaborated Design 版式，见
+///   ip_block_diagram.dart），零工具链依赖、即时显示；
+/// - **RTL 网表**：yosys 只做 `Verilog → 层级网表 JSON` 提取，布局与绘制
+///   由应用自己完成（`netlist_diagram.dart` + `codegen/netlist_model.dart`）
+///   ——不再使用 netlistsvg/ELK/SVG：无样式块兼容问题、无超大画布长条、
+///   悬停高亮与点击天然可用、导出 SVG/PNG 与页内所见一致。顶层为端口 +
+///   子模块实例，点实例「＋」下钻其内部网表，点逻辑单元跳其源码信号。
+///
+/// 从 IP 标签页工具栏「电路图浏览」打开（key 前缀 `sch:`）。工具链缺失
+/// （yosys）时 RTL 视图显示提示，框图不受影响。
+library;
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../providers/isp_studio_state.dart';
+import '../codegen/group_ip_export.dart';
+import '../codegen/ip_gen_plan.dart';
+import '../codegen/ip_target.dart';
+import '../codegen/netlist_model.dart';
+import '../codegen/netlist_svg.dart';
+import '../codegen/yosys_schematic.dart';
+import '../models/isp_graph.dart';
+import '../models/manual_routing_session.dart';
+import '../models/routing_learning_store.dart';
+import 'ip_block_diagram.dart'
+    show IpBlockDiagram, SchModel, SchPalette, buildSchModel, schFitView;
+import 'netlist_diagram.dart';
+import 'tab_toolbar.dart';
+
+/// 编组的电路图浏览标签页（作为编辑器标签页嵌入主视图）。
+class SchematicTab extends StatefulWidget {
+  final String groupId;
+
+  /// FPGA 厂商目标（决定电路图顶层封装的选择，见 schematicTopModule）。
+  final IpVendor vendor;
+
+  /// 网表提取器注入点（测试替换为假实现；缺省 extractSchematicNetlist）。
+  final Future<SchNetlistResult> Function(
+    Map<String, String> files, {
+    required String topName,
+    void Function(String chunk)? onOutput,
+  })?
+  renderer;
+
+  /// IP 文件生成器注入点（测试替换；缺省 buildGroupIpFiles）。
+  final Future<Map<String, String>> Function(
+    IspGraph graph,
+    IspNodeGroup group,
+    IpGenOptions options,
+  )?
+  filesBuilder;
+
+  /// 后台优化启动器注入点（测试可控制进度与完成时机）。
+  final NlOptimizationStarter? optimizationStarter;
+
+  /// 学习规则存储注入点（测试使用临时目录，避免写真实用户配置）。
+  final NlRoutingLearningStore? learningStore;
+
+  /// 手动会话工厂注入点（测试可提供确定的小模型）。
+  final NlManualRoutingSession Function(NetlistDiagramModel model)?
+  manualSessionFactory;
+
+  const SchematicTab({
+    super.key,
+    required this.groupId,
+    this.vendor = IpVendor.generic,
+    this.renderer,
+    this.filesBuilder,
+    this.optimizationStarter,
+    this.learningStore,
+    this.manualSessionFactory,
+  });
+
+  @override
+  State<SchematicTab> createState() => _SchematicTabState();
+}
+
+class _SchematicTabState extends State<SchematicTab> {
+  /// 提取结果与当前展示的模块（层级下钻路径，首项为顶层）。
+  YosysNetlist? _netlist;
+  final List<String> _path = [];
+
+  /// 当前模块的电路图模型（缓存，避免每帧重排）。
+  NetlistDiagramModel? _nlModel;
+
+  /// 交叉数、折点数与总长度均相同的可选最优布局，及当前编号（从 0 开始）。
+  List<NetlistDiagramModel> _optimizationVariants = const [];
+  int _optimizationVariantIndex = 0;
+
+  /// 后台优化任务及代次：新模块/新展开状态会使旧任务的回传失效。
+  NlOptimizationTask? _optimizationTask;
+  int _optimizationSession = 0;
+  bool _optimizing = false;
+
+  /// 进度浮层是否在页面上保留；完成后仍显示，只有用户点 X 才关闭。
+  bool _optimizationPanelVisible = false;
+  Timer? _optimizationTicker;
+  int _optimizationElapsedSeconds = 0;
+
+  /// 工具栏「镜像/行序优化」开关：控制后台优化是否启用行序 Sifting 与
+  /// 符号镜像 × 上下移动/交换 两族邻域。关掉即回到既有的纯布线候选搜索，
+  /// 便于现场 A/B 对比耗时与指标。
+  final bool _orderingOptimization = true;
+
+  /// 优化浮层开关：清理阶段默认关闭（旧优化层即将整体删除）。
+  final bool _panelEnabled = false;
+
+  /// 「布局层优先」：关闭全部布线候选，只让布局层（行序/镜像/引脚重排/块移动）
+  /// 自己收敛。用途是**看到**镜像与上下移动的结果——完整搜索下这些候选
+  /// 往往打平 115 而被拒绝，图面完全看不出镜像；布局层单独跑时才会采纳
+  /// （真实网表实测 140 → 122 且合法）。
+  /// 默认开启：实测布局层优先优于纯布线搜索（真实网表 101 vs 115 交叉），
+  /// 且它保留了镜像/上下移动这些几何改动。勾选框仍可用于 A/B 对比。
+  /// 直线连线的超边拓扑：false=星形（到质心），true=团（全对相连）。
+  /// 决定「直线总长」这个布局目标的取值口径，也是 M2 解析布局的目标函数。
+  bool _cliqueTopology = false;
+
+  /// 是否在提取网表后**自动**开始布线优化。默认关闭：首屏只显示
+  /// 布局阶段的团拓扑直线图，由用户点「重新优化/开始优化」再启动策略。
+  final bool _autoOptimize = false;
+
+  /// 「布局层优先」默认开启：实测布局层优先优于纯布线搜索
+  /// （真实网表 101 vs 115 交叉），且它保留了镜像/上下移动这些几何改动。
+  final bool _layoutFirst = true;
+
+  /// 面板当前展示的是「恢复保存的精确定位」而非本次重新优化的结果。
+  bool _optimizationRestored = false;
+
+  /// 最近一次优化所用的模块，供浮层上的「重新优化」按钮复用。
+  NetlistModule? _optimizationModule;
+
+  late final NlRoutingLearningStore _learningStore =
+      widget.learningStore ?? NlRoutingLearningStore();
+  NlManualRoutingSession? _manualSession;
+  NlManualSegmentView? _manualDragView;
+  Map<String, int> _manualDragOverrides = const {};
+  NlManualBlockView? _manualBlockView;
+  Map<String, int> _manualBlockOffsets = const {};
+
+  /// **原位展开**的实例单元名集合（＋/－ 切换；切模块时清空）。
+  final Set<String> _expanded = {};
+
+  final StringBuffer _log = StringBuffer();
+  bool _logVisible = false;
+  String? _error;
+  bool _running = false;
+
+  /// 视图模式：false = 模块级框图（默认）；true = RTL 网表（首次切换时懒提取）。
+  bool _rtlMode = false;
+  bool _rtlStarted = false;
+
+  /// 配色：false = 暗色（默认，与应用主题一致），true = Vivado 浅色。
+  bool _light = false;
+
+  /// 缩放控制器（框图/RTL 各一；工具栏缩放按钮作用于当前视图）。
+  final TransformationController _bdCtrl = TransformationController();
+  final TransformationController _nlCtrl = TransformationController();
+
+  Size _bdViewport = Size.zero, _bdContent = Size.zero;
+  Size _nlViewport = Size.zero;
+
+  /// 提取成功时的编组指纹（过期提示用，见 [_groupFingerprint]）。
+  String? _renderedFingerprint;
+
+  final _logScroll = ScrollController();
+
+  @override
+  void dispose() {
+    _optimizationTask?.cancel();
+    _optimizationTicker?.cancel();
+    _bdCtrl.dispose();
+    _nlCtrl.dispose();
+    _logScroll.dispose();
+    super.dispose();
+  }
+
+  /// 切换 框图 / RTL 网表 视图；首次切到网表时触发提取。
+  void _switchMode(bool rtl) {
+    setState(() => _rtlMode = rtl);
+    if (rtl && !_rtlStarted) {
+      _rtlStarted = true;
+      unawaited(_extract());
+    }
+  }
+
+  /// 编组指纹（过期提示用）：成员 id+typeId+排序参数 + 厂商 + 选项对象
+  /// 同一性（选项对话框重新保存会换实例）。
+  String _groupFingerprint(IspStudioState state, IspNodeGroup group) {
+    final sb = StringBuffer()
+      ..write(group.name)
+      ..write('|')
+      ..write(widget.vendor.name)
+      ..write('|')
+      ..write(identityHashCode(sessionIpGenOptions[widget.groupId]));
+    final ids = group.nodeIds.toList()..sort();
+    for (final id in ids) {
+      final n = state.graph.nodes[id];
+      sb
+        ..write('|')
+        ..write(id)
+        ..write(':')
+        ..write(n?.typeId);
+      final pv = n?.paramValues;
+      if (pv != null) {
+        final keys = pv.keys.toList()..sort();
+        for (final k in keys) {
+          sb
+            ..write(',')
+            ..write(k)
+            ..write('=')
+            ..write(pv[k]);
+        }
+      }
+    }
+    return sb.toString();
+  }
+
+  // ---- 缩放 ----
+
+  TransformationController get _activeCtrl => _rtlMode ? _nlCtrl : _bdCtrl;
+
+  Size get _activeViewport => _rtlMode ? _nlViewport : _bdViewport;
+
+  void _zoomStep(double factor) {
+    final ctrl = _activeCtrl;
+    final vp = _activeViewport;
+    final m = ctrl.value;
+    final cur = m.getMaxScaleOnAxis();
+    final next = (cur * factor).clamp(0.05, 8.0);
+    final k = next / cur;
+    final cx = vp.width / 2, cy = vp.height / 2;
+    final t = m.getTranslation();
+    ctrl.value = Matrix4.identity()
+      ..translateByDouble(cx - k * (cx - t.x), cy - k * (cy - t.y), 0, 1)
+      ..scaleByDouble(next, next, 1, 1);
+  }
+
+  void _zoomFit() {
+    final vp = _activeViewport;
+    if (vp.isEmpty) return;
+    final content = _rtlMode ? _nlModel?.canvasSize : _bdContent;
+    if (content == null || content.isEmpty) return;
+    schFitView(_activeCtrl, vp, content);
+  }
+
+  // ---- 提取（yosys → 层级网表 JSON → Dart 模型）----
+
+  /// 重新提取网表。[module] 指定提取后要展示的模块（下钻目标），null 回顶层；
+  /// [drillCore] 提取成功后自动下钻顶层的第一个子模块实例（框图点块入口）。
+  Future<void> _extract({String? module, bool drillCore = false}) async {
+    _optimizationTask?.cancel();
+    _stopOptimizationTimer();
+    _optimizationSession++;
+    _optimizing = false;
+    _optimizationPanelVisible = false;
+    _manualSession = null;
+    _manualDragView = null;
+    _manualBlockView = null;
+    final state = context.read<IspStudioState>();
+    final group = state.graph.groups
+        .where((g) => g.id == widget.groupId)
+        .firstOrNull;
+    if (group == null) return;
+    setState(() {
+      _running = true;
+      _error = null;
+    });
+    _log.clear();
+    try {
+      final options =
+          sessionIpGenOptions[widget.groupId] ??
+          IpGenOptions(vendor: widget.vendor);
+      final files = await (widget.filesBuilder ?? _defaultFiles)(
+        state.graph,
+        group,
+        options,
+      );
+      final top = schematicTopModule(files, vendorHint: widget.vendor.name);
+      final result = await (widget.renderer ?? extractSchematicNetlist)(
+        files,
+        topName: top,
+        onOutput: (chunk) {
+          _log.write(chunk);
+          if (mounted) setState(() {});
+        },
+      );
+      if (!mounted) return;
+      if (!result.success || result.netlist == null) {
+        setState(() {
+          _running = false;
+          _error = result.missingTool == 'yosys'
+              ? '未检测到 yosys（tools/yosys 或 PATH）——RTL 网表视图需要它；'
+                    '模块框图不受影响。'
+              : '电路图提取失败：\n${result.log.split('\n').lastWhere((l) => l.isNotEmpty, orElse: () => '未知错误')}';
+          _logVisible = true;
+        });
+        return;
+      }
+      final nl = result.netlist!;
+      final target = module ?? result.topModule ?? top;
+      final mod = nl.module(target) ?? nl.module(result.topModule ?? top)!;
+      setState(() {
+        _running = false;
+        _netlist = nl;
+        _path
+          ..clear()
+          ..add(result.topModule ?? top);
+        if (mod.name != _path.first) _path.add(mod.name);
+        _expanded.clear();
+        _nlModel = _buildModel(mod);
+        _renderedFingerprint = _groupFingerprint(state, group);
+      });
+      _optimizationModule = mod;
+    if (_autoOptimize) unawaited(_startOptimization(mod));
+      // 框图点块入口：提取完成后自动下钻顶层的第一个子模块实例。
+      if (drillCore) {
+        final inst = mod.instances.firstOrNull;
+        if (inst?.moduleRef != null) _showModule(inst!.moduleRef!);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _running = false;
+        _error = '电路图提取异常：$e';
+        _logVisible = true;
+      });
+    }
+  }
+
+  void _assignOptimizationModel(NetlistDiagramModel model) {
+    _optimizationVariants = model.optimizationVariants.isEmpty
+        ? [model]
+        : model.optimizationVariants;
+    _optimizationVariantIndex = 0;
+    _nlModel = _optimizationVariants.first;
+  }
+
+  /// 先用单次布局立即出图，再由后台任务逐轮替换为更优模型。
+  NetlistDiagramModel _buildModel(NetlistModule mod) {
+    final nl = _netlist;
+    final model = buildNetlistDiagramModel(
+      mod,
+      expanded: _expanded,
+      // 实例类型可能是参数化名（`$paramod$hash\core`），也可能是普通模块名
+      // ——两条路都要能解析出子模块。
+      resolve: nl == null
+          ? null
+          : (type) => nl.resolveInstance(type) ?? nl.module(type),
+      optimization: const NlRoutingOptimizationOptions.singlePass(),
+    );
+    _assignOptimizationModel(model);
+    return _nlModel!;
+  }
+
+  String get _optimizationElapsed {
+    final seconds = _optimizationElapsedSeconds;
+    final minutes = (seconds ~/ 60).toString().padLeft(2, '0');
+    final rest = (seconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$rest';
+  }
+
+  void _stopOptimizationTimer() {
+    _optimizationTicker?.cancel();
+    _optimizationTicker = null;
+  }
+
+  /// 浮层上的「重新优化」：跳过“恢复保存布局”，按当前开关强制重跑。
+  void _rerunOptimization() {
+    final mod = _optimizationModule;
+    if (mod == null || _running) return;
+    unawaited(_startOptimization(mod, force: true));
+  }
+
+  /// 工具栏「镜像/行序优化」开关：切换后立即按新开关重跑，便于 A/B 对比。
+  // ignore: unused_element
+
+  /// 工具栏「布局层优先」：勾上则关掉全部布线候选，只让布局层收敛
+  /// （这样镜像/上下移动才会被采纳、图面上看得见）。切换即重跑。
+  // ignore: unused_element
+
+  Future<void> _startOptimization(NetlistModule mod, {bool force = false}) async {
+    _optimizationTask?.cancel();
+    _optimizationTicker?.cancel();
+    _optimizationElapsedSeconds = 0;
+    _optimizationModule = mod;
+    final session = ++_optimizationSession;
+    _optimizationTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_optimizing) return;
+      setState(() => _optimizationElapsedSeconds++);
+    });
+    setState(() {
+      _optimizing = true;
+      _optimizationPanelVisible = true;
+      _optimizationRestored = false;
+    });
+
+    final nl = _netlist;
+    final resolver = nl == null
+        ? null
+        : (String type) => nl.resolveInstance(type) ?? nl.module(type);
+    var bestModel = _nlModel;
+    if (bestModel == null) return;
+    var bestMetrics = evaluateNetlistRouting(bestModel);
+    final starter = widget.optimizationStarter;
+
+    NetlistDiagramModel buildWithPlan(NlRoutingPlan plan) =>
+        buildNetlistDiagramModel(
+          mod,
+          expanded: _expanded,
+          resolve: resolver,
+          optimization: const NlRoutingOptimizationOptions.singlePass(),
+          routingPlan: plan,
+        );
+
+    void consider(NetlistDiagramModel model, {bool assign = true}) {
+      if (!mounted || session != _optimizationSession) return;
+      try {
+        final actual = applyNlManualSegments(model);
+        final metrics = evaluateNetlistRouting(actual);
+        if (!metrics.isValid ||
+            (starter == null && metrics.compareTo(bestMetrics) > 0)) {
+          return;
+        }
+        bestModel = actual;
+        bestMetrics = metrics;
+        if (assign) setState(() => _assignOptimizationModel(actual));
+      } on StateError {
+        return;
+      }
+    }
+
+    try {
+      // [force] 为真时跳过「恢复保存的精确定位」，强制重新跑优化
+      // （浮层上的「重新优化」按钮与工具栏开关切换都走这条路径）。
+      final exact = force ? null : await _learningStore.exactPlan(bestModel!);
+      if (!mounted || session != _optimizationSession) return;
+      if (exact != null) {
+        final restored = applyNlManualSegments(buildWithPlan(exact));
+        final metrics = evaluateNetlistRouting(restored);
+        if (metrics.isValid) {
+          _stopOptimizationTimer();
+          setState(() {
+            _assignOptimizationModel(restored);
+            _optimizing = false;
+            // 不静默：浮层保留并标明这是「恢复保存布局」的结果，
+            // 由用户决定是否点「重新优化」。
+            _optimizationRestored = true;
+            _optimizationPanelVisible = true;
+          });
+          return;
+        }
+      }
+      final learned = await _learningStore.candidatePlans(bestModel!);
+      if (!mounted || session != _optimizationSession) return;
+      for (final plan in learned) {
+        consider(buildWithPlan(plan), assign: false);
+      }
+      setState(() => _assignOptimizationModel(bestModel!));
+    } on Object {
+      // 规则文件损坏或过期只跳过学习增强，不影响默认优化。
+    }
+
+    var startPlan = bestModel!.routingPlan;
+    // ④ 解析布局作为起点：先按「相连针脚 y 中位数」迭代重排一次行序
+    // （`nlIterativeAnalyticPlan`，只改 rowOrders、只接受直线总长下降），
+    // 再以它为交替循环的起点——实测起点依赖极强（零起点 125、从已优化起 104）。
+    if (_orderingOptimization) {
+      try {
+        final analytic = nlIterativeAnalyticPlan(
+          mod,
+          expanded: _expanded,
+          resolve: resolver,
+          topology: _cliqueTopology
+              ? NlNetTopology.clique
+              : NlNetTopology.star,
+        );
+        if (analytic.rowOrders.isNotEmpty) {
+          startPlan = startPlan.copyWith(rowOrders: analytic.rowOrders);
+        }
+      } on Object {
+        // 解析布局失败不影响既有起点。
+      }
+    }
+    void onProgress(NetlistDiagramModel model) => consider(model);
+    final task = starter != null
+        ? starter(mod, expanded: _expanded, onProgress: onProgress)
+        : startNetlistDiagramModelOptimization(
+            mod,
+            expanded: _expanded,
+            resolve: resolver,
+            routingPlan: startPlan,
+            // 工具栏「镜像/行序优化」开关决定是否启用两族布局层邻域；
+            // 「布局层优先」再把布线候选全部关掉，让镜像/移动方案真正被采纳
+            // （完整搜索下这些候选常打平 115 而被拒绝，图面看不出变化）。
+            optimization: NlRoutingOptimizationOptions(
+              trySifting: _orderingOptimization,
+              tryMirror: _orderingOptimization,
+              tryRouteModes: !_layoutFirst,
+              tryLaneOrderVariants: !_layoutFirst,
+              tryBlockMoves: !_layoutFirst,
+              tryRipUpReroute: !_layoutFirst,
+            ),
+            onProgress: onProgress,
+          );
+    _optimizationTask = task;
+    task.result
+        .then((model) async {
+          if (!mounted || session != _optimizationSession) return;
+          consider(model);
+          // ---- 交替精修：布局层 ↔ 布线 ----
+          // 实测（真实网表）：完整搜索 115 →（布局层）104 →（布线）104 →
+          // （再布局层）102。单趟布线常无改善，但**交替**能继续下降，
+          // 因为布局层每趟都会把几何推到新的盆地。故按"是否仍改善"循环，
+          // 任一趟不再改善即停止（`consider` 只接受更优且合法的结果）。
+          // 交替精修只在真实优化器下执行（注入 starter 的测试/嵌入场景
+          // 保持单趟语义，避免多阶段把进度状态拖长）。
+          if (_orderingOptimization && starter == null) {
+            const layoutPass = NlRoutingOptimizationOptions(
+              tryRouteModes: false,
+              tryLaneOrderVariants: false,
+              tryBlockMoves: false,
+              tryRipUpReroute: false,
+              trySifting: true,
+              tryMirror: true,
+            );
+            const routingPass = NlRoutingOptimizationOptions(
+              trySifting: false,
+              tryMirror: false,
+            );
+            var current = model;
+            var currentMetrics = evaluateNetlistRouting(current);
+            // 交替终止判据：**连续两趟无改善**才停——单趟布线常无改善，
+            // 但紧接着的布局趟仍可能改善（实测 104 →(布线)104 →(布局)102）。
+            var misses = 0;
+            for (var pass = 0; pass < 8; pass++) {
+              final options = pass.isEven ? layoutPass : routingPass;
+              NetlistDiagramModel next;
+              try {
+                final task = startNetlistDiagramModelOptimization(
+                  mod,
+                  expanded: _expanded,
+                  resolve: resolver,
+                  routingPlan: current.routingPlan,
+                  optimization: options,
+                  onProgress: onProgress,
+                );
+                _optimizationTask = task;
+                next = await task.result;
+              } on Object {
+                break;
+              }
+              if (!mounted || session != _optimizationSession) return;
+              final nextMetrics = evaluateNetlistRouting(next);
+              if (!nextMetrics.isValid ||
+                  nextMetrics.compareTo(currentMetrics) >= 0) {
+                if (++misses >= 2) break;
+                continue;
+              }
+              misses = 0;
+              current = next;
+              currentMetrics = nextMetrics;
+              consider(next);
+            }
+          }
+          if (!mounted || session != _optimizationSession) return;
+          _stopOptimizationTimer();
+          setState(() => _optimizing = false);
+        })
+        .catchError((Object _) {
+          if (!mounted || session != _optimizationSession) return;
+          _stopOptimizationTimer();
+          setState(() {
+            _optimizing = false;
+            _optimizationPanelVisible = false;
+          });
+        });
+  }
+
+  /// 切换交叉数与总长度均相同的另一种最优布局。
+  void _selectOptimizationVariant(int index) {
+    if (index < 0 || index >= _optimizationVariants.length) return;
+    if (index == _optimizationVariantIndex) return;
+    setState(() {
+      _optimizationVariantIndex = index;
+      _nlModel = _optimizationVariants[index];
+    });
+  }
+
+  // ignore: unused_element
+  Future<void> _toggleManualRouting() async {
+    final session = _manualSession;
+    if (session == null) {
+      final model = _nlModel;
+      if (model == null) return;
+      _optimizationTask?.cancel();
+      _stopOptimizationTimer();
+      _optimizationSession++;
+      _optimizing = false;
+      _optimizationPanelVisible = false;
+      setState(() {
+        final session =
+            widget.manualSessionFactory?.call(model) ??
+            NlManualRoutingSession(model);
+        _manualSession = session;
+        _nlModel = session.workingModel;
+        _manualDragView = null;
+        _manualBlockView = null;
+      });
+      return;
+    }
+    try {
+      final comparison = session.submit();
+      final ruleCount = await _learningStore.saveComparison(comparison);
+      if (!mounted) return;
+      setState(() {
+        _nlModel = comparison.result;
+        _optimizationVariants = [comparison.result];
+        _optimizationVariantIndex = 0;
+        _manualSession = null;
+        _manualDragView = null;
+        _manualBlockView = null;
+      });
+      final recommendationText = switch (comparison.recommendation) {
+        NlManualRecommendation.wire => '调整走线收益更大',
+        NlManualRecommendation.block => '调整元件位置收益更大',
+        NlManualRecommendation.combined => '走线与元件联合调整收益更大',
+        NlManualRecommendation.none => '没有明确的单项更优方案',
+      };
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('手工优化对比'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '交叉点  ${comparison.before.crossings} → ${comparison.after.crossings}',
+              ),
+              Text(
+                '折点数  ${comparison.before.bends} → ${comparison.after.bends}',
+              ),
+              Text(
+                '总走线长度  ${comparison.before.length.toStringAsFixed(0)} → ${comparison.after.length.toStringAsFixed(0)}',
+              ),
+              const SizedBox(height: 8),
+              if (comparison.wireOnlyMetrics != null)
+                Text(
+                  '仅走线：${comparison.wireOnlyMetrics!.crossings} / ${comparison.wireOnlyMetrics!.bends} / ${comparison.wireOnlyMetrics!.length.toStringAsFixed(0)}',
+                ),
+              if (comparison.blockOnlyMetrics != null)
+                Text(
+                  '仅元件：${comparison.blockOnlyMetrics!.crossings} / ${comparison.blockOnlyMetrics!.bends} / ${comparison.blockOnlyMetrics!.length.toStringAsFixed(0)}',
+                ),
+              Text('收益建议：$recommendationText（交叉/折点/长度）'),
+              const SizedBox(height: 8),
+              Text(
+                comparison.improved
+                    ? '三级指标得到改善，已生成/更新学习证据。'
+                    : '本次未改善三级指标，仅保存当前模块手动布局。',
+              ),
+              Text('规则库共 $ruleCount 条，已保存并可在重启后自动读取。'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('手工优化提交失败：$error')));
+    }
+  }
+
+  void _onManualDragStart(NlWire wire, int index) {
+    final session = _manualSession;
+    if (session == null) return;
+    final key = nlManualWireKey(wire);
+    for (final view in session.segments) {
+      if (view.index != index || nlManualWireKey(view.wire) != key) continue;
+      if (!view.editable) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('pin 外延伸与强制首段不可拖动')));
+        return;
+      }
+      _manualDragView = view;
+      _manualDragOverrides = {...session.overrides};
+      return;
+    }
+  }
+
+  void _onManualDragUpdate(NlWire wire, int index, int delta) {
+    final session = _manualSession;
+    final view = _manualDragView;
+    if (session == null || view == null) return;
+    session.dragTo(view, delta, baseOverrides: _manualDragOverrides);
+    setState(() => _nlModel = session.workingModel);
+  }
+
+  void _onManualDragEnd(NlWire wire, int index, int delta) {
+    _onManualDragUpdate(wire, index, delta);
+    final error = _manualSession?.lastError;
+    _manualDragView = null;
+    if (error != null && error.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('本次调整未应用：$error')));
+    }
+  }
+
+  void _onManualBlockDragStart(NlBlock block) {
+    final session = _manualSession;
+    if (session == null) return;
+    for (final view in session.blocks) {
+      if (view.block.id != block.id) continue;
+      if (!view.editable) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('端口和展开容器不支持手动拖动')));
+        return;
+      }
+      _manualBlockView = view;
+      _manualBlockOffsets = {...session.blockOverrides};
+      return;
+    }
+  }
+
+  void _onManualBlockDragUpdate(NlBlock block, int delta) {
+    final session = _manualSession;
+    final view = _manualBlockView;
+    if (session == null || view == null) return;
+    session.dragBlockTo(view, delta, baseOffsets: _manualBlockOffsets);
+    setState(() => _nlModel = session.workingModel);
+  }
+
+  void _onManualBlockDragEnd(NlBlock block, int delta) {
+    _onManualBlockDragUpdate(block, delta);
+    final error = _manualSession?.lastError;
+    _manualBlockView = null;
+    if (error != null && error.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('本次调整未应用：$error')));
+    }
+  }
+
+  /// 切换某实例块的**原位展开**（＋/－），就地重算模型。
+  void _toggleExpand(NetlistCell cell) {
+    setState(() {
+      if (!_expanded.remove(cell.name)) _expanded.add(cell.name);
+      final cur = _currentModule;
+      final mod = _netlist?.module(cur);
+      if (mod != null) _nlModel = _buildModel(mod);
+    });
+    final mod = _netlist?.module(_currentModule);
+    if (mod != null) _optimizationModule = mod;
+    if (mod != null && _autoOptimize) unawaited(_startOptimization(mod));
+  }
+
+  Future<Map<String, String>> _defaultFiles(
+    IspGraph graph,
+    IspNodeGroup group,
+    IpGenOptions options,
+  ) async => buildGroupIpFiles(graph, group, options);
+
+  /// 切到指定模块（下钻/回退）。同模块不重复入栈。
+  void _showModule(String name) {
+    final nl = _netlist;
+    if (nl == null) return;
+    final mod = nl.module(name);
+    if (mod == null) return;
+    setState(() {
+      if (_path.isEmpty || _path.last != mod.name) _path.add(mod.name);
+      _expanded.clear();
+      _nlModel = _buildModel(mod);
+    });
+    _optimizationModule = mod;
+    if (_autoOptimize) unawaited(_startOptimization(mod));
+  }
+
+  /// 框图点节点块：切到 RTL 视图并下钻到核心模块（顶层唯一实例）。
+  void _descendToCore() {
+    setState(() => _rtlMode = true);
+    if (!_rtlStarted || _netlist == null) {
+      _rtlStarted = true;
+      unawaited(_extract(drillCore: true));
+      return;
+    }
+    final nl = _netlist;
+    if (nl == null) return;
+    final topMod = nl.module(_path.isEmpty ? '' : _path.first);
+    final inst = topMod?.instances.firstOrNull;
+    if (inst?.moduleRef != null) _showModule(inst!.moduleRef!);
+  }
+
+  /// RTL 视图点单元：实例下钻；逻辑单元跳其源码信号（IP 代码页高亮）。
+  void _onTapCell(NetlistCell cell) {
+    if (cell.isInstance && cell.moduleRef != null) {
+      _showModule(cell.moduleRef!);
+      return;
+    }
+    // 逻辑单元：取其可读网名（输出优先）跳到 IP 代码页高亮。
+    String? name;
+    for (final p in [...cell.outs, ...cell.ins]) {
+      for (final n in p.nets) {
+        if (!n.isConst && !n.isDerived && !n.name.contains(r'$')) {
+          name = n.name;
+          break;
+        }
+      }
+      if (name != null) break;
+    }
+    final state = context.read<IspStudioState>();
+    final options =
+        sessionIpGenOptions[widget.groupId] ??
+        IpGenOptions(vendor: widget.vendor);
+    state.openGroupIpTab(widget.groupId, options);
+    if (name != null) state.ipCodeHighlight = name;
+  }
+
+  /// 回顶层（清除下钻路径）。
+  void _backToTop() {
+    if (_netlist == null || _path.length <= 1) return;
+    _showModule(_path.first);
+    setState(() => _path.removeRange(1, _path.length));
+  }
+
+  // ---- 导出（自研 SVG / 由 SVG 栅格化的 PNG）----
+
+  SchPalette get _palette => _light ? SchPalette.vivadoLight : SchPalette.dark;
+
+  String _svgText() {
+    final model = _nlModel;
+    if (model == null) return '';
+    return buildNetlistSvg(model, palette: _palette, fontFamily: null);
+  }
+
+  String get _currentModule => _path.isEmpty ? 'sch' : _path.last;
+
+  /// 工具栏端口方向统计文本（`· I 7 / O 5` / `+ IO 2`）。
+  String get _portDirText {
+    final nl = _netlist;
+    if (nl == null) return '';
+    final mod = nl.module(_currentModule);
+    if (mod == null) return '';
+    final c = mod.portDirCounts;
+    final parts = <String>[
+      if ((c[NetlistPortDir.input] ?? 0) > 0) 'I ${c[NetlistPortDir.input]}',
+      if ((c[NetlistPortDir.output] ?? 0) > 0) 'O ${c[NetlistPortDir.output]}',
+      if ((c[NetlistPortDir.inout] ?? 0) > 0) 'IO ${c[NetlistPortDir.inout]}',
+    ];
+    return parts.isEmpty ? '' : ' · ${parts.join(' / ')}';
+  }
+
+  Future<void> _exportSvg() async {
+    final svg = _svgText();
+    if (svg.isEmpty) return;
+    final loc = await getSaveLocation(
+      suggestedName: '${_currentModule}_sch.svg',
+      acceptedTypeGroups: const [
+        XTypeGroup(label: 'SVG', extensions: ['svg']),
+      ],
+    );
+    if (loc == null) return;
+    await File(loc.path).writeAsString(svg);
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已导出 SVG：${loc.path}')));
+  }
+
+  Future<void> _exportPng() async {
+    final svg = _svgText();
+    if (svg.isEmpty) return;
+    final loc = await getSaveLocation(
+      suggestedName: '${_currentModule}_sch.png',
+      acceptedTypeGroups: const [
+        XTypeGroup(label: 'PNG', extensions: ['png']),
+      ],
+    );
+    if (loc == null) return;
+    final Uint8List png = await rasterizeSvgPng(utf8.encode(svg), scale: 2);
+    await File(loc.path).writeAsBytes(png);
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已导出 PNG：${loc.path}')));
+  }
+
+  // ---- 视图 ----
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<IspStudioState>();
+    final group = state.graph.groups
+        .where((g) => g.id == widget.groupId)
+        .firstOrNull;
+    if (group == null) {
+      return const Center(
+        child: Text('编组已被解散', style: TextStyle(color: Colors.grey)),
+      );
+    }
+    return Container(
+      color: const Color(0xFF1E1E1E),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildToolbar(group),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(flex: 3, child: _buildBody(group)),
+                if (_rtlMode && _logVisible) ...[
+                  Container(height: 1, color: const Color(0xFF3A3A3A)),
+                  Expanded(flex: 1, child: _buildLogPanel()),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolbar(IspNodeGroup group) {
+    Widget modeButton(String tooltip, String icon, bool rtl) {
+      final active = _rtlMode == rtl;
+      return Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: () => _switchMode(rtl),
+          borderRadius: BorderRadius.circular(3),
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: active ? const Color(0xFF1F3A35) : null,
+              borderRadius: BorderRadius.circular(3),
+              border: active
+                  ? Border.all(color: const Color(0xFF4EC9B0))
+                  : null,
+            ),
+            child: Center(
+              child: ispTabAssetIcon(
+                icon,
+                color: active ? Colors.white : Colors.white54,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ispTabToolbarRow(
+      children: [
+        // 视图切换：模块级框图（编组 IR 直绘）/ RTL 网表（yosys + 自研布局）。
+        modeButton('模块框图（编组 IR 直绘）', 'icons/type-hierarchy-sub.png', false),
+        modeButton('RTL 网表（yosys 网表 + 自研布局）', 'icons/circuit-board.png', true),
+        const SizedBox(width: 6),
+        // 配色切换（两视图共用）：Vivado 浅色 / 暗色。
+        ispTabIconButton(
+          tooltip: _light ? '切换暗色配色' : '切换浅色配色（Vivado 风格）',
+          onTap: () => setState(() => _light = !_light),
+          icon: Icon(
+            Icons.contrast,
+            size: 20,
+            color: _light ? Colors.white : Colors.white54,
+          ),
+        ),
+        ispTabIconButton(
+          tooltip: 'Zoom In',
+          onTap: () => _zoomStep(1.25),
+          icon: ispTabAssetIcon('icons/zoom-in.png'),
+        ),
+        ispTabIconButton(
+          tooltip: 'Zoom Out',
+          onTap: () => _zoomStep(1 / 1.25),
+          icon: ispTabAssetIcon('icons/zoom-out.png'),
+        ),
+        ispTabIconButton(
+          tooltip: 'Zoom Fit',
+          onTap: _zoomFit,
+          icon: ispTabAssetIcon('icons/screen-full.png'),
+        ),
+
+          if (_rtlMode && _optimizationVariants.length > 1) ...[
+        const SizedBox(width: 6),
+          Flexible(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < _optimizationVariants.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: Tooltip(
+                        message:
+                            '同分最优布局 ${i + 1}/${_optimizationVariants.length}',
+                        child: InkWell(
+                          key: ValueKey('nl-variant-$i'),
+                          borderRadius: BorderRadius.circular(3),
+                          onTap: () => _selectOptimizationVariant(i),
+                          child: Container(
+                            width: 24,
+                            height: 24,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: i == _optimizationVariantIndex
+                                  ? const Color(0xFF3A5FCD)
+                                  : const Color(0xFF2D2D30),
+                              border: Border.all(
+                                color: i == _optimizationVariantIndex
+                                    ? _palette.hover
+                                    : Colors.white24,
+                              ),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              '${i + 1}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: i == _optimizationVariantIndex
+                                    ? _palette.hover
+                                    : Colors.white70,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        if (_rtlMode) ...[
+          const SizedBox(width: 6),
+          ispTabIconButton(
+            tooltip: '重新生成',
+            onTap: _running ? null : _extract,
+            icon: ispTabAssetIcon(
+              'icons/refresh.png',
+              color: _running ? Colors.white38 : Colors.white,
+            ),
+          ),
+          if (_nlModel != null)
+            ispTabIconButton(
+              tooltip: '导出SVG',
+              onTap: _exportSvg,
+              icon: ispTabAssetIcon('icons/git-stash-pop.png'),
+            ),
+          if (_nlModel != null)
+            ispTabIconButton(
+              tooltip: '导出PNG',
+              onTap: _exportPng,
+              icon: ispTabAssetIcon('icons/save.png'),
+            ),
+          ispTabIconButton(
+            tooltip: _logVisible ? '收起日志' : '查看日志',
+            onTap: () => setState(() => _logVisible = !_logVisible),
+            icon: const Icon(Icons.terminal, size: 20, color: Colors.white),
+          ),
+          if (_nlModel != null) ...[
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                '模块 $_currentModule（${_nlModel!.cellCount} 单元$_portDirText）',
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+          if (_path.length > 1) ...[
+            const SizedBox(width: 6),
+            InkWell(
+              onTap: _running ? null : _backToTop,
+              child: const Text(
+                '回顶层',
+                style: TextStyle(fontSize: 11, color: Color(0xFF4EC9B0)),
+              ),
+            ),
+          ],
+        ],
+        const Spacer(),
+        Flexible(
+          child: Text(
+            '${group.name} (${widget.groupId})',
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        const Text(
+          '编组·电路图',
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          widget.vendor.shortName,
+          style: const TextStyle(fontSize: 11, color: Color(0xFF4EC9B0)),
+        ),
+        const SizedBox(width: 8),
+        ispTabToolbarReadOnly(),
+      ],
+    );
+  }
+
+  /// 本体：框图模式为模块级框图；RTL 模式为进度/错误/自研网表电路图
+  /// （InteractiveViewer 拖动平移 + 滚轮缩放，模型构建后初始自适应；
+  /// 编组变更时顶部显示过期提示条）。
+  Widget _buildBody(IspNodeGroup group) {
+    if (!_rtlMode) return _buildBlockDiagram(group);
+    if (_running && _nlModel == null) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text(
+              '正在提取网表（yosys → 网表 JSON → 自研布局）…',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_error != null && _nlModel == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: Color(0xFFCF6679)),
+          ),
+        ),
+      );
+    }
+    final model = _nlModel;
+    if (model == null) {
+      return const Center(
+        child: Text('尚未提取网表', style: TextStyle(color: Colors.grey)),
+      );
+    }
+    final state = context.watch<IspStudioState>();
+    final stale =
+        _renderedFingerprint != null &&
+        _renderedFingerprint != _groupFingerprint(state, group);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (stale) _buildStaleBanner(),
+        Expanded(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: NetlistDiagram(
+                  key: ValueKey('nl:${model.moduleName}'),
+                  model: model,
+                  light: _light,
+                  controller: _nlCtrl,
+                  onViewport: (s) => _nlViewport = s,
+                  onTapCell: _onTapCell,
+                  onToggleExpand: _toggleExpand,
+                  manualRouting: _manualSession != null,
+                  onManualDragStart: _onManualDragStart,
+                  onManualDragUpdate: _onManualDragUpdate,
+                  onManualDragEnd: _onManualDragEnd,
+                  onManualBlockDragStart: _onManualBlockDragStart,
+                  onManualBlockDragUpdate: _onManualBlockDragUpdate,
+                  onManualBlockDragEnd: _onManualBlockDragEnd,
+                ),
+              ),
+              if (_optimizationPanelVisible && _panelEnabled) // 浮层已废弃：默认关闭
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: _buildOptimizationPanel(model),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  double _wireLength(NetlistDiagramModel model) {
+    var length = 0.0;
+    for (final wire in model.wires) {
+      for (final (a, b) in wire.segments) {
+        length += (b - a).distance;
+      }
+    }
+    return length;
+  }
+
+  /// 后台优化进度浮层：随逐轮模型回传实时刷新；完成后保留并仅由 X 关闭。
+  /// 除完成后的关闭按钮外，浮层不拦截原理图交互。
+  Widget _buildOptimizationPanel(NetlistDiagramModel model) {
+    final accent = const Color(0xFF4EC9B0);
+    return Stack(
+      children: [
+        // 优化进行中浮层不拦截原理图交互；结束后可点击浮层内的
+        // 「重新优化」与关闭按钮（此时拦截仅限这块小面板）。
+        IgnorePointer(
+          ignoring: _optimizing,
+          child: Container(
+            key: const ValueKey('nl-optimization-progress'),
+            width: 258,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _palette.canvasBg.withValues(alpha: 0.94),
+              border: Border.all(color: accent.withValues(alpha: 0.45)),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black54,
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: _optimizing
+                          ? CircularProgressIndicator(
+                              strokeWidth: 2.2,
+                              backgroundColor: Colors.white10,
+                              valueColor: AlwaysStoppedAnimation<Color>(accent),
+                            )
+                          : Icon(
+                              _optimizationRestored
+                                  ? Icons.history
+                                  : Icons.check_circle,
+                              size: 20,
+                              color: _optimizationRestored
+                                  ? const Color(0xFFD7BA7D)
+                                  : const Color(0xFF4EC9B0),
+                            ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        _optimizing
+                            ? '布线优化策略执行中'
+                            : (_optimizationRestored
+                                  ? '已恢复保存的精确定位（未重新优化）'
+                                  : '布线优化策略执行完成'),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_optimizationRestored) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '命中已保存的布局，优化器本次没有运行。'
+                    '点「重新优化」按当前开关重跑。',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: Colors.white.withValues(alpha: 0.62),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Text(
+                  '交叉点  ${model.crossingCount}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                Text(
+                  '折点数  ${nlRoutingBendCount(model)}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                Text(
+                  '总走线长度  ${_wireLength(model).toStringAsFixed(0)}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                Text(
+                  '轨道数  ${model.trackCount}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                // 「直线总长」= 解析布局阶段真正要最小化的目标（按所选拓扑）。
+                Text(
+                  '直线总长  '
+                  '${netlistStraightLength(model, topology: _cliqueTopology ? NlNetTopology.clique : NlNetTopology.star).toStringAsFixed(0)}'
+                  '（${_cliqueTopology ? '团' : '星形'}）',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                Text(
+                  '热力均衡  P95/P50 '
+                  '${netlistHeatBalance(model).p95OverP50.toStringAsFixed(2)}'
+                  '  σ=${netlistHeatBalance(model).stdDev.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                InkWell(
+                  key: const ValueKey('nl-topology-toggle'),
+                  onTap: () => setState(() {
+                    _cliqueTopology = !_cliqueTopology;
+                    _optimizationPanelVisible = true;
+                  }),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Text(
+                      '切换拓扑 → ${_cliqueTopology ? '星形' : '团'}',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: accent.withValues(alpha: 0.9),
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ),
+                Text(
+                  '改善轮次数  ${model.optimizationRounds}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                Text(
+                  '候选次数  ${model.optimizationEvaluations}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                Text(
+                  '使用时间  $_optimizationElapsed',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                if (!_optimizing) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 26,
+                    child: OutlinedButton.icon(
+                      key: const ValueKey('nl-optimization-rerun'),
+                      onPressed: _rerunOptimization,
+                      icon: const Icon(Icons.refresh, size: 14),
+                      label: const Text(
+                        '重新优化',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        foregroundColor: accent,
+                        side: BorderSide(color: accent.withValues(alpha: 0.5)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (!_optimizing)
+          Positioned(
+            top: 2,
+            right: 2,
+            child: Tooltip(
+              message: '关闭优化信息',
+              child: InkWell(
+                key: const ValueKey('nl-optimization-close'),
+                borderRadius: BorderRadius.circular(4),
+                onTap: () {
+                  setState(() => _optimizationPanelVisible = false);
+                },
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.close, size: 15, color: Colors.white70),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 模块框图（编组规划 IR 直绘，零工具链）。
+  Widget _buildBlockDiagram(IspNodeGroup group) {
+    final state = context.read<IspStudioState>();
+    try {
+      final options =
+          sessionIpGenOptions[widget.groupId] ??
+          IpGenOptions(vendor: widget.vendor);
+      final plan = planGroupIp(state.graph, group, options);
+      final SchModel model = buildSchModel(plan, state.graph, group);
+      _bdContent = model.canvasSize;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: IpBlockDiagram(
+              model: model,
+              controller: _bdCtrl,
+              light: _light,
+              onViewport: (s) => _bdViewport = s,
+              // 点节点块：切到 RTL 视图并下钻该模块（顶层唯一实例）。
+              onOpenNode: (_) => _descendToCore(),
+            ),
+          ),
+        ],
+      );
+    } catch (e) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            '框图构建失败：$e',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: Color(0xFFCF6679)),
+          ),
+        ),
+      );
+    }
+  }
+
+  /// 过期提示条：编组内容或参数修改后提示重新提取。
+  Widget _buildStaleBanner() {
+    return Container(
+      color: const Color(0xFF3A2E12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber, size: 14, color: Color(0xFFE0A030)),
+          const SizedBox(width: 6),
+          const Expanded(
+            child: Text(
+              '编组内容或参数已变更，当前电路图可能已过期',
+              style: TextStyle(fontSize: 11, color: Color(0xFFE0A030)),
+            ),
+          ),
+          if (!_running)
+            InkWell(
+              onTap: _extract,
+              child: const Text(
+                '重新生成',
+                style: TextStyle(fontSize: 11, color: Color(0xFF4EC9B0)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 日志面板（与仿真/编译终端同一风格）：标题栏 + 等宽输出区。
+  Widget _buildLogPanel() {
+    return Container(
+      color: const Color(0xFF141414),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 26,
+            color: const Color(0xFF1E1E1E),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                const Text(
+                  '提取日志',
+                  style: TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+                const Spacer(),
+                InkWell(
+                  onTap: () => setState(() => _logVisible = false),
+                  child: Icon(
+                    Icons.close,
+                    size: 12,
+                    color: _running ? Colors.white24 : Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _logScroll,
+              padding: const EdgeInsets.all(8),
+              child: SelectableText(
+                _log.toString(),
+                style: const TextStyle(
+                  fontFamily: 'Consolas',
+                  fontFamilyFallback: ['Courier New', 'monospace'],
+                  fontSize: 11,
+                  height: 1.4,
+                  color: Color(0xFFD4D4D4),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -44,11 +44,13 @@ dependencies:
   characters: ^1.4.0
   flutter_colorpicker: ^1.1.0
   flutter_svg: ^2.3.0
+  vector_graphics: ^1.2.3
   archive: ^3.6.1
   image: ^4.2.0
   ffi: ^2.2.0
   dartssh2: ^2.22.3
   package_info_plus: ^9.0.0
+  flutter_markdown: ^0.7.4
 
 dev_dependencies:
   flutter_test:
@@ -112,6 +114,24 @@ flutter:
     - icons/book.png
     # ISP Studio 均衡器 comp 模式「退出对比」图标（同上提取 + 白色）。
     - icons/layout-sidebar-right-dock.png
+    # ISP Studio 仿真波形工具栏图标（同上提取 + 白色；打开流程/保存流程/
+    # comp 复用 folder-opened/save/screen-full/book）。
+    - icons/voice-mode-download.png
+    - icons/right-panel-hide.png
+    - icons/zoom-in.png
+    - icons/zoom-out.png
+    - icons/git-commit.png
+    - icons/reply.png
+    - icons/forward.png
+    - icons/search-sparkle.png
+    - icons/chevron-left.png
+    - icons/chevron-right.png
+    - icons/rising-edge.png
+    - icons/falling-edge.png
+    - icons/search.png
+    - icons/oscilloscope.png
+    - icons/dim-base.png
+    - icons/dim-continue.png
     # ISP Studio 均衡器取色器工具栏「增加/删除取色器」图标（同上）；
     # 「读取预设」「保存风格」复用 folder-opened.png / save.png。
     - icons/diff-added.png

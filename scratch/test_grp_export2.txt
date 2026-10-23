@@ -1,0 +1,74 @@
+00:00 +0: loading G:/DebugToolSet/test/isp_group_c_export_test.dart
+00:00 +0: G:/DebugToolSet/test/isp_group_c_export_test.dart: C 标识符净化 sanitizeCIdent 基本规则
+00:00 +1: G:/DebugToolSet/test/isp_group_c_export_test.dart: C 标识符净化 uniqueCIdent 冲突去重与回退
+00:00 +2: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出校验 含不支持类型时报错并列出节点
+00:00 +3: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出校验 混合可/不可导出 C 的编组同样报错
+00:00 +4: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出校验 单节点编组：仅多段色彩均衡器放行（等效多个色彩控制器混叠）
+00:00 +5: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出校验 multiplier 双输入未接全时报错
+00:00 +6: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出校验 mux4 选中支路未连接时报错
+00:00 +7: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 buildGroupCFiles 与 exportGroupCCode 写盘结果一致
+00:00 +8: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 白平衡→CCM→Gamma 链：文件清单/宏烘焙/拓扑序/外部端口
+00:00 +9: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 分路→合路回环：边缓冲按生产者端口一一对应
+00:00 +10: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 格式推导：yuv 输入的 sat_bright 烘焙 YUV 格式宏
+00:00 +11: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 ColorTrans：csc_rgb2yuv 烘焙标准/范围枚举并生成转换调用
+00:00 +12: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 mux4 未选中支路裁剪：死边上游不生成、无多余缓冲与形参
+00:00 +13: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 单 HSL→RGB CSC 节点：生成物不含其它 CSC 变体（忠实还原流程图）
+00:00 +14: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +15: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +16: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +17: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +18: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +19: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +20: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +21: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +22: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +23: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +24: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +25: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +26: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +27: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +28: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:00 +29: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出
+00:01 +30: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） WB→CCM→Gamma 纯链（含边界尺寸与 LUT 回退域）
+00:01 +31: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 white_balance LUT 模式：烘焙 static const 表 + 查表主循环
+00:02 +32: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） splitter→combiner 回环支路 + mono 支路 bright_contrast
+00:02 +33: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） splitter→combiner 回环支路 + mono 支路 bright_contrast
+00:02 +34: G:/DebugToolSet/test/isp_group_c_export_test.dart: 编组导出生成物 六节点 LUT 模式综合：烘焙表 + 查表主循环 + MSVC 编译
+00:03 +35: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） bayer 链：black_level→lsc→fluoro_leak→pseudo_color→gamma（奇偶相位）
+00:03 +36: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） bayer 链：black_level→lsc→fluoro_leak→pseudo_color→gamma（奇偶相位）
+00:03 +37: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） bayer 链：black_level→lsc→fluoro_leak→pseudo_color→gamma（奇偶相位）
+00:03 +38: G:/DebugToolSet/test/isp_group_c_export_test.dart: 全部 49 类型导出 + MSVC 语法编译
+00:05 +39: G:/DebugToolSet/test/isp_group_c_export_test.dart: 全部 49 类型导出 + MSVC 语法编译
+00:05 +40: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 汇合节点：multiplier / adder（mono 双源运算）
+00:05 +41: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 汇合节点：multiplier / adder（mono 双源运算）
+00:06 +42: G:/DebugToolSet/test/isp_group_c_export_test.dart: Win32 可运行验证程序（main_win.c） MSVC 集成：构建 + 批模式哈希与 Dart 管线逐位一致
+00:07 +43: G:/DebugToolSet/test/isp_group_c_export_test.dart: Win32 可运行验证程序（main_win.c） MSVC 集成：构建 + 批模式哈希与 Dart 管线逐位一致
+00:07 +44: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） mux4 选中支路透传 + 死支路裁剪
+00:08 +45: G:/DebugToolSet/test/isp_group_c_export_test.dart: Win32 可运行验证程序（main_win.c） 黑盒（无 scratch 签名）MSVC 集成：构建 + 批模式哈希一致
+00:08 +46: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） combiner 缺省通道（rgb 缺省 0 / yuv 缺省 mid）
+00:08 +47: G:/DebugToolSet/test/isp_group_c_export_test.dart: Win32 可运行验证程序（main_win.c） LUT 模式 maxValue=1023：构建 + 批模式哈希与 Dart 查表逐位一致
+00:09 +48: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） yuv_combiner 缺省 U/V（mid）经 csc_yuv2rgb 出图
+00:09 +49: G:/DebugToolSet/test/isp_group_c_export_test.dart: Win32 可运行验证程序（main_win.c） lut_fixed 定点模式：构建 + 与 Dart Q14 逐位一致 + 与 FP64 偏差 ≤1
+00:10 +50: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） LUT 模式综合长链（查表路径 + 回退直算路径）
+00:11 +51: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） multi_band_eq 串联三段（含恒等段）行核对拍
+00:12 +52: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） multi_band_eq 并联两段 LUT 模式（查表 + 回退直算）行核对拍
+00:13 +53: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） HSL 域 color_balance（逐像素往返）+ sat_bright HSL 形态
+00:14 +54: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 扇出流物化：wb.out 同时出组与供组内 splitter
+00:14 +55: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 窗口节点：WB→sharpen→Gamma（延迟 + 尾部冲刷 + 边界尺寸）
+00:16 +56: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 窗口后接点对点：sharpen→rgb_debugger→gamma（延迟后融合继续）
+00:17 +57: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 窗口在链首（外部输入整帧寻址）且在链尾（→gamma）
+00:18 +58: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 延迟均衡：直连支路与 sharpen 支路在 blender 汇合（FIFO）
+00:19 +59: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） demosaic(bilinear) 起头的 Bayer 全链（奇偶相位）
+00:20 +60: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） dpc（原地语义，Bayer 半径 2）→ demosaic 链
+00:22 +61: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） dpc directional + mono 形态（半径 1）
+00:23 +62: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） rgb_dnr → edge_extract（双输出）→ gamma
+00:24 +63: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） bayer_dnr（半径 2）→ highlight(recover) → demosaic → gamma
+00:25 +64: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） highlight clip（纯逐像素形态）→ gamma
+00:26 +65: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） morphology：腐蚀/膨胀 × 不同半径（rgb 与 mono 形态）
+00:28 +66: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） morphology mono 形态 r=3（h ≤ 2r 小图）
+00:29 +67: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） gaussian_blur：σ=1（r=3）与 σ=2.5（r=8，h ≤ 2r 小图）
+00:40 +68: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） gaussian_blur mono 形态 + 派生环与窗口混合链
+00:42 +69: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 分离趟支路与直连支路汇合（morphology r=2 延迟均衡 FIFO）
+00:43 +70: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: 黑盒 vs 整帧版数值对拍（MSVC） 分离趟 scratch 宏逐项可见（double 环 + 权重核）
+00:43 +71: G:/DebugToolSet/test/isp_group_c_blackbox_test.dart: lut_fixed NEON 行核 aarch64 实机编译（交叉 gcc） 单节点 lut_fixed 黑盒 __ARM_NEON 路径交叉编译链接零警告
+01:08 +72: All tests passed!
