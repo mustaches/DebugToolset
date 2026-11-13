@@ -35,8 +35,8 @@ import 'node_c_stream.dart';
 import 'stream_plan.dart';
 
 /// 黑盒 top 层名（`isp_pipe_<组名净化>_bb`，命名规则与整帧版一致）。
-String groupBlackBoxTopName(IspNodeGroup group) => '${groupCTopName(group)
-        .replaceFirst(RegExp('^isp_pipeline_'), 'isp_pipe_')}_bb';
+String groupBlackBoxTopName(IspNodeGroup group) =>
+    '${groupCTopName(group).replaceFirst(RegExp('^isp_pipeline_'), 'isp_pipe_')}_bb';
 
 /// 校验编组能否导出黑盒子（行级流水）C 代码；可导出返回 null，否则返回
 /// 中文错误说明。先跑整帧版校验（validateGroupCExport），再查：成员类型
@@ -46,18 +46,18 @@ String groupBlackBoxTopName(IspNodeGroup group) => '${groupCTopName(group)
 String? validateGroupBlackBoxExport(IspGraph graph, IspNodeGroup group) {
   final base = validateGroupCExport(graph, group);
   if (base != null) return base;
-  final members = [
-    for (final id in group.nodeIds) ?graph.nodes[id],
-  ];
+  final members = [for (final id in group.nodeIds) ?graph.nodes[id]];
   // 拒绝原因分类（核实结论见 stream_plan.dart 文件头）。
   String rejectReason(String typeId) => switch (typeId) {
-        'fpn' => '需整帧多遍统计（全帧低通平面 + 行/列残差中位数），无法行级流水',
-        'grgb_balance' || 'fluoro_normalize' || 'fluoro_background' || 'ahe' =>
-          '需全帧统计，无法行级流水',
-        'fluoro_temporal' => '跨帧持久帧，无法行级流水',
-        'fluoro_fusion' => '偏移双线性采样/轮廓邻域需跨行访问',
-        _ => '暂不支持行级流水导出',
-      };
+    'fpn' => '需整帧多遍统计（全帧低通平面 + 行/列残差中位数），无法行级流水',
+    'grgb_balance' ||
+    'fluoro_normalize' ||
+    'fluoro_background' ||
+    'ahe' => '需全帧统计，无法行级流水',
+    'fluoro_temporal' => '跨帧持久帧，无法行级流水',
+    'fluoro_fusion' => '偏移双线性采样/轮廓邻域需跨行访问',
+    _ => '暂不支持行级流水导出',
+  };
   final unsupported = <String>[];
   for (final n in members) {
     if (streamSupportedTypeIds.contains(n.typeId)) continue;
@@ -99,8 +99,10 @@ String? validateGroupBlackBoxExport(IspGraph graph, IspNodeGroup group) {
   // multi_band_eq：各段 q 必须为正（c_ref 同口径返回参数错误）。
   for (final n in members) {
     if (n.typeId != 'multi_band_eq') continue;
-    final count =
-        ((n.paramValues['band_count'] as num?)?.toInt() ?? 1).clamp(1, 24);
+    final count = ((n.paramValues['band_count'] as num?)?.toInt() ?? 1).clamp(
+      1,
+      24,
+    );
     for (var i = 0; i < count; i++) {
       final q = (n.paramValues['b${i}_q'] as num?)?.toDouble() ?? 2.0;
       if (!(q > 0.0)) return '节点 ${n.name} 第 ${i + 1} 段的 q 参数必须为正数。';
@@ -165,7 +167,8 @@ Future<Map<String, String>> buildGroupBlackBoxCFiles(
       final ident = plan.idents[gid]!;
       carve.add('  uint8_t *${ident}_lut = (uint8_t *)isp_p;');
       carve.add(
-          '  isp_p += ISP_PIPE_ALIGN8((size_t)(max_value + 1) * sizeof(uint8_t));');
+        '  isp_p += ISP_PIPE_ALIGN8((size_t)(max_value + 1) * sizeof(uint8_t));',
+      );
     }
   }
 
@@ -206,7 +209,8 @@ Future<Map<String, String>> buildGroupBlackBoxCFiles(
           '  /* 尾部冲刷：窗口阶段输出滞后其延迟行数，底部延迟行在此补齐。 */',
           '  for (y = h; y < h + ${stream.maxDelay}; y++) {',
           for (var k = 0; k < stream.stages.length; k++)
-            if (stream.stages[k].delay > 0) _emitStage(s, graph, stream, k, target),
+            if (stream.stages[k].delay > 0)
+              _emitStage(s, graph, stream, k, target),
           '  }',
         ]
       : <String>[];
@@ -216,7 +220,8 @@ Future<Map<String, String>> buildGroupBlackBoxCFiles(
 
   // ---- top .h ----
   final topGuard = '${macro}_H';
-  final topH = '''
+  final topH =
+      '''
 #ifndef $topGuard
 #define $topGuard
 
@@ -254,17 +259,24 @@ int ${topName}_run(${runParams.join(', ')});
   // 均无竞态。内层 for-x 的计数变量 x 在 top 声明，需 private(x)（整行
   // <id>_row 单节点独占阶段无 x 变量，则不加）。
   final rowParallel = stream.lineBuffers.isEmpty;
-  final rowKernelParallel = rowParallel &&
+  final rowKernelParallel =
+      rowParallel &&
       stream.stages.length == 1 &&
-      _rowNodeId(graph, stream, stream.stages.single,
-              stream.stages.single.delay, target) !=
+      _rowNodeId(
+            graph,
+            stream,
+            stream.stages.single,
+            stream.stages.single.delay,
+            target,
+          ) !=
           null;
-  final topC = '''
+  final topC =
+      '''
 #include "$topName.h"
 
 #include <math.h>
 #include <string.h>
-${s.cscSseUsed ? '#include "isp_csc_sse.h" /* x86 FP64 HSL 行核双像素快路径（逐位一致） */\n' : ''}${helpers.isEmpty ? '' : '\n$helpers\n'}${s.fileDecls.isEmpty ? '' : '\n${s.fileDecls.join('\n\n')}\n'}
+${s.cscModesUsed ? '#include "isp_csc_modes.h" /* ColorTrans 四档共享模式层 */\n' : ''}${s.cscSseUsed ? '#include "isp_csc_sse.h" /* x86 FP64 HSL 行核双像素快路径（逐位一致） */\n' : ''}${helpers.isEmpty ? '' : '\n$helpers\n'}${s.fileDecls.isEmpty ? '' : '\n${s.fileDecls.join('\n\n')}\n'}
 int ${topName}_run(${runParams.join(', ')}) {
   /* 单节点独占且类型有整行行核时阶段整行走 <id>_row，top 层无 x 循环——
    * 条件声明避免 GCC -Wunused-variable。 */
@@ -312,6 +324,13 @@ ${flushCodes.join('\n')}
       }
     }
   }
+  if (s.cscModesUsed) {
+    for (final f in const ['isp_csc_modes.h', 'isp_csc_common.h']) {
+      try {
+        files[f] = await loadCRefFile(f, readFile: readFile);
+      } catch (_) {}
+    }
+  }
   // 目标微架构说明（加速宏定义 + 实现方案），随代码一并导出。
   files[target.microDocName] = buildTargetCodeMicroDoc(target, blackBox: true);
   return files;
@@ -322,8 +341,13 @@ ${flushCodes.join('\n')}
 ///（NEON/SSE2 + 标量双变体随导出目标分叉，或纯标量）。命中时阶段整行
 /// 走 `<id>_row`，且 top 层 y 循环可加 OpenMP 行域并行（逐像素独立运算
 /// 逐位一致）。
-String? _rowNodeId(IspGraph graph, GroupStreamPlan stream,
-    StreamStage stage, int delay, GroupCTarget target) {
+String? _rowNodeId(
+  IspGraph graph,
+  GroupStreamPlan stream,
+  StreamStage stage,
+  int delay,
+  GroupCTarget target,
+) {
   if (delay != 0 || stage.chain.length != 1) return null;
   final plan = stream.plan;
   final nid = stage.chain.single;
@@ -341,17 +365,25 @@ String? _rowNodeId(IspGraph graph, GroupStreamPlan stream,
   // 类型 + 参数的行核可用性（与 node_c_stream 行核发射器的登记口径一致：
   // 发射器按同一组参数登记 `<id>_row` 文件级声明）。
   final mode = member.paramValues['codegenMode'];
+  if (member.typeId.startsWith('csc_') && mode != null && mode != 'func') {
+    return null;
+  }
   if (member.typeId == 'multi_band_eq') {
-    return (mode == 'lut_fixed' || mode == 'lut') ? nid : null;
+    return (mode == 'lut_fixed' || mode == 'lut' || mode == 'func_fixed')
+        ? nid
+        : null;
   }
   if (member.typeId == 'csc_rgb2yuv') {
     if (member.paramValues['bypass'] == true) return null;
-    if ('${member.paramValues['standard'] ?? ''}' == 'bt709') return null;
+    final standard = '${member.paramValues['standard'] ?? 'bt2020'}';
+    if (standard != 'bt601') return null;
     if ('${member.paramValues['range'] ?? ''}' == 'limited') return null;
     return nid;
   }
   if (member.typeId == 'csc_yuv2rgb') {
     if (member.paramValues['bypass'] == true) return null;
+    final standard = '${member.paramValues['standard'] ?? 'bt2020'}';
+    if (standard != 'bt601') return null;
     return nid;
   }
   if (member.typeId == 'csc_hsl2rgb' || member.typeId == 'csc_rgb2hsl') {
@@ -380,7 +412,7 @@ String? _rowNodeId(IspGraph graph, GroupStreamPlan stream,
     return nid;
   }
   if (member.typeId == 'color_temp_adjuster') {
-    // LUT 模式 + 增益非全 1（与行核发射器登记口径一致）。
+    // lut/lut_fixed/func_fixed + 增益非全 1（与行核发射器登记口径一致）。
     if (colorTempRowGains(member.paramValues) == null) return null;
     return nid;
   }
@@ -424,8 +456,13 @@ String? _rowNodeId(IspGraph graph, GroupStreamPlan stream,
 /// 发射一个行循环阶段：窗口预备（派生行/窗口行指针）→ 融合链逐节点
 /// 行核 → 写物化目标（行 y-D，环形槽取模）。[target] 贯通导出目标 CPU
 ///（lut_fixed 行核 SIMD 变体选择）。
-String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
-    int k, GroupCTarget target) {
+String _emitStage(
+  StreamKernelCtx s,
+  IspGraph graph,
+  GroupStreamPlan stream,
+  int k,
+  GroupCTarget target,
+) {
   final plan = stream.plan;
   final stage = stream.stages[k];
   final d = stage.delay;
@@ -433,8 +470,7 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
   final ind = d > 0 ? '      ' : '    ';
   final values = <String, List<String>>{};
   final b = StringBuffer();
-  final chainDesc =
-      stage.chain.map((id) => plan.members[id]!.name).join(' → ');
+  final chainDesc = stage.chain.map((id) => plan.members[id]!.name).join(' → ');
   final targetDesc = [
     for (final t in stage.targets) ...[
       if (t.lineBuffer != null) stream.lineBuffers[t.lineBuffer!].name,
@@ -442,7 +478,8 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
     ],
   ].join(' + ');
   b.writeln(
-      '    /* 阶段 $k：$chainDesc → $targetDesc${d > 0 ? '（延迟 $d 行）' : ''} */');
+    '    /* 阶段 $k：$chainDesc → $targetDesc${d > 0 ? '（延迟 $d 行）' : ''} */',
+  );
   if (d > 0) {
     b.writeln('    if (y >= $d) {');
     b.writeln('      const int yo = y - $d;');
@@ -464,11 +501,13 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
         final buf = stream.lineBuffers[bufIdx];
         if (buf.rows > 1 && declared.add(buf.name)) {
           b.writeln(
-              '$ind  const uint16_t *irow_${buf.name} = ${buf.name} + (size_t)(${s.rowVar} % ${buf.rows}) * (size_t)w${_chFactor(buf.channels)};');
+            '$ind  const uint16_t *irow_${buf.name} = ${buf.name} + (size_t)(${s.rowVar} % ${buf.rows}) * (size_t)w${_chFactor(buf.channels)};',
+          );
         }
       } else if (d > 0 && src.ext != null && declared.add(src.ext!.name)) {
         b.writeln(
-            '$ind  const uint16_t *irow_${src.ext!.name} = ${src.ext!.name} + (size_t)yo * (size_t)w${_chFactor(src.ext!.channels)};');
+          '$ind  const uint16_t *irow_${src.ext!.name} = ${src.ext!.name} + (size_t)yo * (size_t)w${_chFactor(src.ext!.channels)};',
+        );
       }
     }
   }
@@ -478,12 +517,16 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
       final buf = stream.lineBuffers[t.lineBuffer!];
       if (buf.rows > 1 && declared.add('trow_${buf.name}')) {
         b.writeln(
-            '$ind  uint16_t *trow_${buf.name} = ${buf.name} + (size_t)(${s.rowVar} % ${buf.rows}) * (size_t)w${_chFactor(buf.channels)};');
+          '$ind  uint16_t *trow_${buf.name} = ${buf.name} + (size_t)(${s.rowVar} % ${buf.rows}) * (size_t)w${_chFactor(buf.channels)};',
+        );
       }
     }
-    if (d > 0 && t.extOutput != null && declared.add('trow_${t.extOutput!.name}')) {
+    if (d > 0 &&
+        t.extOutput != null &&
+        declared.add('trow_${t.extOutput!.name}')) {
       b.writeln(
-          '$ind  ${t.extOutput!.cType} *trow_${t.extOutput!.name} = ${t.extOutput!.name} + (size_t)yo * (size_t)w${_chFactor(t.extOutput!.channels)};');
+        '$ind  ${t.extOutput!.cType} *trow_${t.extOutput!.name} = ${t.extOutput!.name} + (size_t)yo * (size_t)w${_chFactor(t.extOutput!.channels)};',
+      );
     }
   }
   // 窗口节点预备（派生行写入 + 窗口行指针 + dpc 输出环/当前行拷贝）。
@@ -507,8 +550,8 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
       final extra = typeId == 'gamma'
           ? ', ${ident}_lut'
           : typeId == 'black_level'
-              ? ', y'
-              : '';
+          ? ', y'
+          : '';
       fixedRowCall =
           '${ident}_row(row_${inExt.name}, row_${stage.targets.single.extOutput!.name}, w, max_value$extra)';
     }
@@ -521,11 +564,18 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
     final wrapper = plan.wrappers[id]!;
     final inputs = <String, List<String>?>{};
     for (final cp in wrapper.inputs) {
-      inputs[cp.name] =
-          _srcExprs(stream, stream.inputSrcs['$id:${cp.name}']!, values, d);
+      inputs[cp.name] = _srcExprs(
+        stream,
+        stream.inputSrcs['$id:${cp.name}']!,
+        values,
+        d,
+      );
     }
-    emitStreamRowKernel(s, streamNodeCtx(graph, plan, id, target: target),
-        inputs);
+    emitStreamRowKernel(
+      s,
+      streamNodeCtx(graph, plan, id, target: target),
+      inputs,
+    );
     b.writeln('$ind  $fixedRowCall;');
     if (d > 0) b.writeln('    }');
     return b.toString();
@@ -536,7 +586,10 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
     final wi = stream.windowInfos[id];
     if (wi != null) {
       final (lines, outs) = emitStreamWindowKernel(
-          s, streamNodeCtx(graph, plan, id), _windowAccessOf(stream, id, wi));
+        s,
+        streamNodeCtx(graph, plan, id),
+        _windowAccessOf(stream, id, wi),
+      );
       for (final line in lines) {
         b.writeln('$ind    $line');
       }
@@ -547,11 +600,18 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
     }
     final inputs = <String, List<String>?>{};
     for (final cp in wrapper.inputs) {
-      inputs[cp.name] =
-          _srcExprs(stream, stream.inputSrcs['$id:${cp.name}']!, values, d);
+      inputs[cp.name] = _srcExprs(
+        stream,
+        stream.inputSrcs['$id:${cp.name}']!,
+        values,
+        d,
+      );
     }
     final (lines, outs) = emitStreamRowKernel(
-        s, streamNodeCtx(graph, plan, id, target: target), inputs);
+      s,
+      streamNodeCtx(graph, plan, id, target: target),
+      inputs,
+    );
     for (final line in lines) {
       b.writeln('$ind    $line');
     }
@@ -575,7 +635,9 @@ String _emitStage(StreamKernelCtx s, IspGraph graph, GroupStreamPlan stream,
       }
     }
     if (t.extOutput != null) {
-      final dst = d > 0 ? 'trow_${t.extOutput!.name}' : 'row_${t.extOutput!.name}';
+      final dst = d > 0
+          ? 'trow_${t.extOutput!.name}'
+          : 'row_${t.extOutput!.name}';
       for (var c = 0; c < t.channels; c++) {
         b.writeln('$ind    $dst[${idx[c]}] = ${target[c]};');
       }
@@ -590,8 +652,14 @@ String _chFactor(int channels) => channels == 1 ? '' : ' * ${channels}u';
 
 /// 窗口节点预备：派生环当前行（yo+r）写入 → 派生/输入窗口行指针 →
 /// dpc 输出环行指针与当前行拷贝。
-void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
-    GroupStreamPlan stream, String id, StreamWindowNodeInfo wi, String ind) {
+void _emitWindowPreamble(
+  StringBuffer b,
+  StreamKernelCtx s,
+  GroupStreamPlan stream,
+  String id,
+  StreamWindowNodeInfo wi,
+  String ind,
+) {
   final plan = stream.plan;
   final r = wi.radius;
   final inSrc = stream.inputSrcs['$id:${wi.inputPort}']!;
@@ -617,14 +685,18 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
 
     // 派生一行（读输入行基址 srcRow → 写派生环槽 dstRow）的 for-x 循环。
     void emitDeriveRow(String indent, String srcRow, String dstRow) {
-      b.writeln('$indent' 'const uint16_t *iro_ = $srcRow;');
+      b.writeln(
+        '$indent'
+        'const uint16_t *iro_ = $srcRow;',
+      );
       b.writeln('$indent${aux.cType} *sro_ = $dstRow;');
       b.writeln('${indent}for (x = 0; x < w; x++) {');
       if (typeId == 'rgb_dnr') {
         // yuv 派生行：BT.601 全范围定点转换（bb_rgb_to_yuv_px）。
         s.useHelper('bb_rgb_to_yuv_px');
         b.writeln(
-            '$indent  bb_rgb_to_yuv_px(iro_[(x) * 3], iro_[(x) * 3 + 1], iro_[(x) * 3 + 2], max_value >> 1, max_value, sro_ + (x) * 3);');
+          '$indent  bb_rgb_to_yuv_px(iro_[(x) * 3], iro_[(x) * 3 + 1], iro_[(x) * 3 + 2], max_value >> 1, max_value, sro_ + (x) * 3);',
+        );
       } else if (typeId == 'morphology') {
         // 水平趟：窗口 [x-r, x+r] 截断取极值（严格比较；极值与枚举顺序
         // 无关，中心 tap 恒在界内作初值）。出处：isp_morphology.c
@@ -640,9 +712,11 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
             final col = dx > 0 ? '(x + $dx)' : '(x - ${-dx})';
             b.writeln('$indent    if ($col >= 0 && $col < w) {');
             b.writeln(
-                '$indent      const uint16_t u_ = iro_[${ch == 1 ? col : '$col * $ch + $c'}];');
+              '$indent      const uint16_t u_ = iro_[${ch == 1 ? col : '$col * $ch + $c'}];',
+            );
             b.writeln(
-                '$indent      if (${erode ? 'u_ < hv_' : 'u_ > hv_'}) hv_ = u_;');
+              '$indent      if (${erode ? 'u_ < hv_' : 'u_ > hv_'}) hv_ = u_;',
+            );
             b.writeln('$indent    }');
           }
           b.writeln('$indent    sro_[$colC] = hv_;');
@@ -658,10 +732,12 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
           b.writeln('$indent    double acc_ = 0.0;');
           for (var k = 0; k < 2 * r + 1; k++) {
             final off = k - r;
-            final xx =
-                off == 0 ? 'x' : (off > 0 ? '(x + $off)' : '(x - ${-off})');
+            final xx = off == 0
+                ? 'x'
+                : (off > 0 ? '(x + $off)' : '(x - ${-off})');
             b.writeln(
-                '$indent    acc_ += (double)iro_[($xx < 0 ? 0 : ($xx >= w ? w - 1 : $xx))${ch == 1 ? '' : ' * $ch + $c'}] * ${ident}_gk[$k];');
+              '$indent    acc_ += (double)iro_[($xx < 0 ? 0 : ($xx >= w ? w - 1 : $xx))${ch == 1 ? '' : ' * $ch + $c'}] * ${ident}_gk[$k];',
+            );
           }
           b.writeln('$indent    sro_[$colC] = acc_;');
           b.writeln('$indent  }');
@@ -674,7 +750,8 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
         // sharpen / edge_extract(RGB)：BT.601 定点亮度（与 rgbToYuv 的 Y
         // 同一公式；系数和 65536 不超 uint16，无钳位）。
         b.writeln(
-            '$indent  sro_[x] = (uint16_t)((19595 * (int64_t)iro_[(x) * 3] + 38470 * (int64_t)iro_[(x) * 3 + 1] + 7471 * (int64_t)iro_[(x) * 3 + 2] + 32768) >> 16);');
+          '$indent  sro_[x] = (uint16_t)((19595 * (int64_t)iro_[(x) * 3] + 38470 * (int64_t)iro_[(x) * 3 + 1] + 7471 * (int64_t)iro_[(x) * 3 + 2] + 32768) >> 16);',
+        );
       }
       b.writeln('$indent}');
     }
@@ -687,14 +764,20 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
       final srcRow = wi.inputBuffer >= 0
           ? '${stream.lineBuffers[wi.inputBuffer].name} + (size_t)(($l) % ${stream.lineBuffers[wi.inputBuffer].rows}) * (size_t)w${_chFactor(stream.lineBuffers[wi.inputBuffer].channels)}'
           : '${inSrc.ext!.name} + (size_t)($l) * (size_t)w${_chFactor(inSrc.ext!.channels)}';
-      emitDeriveRow('$ind      ', srcRow,
-          '${aux.name} + (size_t)(($l) % ${aux.rows}) * (size_t)w$auxCh');
+      emitDeriveRow(
+        '$ind      ',
+        srcRow,
+        '${aux.name} + (size_t)(($l) % ${aux.rows}) * (size_t)w$auxCh',
+      );
       b.writeln('$ind    }');
     }
     b.writeln('$ind  }');
     b.writeln('$ind  if (yo + $r < h) {');
-    emitDeriveRow('$ind    ', inRowExpr(2 * r),
-        '${aux.name} + (size_t)((yo + $r) % ${aux.rows}) * (size_t)w$auxCh');
+    emitDeriveRow(
+      '$ind    ',
+      inRowExpr(2 * r),
+      '${aux.name} + (size_t)((yo + $r) % ${aux.rows}) * (size_t)w$auxCh',
+    );
     b.writeln('$ind  }');
     // 派生环窗口行指针（k = 0..2r，行 yo-r+k）。
     if (typeId == 'gaussian_blur') {
@@ -703,12 +786,14 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
       for (var k = 0; k <= 2 * r; k++) {
         final yy = k == r ? 'yo' : (k < r ? 'yo - ${r - k}' : 'yo + ${k - r}');
         b.writeln(
-            '$ind  const double *grow_${id}_$k = ${aux.name} + (size_t)(($yy < 0 ? 0 : ($yy >= h ? h - 1 : $yy)) % ${aux.rows}) * (size_t)w$auxCh;');
+          '$ind  const double *grow_${id}_$k = ${aux.name} + (size_t)(($yy < 0 ? 0 : ($yy >= h ? h - 1 : $yy)) % ${aux.rows}) * (size_t)w$auxCh;',
+        );
       }
     } else {
       for (var k = 0; k <= 2 * r; k++) {
         b.writeln(
-            '$ind  const uint16_t *srow_${id}_$k = ${aux.name} + (size_t)((yo + ${aux.rows - r} + $k) % ${aux.rows}) * (size_t)w$auxCh;');
+          '$ind  const uint16_t *srow_${id}_$k = ${aux.name} + (size_t)((yo + ${aux.rows - r} + $k) % ${aux.rows}) * (size_t)w$auxCh;',
+        );
       }
     }
   }
@@ -725,10 +810,12 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
         stream.lineBuffers[stream.streamBufferIndex['$id:$regPort']!];
     for (var k = 0; k < r; k++) {
       b.writeln(
-          '$ind  const uint16_t *orow_${id}_$k = ${outBuf.name} + (size_t)((yo + ${outBuf.rows - r} + $k) % ${outBuf.rows}) * (size_t)w;');
+        '$ind  const uint16_t *orow_${id}_$k = ${outBuf.name} + (size_t)((yo + ${outBuf.rows - r} + $k) % ${outBuf.rows}) * (size_t)w;',
+      );
     }
     b.writeln(
-        '$ind  uint16_t *ow_$id = ${outBuf.name} + (size_t)(yo % ${outBuf.rows}) * (size_t)w;');
+      '$ind  uint16_t *ow_$id = ${outBuf.name} + (size_t)(yo % ${outBuf.rows}) * (size_t)w;',
+    );
     // 当前行整行拷入输出环：处理过程中左侧读已处理值（本迭代写回）、
     // 右侧读未处理值（拷贝内容），与 c_ref 原地读写一致。
     b.writeln('$ind  for (x = 0; x < w; x++) {');
@@ -739,11 +826,15 @@ void _emitWindowPreamble(StringBuffer b, StreamKernelCtx s,
 
 /// 窗口节点的访问描述（行指针变量名与预备声明一致）。
 StreamWindowAccess _windowAccessOf(
-    GroupStreamPlan stream, String id, StreamWindowNodeInfo wi) {
+  GroupStreamPlan stream,
+  String id,
+  StreamWindowNodeInfo wi,
+) {
   final r = wi.radius;
   // gaussian 垂直趟为夹取语义，行指针用 grow_ 前缀（预备处夹取行号）。
-  final auxPrefix =
-      stream.plan.members[id]!.typeId == 'gaussian_blur' ? 'grow' : 'srow';
+  final auxPrefix = stream.plan.members[id]!.typeId == 'gaussian_blur'
+      ? 'grow'
+      : 'srow';
   return StreamWindowAccess(
     rowPtrs: [for (var k = 0; k <= 2 * r; k++) 'wrow_${id}_$k'],
     radius: r,
@@ -752,10 +843,7 @@ StreamWindowAccess _windowAccessOf(
         ? null
         : [for (var k = 0; k <= 2 * r; k++) '${auxPrefix}_${id}_$k'],
     outRowPtrs: wi.inPlace
-        ? [
-            for (var k = 0; k < r; k++) 'orow_${id}_$k',
-            'ow_$id',
-          ]
+        ? [for (var k = 0; k < r; k++) 'orow_${id}_$k', 'ow_$id']
         : null,
   );
 }
@@ -775,8 +863,12 @@ String streamNodeCtxInputFormat(GroupCPlan plan, String nodeId) {
 /// 节点输入端口 → 通道 C 表达式（物化流元素 / 外部输入行元素 / 融合链
 /// 上游局部变量；null = 未连接的次要输入，仅 combiner）。环形缓冲
 /// （rows>1）在延迟阶段按 yo 取模读取（irow_ 行指针，预备处声明）。
-List<String>? _srcExprs(GroupStreamPlan stream, StreamSrc src,
-    Map<String, List<String>> values, int stageDelay) {
+List<String>? _srcExprs(
+  GroupStreamPlan stream,
+  StreamSrc src,
+  Map<String, List<String>> values,
+  int stageDelay,
+) {
   if (src.isUnconnected) return null;
   final nid = src.nodeId;
   if (nid != null) {
@@ -814,8 +906,13 @@ Future<GroupCExportResult> exportGroupBlackBoxCCode(
   DateTime? genTime,
   GroupCTarget target = GroupCTarget.cortexA53_55,
 }) async {
-  final files = await buildGroupBlackBoxCFiles(graph, group,
-      readFile: readFile, genTime: genTime, target: target);
+  final files = await buildGroupBlackBoxCFiles(
+    graph,
+    group,
+    readFile: readFile,
+    genTime: genTime,
+    target: target,
+  );
   final written = <String>[];
   for (final e in files.entries) {
     await File('$dir/${e.key}').writeAsString(e.value);
@@ -824,7 +921,8 @@ Future<GroupCExportResult> exportGroupBlackBoxCCode(
   return GroupCExportResult(written, groupBlackBoxTopName(group));
 }
 
-String _bbDoc(IspNodeGroup group, DateTime genTime, GroupCTarget target) => '''
+String _bbDoc(IspNodeGroup group, DateTime genTime, GroupCTarget target) =>
+    '''
 /* 本文件由 DebugToolSet ISP Studio 自动生成：编组「${group.name}」的
  * 黑盒子（行级流水）ISP pipeline。语义说明：
  * - 行级流水：中间结果不存整帧；连续点对点链融合进同一行循环，

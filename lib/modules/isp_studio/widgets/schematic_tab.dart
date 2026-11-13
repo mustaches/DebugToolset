@@ -31,6 +31,15 @@ import 'ip_block_diagram.dart' show SchPalette, schFitView;
 import 'netlist_diagram.dart';
 import 'tab_toolbar.dart';
 
+/// 大电路阈值（可画单元数）：超过则打开/展开时跳过自动布局优化与自动
+/// 布线（保持直线星形预览；手动运行仍可用，带 90s 时间预算兜底返回当前
+/// 最优）。func_fixed 段运算单元流水核心（64 位乘加数据通路，每段约 80
+/// 单元）是典型场景——此前打开即卡死。
+const int kSchLargeModuleCells = 96;
+
+/// 模块是否为大电路（按可画单元数；见 [kSchLargeModuleCells]）。
+bool schModuleIsLarge(NetlistModule m) => m.cells.length > kSchLargeModuleCells;
+
 /// 编组的电路图浏览标签页（作为编辑器标签页嵌入主视图）。
 class SchematicTab extends StatefulWidget {
   final String groupId;
@@ -74,12 +83,14 @@ class _NlEditSnapshot {
   final Map<NlBlock, List<Offset>> pinEdge;
   final Map<NlBlock, int> columns;
   final Map<NlBlock, bool> flips;
+  final Map<NlBlock, bool> flipsH;
   final Map<NlBlock, List<String>?> inOrders;
   final Map<NlBlock, List<String>?> outOrders;
   final Map<NlBlock, List<String>?> topOrders;
   final Map<NlBlock, List<String>?> bottomOrders;
   final Map<NlPin, Offset> portPos;
   final Map<NlPin, Offset> portEdge;
+  final Map<NlWire, List<(Offset, Offset)>> manualSegments;
   final NlAutoRouteResult? routes;
 
   const _NlEditSnapshot({
@@ -89,12 +100,14 @@ class _NlEditSnapshot {
     required this.pinEdge,
     required this.columns,
     required this.flips,
+    required this.flipsH,
     required this.inOrders,
     required this.outOrders,
     required this.topOrders,
     required this.bottomOrders,
     required this.portPos,
     required this.portEdge,
+    required this.manualSegments,
     required this.routes,
   });
 }
@@ -146,7 +159,7 @@ class _SchematicTabState extends State<SchematicTab> {
   bool _heatmap = false;
 
   /// 列分配算法：true=分层布局（默认），false=经典 BFS 压缩（回退）。
-  bool _layeredLayout = false;
+  bool _layeredLayout = true;
 
   /// 是否显示走线诊断叠加层与指标面板（仅 RTL 视图）。
   bool _diagnostics = false;
@@ -159,6 +172,8 @@ class _SchematicTabState extends State<SchematicTab> {
 
   /// 自动布线结果（wire → 本层正交线段）；null = 直线预览。
   NlAutoRouteResult? _autoRoutes;
+  /// 手动调整过的网段：自动布线/布线优化后按网回填，避免手工成果丢失。
+  final Map<NlWire, List<(Offset, Offset)>> _manualSegments = {};
   bool _autoRouting = false;
   bool _routingOptimizing = false;
 
@@ -192,6 +207,10 @@ class _SchematicTabState extends State<SchematicTab> {
   int _layoutOptInouts = 0;
   double _layoutOptInitial = 0;
   double _layoutOptLength = 0;
+
+  /// 布局优化进度活性指标（心跳回调驱动，无采纳也持续走动）。
+  int _layoutOptEvaluations = 0;
+  int _layoutOptRounds = 0;
   int _layoutOptSession = 0;
 
   /// 布局优化用时（运行中随进度回调刷新，完成后冻结）。
@@ -221,6 +240,9 @@ class _SchematicTabState extends State<SchematicTab> {
 
   /// **原位展开**的实例单元名集合（＋/－ 切换；切模块时清空）。
   final Set<String> _expanded = {};
+  /// 已单独优化过的展开子模型（按实例名缓存，避免父模型重建时丢结果）。
+  final Map<String, NetlistDiagramModel> _subModelCache = {};
+  String? _appliedSchematicHighlight;
 
   final StringBuffer _log = StringBuffer();
   bool _logVisible = false;
@@ -236,6 +258,16 @@ class _SchematicTabState extends State<SchematicTab> {
 
   /// 提取成功时的编组指纹（过期提示用，见 [_groupFingerprint]）。
   String? _renderedFingerprint;
+
+  /// 大电路提示（当前模块单元数超 [kSchLargeModuleCells] 时显示）：
+  /// 打开/展开跳过自动布局优化；布线在后台 isolate 自动进行。
+  bool _largeCircuitNote = false;
+
+  /// 大电路后台布线中的任务数（isolate 逐层 A*；期间保持直线预览可
+  /// 交互）。计数制：会话过期被丢弃的任务也会归零——此前用布尔 +
+  /// 会话号早退，旧任务被新会话顶替时标志永真（胶囊卡住）。
+  int _bgRoutingCount = 0;
+  bool get _bgRouting => _bgRoutingCount > 0;
 
   final _logScroll = ScrollController();
 
@@ -310,9 +342,52 @@ class _SchematicTabState extends State<SchematicTab> {
   void _zoomFit() {
     final vp = _activeViewport;
     if (vp.isEmpty) return;
+    _fitCanvasToContent();
     final content = _nlModel?.canvasSize;
     if (content == null || content.isEmpty) return;
     schFitView(_activeCtrl, vp, content);
+  }
+
+  /// 按当前块/端口/走线的实际范围收紧画布，去掉 Zoom Fit 后的大片空白。
+  void _fitCanvasToContent() {
+    final model = _nlModel;
+    if (model == null) return;
+    var maxX = 0.0;
+    var maxY = 0.0;
+    final routeSegments = _autoRoutes?.segments;
+    for (final lv in model.flattened()) {
+      for (final b in lv.blocks) {
+        if (b.boxSize.width <= 0) continue;
+        maxX = math.max(maxX, lv.offset.dx + b.boxOrigin.dx + b.boxSize.width);
+        maxY = math.max(maxY, lv.offset.dy + b.boxOrigin.dy + b.boxSize.height);
+      }
+      for (final p in lv.ports) {
+        maxX = math.max(maxX, lv.offset.dx + p.pos.dx + 40);
+        maxY = math.max(maxY, lv.offset.dy + p.pos.dy + 20);
+      }
+    }
+    if (routeSegments != null) {
+      for (final segs in routeSegments.values) {
+        for (final s in segs) {
+          maxX = math.max(maxX, math.max(s.$1.dx, s.$2.dx) + 30);
+          maxY = math.max(maxY, math.max(s.$1.dy, s.$2.dy) + 30);
+        }
+      }
+    }
+    final size = Size(math.max(200, maxX + 30), math.max(200, maxY + 30));
+    if ((size.width - model.canvasSize.width).abs() < 1 &&
+        (size.height - model.canvasSize.height).abs() < 1) {
+      return;
+    }
+    setState(() {
+      _nlModel = NetlistDiagramModel(
+        blocks: model.blocks,
+        wires: model.wires,
+        canvasSize: size,
+        moduleName: model.moduleName,
+        cellCount: model.cellCount,
+      );
+    });
   }
 
   // ---- 提取（yosys → 层级网表 JSON → Dart 模型）----
@@ -372,9 +447,32 @@ class _SchematicTabState extends State<SchematicTab> {
           ..add(result.topModule ?? top);
         if (mod.name != _path.first) _path.add(mod.name);
         _expanded.clear();
+        if (state.schematicHighlightSignal != null) {
+          // 从波形跳转过来时直接展开顶层实例，显示层级原理图。
+          for (final inst in mod.instances) {
+            if (inst.moduleRef != null) _expanded.add(inst.name);
+          }
+        }
         _nlModel = _buildModel(mod);
+        _largeCircuitNote = schModuleIsLarge(mod);
         _renderedFingerprint = _groupFingerprint(state, group);
       });
+      // 顶层图首次显示：只有未展开时才自动布局+布线；层级视图按层独立布线。
+      // 大电路跳过自动布局优化（候选评估随单元数平方增长，曾致打开即卡死）；
+      // 布线走后台 isolate（_kickBackgroundRouting），用户可经工具栏手动优化
+      //（带时间预算兜底）。
+      if (!drillCore &&
+          _expanded.isEmpty &&
+          !_largeCircuitNote &&
+          !Platform.environment.containsKey('FLUTTER_TEST')) {
+        unawaited(_autoOptimizeOnOpen());
+      } else if (!drillCore &&
+          _expanded.isNotEmpty &&
+          !Platform.environment.containsKey('FLUTTER_TEST') &&
+          _nlModel != null) {
+        setState(() => _autoRoutes = _routeExpandedLevels(_nlModel!));
+        unawaited(_kickBackgroundRouting(_nlModel!));
+      }
       // 框图点块入口：提取完成后自动下钻顶层的第一个子模块实例。
       if (drillCore) {
         final inst = mod.instances.firstOrNull;
@@ -388,6 +486,16 @@ class _SchematicTabState extends State<SchematicTab> {
         _logVisible = true;
       });
     }
+  }
+
+  /// 打开顶层图后自动跑一遍布局优化 + 自动布线。
+  Future<void> _autoOptimizeOnOpen() async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted || _nlModel == null || _running) return;
+    if (_layoutOptimizing || _routingOptimizing || _autoRouting) return;
+    await _startLayoutOptimization();
+    if (!mounted || _nlModel == null) return;
+    await _runAutoRoute();
   }
 
   /// 构建当前模块的 RTL 图模型：单次确定性布局 + 直线（团/星形）渲染。
@@ -404,7 +512,10 @@ class _SchematicTabState extends State<SchematicTab> {
       rowOrders: _layoutRowOrders,
       mirroredBlocks: _layoutMirroredBlocks,
       pinOrders: _layoutPinOrders,
-      layout: _layeredLayout && _path.length <= 1
+      subModels: _subModelCache,
+      // 下钻视图同样用分层布局（此前的顶层限制会让下钻回退到 BFS 压缩，
+      // 宽层不拆分——func_fixed 流水核心曾堆成 74 单元单列/16305px 高）。
+      layout: _layeredLayout
           ? NlLayoutAlgorithm.layered
           : NlLayoutAlgorithm.compact,
     );
@@ -412,15 +523,108 @@ class _SchematicTabState extends State<SchematicTab> {
     return model;
   }
 
+  /// 展开容器的层级视图：每一层独立布线，避免不同层坐标偏移叠加后
+  /// 被当成一张大图布线（会出现跨层绕大圈、交叉暴涨）。
+  NlAutoRouteResult _routeExpandedLevels(NetlistDiagramModel model) {
+    final segments = <NlWire, List<(Offset, Offset)>>{};
+    final junctions = <NlWire, List<Offset>>{};
+    var fallback = 0;
+    for (final lv in model.flattened()) {
+      // 大层跳过 A* 布线（保持直线预览）：func_fixed 段单元流水核心等大
+      // 网表一次布线即数秒起，展开即卡死的教训。
+      if (lv.blocks.length > kSchLargeModuleCells) continue;
+      final local = NlLevel(
+        blocks: lv.blocks,
+        wires: lv.wires,
+        pins: lv.pins,
+        ports: lv.ports,
+        offset: Offset.zero,
+      );
+      final r = routeNetlistWires([local], lv.canvasSize ?? nlLevelCanvasSize(lv));
+      segments.addAll(r.segments);
+      junctions.addAll(r.junctions);
+      fallback += r.fallbackCount;
+    }
+    return NlAutoRouteResult(
+      segments: segments,
+      junctions: junctions,
+      fallbackCount: fallback,
+    );
+  }
+
   /// 切换某实例块的**原位展开**（＋/－），就地重算模型。
   void _toggleExpand(NetlistCell cell) {
     _invalidateLayoutOptimization();
+    var expandedNow = false;
+    if (!_expanded.remove(cell.name)) {
+      _expanded.add(cell.name);
+      expandedNow = true;
+      _manualSegments.clear();
+    } else {
+      _subModelCache.remove(cell.name);
+    }
+    // 支持逐层展开：清掉旧缓存，重建时按 _expanded 递归展开子层。
+    _subModelCache.clear();
+    final cur = _currentModule;
+    final mod = _netlist?.module(cur);
+    final newModel = mod == null ? null : _buildModel(mod);
+    // 展开/收起后立即按层布线，首帧就是走线完成状态，不先闪直线预览。
+    final routed = newModel == null ? null : _routeExpandedLevels(newModel);
     setState(() {
-      if (!_expanded.remove(cell.name)) _expanded.add(cell.name);
-      final cur = _currentModule;
-      final mod = _netlist?.module(cur);
-      if (mod != null) _nlModel = _buildModel(mod);
+      if (newModel != null) _nlModel = newModel;
+      _autoRoutes = routed;
     });
+    // 大层（>kSchLargeModuleCells 块）后台 isolate 布线，完成后并回——
+    // 同步 A* 单层 ~10s 会冻结 UI；不布则只剩直线毛线团。
+    if (newModel != null && !Platform.environment.containsKey('FLUTTER_TEST')) {
+      unawaited(_kickBackgroundRouting(newModel));
+    }
+    if (expandedNow && !Platform.environment.containsKey('FLUTTER_TEST')) {
+      unawaited(_optimizeExpandedChild(cell));
+    }
+  }
+
+  /// 展开时对子模块单独优化布局，再按层独立布线。
+  Future<void> _optimizeExpandedChild(NetlistCell cell) async {
+    final nl = _netlist;
+    final child = nl == null
+        ? null
+        : nl.resolveInstance(cell.type) ?? nl.module(cell.type);
+    if (child == null || !mounted) return;
+    // 大子电路跳过自动布局优化（保持直线预览）：候选评估随单元数平方
+    // 增长（func_fixed 流水核心曾致展开即卡死）；手动运行仍可用。
+    if (schModuleIsLarge(child)) return;
+    final topology = _cliqueTopology
+        ? NlNetTopology.clique
+        : NlNetTopology.star;
+    try {
+      final result = await optimizeNetlistLayout(
+        child,
+        netlist: nl,
+        resolve: nl == null
+            ? null
+            : (type) => nl.resolveInstance(type) ?? nl.module(type),
+        topology: topology,
+        allowMirror: _mirrorComponents,
+        swapPins: _swapPins,
+        allowGlobalReorder: _allowGlobalReorder,
+        timeBudget: const Duration(seconds: 90),
+      );
+      if (!mounted) return;
+      // 已继续展开更深层时，不再回填这一层的缓存，否则会盖掉更深的展开。
+      if (_expanded.length > 1) return;
+      _subModelCache[cell.name] = result.model;
+      setState(() {
+        final cur = _currentModule;
+        final mod = _netlist?.module(cur);
+        if (mod != null) _nlModel = _buildModel(mod);
+      });
+      if (_nlModel != null) {
+        setState(() => _autoRoutes = _routeExpandedLevels(_nlModel!));
+      }
+    } on Object {
+      // 子模块优化失败时保留原布局，不影响父图。
+    }
   }
 
   /// 任何导航/提取/展开都会使正在跑的布局优化结果失效。
@@ -436,6 +640,7 @@ class _SchematicTabState extends State<SchematicTab> {
     _layoutMirroredBlocks = const {};
     _layoutPinOrders = const {};
     _editLog.clear();
+    _subModelCache.clear();
   }
 
   _NlEditSnapshot _captureNlEdit() {
@@ -445,6 +650,7 @@ class _SchematicTabState extends State<SchematicTab> {
     final pinEdge = <NlBlock, List<Offset>>{};
     final columns = <NlBlock, int>{};
     final flips = <NlBlock, bool>{};
+    final flipsH = <NlBlock, bool>{};
     final inOrders = <NlBlock, List<String>?>{};
     final outOrders = <NlBlock, List<String>?>{};
     final topOrders = <NlBlock, List<String>?>{};
@@ -465,6 +671,7 @@ class _SchematicTabState extends State<SchematicTab> {
       pinEdge[b] = [for (final p in pins) p.edge];
       columns[b] = b.column;
       flips[b] = b.pinFlip;
+      flipsH[b] = b.flipH;
       inOrders[b] = b.inPinOrder == null ? null : [...b.inPinOrder!];
       outOrders[b] = b.outPinOrder == null ? null : [...b.outPinOrder!];
       topOrders[b] = b.topPinOrder == null ? null : [...b.topPinOrder!];
@@ -479,17 +686,26 @@ class _SchematicTabState extends State<SchematicTab> {
       pinEdge: pinEdge,
       columns: columns,
       flips: flips,
+      flipsH: flipsH,
       inOrders: inOrders,
       outOrders: outOrders,
       topOrders: topOrders,
       bottomOrders: bottomOrders,
       portPos: portPos,
       portEdge: portEdge,
+      manualSegments: {
+        for (final e in _manualSegments.entries) e.key: [...e.value],
+      },
       routes: _autoRoutes,
     );
   }
 
   void _restoreNlEdit(_NlEditSnapshot snap) {
+    _manualSegments
+      ..clear()
+      ..addAll({
+        for (final e in snap.manualSegments.entries) e.key: [...e.value],
+      });
     for (final level in _nlModel?.flattened() ?? const <NlLevel>[]) {
       for (final p in level.ports) {
         p.pos = snap.portPos[p] ?? p.pos;
@@ -501,6 +717,7 @@ class _SchematicTabState extends State<SchematicTab> {
       b.boxOrigin = snap.boxOrigins[b] ?? b.boxOrigin;
       b.column = snap.columns[b] ?? b.column;
       b.pinFlip = snap.flips[b] ?? b.pinFlip;
+      b.flipH = snap.flipsH[b] ?? b.flipH;
       b.inPinOrder = snap.inOrders[b];
       b.outPinOrder = snap.outOrders[b];
       b.topPinOrder = snap.topOrders[b];
@@ -576,15 +793,19 @@ class _SchematicTabState extends State<SchematicTab> {
     }
     final order = [...others]..insert(insertAt, pin);
     final names = [for (final p in order) p.display];
-    switch (side) {
-      case 'left':
+    final isInputPin = block.ins.any((p) => identical(p, pin));
+    if (side == 'left' || side == 'right') {
+      // 左右镜像后输入可能在右侧：按“输入/输出归属”选顺序表，
+      // 不能按几何左右选，否则输入被写进 outPinOrder 而不生效。
+      if (isInputPin) {
         block.inPinOrder = names;
-      case 'right':
+      } else {
         block.outPinOrder = names;
-      case 'top':
-        block.topPinOrder = names;
-      default:
-        block.bottomPinOrder = names;
+      }
+    } else if (side == 'top') {
+      block.topPinOrder = names;
+    } else {
+      block.bottomPinOrder = names;
     }
     nlLayoutBlockPins(block);
     if (_editStraightPreview) {
@@ -609,6 +830,28 @@ class _SchematicTabState extends State<SchematicTab> {
       _autoRoutes = next;
       _editUndo.add(snap);
       _editLog.add('调整引脚顺序 ${block.title}');
+    });
+  }
+
+  void _onNlFlipHBlock(NlBlock block) {
+    if (!_editMode || _nlModel == null) return;
+    final snap = _dragSnapshot ?? _captureNlEdit();
+    _dragSnapshot = null;
+    block.flipH = !block.flipH;
+    nlLayoutBlockPins(block);
+    if (_editStraightPreview || _autoRoutes == null) {
+      setState(() {
+        _editUndo.add(snap);
+        _editLog.add('左右镜像 ${block.title}');
+      });
+      return;
+    }
+    final levels = _nlModel!.flattened();
+    final next = routeNetlistWires(levels, _nlModel!.canvasSize);
+    setState(() {
+      _autoRoutes = next;
+      _editUndo.add(snap);
+      _editLog.add('左右镜像 ${block.title}');
     });
   }
 
@@ -648,6 +891,33 @@ class _SchematicTabState extends State<SchematicTab> {
         );
       }
     }
+  }
+
+  /// 自动布线/布线优化后回填手工调整过的网段；冲突的单独跳过，不整图回退。
+  NlAutoRouteResult _applyManualSegments(NlAutoRouteResult result) {
+    if (_manualSegments.isEmpty || _nlModel == null) return result;
+    final levels = _nlModel!.flattened();
+    var current = result;
+    for (final e in _manualSegments.entries) {
+      if (!current.segments.containsKey(e.key)) continue;
+      if (e.value.any((s) => _nlSegmentHitsBlock(levels, s))) continue;
+      final junctions = <NlWire, List<Offset>>{...current.junctions};
+      final own = nlTreeJunctions(e.value);
+      if (own.isEmpty) {
+        junctions.remove(e.key);
+      } else {
+        junctions[e.key] = own;
+      }
+      final candidate = NlAutoRouteResult(
+        segments: {...current.segments, e.key: [...e.value]},
+        junctions: junctions,
+        fallbackCount: current.fallbackCount,
+      );
+      if (nlRoutingOverlapPairCount(candidate) == 0) {
+        current = candidate;
+      }
+    }
+    return current;
   }
 
   void _onNlBlockDragStart(NlBlock block) {
@@ -715,17 +985,41 @@ class _SchematicTabState extends State<SchematicTab> {
       final p = segs[i].$1;
       final q = segs[i].$2;
       final otherVertical = (p.dx - q.dx).abs() < 0.01;
-      var np = p;
-      var nq = q;
+      final oldLoX = math.min(a.dx, b.dx);
+      final oldHiX = math.max(a.dx, b.dx);
+      final oldLoY = math.min(a.dy, b.dy);
+      final oldHiY = math.max(a.dy, b.dy);
+      Offset mapOnMoved(Offset v) {
+        if (targetVertical) {
+          if ((v.dx - a.dx).abs() < 0.01 &&
+              v.dy >= oldLoY - 0.01 &&
+              v.dy <= oldHiY + 0.01) {
+            return Offset(newA.dx, v.dy);
+          }
+        } else {
+          if ((v.dy - a.dy).abs() < 0.01 &&
+              v.dx >= oldLoX - 0.01 &&
+              v.dx <= oldHiX + 0.01) {
+            return Offset(v.dx, newA.dy);
+          }
+        }
+        return v;
+      }
+
+      var np = mapOnMoved(p);
+      var nq = mapOnMoved(q);
+      // 端点与目标段平行时插入连接段；T 型分支把挂点跟到新线。
       if ((p - a).distance < 0.01) {
         if (otherVertical == targetVertical) {
           connectors.add((a, newA));
+          np = p;
         } else {
           np = newA;
         }
       } else if ((p - b).distance < 0.01) {
         if (otherVertical == targetVertical) {
           connectors.add((b, newB));
+          np = p;
         } else {
           np = newB;
         }
@@ -733,12 +1027,14 @@ class _SchematicTabState extends State<SchematicTab> {
       if ((q - a).distance < 0.01) {
         if (otherVertical == targetVertical) {
           connectors.add((a, newA));
+          nq = q;
         } else {
           nq = newA;
         }
       } else if ((q - b).distance < 0.01) {
         if (otherVertical == targetVertical) {
           connectors.add((b, newB));
+          nq = q;
         } else {
           nq = newB;
         }
@@ -762,50 +1058,9 @@ class _SchematicTabState extends State<SchematicTab> {
       junctions: junctions,
       fallbackCount: _autoRoutes!.fallbackCount,
     );
-    // 被推开的新线段压到的其它网，逐条让开。
-    final changed = <(Offset, Offset)>[(newA, newB)];
-    final colliding = <NlWire>[];
-    for (final level in levels) {
-      for (final w in level.wires) {
-        if (identical(w, wire)) continue;
-        if (_nlSegListsOverlap(changed, result.segments[w] ?? const [])) {
-          colliding.add(w);
-        }
-      }
-    }
-    for (final w in colliding) {
-      final fixed = w.loads.length == 1
-          ? nlRerouteSingleWire(levels, _nlModel!.canvasSize, result, w)
-          : nlRerouteTreeWire(levels, _nlModel!.canvasSize, result, w);
-      if (fixed != null) result = fixed;
-    }
+    // 只调整被拖动的网：一旦压到其它网就停在上一帧，不重布无关走线。
+    if (nlRoutingOverlapPairCount(result) > 0) return;
     setState(() => _autoRoutes = result);
-  }
-
-  NlAutoRouteResult? _nlRepairOverlaps(
-    List<NlLevel> levels,
-    NlAutoRouteResult result,
-  ) {
-    var current = result;
-    for (var pass = 0; pass < 4; pass++) {
-      NlWire? dirty;
-      final entries = current.segments.entries.toList();
-      for (var i = 0; i < entries.length && dirty == null; i++) {
-        for (var j = i + 1; j < entries.length; j++) {
-          if (_nlSegListsOverlap(entries[i].value, entries[j].value)) {
-            dirty = entries[j].key;
-            break;
-          }
-        }
-      }
-      if (dirty == null) return current;
-      final fixed = dirty.loads.length == 1
-          ? nlRerouteSingleWire(levels, _nlModel!.canvasSize, current, dirty)
-          : nlRerouteTreeWire(levels, _nlModel!.canvasSize, current, dirty);
-      if (fixed == null) return null;
-      current = fixed;
-    }
-    return null;
   }
 
   void _onNlSegmentDragEnd(NlWire wire, int index) {
@@ -826,19 +1081,18 @@ class _SchematicTabState extends State<SchematicTab> {
       }
       return;
     }
-    final repaired = _nlRepairOverlaps(levels, _autoRoutes!);
-    if (repaired == null) {
+    if (nlRoutingOverlapPairCount(_autoRoutes!) > 0) {
       _restoreNlEdit(snap);
       setState(() {});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('线段调整会产生走线冲突，已回退')),
+          const SnackBar(content: Text('线段会压到其它网，已回退')),
         );
       }
       return;
     }
     setState(() {
-      _autoRoutes = repaired;
+      _manualSegments[wire] = [...(_autoRoutes!.segments[wire] ?? const [])];
       _editUndo.add(snap);
       _editLog.add('调整线段 ${wire.label}');
     });
@@ -1094,6 +1348,18 @@ class _SchematicTabState extends State<SchematicTab> {
       nlShiftBlockXY(block, originalX - block.boxOrigin.dx, 0);
     }
     if (horizontalIntent && hitColumn != null && hitColumn != block.column) {
+      final b = bounds[hitColumn]!;
+      final targetCenter = (b[0] + b[1]) / 2;
+      final own = bounds[block.column]!;
+      final ownCenter = (own[0] + own[1]) / 2;
+      // 必须越过两列中心的中点才换列，避免轻微横移就把相邻列的元件推走。
+      final threshold =
+          (targetCenter - ownCenter).abs() / 2 + nlLayoutGrid;
+      if ((centerX - ownCenter).abs() <= threshold) {
+        hitColumn = null;
+      }
+    }
+    if (horizontalIntent && hitColumn != null && hitColumn != block.column) {
       targetColumn = hitColumn;
       final centers = <double>[];
       final b = bounds[targetColumn]!;
@@ -1113,9 +1379,16 @@ class _SchematicTabState extends State<SchematicTab> {
       block.column = targetColumn;
     }
     // 目标列按“拖入位置”重排：其它元件依次让位，保持 7 Grid 间距。
+    final targetCx = block.boxOrigin.dx + block.boxSize.width / 2;
     final targetBlocks = [
       for (final b in level.blocks)
-        if (!b.isIo && b.boxSize.height > 0 && b.column == targetColumn) b,
+        if (!b.isIo &&
+            b.boxSize.height > 0 &&
+            b.column == targetColumn &&
+            (identical(b, block) ||
+                (b.boxOrigin.dx + b.boxSize.width / 2 - targetCx).abs() <=
+                    90))
+          b,
     ]..sort((a, b) => a.boxOrigin.dy.compareTo(b.boxOrigin.dy));
     // 目标列只解决“覆盖”：保留元件当前 y，只把与上方重叠的元件向下推，
     // 不再从列顶重新紧凑堆叠（否则下方元件一拖就被吸回原位）。
@@ -1230,6 +1503,16 @@ class _SchematicTabState extends State<SchematicTab> {
       next = routeNetlistWires(levels, _nlModel!.canvasSize);
     }
     final clean = nlRouteIsClean(next);
+    if (!clean) {
+      _restoreNlEdit(snap);
+      setState(() {});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('走线无法完全避让，已回退')),
+        );
+      }
+      return;
+    }
     setState(() {
       _autoRoutes = next;
       _editUndo.add(snap);
@@ -1238,11 +1521,6 @@ class _SchematicTabState extends State<SchematicTab> {
         '${dy.toStringAsFixed(0)})',
       );
     });
-    if (!clean && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('元件已移动；走线仍有冲突，可继续手动调整')),
-      );
-    }
   }
 
   void _undoNlEdit() {
@@ -1761,20 +2039,64 @@ class _SchematicTabState extends State<SchematicTab> {
     _editStraightPreview = false;
     _routingOptSession++;
     setState(() => _autoRouting = true);
-    // 先让按钮进入忙碌态，再执行网格 A*（通常几十到几百毫秒）。
+    // 先让按钮进入忙碌态，再执行网格 A*（小图几十到几百毫秒）。
     await Future<void>.delayed(const Duration(milliseconds: 32));
     if (!mounted) return;
-    final routes = routeNetlistWires(model.flattened(), model.canvasSize);
+    // 大单层 A* 一次可达 ~10s：放后台 isolate 逐层并行，避免冻结 UI
+    //（测试环境无真实事件循环跑 isolate，保持同步口径）。
+    final routes = Platform.environment.containsKey('FLUTTER_TEST')
+        ? routeNetlistWires(model.flattened(), model.canvasSize)
+        : await routeNlLevelsInIsolate(model.flattened());
     if (!mounted) return;
     if (!identical(_nlModel, model)) {
       setState(() => _autoRouting = false);
       return;
     }
     setState(() {
-      _autoRoutes = routes;
+      _autoRoutes = _applyManualSegments(routes);
       _autoRouting = false;
     });
     await _optimizeRouting();
+  }
+
+  /// 大电路的后台布线（> [kSchLargeModuleCells] 块的层）：isolate 逐层并行
+  /// A*，完成后并回既有布线结果；期间保持直线预览可交互（不冻结 UI）。
+  /// 用于展开/下钻大模块——此前同步布线冻结 UI、跳过布线则只剩直线
+  /// 毛线团（func_fixed 流水核心 163 块 / 182 网的教训）。
+  Future<void> _kickBackgroundRouting(NetlistDiagramModel model) async {
+    final levels = model.flattened();
+    final large = [
+      for (final lv in levels)
+        if (lv.blocks.length > kSchLargeModuleCells) lv,
+    ];
+    if (large.isEmpty) return;
+    final session = ++_routingOptSession;
+    setState(() => _bgRoutingCount++);
+    NlAutoRouteResult r;
+    try {
+      r = await routeNlLevelsInIsolate(large);
+    } finally {
+      if (mounted) setState(() => _bgRoutingCount--);
+    }
+    if (!mounted || session != _routingOptSession) return;
+    if (!identical(_nlModel, model)) return;
+    setState(() {
+      final cur = _autoRoutes;
+      _autoRoutes = NlAutoRouteResult(
+        segments: {...?cur?.segments, ...r.segments},
+        junctions: {...?cur?.junctions, ...r.junctions},
+        fallbackCount: (cur?.fallbackCount ?? 0) + r.fallbackCount,
+      );
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(r.fallbackCount > 0
+              ? '大电路后台布线完成（${r.fallbackCount} 条网未能正交布线，保持直线）'
+              : '大电路后台布线完成'),
+        ),
+      );
+    }
   }
 
   /// 「自动布线」的第二阶段：按布线优化选项多轮优化（交叉→折弯→总长），
@@ -1819,6 +2141,8 @@ class _SchematicTabState extends State<SchematicTab> {
           swapBottomPins: _routeOptSwapB,
           variableRowGap: _variableRowGap,
         ),
+        // 大电路时间预算兜底（超预算返回当前最优，budgetExceeded 置位）。
+        timeBudget: const Duration(seconds: 90),
         onProgress: (routes, stage, step) {
           if (!mounted ||
               !identical(_nlModel, model) ||
@@ -1848,7 +2172,7 @@ class _SchematicTabState extends State<SchematicTab> {
       final metrics = nlRoutingMetrics(optimized.result);
       _routingOptWatch.stop();
       setState(() {
-        _autoRoutes = optimized.result;
+        _autoRoutes = _applyManualSegments(optimized.result);
         _routingOptimizing = false;
         _routingOptCrossings = metrics.crossings;
         _routingOptBends = metrics.bends;
@@ -1863,7 +2187,8 @@ class _SchematicTabState extends State<SchematicTab> {
                 '长度 $before→$after dp'
           : '布线已是最优（交叉 ${optimized.crossings}、'
                 '折弯 ${optimized.bends}、$after dp）';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          optimized.budgetExceeded ? '$text（已达 90 秒时间预算，返回当前最优）' : text)));
     } on Object catch (error) {
       if (!mounted) return;
       _routingOptWatch.stop();
@@ -2022,14 +2347,16 @@ class _SchematicTabState extends State<SchematicTab> {
     for (final list in byColumn.values) {
       list.sort((a, b) => a.boxOrigin.dy.compareTo(b.boxOrigin.dy));
       for (var i = 0; i + 1 < list.length; i++) {
-        _mergeTeachingRule({
-          'type': 'order',
-          'a': list[i].id,
-          'b': list[i + 1].id,
-        });
+        final ta = list[i].cell?.typeLabel ?? list[i].title;
+        final tb = list[i + 1].cell?.typeLabel ?? list[i + 1].title;
+        if (ta == tb) continue;
+        // 学“类型之间的上下顺序”，而不是具体实例 id；换图后仍可按类型迁移。
+        _mergeTeachingRule({'type': 'typeOrder', 'a': ta, 'b': tb});
         added++;
       }
     }
+    // 旧的按实例 id 记录的顺序规则不再使用，学习时清理掉。
+    _teachRules.removeWhere((r) => r['type'] == 'order');
     await _saveTeaching();
     if (!mounted) return;
     setState(() {});
@@ -2040,20 +2367,42 @@ class _SchematicTabState extends State<SchematicTab> {
 
   void _applyTeaching(NetlistDiagramModel model) {
     if (_teachRules.isEmpty) return;
+    // 旧版按实例 id 记录的顺序规则：用当前模型的 id→类型映射迁移成类型规则。
+    final hasTypeOrder = _teachRules.any((r) => r['type'] == 'typeOrder');
+    final hasIdOrder = _teachRules.any((r) => r['type'] == 'order');
+    if (!hasTypeOrder && hasIdOrder) {
+      final typeById = {
+        for (final b in model.blocks)
+          if (!b.isIo) b.id: b.cell?.typeLabel ?? b.title,
+      };
+      for (final r in [..._teachRules]) {
+        if (r['type'] != 'order') continue;
+        final a = typeById[r['a']];
+        final b = typeById[r['b']];
+        if (a != null && b != null && a != b) {
+          _mergeTeachingRule({'type': 'typeOrder', 'a': a, 'b': b});
+        }
+      }
+      _teachRules.removeWhere((r) => r['type'] == 'order');
+      unawaited(_saveTeaching());
+    }
     for (final b in model.blocks) {
       if (b.isIo) continue;
       final type = b.cell?.typeLabel ?? b.title;
+      var pinsChanged = false;
       for (final r in _teachRules) {
         if (r['type'] == 'mirror' && r['cell'] == type) {
           b.pinFlip = true;
+          pinsChanged = true;
         } else if (r['type'] == 'pin' && r['cell'] == type) {
           final seq = [for (final e in (r['seq'] as List?) ?? []) '$e'];
           if (seq.isEmpty) continue;
           b.inPinOrder = r['side'] == 'in' ? seq : b.inPinOrder;
           b.outPinOrder = r['side'] == 'out' ? seq : b.outPinOrder;
-          nlLayoutBlockPins(b);
+          pinsChanged = true;
         }
       }
+      if (pinsChanged) nlLayoutBlockPins(b);
     }
     final byColumn = <int, List<NlBlock>>{};
     for (final b in model.blocks) {
@@ -2064,12 +2413,13 @@ class _SchematicTabState extends State<SchematicTab> {
       list.sort((a, b) => a.boxOrigin.dy.compareTo(b.boxOrigin.dy));
       var changed = true;
       var guard = 0;
-      while (changed && guard++ < 32) {
+      while (changed && guard++ < 64) {
         changed = false;
         for (final r in _teachRules) {
-          if (r['type'] != 'order') continue;
-          final ia = list.indexWhere((b) => b.id == r['a']);
-          final ib = list.indexWhere((b) => b.id == r['b']);
+          if (r['type'] != 'typeOrder') continue;
+          String typeOf(NlBlock b) => b.cell?.typeLabel ?? b.title;
+          final ia = list.indexWhere((b) => typeOf(b) == r['a']);
+          final ib = list.indexWhere((b) => typeOf(b) == r['b']);
           if (ia >= 0 && ib >= 0 && ia > ib) {
             final item = list.removeAt(ia);
             list.insert(ib, item);
@@ -2085,6 +2435,98 @@ class _SchematicTabState extends State<SchematicTab> {
     }
   }
 
+  /// 手工布局后先做“列对齐 + 列内间距微调”，再进入局部/整图优化。
+  void _alignManualColumns(
+    NetlistDiagramModel model,
+    NlNetTopology topology,
+  ) {
+    final byColumn = <int, List<NlBlock>>{};
+    for (final b in model.blocks) {
+      if (b.isIo) continue;
+      (byColumn[b.column] ??= []).add(b);
+    }
+    for (var pass = 0; pass < 2; pass++) {
+      for (final entry in byColumn.entries) {
+        final list = [...entry.value]
+          ..sort((a, b) => a.boxOrigin.dy.compareTo(b.boxOrigin.dy));
+        if (list.isEmpty) continue;
+        // 同一列中心 x 对齐。
+        final targetCx =
+            list
+                .map((b) => b.boxOrigin.dx + b.boxSize.width / 2)
+                .reduce((a, b) => a + b) /
+            list.length;
+        for (final b in list) {
+          nlShiftBlock(
+            b,
+            targetCx - (b.boxOrigin.dx + b.boxSize.width / 2),
+          );
+        }
+        final top = list
+            .map((b) => b.boxOrigin.dy)
+            .reduce(math.min);
+        var bestGap = 7 * nlLayoutGrid;
+        var bestLength = double.infinity;
+        // 上下间距按 1 Grid 微调（5~12 Grid），用精确总直线长度择优。
+        for (var g = 5; g <= 12; g++) {
+          final gap = g * nlLayoutGrid;
+          var y = top;
+          for (final b in list) {
+            nlShiftBlock(b, y - b.boxOrigin.dy);
+            y += b.boxSize.height + gap;
+          }
+          final length = nlStraightLength(model, topology: topology);
+          if (length < bestLength - 0.5) {
+            bestLength = length;
+            bestGap = gap;
+          }
+        }
+        var y = top;
+        for (final b in list) {
+          nlShiftBlock(b, y - b.boxOrigin.dy);
+          y += b.boxSize.height + bestGap;
+        }
+      }
+    }
+  }
+
+  /// 在手工布局上做列内相邻交换的精确目标局部搜索（不重建模型）。
+  void _improveManualLayout(
+    NetlistDiagramModel model,
+    NlNetTopology topology,
+  ) {
+    var best = nlStraightLength(model, topology: topology);
+    for (var pass = 0; pass < 3; pass++) {
+      var changed = false;
+      final byColumn = <int, List<NlBlock>>{};
+      for (final b in model.blocks) {
+        if (b.isIo) continue;
+        (byColumn[b.column] ??= []).add(b);
+      }
+      for (final list in byColumn.values) {
+        list.sort((a, b) => a.boxOrigin.dy.compareTo(b.boxOrigin.dy));
+        for (var i = 0; i + 1 < list.length; i++) {
+          final a = list[i];
+          final b = list[i + 1];
+          if ((a.boxSize.height - b.boxSize.height).abs() > 0.1) continue;
+          final ya = a.boxOrigin.dy;
+          final yb = b.boxOrigin.dy;
+          nlShiftBlock(a, yb - ya);
+          nlShiftBlock(b, ya - yb);
+          final length = nlStraightLength(model, topology: topology);
+          if (length < best - 0.5) {
+            best = length;
+            changed = true;
+          } else {
+            nlShiftBlock(a, ya - yb);
+            nlShiftBlock(b, yb - ya);
+          }
+        }
+      }
+      if (!changed) break;
+    }
+  }
+
   /// 工具栏「优化布局」：列内重排行序，按当前拓扑的总直线长度择优。
   Future<void> _startLayoutOptimization() async {
     final mod = _netlist?.module(_currentModule);
@@ -2095,6 +2537,11 @@ class _SchematicTabState extends State<SchematicTab> {
         : NlNetTopology.star;
     final session = ++_layoutOptSession;
     final baseline = _nlModel;
+    if (baseline != null && _editLog.isNotEmpty) {
+      // 手工布局先列对齐并微调列内间距，再做局部/整图优化。
+      _alignManualColumns(baseline, topology);
+      _improveManualLayout(baseline, topology);
+    }
     // 无本次手工改动时，先套用历史学习到的偏好（镜像/引脚序/相邻顺序）。
     if (baseline != null && _editLog.isEmpty) {
       _applyTeaching(baseline);
@@ -2103,13 +2550,14 @@ class _SchematicTabState extends State<SchematicTab> {
         ? 0.0
         : nlStraightLength(baseline, topology: topology);
     final hasManualEdits = _editLog.isNotEmpty;
-    final manualRows = hasManualEdits && baseline != null
+    final useCurrentAsInitial = hasManualEdits || _teachRules.isNotEmpty;
+    final manualRows = useCurrentAsInitial && baseline != null
         ? _currentRowOrders(baseline)
         : _layoutRowOrders;
-    final manualMirrors = hasManualEdits && baseline != null
+    final manualMirrors = useCurrentAsInitial && baseline != null
         ? _currentMirrors(baseline)
         : _layoutMirroredBlocks;
-    final manualPinOrders = hasManualEdits && baseline != null
+    final manualPinOrders = useCurrentAsInitial && baseline != null
         ? _currentPinOrders(baseline)
         : _layoutPinOrders;
     setState(() {
@@ -2147,12 +2595,16 @@ class _SchematicTabState extends State<SchematicTab> {
         initialMirroredBlocks: manualMirrors,
         initialPinOrders: manualPinOrders,
         isCancelled: () => !mounted || session != _layoutOptSession,
+        // 大电路时间预算兜底（超预算返回当前最优，budgetExceeded 置位）。
+        timeBudget: const Duration(seconds: 90),
         onProgress: (p) {
           if (!mounted || session != _layoutOptSession) return;
           setState(() {
             _layoutOptModules = p.nodes;
             _layoutOptInitial = p.initialLength;
             _layoutOptLength = p.length;
+            _layoutOptEvaluations = p.evaluations;
+            _layoutOptRounds = p.rounds;
             _layoutOptElapsed = _layoutOptWatch.elapsed;
             _nlModel = p.model;
           });
@@ -2175,7 +2627,11 @@ class _SchematicTabState extends State<SchematicTab> {
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('手工布局已更优，保留当前结果')),
+            SnackBar(
+              content: Text(result.budgetExceeded
+                  ? '布局优化已达 90 秒时间预算且未找到更优解，保留当前布局'
+                  : '手工布局已更优，保留当前结果'),
+            ),
           );
         }
         return;
@@ -2191,6 +2647,11 @@ class _SchematicTabState extends State<SchematicTab> {
         _layoutPinOrders = result.pinOrders;
         _nlModel = result.model;
       });
+      if (result.budgetExceeded && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('布局优化已达 90 秒时间预算，返回当前最优')),
+        );
+      }
     } on Object catch (error) {
       if (!mounted || session != _layoutOptSession) return;
       _layoutOptWatch.stop();
@@ -2222,7 +2683,14 @@ class _SchematicTabState extends State<SchematicTab> {
       if (_path.isEmpty || _path.last != mod.name) _path.add(mod.name);
       _expanded.clear();
       _nlModel = _buildModel(mod);
+      _largeCircuitNote = schModuleIsLarge(mod);
     });
+    // 下钻大模块：后台 isolate 布线（直线预览先上屏，布线完成自动并回）。
+    if (_largeCircuitNote &&
+        !Platform.environment.containsKey('FLUTTER_TEST') &&
+        _nlModel != null) {
+      unawaited(_kickBackgroundRouting(_nlModel!));
+    }
   }
 
   /// RTL 视图点单元：实例下钻；逻辑单元跳其源码信号（IP 代码页高亮）。
@@ -2361,6 +2829,42 @@ class _SchematicTabState extends State<SchematicTab> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<IspStudioState>();
+    final highlightSignal = state.schematicHighlightSignal;
+    if (highlightSignal != null &&
+        highlightSignal != _appliedSchematicHighlight) {
+      _appliedSchematicHighlight = highlightSignal;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final mod = _netlist?.module(_currentModule);
+        if (mod == null) return;
+        // 目标展开集：全部可下钻实例。已在该状态（且模型在）时只高亮
+        // 信号，不重建模型——保留已完成的布局/布线（此前每次跳转都重建
+        // 并重布，大电路直接退回直线预览，已完成的走线被丢弃）。
+        final target = {
+          for (final inst in mod.instances)
+            if (inst.moduleRef != null) inst.name,
+        };
+        final needRebuild = _nlModel == null ||
+            _expanded.length != target.length ||
+            !_expanded.containsAll(target);
+        if (!needRebuild) return;
+        setState(() {
+          _expanded
+            ..clear()
+            ..addAll(target);
+          _nlModel = _buildModel(mod);
+          if (_expanded.isNotEmpty) {
+            _autoRoutes = _routeExpandedLevels(_nlModel!);
+          } else {
+            _autoRoutes = null;
+          }
+        });
+        if (_expanded.isNotEmpty &&
+            !Platform.environment.containsKey('FLUTTER_TEST')) {
+          unawaited(_kickBackgroundRouting(_nlModel!));
+        }
+      });
+    }
     final group = state.graph.groups
         .where((g) => g.id == widget.groupId)
         .firstOrNull;
@@ -2705,6 +3209,11 @@ class _SchematicTabState extends State<SchematicTab> {
             const SizedBox(height: 8),
             Text(
               '模块数  $_layoutOptModules',
+              style: TextStyle(fontSize: 11, color: bodyColor),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '评估  $_layoutOptEvaluations 次 · 第 $_layoutOptRounds 轮',
               style: TextStyle(fontSize: 11, color: bodyColor),
             ),
             const SizedBox(height: 2),
@@ -3176,6 +3685,7 @@ class _SchematicTabState extends State<SchematicTab> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (stale) _buildStaleBanner(),
+        if (_largeCircuitNote) _buildLargeCircuitNote(),
         Expanded(
           child: Stack(
             children: [
@@ -3200,10 +3710,12 @@ class _SchematicTabState extends State<SchematicTab> {
                       ? null
                       : _autoRoutes?.junctions,
                   straightDashed: _editMode && _editStraightPreview,
+                  highlightSignal: state.schematicHighlightSignal,
                   editMode: _editMode,
                   onBlockDragStart: _onNlBlockDragStart,
                   onBlockDragEnd: _onNlBlockDragEnd,
                   onMirrorBlock: _onNlMirrorBlock,
+                  onFlipHBlock: _onNlFlipHBlock,
                   onPinDragStart: _onNlPinDragStart,
                   onPinDragUpdate: _onNlPinDragUpdate,
                   onPinDragEnd: _onNlPinDragEnd,
@@ -3232,6 +3744,12 @@ class _SchematicTabState extends State<SchematicTab> {
                       if (_diagnostics) _buildDiagnosticsPanel(model),
                     ],
                   ),
+                ),
+              if (_bgRouting)
+                const Positioned(
+                  top: 12,
+                  left: 12,
+                  child: _BgRoutingChip(),
                 ),
               if (showInfoPanels)
                 Positioned(
@@ -3283,6 +3801,37 @@ class _SchematicTabState extends State<SchematicTab> {
     );
   }
 
+  /// 大电路提示条：单元数超阈值时说明已跳过自动优化/布线（直线预览），
+  /// 手动运行经工具栏（带时间预算兜底）。
+  Widget _buildLargeCircuitNote() {
+    return Container(
+      color: const Color(0xFF12283A),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline, size: 14, color: Color(0xFF5AA0E0)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '电路较大（$_currentModuleCellCount 单元）：已跳过自动布局优化，'
+              '布线在后台自动进行（期间可正常交互）；手动「开始优化布局」'
+              '限时 90 秒返回当前最优',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF5AA0E0)),
+            ),
+          ),
+          InkWell(
+            onTap: () => setState(() => _largeCircuitNote = false),
+            child: const Icon(Icons.close, size: 12, color: Color(0xFF5AA0E0)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 当前模块的可画单元数（提示条显示用）。
+  int get _currentModuleCellCount =>
+      _netlist?.module(_currentModule)?.cells.length ?? 0;
+
   /// 日志面板（与仿真/编译终端同一风格）：标题栏 + 等宽输出区。
   Widget _buildLogPanel() {
     return Container(
@@ -3327,6 +3876,41 @@ class _SchematicTabState extends State<SchematicTab> {
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 大电路后台布线中的轻量指示（左上角小胶囊：spinner + 文案）。
+class _BgRoutingChip extends StatelessWidget {
+  const _BgRoutingChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12283A).withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF5AA0E0).withValues(alpha: 0.45)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.8,
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5AA0E0)),
+            ),
+          ),
+          SizedBox(width: 8),
+          Text(
+            '大电路后台布线中…（可继续操作）',
+            style: TextStyle(fontSize: 11, color: Color(0xFF5AA0E0)),
           ),
         ],
       ),

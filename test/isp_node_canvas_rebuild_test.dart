@@ -69,7 +69,12 @@ void main() {
 
     expect(find.text('未运行'), findsNothing,
         reason: 'notifyListeners 重建后不应再显示「未运行」');
-    expect(find.byType(RawImage), findsOneWidget,
-        reason: '应显示 vectorscope RawImage');
+    // 节点内还有 image==null 的小图标 RawImage（端口/角标占位），按渲染
+    // 的图像对象过滤后才指向仪器附加区本身。
+    expect(
+      find.byWidgetPredicate((w) => w is RawImage && w.image == testImage),
+      findsOneWidget,
+      reason: '应显示 vectorscope RawImage',
+    );
   });
 }

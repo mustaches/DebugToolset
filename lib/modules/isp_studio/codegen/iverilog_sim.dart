@@ -8,6 +8,8 @@ import 'dart:convert' show utf8;
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'generated_text_io.dart';
+
 /// iverilog 编译器可执行文件路径（`iverilog`/`vvp` 两件套）。未找到返回
 /// null。
 class IverilogToolchain {
@@ -26,7 +28,8 @@ String _bundledToolDir(String rel) => '${Directory.current.path}\\$rel';
 /// 其次 PATH 各目录与常见安装根（C:\iverilog\bin 等）。返回编译器 +
 /// 运行器路径；[searchDirs] 可注入（测试用）。
 IverilogToolchain? detectIverilog({List<String>? searchDirs}) {
-  final dirs = searchDirs ??
+  final dirs =
+      searchDirs ??
       [
         _bundledToolDir(r'tools\iverilog\bin'),
         ...?Platform.environment['PATH']?.split(';'),
@@ -79,7 +82,11 @@ Future<IpSimResult> runIpSimulation(
   final tc = iverilog ?? detectIverilog();
   if (tc == null) {
     return const IpSimResult(
-        success: false, passed: false, output: '未检测到 iverilog', exitCode: -1);
+      success: false,
+      passed: false,
+      output: '未检测到 iverilog',
+      exitCode: -1,
+    );
   }
   final dir = await Directory.systemTemp.createTemp('isp_ip_sim_');
   final out = StringBuffer();
@@ -93,20 +100,35 @@ Future<IpSimResult> runIpSimulation(
     for (final e in files.entries) {
       final f = File('${dir.path}${Platform.pathSeparator}${e.key}');
       await f.parent.create(recursive: true);
-      await f.writeAsString(e.value);
+      await writeGeneratedText(f, e.value);
     }
+    // 多节点包需编入各子目录的核心/通用顶层；跳过独立 tb、demo 与厂商包装。
     final sources = [
       for (final name in files.keys)
-        if (name.endsWith('.v')) name,
+        if (name.endsWith('.v') &&
+            !name.startsWith('demo/') &&
+            !name.contains('/tb_') &&
+            (!name.endsWith('_axis.v') || name.contains('/')) &&
+            !name.endsWith('_libero.v'))
+          name,
     ];
     final vvpOut = '${dir.path}${Platform.pathSeparator}sim.vvp';
     emit('$sources\n\n');
 
-    final compileCode = await _runStep(tc.iverilog,
-        ['-g2012', '-o', vvpOut, ...sources], dir.path, emit, timeout);
+    final compileCode = await _runStep(
+      tc.iverilog,
+      ['-g2012', '-o', vvpOut, ...sources],
+      dir.path,
+      emit,
+      timeout,
+    );
     if (compileCode != 0) {
       return IpSimResult(
-          success: false, passed: false, output: out.toString(), exitCode: compileCode);
+        success: false,
+        passed: false,
+        output: out.toString(),
+        exitCode: compileCode,
+      );
     }
     final runCode = await _runStep(tc.vvp, [vvpOut], dir.path, emit, timeout);
     final passed = out.toString().contains('PASS');
@@ -120,11 +142,12 @@ Future<IpSimResult> runIpSimulation(
     } catch (_) {}
 
     return IpSimResult(
-        success: true,
-        passed: passed,
-        output: out.toString(),
-        exitCode: runCode,
-        vcdData: vcdData);
+      success: true,
+      passed: passed,
+      output: out.toString(),
+      exitCode: runCode,
+      vcdData: vcdData,
+    );
   } finally {
     try {
       await dir.delete(recursive: true);
@@ -134,8 +157,13 @@ Future<IpSimResult> runIpSimulation(
   }
 }
 
-Future<int> _runStep(String exe, List<String> args, String workDir,
-    void Function(String) emit, Duration timeout) async {
+Future<int> _runStep(
+  String exe,
+  List<String> args,
+  String workDir,
+  void Function(String) emit,
+  Duration timeout,
+) async {
   final Process proc;
   try {
     proc = await Process.start(exe, args, workingDirectory: workDir);
@@ -143,14 +171,15 @@ Future<int> _runStep(String exe, List<String> args, String workDir,
     emit('启动失败：$e\n');
     return -1;
   }
-  final outDone =
-      proc.stdout.transform(utf8.decoder).forEach(emit);
-  final errDone =
-      proc.stderr.transform(utf8.decoder).forEach(emit);
-  final code = await proc.exitCode.timeout(timeout, onTimeout: () {
-    proc.kill();
-    return -2;
-  });
+  final outDone = proc.stdout.transform(utf8.decoder).forEach(emit);
+  final errDone = proc.stderr.transform(utf8.decoder).forEach(emit);
+  final code = await proc.exitCode.timeout(
+    timeout,
+    onTimeout: () {
+      proc.kill();
+      return -2;
+    },
+  );
   await Future.wait([outDone, errDone]);
   return code;
 }

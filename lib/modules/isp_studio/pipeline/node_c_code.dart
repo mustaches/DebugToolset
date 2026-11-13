@@ -30,18 +30,9 @@ const Map<String, List<String>> nodeCCodeFiles = {
   'dpc': ['isp_dpc.h', 'isp_dpc.c'],
   'fpn': ['isp_fpn.h', 'isp_fpn.c'],
   'lsc': ['isp_lsc.h', 'isp_lsc.c'],
-  'grgb_balance': [
-    'isp_grgb_balance.h',
-    'isp_grgb_balance.c',
-  ],
-  'bayer_dnr': [
-    'isp_bayer_dnr.h',
-    'isp_bayer_dnr.c',
-  ],
-  'highlight': [
-    'isp_highlight.h',
-    'isp_highlight.c',
-  ],
+  'grgb_balance': ['isp_grgb_balance.h', 'isp_grgb_balance.c'],
+  'bayer_dnr': ['isp_bayer_dnr.h', 'isp_bayer_dnr.c'],
+  'highlight': ['isp_highlight.h', 'isp_highlight.c'],
   // ---- 去马赛克 / RGB 域 ----
   'demosaic': [
     'isp_demosaic.h',
@@ -62,20 +53,48 @@ const Map<String, List<String>> nodeCCodeFiles = {
   // CSC 六向互转按变体拆分（原 isp_csc 全家桶已拆分为每变体一对文件
   // + 共享内部头 isp_csc_common.h）：单节点只引用实际用到的变体，
   // 编组导出/查看代码忠实还原流程图。
-  'csc_rgb2yuv': ['isp_csc_common.h', 'isp_csc_rgb2yuv.h', 'isp_csc_rgb2yuv.c'],
-  'csc_rgb2hsl': ['isp_csc_common.h', 'isp_csc_rgb2hsl.h', 'isp_csc_rgb2hsl.c'],
-  'csc_yuv2rgb': ['isp_csc_common.h', 'isp_csc_yuv2rgb.h', 'isp_csc_yuv2rgb.c'],
-  'csc_yuv2hsl': ['isp_csc_common.h', 'isp_csc_yuv2hsl.h', 'isp_csc_yuv2hsl.c'],
-  'csc_hsl2rgb': ['isp_csc_common.h', 'isp_csc_hsl2rgb.h', 'isp_csc_hsl2rgb.c'],
-  'csc_hsl2yuv': ['isp_csc_common.h', 'isp_csc_hsl2yuv.h', 'isp_csc_hsl2yuv.c'],
+  'csc_rgb2yuv': [
+    'isp_csc_common.h',
+    'isp_csc_modes.h',
+    'isp_csc_rgb2yuv.h',
+    'isp_csc_rgb2yuv.c',
+  ],
+  'csc_rgb2hsl': [
+    'isp_csc_common.h',
+    'isp_csc_modes.h',
+    'isp_csc_rgb2hsl.h',
+    'isp_csc_rgb2hsl.c',
+  ],
+  'csc_yuv2rgb': [
+    'isp_csc_common.h',
+    'isp_csc_modes.h',
+    'isp_csc_yuv2rgb.h',
+    'isp_csc_yuv2rgb.c',
+  ],
+  'csc_yuv2hsl': [
+    'isp_csc_common.h',
+    'isp_csc_modes.h',
+    'isp_csc_yuv2hsl.h',
+    'isp_csc_yuv2hsl.c',
+  ],
+  'csc_hsl2rgb': [
+    'isp_csc_common.h',
+    'isp_csc_modes.h',
+    'isp_csc_hsl2rgb.h',
+    'isp_csc_hsl2rgb.c',
+  ],
+  'csc_hsl2yuv': [
+    'isp_csc_common.h',
+    'isp_csc_modes.h',
+    'isp_csc_hsl2yuv.h',
+    'isp_csc_hsl2yuv.c',
+  ],
   // ---- 调节器 ----
-  'hsl_debugger': ['isp_adjust.h', 'isp_adjust.c'],
   'rgb_debugger': ['isp_adjust.h', 'isp_adjust.c'],
   'yuv_debugger': ['isp_adjust.h', 'isp_adjust.c'],
   'sat_bright_adjuster': ['isp_adjust.h', 'isp_adjust.c'],
   'bright_contrast_adjuster': ['isp_adjust.h', 'isp_adjust.c'],
   'color_balance': ['isp_adjust.h', 'isp_adjust.c'],
-  'color_controller': ['isp_color_controller.h', 'isp_color_controller.c'],
   'multi_band_eq': ['isp_multi_band_eq.h', 'isp_multi_band_eq.c'],
   'levels_curves': ['isp_levels.h', 'isp_levels.c'],
   'color_temp_adjuster': ['isp_color_temp.h', 'isp_color_temp.c'],
@@ -143,6 +162,8 @@ const Set<String> pcSideNodeTypes = {
   'audio_level',
   'audio_waveform',
   'audio_eq',
+  'format_converter',
+  'video_health_check',
 };
 
 /// c_ref/ 文件内容缓存（资产打包后内容只读，无需失效）。

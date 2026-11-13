@@ -291,7 +291,8 @@ NlRoutingDiagnostics computeNlRoutingDiagnostics(
 }) {
   final routed = routes != null;
   final geometry = <_NlWireGeometry>[];
-  for (final level in levels) {
+  for (var li = 0; li < levels.length; li++) {
+    final level = levels[li];
     for (final wire in level.wires) {
       final raw =
           routes?[wire] ?? nlStraightWireSegments(wire, topology);
@@ -315,6 +316,7 @@ NlRoutingDiagnostics computeNlRoutingDiagnostics(
           segments: segments,
           pins: pins,
           junctions: junctionsAbs,
+          levelIdx: li,
         ),
       );
     }
@@ -595,6 +597,10 @@ class _NlWireGeometry {
   final List<Offset> pins;
   final List<Offset> junctions;
 
+  /// 所属层下标（穿块检查只与同层块比对——展开容器内部的子层走线在父层
+  /// 容器框内是合法的，跨层比对比出大量误报）。
+  final int levelIdx;
+
   late final Rect bounds = _boundsOf(segments);
 
   /// 全部网线的包围盒半周长（HPWL 下界）；单点/空集为 0。
@@ -615,6 +621,7 @@ class _NlWireGeometry {
     required this.segments,
     required this.pins,
     required this.junctions,
+    this.levelIdx = 0,
   });
 }
 
@@ -735,8 +742,16 @@ void _checkLegality(
   NlMetricsOptions options,
   List<NlViolation> out,
 ) {
-  // ---- 穿元件（含端口符号区） ----
-  for (final level in levels) {
+  // ---- 穿元件（含端口符号区；只比同层——容器内部的子层走线在父层容器
+  // 框内合法，跨层比对全是误报） ----
+  final byLevel = <int, List<_NlWireGeometry>>{};
+  for (final g in geometry) {
+    (byLevel[g.levelIdx] ??= []).add(g);
+  }
+  for (var li = 0; li < levels.length; li++) {
+    final level = levels[li];
+    final wiresHere = byLevel[li] ?? const <_NlWireGeometry>[];
+    if (wiresHere.isEmpty) continue;
     for (final block in level.blocks) {
       if (block.boxSize.isEmpty) continue;
       final rect = Rect.fromLTWH(
@@ -746,7 +761,7 @@ void _checkLegality(
         block.boxSize.height,
       ).deflate(0.5);
       if (rect.width <= 0 || rect.height <= 0) continue;
-      for (final g in geometry) {
+      for (final g in wiresHere) {
         for (final (a, b) in g.segments) {
           final hit = _clipSegmentToRect(a, b, rect);
           if (hit == null) continue;

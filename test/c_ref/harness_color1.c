@@ -20,6 +20,7 @@
 #include "isp_white_balance.h"
 #include "isp_ccm.h"
 #include "isp_gamma.h"
+#include "isp_adjust.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,26 @@ int op_white_balance_apply(CaseIO *io) {
   rc = isp_white_balance_apply(frame, w, h, case_param_double(io, "rGain", 1.0),
                                case_param_double(io, "bGain", 1.0),
                                case_param_int(io, "max_value", 1023));
+  if (rc == ISP_OK) rc = case_write_out(io, 0, frame, len);
+  free(frame);
+  return rc;
+}
+
+int op_white_balance_q14(CaseIO *io) {
+  const int w = case_param_int(io, "width", 0);
+  const int h = case_param_int(io, "height", 0);
+  const size_t len = (size_t)w * (size_t)h * 3;
+  const double rg = case_param_double(io, "rGain", 1.0);
+  const double bg = case_param_double(io, "bGain", 1.0);
+  const int32_t gains_q14[3] = {(int32_t)llround(rg * 16384.0), 16384,
+                                (int32_t)llround(bg * 16384.0)};
+  uint16_t *frame;
+  int rc;
+  if (w <= 0 || h <= 0) return ISP_ERR_SIZE;
+  frame = case_load_in(io, 0, len);
+  if (frame == NULL) return ISP_ERR_ARG;
+  rc = isp_adjust_q14_gain3_apply(
+      frame, w, h, case_param_int(io, "max_value", 1023), gains_q14);
   if (rc == ISP_OK) rc = case_write_out(io, 0, frame, len);
   free(frame);
   return rc;

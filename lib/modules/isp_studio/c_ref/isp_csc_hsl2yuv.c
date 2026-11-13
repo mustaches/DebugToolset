@@ -22,7 +22,7 @@ int isp_csc_hsl_to_yuv(const uint16_t *hsl, int w, int h, int max_value,
      * 再按 rgbToYuv 的 BT.601 全范围定点公式求 Y/U/V；不分配中间缓冲 */
     isp_csc_hsl_to_rgb_px(hsl[i], hsl[i + 1], hsl[i + 2], max_value, inv,
                           &r, &g, &b);
-    isp_csc_rgb_to_yuv_px(r, g, b, half, max_value, out + i);
+    isp_csc_rgb_to_yuv_px_s(r, g, b, half, max_value, ISP_CSC_STD_601, out + i);
   }
   return ISP_OK;
 }

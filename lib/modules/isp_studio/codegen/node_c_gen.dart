@@ -39,7 +39,7 @@ import 'node_c_gen_raw.dart';
 import 'node_c_gen_rgb.dart';
 
 /// 当前支持导出的节点类型（Process 含 ColorTrans/Fluorescence 子分组 +
-/// Datapath，共 49 个；Source 类暂不支持）。
+/// Datapath，共 47 个；Source 类暂不支持）。
 const Set<String> cExportSupportedTypeIds = {
   // Process — RAW 域
   'black_level', 'dpc', 'fpn', 'lsc', 'grgb_balance', 'bayer_dnr', 'highlight',
@@ -50,7 +50,7 @@ const Set<String> cExportSupportedTypeIds = {
   'csc_rgb2yuv', 'csc_rgb2hsl', 'csc_yuv2rgb', 'csc_yuv2hsl', 'csc_hsl2rgb',
   'csc_hsl2yuv',
   // Process — 调节器
-  'hsl_debugger', 'color_controller', 'multi_band_eq', 'rgb_debugger', 'yuv_debugger',
+  'multi_band_eq', 'rgb_debugger', 'yuv_debugger',
   'sat_bright_adjuster', 'bright_contrast_adjuster', 'levels_curves',
   'color_balance', 'color_temp_adjuster',
   // Process — Fluorescence
@@ -80,8 +80,12 @@ class CPort {
   /// 持久区分配，且只有本节点写它。
   final bool isPersistent;
 
-  const CPort(this.name,
-      {this.cType = 'uint16_t', this.channels = 1, this.isPersistent = false});
+  const CPort(
+    this.name, {
+    this.cType = 'uint16_t',
+    this.channels = 1,
+    this.isPersistent = false,
+  });
 
   /// 缓冲字节数表达式（实参名 w/h 固定）。
   String get bytesExpr =>
@@ -176,7 +180,8 @@ class CNodeGenCtx {
   double doubleParam(String key) => (param(key) as num?)?.toDouble() ?? 0.0;
   int intParam(String key) => (param(key) as num?)?.toInt() ?? 0;
   bool boolParam(String key) => param(key) == true;
-  String strParam(String key) => param(key)?.toString() ?? '';
+  String strParam(String key) =>
+      param(key)?.toString() ?? (key == 'codegenMode' ? 'func_fixed' : '');
 
   /// 是否为 Process 类（含荧光，有 Bypass 开关）。
   bool get isProcess => IspNodeRegistry.isProcessType(node.typeId);
@@ -269,7 +274,8 @@ CNodeFiles assembleCNode({
     scratchMacro: scratchMacro,
   ).runProto;
 
-  final h = '''
+  final h =
+      '''
 #ifndef $guard
 #define $guard
 
@@ -295,9 +301,11 @@ $proto;
 #endif /* $guard */
 ''';
 
-  final c = '''
+  final c =
+      '''
 #include "$ident.h"
 
+#include <math.h>
 #include <string.h>
 
 $proto {
@@ -355,8 +363,9 @@ CNodeFiles _genGamma(CNodeGenCtx ctx) {
   final m = ctx.macro;
   // 与 pipeline_runner 一致：gamma <= 0 回退 2.2，contrast <= 0 回退 1.0。
   final gamma = ctx.doubleParam('gamma') <= 0 ? 2.2 : ctx.doubleParam('gamma');
-  final contrast =
-      ctx.doubleParam('contrast') <= 0 ? 1.0 : ctx.doubleParam('contrast');
+  final contrast = ctx.doubleParam('contrast') <= 0
+      ? 1.0
+      : ctx.doubleParam('contrast');
   return assembleCNode(
     ctx: ctx,
     algoIncludes: const ['isp_gamma.h'],
@@ -368,7 +377,8 @@ CNodeFiles _genGamma(CNodeGenCtx ctx) {
       '#define ${m}_CONTRAST ${cNum(contrast)}',
     ],
     scratchExpr: 'ISP_GAMMA_LUT_BYTES(max_value)',
-    body: '''
+    body:
+        '''
   /* Bypass：退化为默认色调映射（见文件头注释）。 */
   const double g = ${m}_BYPASS ? 2.2 : ${m}_GAMMA;
   const double br = ${m}_BYPASS ? 0.0 : ${m}_BRIGHTNESS;
@@ -384,7 +394,11 @@ CNodeFiles _genCcm(CNodeGenCtx ctx) {
   final raw = ctx.param('matrix');
   final values = [
     for (var i = 0; i < 9; i++)
-      cNum(raw is List && i < raw.length ? (raw[i] as num).toDouble() : (i % 4 == 0 ? 1.0 : 0.0)),
+      cNum(
+        raw is List && i < raw.length
+            ? (raw[i] as num).toDouble()
+            : (i % 4 == 0 ? 1.0 : 0.0),
+      ),
   ];
   const input = CPort('in', channels: 3);
   const output = CPort('out', channels: 3);
@@ -394,7 +408,8 @@ CNodeFiles _genCcm(CNodeGenCtx ctx) {
     inputs: const [input],
     outputs: const [output],
     macroLines: const [],
-    body: '''
+    body:
+        '''
   static const double ${ctx.ident}_matrix[9] = {
     ${values.join(', ')},
   };
@@ -423,6 +438,33 @@ CNodeFiles _genWhiteBalance(CNodeGenCtx ctx) {
           '#define ${m}_RGAIN ${cNum(rGain)}',
           '#define ${m}_BGAIN ${cNum(bGain)}',
         ];
+  if (ctx.strParam('codegenMode') == 'func_fixed') {
+    final rq = (rGain * 16384).round();
+    final bq = (bGain * 16384).round();
+    return assembleCNode(
+      ctx: ctx,
+      algoIncludes: const ['isp_white_balance.h', 'isp_adjust.h'],
+      inputs: const [input],
+      outputs: const [output],
+      macroLines: macroLines,
+      body: auto
+          ? '''
+${copyInToOut(input, output, '  ')}
+  if (${m}_BYPASS) return ISP_OK;
+  double r_gain = 1.0, b_gain = 1.0;
+  int rc = isp_white_balance_auto_gains(out, w, h, 16, &r_gain, &b_gain);
+  if (rc != ISP_OK) return rc;
+  const int32_t gains_q14[3] = {
+      (int32_t)llround(r_gain * 16384.0), 16384,
+      (int32_t)llround(b_gain * 16384.0)};
+  return isp_adjust_q14_gain3_apply(out, w, h, max_value, gains_q14);'''
+          : '''
+${copyInToOut(input, output, '  ')}
+  if (${m}_BYPASS) return ISP_OK;
+  static const int32_t gains_q14[3] = {$rq, 16384, $bq};
+  return isp_adjust_q14_gain3_apply(out, w, h, max_value, gains_q14);''',
+    );
+  }
   if (lutMode && !auto) {
     // 烘焙表由 Dart 建表函数生成（与预览同函数，位级一致）。
     final lutR = whiteBalanceGainLut(rGain, ctx.lutDomainMax);
@@ -433,7 +475,8 @@ CNodeFiles _genWhiteBalance(CNodeGenCtx ctx) {
       inputs: const [input],
       outputs: const [output],
       macroLines: macroLines,
-      body: '''
+      body:
+          '''
   /* LUT 模式：以下两表由生成期按节点参数烘焙（Dart whiteBalanceGainLut，
    * 域 0..${ctx.lutDomainMax}）；运行时 max_value 与烘焙域一致走纯查表，
    * 不一致回退直算（与函数方式同公式，数值一致）。 */
@@ -464,12 +507,12 @@ ${copyInToOut(input, output, '  ')}
   isp_white_balance_build_lut(r_gain, max_value, lut_r);
   isp_white_balance_build_lut(b_gain, max_value, lut_b);'''
       : auto
-          ? '''
+      ? '''
   /* auto 模式：灰度世界增益估计（采样步长 16，与 Dart 缺省一致）。 */
   double r_gain = 1.0, b_gain = 1.0;
   int rc = isp_white_balance_auto_gains(out, w, h, 16, &r_gain, &b_gain);
   if (rc != ISP_OK) return rc;'''
-          : '''
+      : '''
   const double r_gain = ${m}_RGAIN;
   const double b_gain = ${m}_BGAIN;''';
   return assembleCNode(
@@ -481,7 +524,8 @@ ${copyInToOut(input, output, '  ')}
     scratchExpr: lutMode && auto
         ? '(size_t)(max_value + 1) * 2u * sizeof(uint16_t)'
         : null,
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
   if (${m}_BYPASS) return ISP_OK;
 $applyLines
@@ -489,41 +533,110 @@ $applyLines
   );
 }
 
-/// ColorTrans：6 个色彩空间转换类型（单进单出 3 通道，非原地）。
-/// 仅 csc_rgb2yuv 带 standard/range 枚举参数（BT.601/709、全/有限范围），
-/// 其余为 BT.601 全范围定点无参转换。Bypass 直通为同布局 memcpy。
+Int32List _cscProductLut(List<int> coefficients, int maxValue, int half) {
+  return Int32List.fromList([
+    for (final coefficient in coefficients)
+      for (var v = 0; v <= maxValue; v++) coefficient * (v - half),
+  ]);
+}
+
+String? cscLutDecl(CNodeGenCtx ctx, int variant, int mode) {
+  if (mode != 2 && mode != 3) return null;
+  final n = ctx.lutDomainMax;
+  final id = ctx.ident;
+  if (variant == 0 || variant == 5) {
+    final bt709 = ctx.strParam('standard') == 'bt709';
+    final coefficients = bt709
+        ? [13933, 46871, 4732, -7509, -25260, 32768, 32768, -29759, -3009]
+        : [19595, 38470, 7471, -11058, -21710, 32768, 32768, -27439, -5329];
+    return 'static const int32_t ${id}_lut[${9 * (n + 1)}] = {\n'
+        '${cI32Table(_cscProductLut(coefficients, n, 0))}\n};';
+  }
+  if (variant == 2 || variant == 3) {
+    return 'static const int32_t ${id}_lut[${4 * (n + 1)}] = {\n'
+        '${cI32Table(_cscProductLut([91881, -22553, -46801, 116130], n, n >> 1))}\n};';
+  }
+  return null;
+}
+
+String? cscNormLutDecl(CNodeGenCtx ctx, int variant, int mode) {
+  if ((mode != 2 && mode != 3) ||
+      (variant != 1 && variant != 3 && variant != 4)) {
+    return null;
+  }
+  final n = ctx.lutDomainMax;
+  final id = ctx.ident;
+  if (mode == 2) {
+    final values = Float64List.fromList([
+      for (var c = 0; c < 3; c++)
+        for (var v = 0; v <= n; v++) v / n,
+    ]);
+    return 'static const double ${id}_norm_lut[${3 * (n + 1)}] = {\n'
+        '${cF64Table(values)}\n};';
+  }
+  final values = Int32List.fromList([
+    for (var c = 0; c < 3; c++)
+      for (var v = 0; v <= n; v++) (v * 16384 / n).round(),
+  ]);
+  return 'static const int32_t ${id}_norm_lut[${3 * (n + 1)}] = {\n'
+      '${cI32Table(values)}\n};';
+}
+
+int cscCodegenMode(String mode) => switch (mode) {
+  'func_fixed' => 1,
+  'lut' => 2,
+  'lut_fixed' => 3,
+  _ => 0,
+};
+
+/// ColorTrans：六类型共用四档模式执行层；LUT 为线性转换乘积项或 HSL
+/// 归一化表，func_fixed/lut_fixed 的 HSL 路径使用 Q14。
 CNodeFiles _genCsc(CNodeGenCtx ctx) {
   final m = ctx.macro;
-  // 变体头一一对应（isp_csc 全家桶已按变体拆分）：wrapper 只 #include
-  // 实际用到的变体头 + 共享内部头 isp_csc_common.h。
-  final (fn, header) = switch (ctx.node.typeId) {
-    'csc_rgb2yuv' => ('isp_csc_rgb_to_yuv', 'isp_csc_rgb2yuv.h'),
-    'csc_rgb2hsl' => ('isp_csc_rgb_to_hsl', 'isp_csc_rgb2hsl.h'),
-    'csc_yuv2rgb' => ('isp_csc_yuv_to_rgb', 'isp_csc_yuv2rgb.h'),
-    'csc_yuv2hsl' => ('isp_csc_yuv_to_hsl', 'isp_csc_yuv2hsl.h'),
-    'csc_hsl2rgb' => ('isp_csc_hsl_to_rgb', 'isp_csc_hsl2rgb.h'),
-    'csc_hsl2yuv' => ('isp_csc_hsl_to_yuv', 'isp_csc_hsl2yuv.h'),
+  final (variant, header) = switch (ctx.node.typeId) {
+    'csc_rgb2yuv' => (0, 'isp_csc_rgb2yuv.h'),
+    'csc_rgb2hsl' => (1, 'isp_csc_rgb2hsl.h'),
+    'csc_yuv2rgb' => (2, 'isp_csc_yuv2rgb.h'),
+    'csc_yuv2hsl' => (3, 'isp_csc_yuv2hsl.h'),
+    'csc_hsl2rgb' => (4, 'isp_csc_hsl2rgb.h'),
+    'csc_hsl2yuv' => (5, 'isp_csc_hsl2yuv.h'),
     _ => throw ArgumentError('非 ColorTrans 类型: ${ctx.node.typeId}'),
   };
-  final withStdRange = ctx.node.typeId == 'csc_rgb2yuv';
+  // YUV 矩阵相关的变体（RGB→YUV / YUV→RGB / YUV→HSL / HSL→YUV）都要透传
+  // YUV 标准；range 仍只对 RGB→YUV 生效。
+  final withStd = variant == 0 || variant == 2 || variant == 3 || variant == 5;
+  final withRange = variant == 0;
+  final mode = cscCodegenMode(ctx.strParam('codegenMode'));
+  final lutDecl = cscLutDecl(ctx, variant, mode);
+  final normDecl = cscNormLutDecl(ctx, variant, mode);
   const input = CPort('in', channels: 3);
   const output = CPort('out', channels: 3);
   return assembleCNode(
     ctx: ctx,
-    algoIncludes: ['isp_csc_common.h', header],
+    algoIncludes: ['isp_csc_common.h', header, 'isp_csc_modes.h'],
     inputs: const [input],
     outputs: const [output],
-    macroLines: withStdRange
-        ? [
-            '#define ${m}_STANDARD ${ctx.strParam('standard') == 'bt709' ? 'ISP_CSC_BT709' : 'ISP_CSC_BT601'}',
-            '#define ${m}_RANGE ${ctx.strParam('range') == 'limited' ? 'ISP_CSC_RANGE_LIMITED' : 'ISP_CSC_RANGE_FULL'}',
-          ]
-        : const [],
-    body: '''
+    macroLines: [
+      if (withStd)
+        '#define ${m}_STANDARD ${switch (ctx.strParam('standard')) {
+          'bt709' => 'ISP_CSC_BT709',
+          'bt2020' => 'ISP_CSC_BT2020',
+          _ => 'ISP_CSC_BT601',
+        }}',
+      if (withRange)
+        '#define ${m}_RANGE ${ctx.strParam('range') == 'limited' ? 'ISP_CSC_RANGE_LIMITED' : 'ISP_CSC_RANGE_FULL'}',
+    ],
+    body:
+        '''
+${lutDecl == null ? '' : '  $lutDecl\n'}${normDecl == null ? '' : '  $normDecl\n'}
   if (${m}_BYPASS) {
 ${copyInToOut(input, output, '    ')}
     return ISP_OK;
   }
-  return $fn(in, w, h, max_value, ${withStdRange ? '${m}_STANDARD, ${m}_RANGE, ' : ''}out);''',
+  return isp_csc_apply_modes(in, w, h, max_value, $variant, $mode,
+      ${withStd ? '${m}_STANDARD' : '0'},
+      ${withRange ? '${m}_RANGE' : '0'},
+      ${lutDecl == null ? 'NULL' : '${ctx.ident}_lut'},
+      ${normDecl == null ? 'NULL' : '${ctx.ident}_norm_lut'}, out);''',
   );
 }

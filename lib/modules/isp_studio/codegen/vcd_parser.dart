@@ -18,7 +18,7 @@ class VcdChange {
 }
 
 class VcdSignal {
-  /// 层级全路径（如 tb_isp_ip_multi_band_eq.clk）。
+  /// 层级全路径（如 tb_ISP_IP_MBC_EQ.clk）。
   final String path;
 
   /// 短名（如 clk）。
@@ -102,7 +102,14 @@ VcdFile parseVcd(String text) {
         final m = RegExp(r'(\d+)\s*(fs|ps|ns|us|ms|s)').firstMatch(line);
         if (m != null) {
           final v = int.parse(m.group(1)!);
-          const unit = {'fs': 0.001, 'ps': 1, 'ns': 1000, 'us': 1e6, 'ms': 1e9, 's': 1e12};
+          const unit = {
+            'fs': 0.001,
+            'ps': 1,
+            'ns': 1000,
+            'us': 1e6,
+            'ms': 1e9,
+            's': 1e12,
+          };
           timescalePs = (v * unit[m.group(2)]!).round();
         }
       } else if (line.startsWith('\$scope')) {
@@ -126,7 +133,12 @@ VcdFile parseVcd(String text) {
           final scope = scopeStack.last;
           final path = scope.path.isEmpty ? name : '${scope.path}.$name';
           final sig = VcdSignal(
-              path: path, name: name, id: id, width: width, vcdType: type);
+            path: path,
+            name: name,
+            id: id,
+            width: width,
+            vcdType: type,
+          );
           idToSignals.putIfAbsent(id, () => []).add(sig);
           signals.add(sig);
           scope.signals.add(sig);
@@ -140,7 +152,12 @@ VcdFile parseVcd(String text) {
     final c = line[0];
     if (c == '#') {
       time = int.tryParse(line.substring(1)) ?? time;
-    } else if (c == '0' || c == '1' || c == 'x' || c == 'X' || c == 'z' || c == 'Z') {
+    } else if (c == '0' ||
+        c == '1' ||
+        c == 'x' ||
+        c == 'X' ||
+        c == 'z' ||
+        c == 'Z') {
       // 标量：值字符 + id（无空格）
       final id = line.substring(1);
       for (final s in idToSignals[id] ?? const <VcdSignal>[]) {
@@ -167,7 +184,11 @@ VcdFile parseVcd(String text) {
     }
   }
   return VcdFile(
-      timescalePs: timescalePs, signals: signals, endTime: end, root: root);
+    timescalePs: timescalePs,
+    signals: signals,
+    endTime: end,
+    root: root,
+  );
 }
 
 /// 查询某信号在 [time] 时刻的取值（changes 按时间有序，二分查找）。

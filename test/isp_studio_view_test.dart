@@ -639,15 +639,17 @@ void main() {
     expect(nodeFinder, findsOneWidget);
 
     // 点击最大化按钮 → 节点铺满视口且置顶。
-    await tester.tap(
-        find.descendant(of: nodeFinder, matching: find.byIcon(Icons.fullscreen)));
+    // 最大化/还原按钮是 icons/screen-full.png 图标（Image.asset），按
+    // Tooltip 语义查找比按 IconData 稳妥。
+    await tester.tap(find.descendant(
+        of: nodeFinder, matching: find.byTooltip('最大化')));
     await tester.pumpAndSettle();
     expect(state.maximizedNodeId, previewId);
     expect(node.width, greaterThan(oldW));
 
     // 再点还原按钮 → 几何恢复。
     await tester.tap(find.descendant(
-        of: nodeFinder, matching: find.byIcon(Icons.fullscreen_exit)));
+        of: nodeFinder, matching: find.byTooltip('还原')));
     await tester.pumpAndSettle();
     expect(state.maximizedNodeId, isNull);
     expect(node.width, oldW);

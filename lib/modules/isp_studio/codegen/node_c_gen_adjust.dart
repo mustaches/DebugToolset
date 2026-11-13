@@ -47,11 +47,11 @@ CNodeFiles? genAdjusterCNode(CNodeGenCtx ctx) {
 
 /// 帧格式 → IspAdjustFormat 枚举常量。
 String _adjustFormatEnum(String fmt) => switch (fmt) {
-      'yuv' => 'ISP_ADJ_FMT_YUV',
-      'hsl' => 'ISP_ADJ_FMT_HSL',
-      'mono' => 'ISP_ADJ_FMT_MONO',
-      _ => 'ISP_ADJ_FMT_RGB',
-    };
+  'yuv' => 'ISP_ADJ_FMT_YUV',
+  'hsl' => 'ISP_ADJ_FMT_HSL',
+  'mono' => 'ISP_ADJ_FMT_MONO',
+  _ => 'ISP_ADJ_FMT_RGB',
+};
 
 /// 多形态调节器公共骨架（sat_bright / bright_contrast / color_balance）：
 /// [candidates] 为 (输入端口, 帧格式, 输出端口) 候选表，按端口声明序；
@@ -86,7 +86,8 @@ CNodeFiles _genMultiFormatAdjust(
       '#define ${m}_FORMAT ${_adjustFormatEnum(fmt)}',
       ...macroLines,
     ],
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
 $bypassLine  return ${makeCall(outPort)};''',
   );
@@ -107,7 +108,8 @@ CNodeFiles _genHslDebugger(CNodeGenCtx ctx) {
       '#define ${m}_S_GAIN ${cNum(ctx.doubleParam('s_gain'))}',
       '#define ${m}_L_GAIN ${cNum(ctx.doubleParam('l_gain'))}',
     ],
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
   if (${m}_BYPASS) return ISP_OK;
   return isp_adjust_hsl(out, w, h, max_value,
@@ -130,7 +132,8 @@ CNodeFiles _genRgbDebugger(CNodeGenCtx ctx) {
       '#define ${m}_G_GAIN ${cNum(ctx.doubleParam('g_gain'))}',
       '#define ${m}_B_GAIN ${cNum(ctx.doubleParam('b_gain'))}',
     ],
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
   if (${m}_BYPASS) return ISP_OK;
   return isp_adjust_rgb(out, w, h, max_value,
@@ -153,7 +156,8 @@ CNodeFiles _genYuvDebugger(CNodeGenCtx ctx) {
       '#define ${m}_U_GAIN ${cNum(ctx.doubleParam('u_gain'))}',
       '#define ${m}_V_GAIN ${cNum(ctx.doubleParam('v_gain'))}',
     ],
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
   if (${m}_BYPASS) return ISP_OK;
   return isp_adjust_yuv(out, w, h, max_value,
@@ -185,15 +189,40 @@ CNodeFiles _genSatBright(CNodeGenCtx ctx) {
 /// （isp_adjust_bright_contrast；mono 形态通道数为 1）。
 CNodeFiles _genBrightContrast(CNodeGenCtx ctx) {
   final m = ctx.macro;
+  if (ctx.strParam('codegenMode') == 'func_fixed') {
+    final brightQ = (ctx.doubleParam('bright') / 100 * 16384).round();
+    final baselineQ = (ctx.doubleParam('baseline') / 100 * 16384).round();
+    final gainQ = (ctx.doubleParam('gain') / 100 * 16384).round();
+    return _genMultiFormatAdjust(
+      ctx,
+      candidates: const [
+        ('in', 'rgb', 'out_rgb'),
+        ('in_yuv', 'yuv', 'out_yuv'),
+        ('in_hsl', 'hsl', 'out_hsl'),
+        ('in_mono', 'mono', 'out_mono'),
+      ],
+      macroLines: [
+        '#define ${m}_BRIGHT_Q14 $brightQ',
+        '#define ${m}_BASELINE_Q14 $baselineQ',
+        '#define ${m}_GAIN_Q14 $gainQ',
+      ],
+      makeCall: (out) =>
+          'isp_adjust_bright_contrast_q14($out, w, h, ${m}_FORMAT, max_value,\n'
+          '                                ${m}_BRIGHT_Q14, ${m}_BASELINE_Q14,\n'
+          '                                ${m}_GAIN_Q14)',
+    );
+  }
   // LUT 模式（codegenMode=lut）：adjust 一维映射表与（RGB 域）亮度比例
   // 表按生成期参数烘焙（Dart brightContrastAdjustLut/RatioLut，域
   // 0..ctx.lutDomainMax）；运行时 max_value 一致走纯查表（RGB 域消灭逐
   // 像素除法），不一致回退直算（与函数方式同公式，数值一致）。
   if (ctx.strParam('codegenMode') == 'lut') {
-    var (inPort, fmt, outPort) =
-        const [('in', 'rgb', 'out_rgb'), ('in_yuv', 'yuv', 'out_yuv'),
-               ('in_hsl', 'hsl', 'out_hsl'), ('in_mono', 'mono', 'out_mono')]
-            .first;
+    var (inPort, fmt, outPort) = const [
+      ('in', 'rgb', 'out_rgb'),
+      ('in_yuv', 'yuv', 'out_yuv'),
+      ('in_hsl', 'hsl', 'out_hsl'),
+      ('in_mono', 'mono', 'out_mono'),
+    ].first;
     for (final c in const [
       ('in', 'rgb', 'out_rgb'),
       ('in_yuv', 'yuv', 'out_yuv'),
@@ -210,12 +239,15 @@ CNodeFiles _genBrightContrast(CNodeGenCtx ctx) {
     final output = CPort(outPort, channels: channels);
     final n = ctx.lutDomainMax;
     final adjLut = brightContrastAdjustLut(
-        maxValue: n,
-        brightPct: ctx.doubleParam('bright'),
-        baselinePct: ctx.doubleParam('baseline'),
-        gainPct: ctx.doubleParam('gain'));
+      maxValue: n,
+      brightPct: ctx.doubleParam('bright'),
+      baselinePct: ctx.doubleParam('baseline'),
+      gainPct: ctx.doubleParam('gain'),
+    );
 
-    final bypassLine = ctx.isProcess ? '  if (${m}_BYPASS) return ISP_OK;\n' : '';
+    final bypassLine = ctx.isProcess
+        ? '  if (${m}_BYPASS) return ISP_OK;\n'
+        : '';
     return assembleCNode(
       ctx: ctx,
       algoIncludes: const ['isp_adjust.h'],
@@ -227,7 +259,8 @@ CNodeFiles _genBrightContrast(CNodeGenCtx ctx) {
         '#define ${m}_BASELINE_PCT ${cNum(ctx.doubleParam('baseline'))}',
         '#define ${m}_GAIN_PCT ${cNum(ctx.doubleParam('gain'))}',
       ],
-      body: '''
+      body:
+          '''
   /* LUT 模式：adjust 映射表（与 RGB 域亮度比例表）由生成期按节点参数
    * 烘焙（Dart brightContrastAdjustLut/RatioLut，域 0..$n）。 */
   static const uint16_t ${ctx.ident}_adj_lut[${n + 1}] = {
@@ -298,12 +331,13 @@ CNodeFiles _genColorController(CNodeGenCtx ctx) {
   if (ctx.strParam('codegenMode') == 'lut') {
     final n = ctx.lutDomainMax;
     final (shiftLut, sMulLut, lMulLut) = hslBandLuts(
-        maxValue: n,
-        hCenterDeg: ctx.doubleParam('h_center'),
-        q: ctx.doubleParam('q'),
-        hShiftDeg: ctx.doubleParam('h_shift'),
-        sGain: ctx.doubleParam('s_gain'),
-        lGain: ctx.doubleParam('l_gain'));
+      maxValue: n,
+      hCenterDeg: ctx.doubleParam('h_center'),
+      q: ctx.doubleParam('q'),
+      hShiftDeg: ctx.doubleParam('h_shift'),
+      sGain: ctx.doubleParam('s_gain'),
+      lGain: ctx.doubleParam('l_gain'),
+    );
     return assembleCNode(
       ctx: ctx,
       algoIncludes: const ['isp_color_controller.h'],
@@ -316,7 +350,8 @@ CNodeFiles _genColorController(CNodeGenCtx ctx) {
         '#define ${m}_S_GAIN ${cNum(ctx.doubleParam('s_gain'))}',
         '#define ${m}_L_GAIN ${cNum(ctx.doubleParam('l_gain'))}',
       ],
-      body: '''
+      body:
+          '''
   /* LUT 模式：以下三张 H 域表由生成期按节点参数烘焙（Dart
    * hslBandLuts，域 0..$n）。 */
   static const int32_t ${ctx.ident}_shift_lut[${n + 1}] = {
@@ -356,7 +391,8 @@ ${cF64Table(lMulLut)}
       '#define ${m}_S_GAIN ${cNum(ctx.doubleParam('s_gain'))}',
       '#define ${m}_L_GAIN ${cNum(ctx.doubleParam('l_gain'))}',
     ],
-    body: '''
+    body:
+        '''
   if (${m}_BYPASS) {
     if (out != in) {
       memcpy(out, in, ${input.bytesExpr});
@@ -395,7 +431,8 @@ CNodeFiles _genMultiBandEq(CNodeGenCtx ctx) {
         l: bandParam(i, 'l', 1.0),
       ),
   ];
-  final bandsDecl = '''
+  final bandsDecl =
+      '''
   /* 段参数烘焙（生成期，与节点当前段配置一致）。 */
   static const IspMultiBandEqBand ${ctx.ident}_bands[$bandCount] = {
 ${[for (final b in bands) '    {${cNum(b.h)}, ${cNum(b.q)}, ${cNum(b.dh)}, ${cNum(b.s)}, ${cNum(b.l)}},'].join('\n')}
@@ -409,15 +446,19 @@ ${[for (final b in bands) '    {${cNum(b.h)}, ${cNum(b.q)}, ${cNum(b.dh)}, ${cNu
   // 查表，不一致回退直算（同一合成 helper，逐位一致）。
   if (ctx.strParam('codegenMode') == 'lut') {
     final n = ctx.lutDomainMax;
-    final (shiftLut, sMulLut, lMulLut) =
-        multiBandLuts(bands, serial: serial, maxValue: n);
+    final (shiftLut, sMulLut, lMulLut) = multiBandLuts(
+      bands,
+      serial: serial,
+      maxValue: n,
+    );
     return assembleCNode(
       ctx: ctx,
       algoIncludes: const ['isp_multi_band_eq.h'],
       inputs: const [input],
       outputs: const [output],
       macroLines: macroLines,
-      body: '''
+      body:
+          '''
 $bandsDecl
   /* LUT 模式：以下三张 H 域表由生成期按节点参数合成烘焙（Dart
    * multiBandLuts，域 0..$n）。 */
@@ -445,13 +486,38 @@ ${cF64Table(lMulLut)}
                                  ${m}_BAND_COUNT, ${ctx.ident}_bands);''',
     );
   }
+  // func_fixed 模式（codegenMode=func_fixed）：运行期直算的全整数定点
+  // 变体（无 FP64/libm、不建表，任意运行时 max_value 恒走定点路径）；
+  // 段数组烘焙不变，帧入口换算定点常量，逐像素 mb_compose_fx + Q14 乘加
+  // （与 Dart applyMultiBandEqFx 逐位一致，与 FP64 口径偏差 ≤1 LSB）。
+  if (ctx.strParam('codegenMode') == 'func_fixed') {
+    return assembleCNode(
+      ctx: ctx,
+      algoIncludes: const ['isp_multi_band_eq.h'],
+      inputs: const [input],
+      outputs: const [output],
+      macroLines: macroLines,
+      body:
+          '''
+$bandsDecl
+  if (${m}_BYPASS) {
+    if (out != in) {
+      memcpy(out, in, ${input.bytesExpr});
+    }
+    return ISP_OK;
+  }
+  return isp_multi_band_eq_fx_apply(in, out, w, h, max_value, ${m}_SERIAL,
+                                    ${m}_BAND_COUNT, ${ctx.ident}_bands);''',
+    );
+  }
   return assembleCNode(
     ctx: ctx,
     algoIncludes: const ['isp_multi_band_eq.h'],
     inputs: const [input],
     outputs: const [output],
     macroLines: macroLines,
-    body: '''
+    body:
+        '''
 $bandsDecl
   if (${m}_BYPASS) {
     if (out != in) {
@@ -488,7 +554,8 @@ CNodeFiles _genLevelsCurves(CNodeGenCtx ctx) {
       inputs: const [input],
       outputs: const [output],
       macroLines: const [],
-      body: '''
+      body:
+          '''
   /* 生成期判定为恒等曲线（与 Dart 同口径）：直通拷贝。 */
 ${copyInToOut(input, output, '  ')}
   return ISP_OK;''',
@@ -501,7 +568,8 @@ ${copyInToOut(input, output, '  ')}
     inputs: const [input],
     outputs: const [output],
     macroLines: const [],
-    body: '''
+    body:
+        '''
   /* 传递函数 LUT：生成期由 Dart levelsCurveLut 按节点参数烘焙（与节点
    * 图表中绘制的曲线同一求值口径），运行时纯查表。 */
   static const uint16_t ${ctx.ident}_lut[ISP_LEVELS_LUT_SIZE] = {
@@ -528,28 +596,60 @@ CNodeFiles _genColorTempAdjuster(CNodeGenCtx ctx) {
     '#define ${m}_TEMPERATURE ${cNum(ctx.doubleParam('temperature'))}',
     '#define ${m}_MEASURED_CCT ${cNum(ctx.intParam('measured_cct'), asDouble: false)}',
   ];
-  if (ctx.strParam('codegenMode') == 'lut') {
-    // LUT 模式：色温/参考色温均烘焙参数，增益在生成期经 Dart
-    // colorTempGains 算出后烘焙三通道查找表（与 C isp_color_temp_gains
-    // 有既有 tol=0 对拍，增益值一致）；运行时 max_value 与烘焙域一致
-    // 走纯查表，不一致回退运行期求增益+直算。
-    final temperature = ctx.doubleParam('temperature');
-    final measuredCct = ctx.intParam('measured_cct');
-    final gains = colorTempGains(temperature, measuredCct);
-    final luts = [
-      for (final g in gains) adjustGainLut(g, ctx.lutDomainMax),
-    ];
+  final mode = ctx.strParam('codegenMode');
+  final gains = colorTempGains(
+    ctx.doubleParam('temperature'),
+    ctx.intParam('measured_cct'),
+  );
+  if (mode == 'func_fixed' || mode == 'lut_fixed') {
+    final q14 = [for (final g in gains) (g * 16384.0).round()];
+    final tables = mode == 'lut_fixed'
+        ? [for (final g in gains) adjustQ14GainLut(g, ctx.lutDomainMax)]
+        : null;
+    return assembleCNode(
+      ctx: ctx,
+      algoIncludes: const ['isp_adjust.h'],
+      inputs: const [input],
+      outputs: const [output],
+      macroLines: macroLines,
+      body:
+          '''
+  static const int32_t ${ctx.ident}_gains_q14[3] = {
+    ${q14[0]}, ${q14[1]}, ${q14[2]}
+  };
+${tables == null ? '' : '''
+  static const uint16_t ${ctx.ident}_lut_r[${ctx.lutDomainMax + 1}] = {
+${cU16Table(tables[0])}
+  };
+  static const uint16_t ${ctx.ident}_lut_g[${ctx.lutDomainMax + 1}] = {
+${cU16Table(tables[1])}
+  };
+  static const uint16_t ${ctx.ident}_lut_b[${ctx.lutDomainMax + 1}] = {
+${cU16Table(tables[2])}
+  };
+'''}${copyInToOut(input, output, '  ')}
+${tables == null ? '' : '''
+  if (max_value == ${ctx.lutDomainMax}) {
+    return isp_adjust_lut3_apply(out_rgb, w, h, max_value, ${ctx.ident}_lut_r,
+                                 ${ctx.ident}_lut_g, ${ctx.ident}_lut_b,
+                                 out_rgb);
+  }
+'''}  return isp_adjust_q14_gain3_apply(out_rgb, w, h, max_value,
+                                      ${ctx.ident}_gains_q14);''',
+    );
+  }
+  if (mode == 'lut') {
+    final luts = [for (final g in gains) adjustGainLut(g, ctx.lutDomainMax)];
     return assembleCNode(
       ctx: ctx,
       algoIncludes: const ['isp_color_temp.h', 'isp_adjust.h'],
       inputs: const [input],
       outputs: const [output],
       macroLines: macroLines,
-      body: '''
+      body:
+          '''
   double gains[3] = {0.0, 0.0, 0.0};
   int rc = 0;
-  /* LUT 模式：以下三表由生成期按节点参数烘焙（Dart colorTempGains +
-   * adjustGainLut，域 0..${ctx.lutDomainMax}）。 */
   static const uint16_t ${ctx.ident}_lut_r[${ctx.lutDomainMax + 1}] = {
 ${cU16Table(luts[0])}
   };
@@ -577,7 +677,8 @@ ${copyInToOut(input, output, '  ')}
     inputs: const [input],
     outputs: const [output],
     macroLines: macroLines,
-    body: '''
+    body:
+        '''
   double gains[3] = {0.0, 0.0, 0.0};
   int rc = 0;
 ${copyInToOut(input, output, '  ')}

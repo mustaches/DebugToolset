@@ -1105,8 +1105,8 @@ void main() {
               find.byKey(const ValueKey('nl-settings-layered')),
             )
             .value,
-        isFalse,
-        reason: '分层布局默认关闭',
+        isTrue,
+        reason: '分层布局默认开启（竖向可读性，2026-10-24 起）',
       );
       await tester.ensureVisible(
         find.byKey(const ValueKey('nl-settings-global-reorder')),
@@ -1234,7 +1234,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('直线·星形'), findsOneWidget);
     });
-    testWidgets('设置：分层布局默认关闭，开关可切换重建模型', (tester) async {
+    testWidgets('设置：分层布局默认开启，开关可切换重建模型', (tester) async {
       final (state, groupId) = makeGroup();
       addTearDown(state.dispose);
       await pumpTab(
@@ -1245,26 +1245,26 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
-      expect(find.textContaining('压缩列'), findsOneWidget);
+      expect(find.textContaining('分层列'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('nl-settings-button')));
       await tester.pumpAndSettle();
       final layered = find.byKey(const ValueKey('nl-settings-layered'));
       await tester.ensureVisible(layered);
-      expect(tester.widget<CheckboxListTile>(layered).value, isFalse);
+      expect(tester.widget<CheckboxListTile>(layered).value, isTrue);
       await tester.tap(layered);
       await tester.pumpAndSettle();
-      expect(tester.widget<CheckboxListTile>(layered).value, isTrue);
-      expect(find.textContaining('分层列'), findsOneWidget);
+      expect(tester.widget<CheckboxListTile>(layered).value, isFalse);
+      expect(find.textContaining('压缩列'), findsOneWidget);
 
       await tester.tap(layered);
       await tester.pumpAndSettle();
       expect(
         tester.widget<CheckboxListTile>(layered).value,
-        isFalse,
-        reason: '关闭后回退经典压缩',
+        isTrue,
+        reason: '重新开启回到分层布局',
       );
-      expect(find.textContaining('压缩列'), findsOneWidget);
+      expect(find.textContaining('分层列'), findsOneWidget);
     });
 
     testWidgets('优化布局：右上角浮层显示模块数/端点数与总直线长度并完成', (tester) async {
@@ -1661,6 +1661,66 @@ void main() {
             block.bottomPinOrder == null,
         isTrue,
       );
+    });
+
+    testWidgets('编辑模式：左键左右镜像元件并可撤销', (tester) async {
+      final (state, groupId) = makeGroup();
+      addTearDown(state.dispose);
+      await pumpTab(
+        tester,
+        state,
+        groupId,
+        renderer: (files, {required topName, onOutput}) async => _okResult(),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('nl-edit-button')));
+      await tester.pump();
+      final diagram = tester.widget<NetlistDiagram>(
+        find.byType(NetlistDiagram),
+      );
+      final block = diagram.model.blocks.firstWhere(
+        (b) => !b.isIo && b.boxSize.height > 0,
+      );
+      expect(block.flipH, isFalse);
+      diagram.onFlipHBlock!(block);
+      await tester.pumpAndSettle();
+      expect(block.flipH, isTrue);
+      await tester.tap(find.byKey(const ValueKey('nl-edit-undo')));
+      await tester.pumpAndSettle();
+      expect(block.flipH, isFalse);
+    });
+
+    testWidgets('波形跳转原理图：已展开布线完成时二次跳转不重建/不丢布线',
+        (tester) async {
+      final (state, groupId) = makeGroup();
+      addTearDown(state.dispose);
+      await pumpTab(
+        tester,
+        state,
+        groupId,
+        renderer: (files, {required topName, onOutput}) async => _okResult(),
+      );
+      await tester.pump();
+      await tester.pump();
+      // 首次跳转：展开顶层实例 + 分层布线。
+      state.openSchematicTab(groupId, IpVendor.generic,
+          highlightSignal: 'n1_sum');
+      await tester.pump();
+      await tester.pump();
+      final d1 =
+          tester.widget<NetlistDiagram>(find.byType(NetlistDiagram));
+      expect(d1.autoRoutes, isNotNull, reason: '首次跳转后应有布线');
+      // 二次跳转（不同信号）：仅切换高亮，模型与布线保持原对象。
+      state.openSchematicTab(groupId, IpVendor.generic,
+          highlightSignal: 'in_data');
+      await tester.pump();
+      await tester.pump();
+      final d2 =
+          tester.widget<NetlistDiagram>(find.byType(NetlistDiagram));
+      expect(identical(d2.autoRoutes, d1.autoRoutes), isTrue,
+          reason: '二次跳转不应丢布线（退回直线预览）');
+      expect(d2.highlightSignal, 'in_data');
     });
 
     testWidgets('热力图使用自动布线结果，而不是直线预览', (tester) async {
@@ -2134,11 +2194,14 @@ void main() {
       final inst = topMod.cells.single;
       expect(inst.isInstance, isTrue);
       expect(inst.moduleRef, isNotNull);
-      // 下钻模块可取出且含 RTL 单元。
+      // 下钻模块可取出且含 RTL 单元：core 自身只是胶水（1 个位运算 + 1 个
+      // 数据通路实例），真正的运算在 <top>_lut_core / <top>_fx_core 里。
       final core = r.netlist!.resolveInstance(inst.type)!;
-      expect(core.cells.length, greaterThan(20));
+      final datapath = r.netlist!
+          .resolveInstance(core.cells.firstWhere((c) => c.isInstance).type)!;
+      expect(datapath.cells.length, greaterThan(20));
       // 自研布局模型可直接构建（画布有限、比例受控）。
-      final model = buildNetlistDiagramModel(core);
+      final model = buildNetlistDiagramModel(datapath);
       expect(model.canvasSize.width.isFinite, isTrue);
       final ratio = model.canvasSize.width / model.canvasSize.height;
       expect(ratio, lessThan(6.0), reason: '不应是 1:N 长条（实测 $ratio）');
@@ -2146,5 +2209,123 @@ void main() {
       final svg = buildNetlistSvg(model);
       expect(parseSvgSize(svg), isNotNull);
     }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('func_fixed 大网表：时间预算兜底（优化不再卡死）', () async {
+      final yosys = detectYosys();
+      if (yosys == null) {
+        markTestSkipped('未检测到 yosys（tools/yosys 或 PATH）');
+        return;
+      }
+      final state = IspStudioState();
+      addTearDown(state.dispose);
+      final mb = state.graph.addNode('multi_band_eq', 0, 0);
+      state.graph.nodes[mb]!.paramValues['codegenMode'] = 'func_fixed';
+      state.graph.nodes[mb]!.paramValues['band_count'] = 2;
+      state.graph.nodes[mb]!.paramValues['b0_h'] = 120.0;
+      state.graph.nodes[mb]!.paramValues['b0_dh'] = 30.0;
+      state.graph.nodes[mb]!.paramValues['b0_s'] = 1.5;
+      state.graph.nodes[mb]!.paramValues['b1_h'] = 200.0;
+      state.graph.nodes[mb]!.paramValues['b1_q'] = 4.0;
+      state.graph.nodes[mb]!.paramValues['b1_dh'] = -20.0;
+      state.graph.groups.add(IspNodeGroup('g1', {mb}, name: 'mbfx'));
+      final group = state.graph.groups.single;
+      final files = buildGroupIpFiles(
+        state.graph,
+        group,
+        const IpGenOptions(vendor: IpVendor.generic),
+      );
+      final top = schematicTopModule(files);
+      final r = await extractSchematicNetlist(files, topName: top);
+      expect(r.success, isTrue, reason: r.log);
+      // 顶层为 1 实例 + 端口（小图）；下钻 core 只剩胶水，真正的大电路是
+      // <top>_fx_core 数据通路（触发护栏口径按这一层算）。
+      final topMod = r.netlist!.module(top)!;
+      expect(schModuleIsLarge(topMod), isFalse);
+      final glue = r.netlist!.resolveInstance(topMod.cells.single.type)!;
+      expect(schModuleIsLarge(glue), isFalse);
+      final core =
+          r.netlist!.resolveInstance(glue.cells.firstWhere((c) => c.isInstance).type)!;
+      expect(schModuleIsLarge(core), isTrue);
+      // 时间预算（布局优化）：大网表按预算返回当前最优（此前无预算时该
+      // 网表数十分钟不收敛，打开/展开即卡死）。
+      final sw = Stopwatch()..start();
+      final opt = await optimizeNetlistLayout(core,
+          timeBudget: const Duration(seconds: 3));
+      expect(sw.elapsed, lessThan(const Duration(seconds: 60)));
+      expect(opt.budgetExceeded, isTrue);
+      // 时间预算（布线优化）：预算在候选轮次之间检查，而大网表单趟同步
+      // A* 本身就要一分钟以上（页面因此对大电路走后台 isolate），所以这里
+      // 用一个中等规模子模块 + 极小预算验证「超预算立即返回当前最优」。
+      final mid = r.netlist!.modules.entries
+          .firstWhere((e) => e.key.contains('band_par_post_full'))
+          .value;
+      final model = buildNetlistDiagramModel(mid);
+      final initial = routeNetlistWires(model.flattened(), model.canvasSize);
+      sw
+        ..reset()
+        ..start();
+      final ropt = await optimizeNetlistRouting(
+        model.flattened(),
+        model.canvasSize,
+        initial: initial,
+        parallelMinWires: 1 << 30, // 强制串行候选路径（isolate 只给大图用）
+        timeBudget: const Duration(microseconds: 1),
+      );
+      expect(sw.elapsed, lessThan(const Duration(seconds: 90)));
+      expect(ropt.budgetExceeded, isTrue);
+    }, timeout: const Timeout(Duration(minutes: 4)));
+
+    test('func_fixed 展开视图：子层走线不越出容器框', () async {
+      final yosys = detectYosys();
+      if (yosys == null) {
+        markTestSkipped('未检测到 yosys（tools/yosys 或 PATH）');
+        return;
+      }
+      final state = IspStudioState();
+      addTearDown(state.dispose);
+      final mb = state.graph.addNode('multi_band_eq', 0, 0);
+      state.graph.nodes[mb]!.paramValues['codegenMode'] = 'func_fixed';
+      state.graph.nodes[mb]!.paramValues['band_count'] = 2;
+      state.graph.nodes[mb]!.paramValues['b0_dh'] = 30.0;
+      state.graph.nodes[mb]!.paramValues['b1_dh'] = -20.0;
+      state.graph.groups.add(IspNodeGroup('g1', {mb}, name: 'mbfx'));
+      final files = buildGroupIpFiles(state.graph, state.graph.groups.single,
+          const IpGenOptions(vendor: IpVendor.vivado));
+      final top = schematicTopModule(files, vendorHint: 'vivado');
+      final r = await extractSchematicNetlist(files, topName: top);
+      expect(r.success, isTrue, reason: r.log);
+      final nl = r.netlist!;
+      final mod = nl.module(top)!;
+      // 顶层原位展开 u_core（层级图形态）+ 后台 isolate 布线（生产口径）。
+      final model = buildNetlistDiagramModel(mod,
+          layout: NlLayoutAlgorithm.layered,
+          expanded: {mod.cells.single.name},
+          resolve: (t) => nl.resolveInstance(t) ?? nl.module(t));
+      final levels = model.flattened();
+      expect(levels.length, greaterThan(1));
+      final rr = await routeNlLevelsInIsolate(levels);
+      // 子层走线（绝对坐标 = 局部 + 层 offset）须在容器块包围盒内。
+      final container = model.blocks.firstWhere((b) => b.sub != null);
+      final boxMin = container.boxOrigin;
+      final boxMax = container.boxOrigin +
+          Offset(container.boxSize.width, container.boxSize.height);
+      var spill = 0;
+      for (var li = 1; li < levels.length; li++) {
+        for (final w in levels[li].wires) {
+          for (final (a, b) in rr.segments[w] ?? const <(Offset, Offset)>[]) {
+            for (final p in [a, b]) {
+              final abs = p + levels[li].offset;
+              if (abs.dx < boxMin.dx - 1 ||
+                  abs.dy < boxMin.dy - 1 ||
+                  abs.dx > boxMax.dx + 1 ||
+                  abs.dy > boxMax.dy + 1) {
+                spill++;
+              }
+            }
+          }
+        }
+      }
+      expect(spill, 0, reason: '子层走线不得越出容器框');
+    }, timeout: const Timeout(Duration(minutes: 3)));
   });
 }

@@ -168,6 +168,24 @@ int isp_adjust_rgb(uint16_t *rgb, int w, int h, int max_value,
   return ISP_OK;
 }
 
+int isp_adjust_q14_gain3_apply(uint16_t *rgb, int w, int h, int max_value,
+                               const int32_t gains_q14[3]) {
+  const int rc = isp_adjust_check(rgb, w, h, max_value);
+  const size_t n = (size_t)w * (size_t)h;
+  size_t px;
+  if (rc != ISP_OK) return rc;
+  if (gains_q14 == NULL) return ISP_ERR_ARG;
+  for (px = 0; px < n; px++) {
+    uint16_t *const p = rgb + px * 3;
+    int c;
+    for (c = 0; c < 3; c++) {
+      const int64_t v = ((int64_t)p[c] * gains_q14[c] + 8192) >> 14;
+      p[c] = (uint16_t)(v < 0 ? 0 : (v > max_value ? max_value : v));
+    }
+  }
+  return ISP_OK;
+}
+
 int isp_adjust_yuv(uint16_t *yuv, int w, int h, int max_value,
                    double y_gain, double u_gain, double v_gain) {
   const int rc = isp_adjust_check(yuv, w, h, max_value);
@@ -291,6 +309,78 @@ int isp_adjust_bright_contrast(uint16_t *data, int w, int h,
       for (px = 0; px < n; px++) {
         data[px] =
             (uint16_t)isp_adjust_bc_map(data[px], bs, base, gs, max_value);
+      }
+      return ISP_OK;
+  }
+}
+
+static int64_t isp_adjust_bc_map_q14_raw(int y, int32_t bs_q14,
+                                          int32_t base_q14, int32_t gs_q14,
+                                          int max_value) {
+  int64_t v = ((int64_t)y * bs_q14 - (int64_t)base_q14 * max_value) << 16;
+  v = (v * gs_q14 + (v >= 0 ? (1LL << 29) : -(1LL << 29))) >> 14;
+  return v + ((int64_t)base_q14 * max_value << 16);
+}
+
+static int isp_adjust_bc_map_q14(int y, int32_t bs_q14, int32_t base_q14,
+                                 int32_t gs_q14, int max_value) {
+  const int64_t v = isp_adjust_bc_map_q14_raw(y, bs_q14, base_q14, gs_q14,
+                                               max_value);
+  if (v <= 0) return 0;
+  if (v >= ((int64_t)max_value << 30)) return max_value;
+  return (int)((v + (1LL << 29)) >> 30);
+}
+
+int isp_adjust_bright_contrast_q14(uint16_t *data, int w, int h,
+                                   IspAdjustFormat format, int max_value,
+                                   int32_t bright_q14, int32_t baseline_q14,
+                                   int32_t gain_q14) {
+  const int rc = isp_adjust_check(data, w, h, max_value);
+  const size_t n = (size_t)w * (size_t)h;
+  size_t px;
+  if (rc != ISP_OK) return rc;
+  switch (format) {
+    case ISP_ADJ_FMT_RGB:
+      for (px = 0; px < n; px++) {
+        uint16_t *const p = data + px * 3;
+        const int64_t y_q30 =
+            (313524LL * p[0] + 615514LL * p[1] + 119538LL * p[2]) << 10;
+        const int yr = (int)((y_q30 + (1LL << 29)) >> 30);
+        int64_t adj_q30 = isp_adjust_bc_map_q14_raw(
+            yr, bright_q14, baseline_q14, gain_q14, max_value);
+        int c;
+        adj_q30 = ISP_MAX(0, ISP_MIN(adj_q30, (int64_t)max_value << 30));
+        if (y_q30 == 0) continue;
+        for (c = 0; c < 3; c++) {
+          const int64_t num = (int64_t)p[c] * adj_q30;
+          if (num <= 0) {
+            p[c] = 0;
+          } else if (num >= max_value * y_q30) {
+            p[c] = (uint16_t)max_value;
+          } else {
+            p[c] = (uint16_t)((num + (y_q30 >> 1)) / y_q30);
+          }
+        }
+      }
+      return ISP_OK;
+    case ISP_ADJ_FMT_YUV:
+      for (px = 0; px < n; px++) {
+        uint16_t *const p = data + px * 3;
+        p[0] = (uint16_t)isp_adjust_bc_map_q14(
+            p[0], bright_q14, baseline_q14, gain_q14, max_value);
+      }
+      return ISP_OK;
+    case ISP_ADJ_FMT_HSL:
+      for (px = 0; px < n; px++) {
+        uint16_t *const p = data + px * 3;
+        p[2] = (uint16_t)isp_adjust_bc_map_q14(
+            p[2], bright_q14, baseline_q14, gain_q14, max_value);
+      }
+      return ISP_OK;
+    default:
+      for (px = 0; px < n; px++) {
+        data[px] = (uint16_t)isp_adjust_bc_map_q14(
+            data[px], bright_q14, baseline_q14, gain_q14, max_value);
       }
       return ISP_OK;
   }

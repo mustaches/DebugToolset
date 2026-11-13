@@ -59,6 +59,94 @@
 #define ISP_CSC_CV_G_709 (-29759)/* -0.4542 * 65536 */
 #define ISP_CSC_CV_B_709 (-3009) /* -0.0458 * 65536 */
 
+/* BT.2020 正向（convertRgbToYuvCsc 的 standard == 'bt2020' 分支） */
+#define ISP_CSC_CY_R_2020 17216 /* 0.2627 * 65536 */
+#define ISP_CSC_CY_G_2020 44433 /* 0.6780 * 65536 */
+#define ISP_CSC_CY_B_2020 3886  /* 0.0593 * 65536 */
+#define ISP_CSC_CU_R_2020 (-9151) /* -0.13963 * 65536 */
+#define ISP_CSC_CU_G_2020 (-23617)/* -0.36037 * 65536 */
+#define ISP_CSC_CV_G_2020 (-30133)/* -0.45979 * 65536 */
+#define ISP_CSC_CV_B_2020 (-2635) /* -0.04021 * 65536 */
+
+/* 逆变换：BT.709 / BT.2020（yuvToRgb 的 standard 分支） */
+#define ISP_CSC_CR_V_709 103206   /* 1.5748  * 65536 */
+#define ISP_CSC_CG_U_709 (-12276)/* -0.1873 * 65536 */
+#define ISP_CSC_CG_V_709 (-30679)/* -0.4681 * 65536 */
+#define ISP_CSC_CB_U_709 121609   /* 1.8556  * 65536 */
+#define ISP_CSC_CR_V_2020 96639   /* 1.4746  * 65536 */
+#define ISP_CSC_CG_U_2020 (-10784)/* -0.1646 * 65536 */
+#define ISP_CSC_CG_V_2020 (-37444)/* -0.5714 * 65536 */
+#define ISP_CSC_CB_U_2020 123299  /* 1.8814  * 65536 */
+
+/**
+ * @brief YUV 矩阵标准（节点属性 standard，默认 bt2020）。
+ *
+ * Dart 来源：convertRgbToYuvCsc / yuvToRgb 的 `standard` 参数。
+ */
+typedef enum IspCscStandard {
+  /** BT.601（系数 0.299/0.587/0.114 等）。 */
+  ISP_CSC_BT601 = 0,
+  /** BT.709（系数 0.2126/0.7152/0.0722 等）。 */
+  ISP_CSC_BT709 = 1,
+  /** BT.2020（系数 0.2627/0.6780/0.0593 等）。 */
+  ISP_CSC_BT2020 = 2
+} IspCscStandard;
+
+/**
+ * @brief YUV 量化范围（节点属性 range，默认 full）。只有 RGB→YUV 使用。
+ */
+typedef enum IspCscRange {
+  /** 全范围：Y/U/V ∈ [0, max_value]。 */
+  ISP_CSC_RANGE_FULL = 0,
+  /** 限制范围：Y 压缩到 16..235/max_value*16/255 区间，U/V 按 224/255 压缩。 */
+  ISP_CSC_RANGE_LIMITED = 1
+} IspCscRange;
+
+#define ISP_CSC_STD_601 ISP_CSC_BT601
+#define ISP_CSC_STD_709 ISP_CSC_BT709
+#define ISP_CSC_STD_2020 ISP_CSC_BT2020
+
+/** @brief 按 standard 选 RGB→YUV 的 9 个 Q16 系数。 */
+static inline void isp_csc_rgb_to_yuv_coef(int standard, int *cyR, int *cyG,
+                                           int *cyB, int *cuR, int *cuG,
+                                           int *cuB, int *cvR, int *cvG,
+                                           int *cvB) {
+  if (standard == ISP_CSC_STD_2020) {
+    *cyR = ISP_CSC_CY_R_2020; *cyG = ISP_CSC_CY_G_2020;
+    *cyB = ISP_CSC_CY_B_2020; *cuR = ISP_CSC_CU_R_2020;
+    *cuG = ISP_CSC_CU_G_2020; *cuB = ISP_CSC_CU_B_601;
+    *cvR = ISP_CSC_CV_R_601;  *cvG = ISP_CSC_CV_G_2020;
+    *cvB = ISP_CSC_CV_B_2020;
+  } else if (standard == ISP_CSC_STD_709) {
+    *cyR = ISP_CSC_CY_R_709; *cyG = ISP_CSC_CY_G_709;
+    *cyB = ISP_CSC_CY_B_709; *cuR = ISP_CSC_CU_R_709;
+    *cuG = ISP_CSC_CU_G_709; *cuB = ISP_CSC_CU_B_601;
+    *cvR = ISP_CSC_CV_R_601;  *cvG = ISP_CSC_CV_G_709;
+    *cvB = ISP_CSC_CV_B_709;
+  } else {
+    *cyR = ISP_CSC_CY_R_601; *cyG = ISP_CSC_CY_G_601;
+    *cyB = ISP_CSC_CY_B_601; *cuR = ISP_CSC_CU_R_601;
+    *cuG = ISP_CSC_CU_G_601; *cuB = ISP_CSC_CU_B_601;
+    *cvR = ISP_CSC_CV_R_601;  *cvG = ISP_CSC_CV_G_601;
+    *cvB = ISP_CSC_CV_B_601;
+  }
+}
+
+/** @brief 按 standard 选 YUV→RGB 的 4 个 Q16 系数。 */
+static inline void isp_csc_yuv_to_rgb_coef(int standard, int *crV, int *cgU,
+                                           int *cgV, int *cbU) {
+  if (standard == ISP_CSC_STD_2020) {
+    *crV = ISP_CSC_CR_V_2020; *cgU = ISP_CSC_CG_U_2020;
+    *cgV = ISP_CSC_CG_V_2020; *cbU = ISP_CSC_CB_U_2020;
+  } else if (standard == ISP_CSC_STD_709) {
+    *crV = ISP_CSC_CR_V_709; *cgU = ISP_CSC_CG_U_709;
+    *cgV = ISP_CSC_CG_V_709; *cbU = ISP_CSC_CB_U_709;
+  } else {
+    *crV = ISP_CSC_CR_V; *cgU = ISP_CSC_CG_U;
+    *cgV = ISP_CSC_CG_V; *cbU = ISP_CSC_CB_U;
+  }
+}
+
 /* ---------------------------------------------------------------------------
  * 内部小工具（static inline：未引用的工具不产生符号，跨编译单元无冲突）
  * ------------------------------------------------------------------------- */
@@ -205,14 +293,17 @@ static inline void isp_csc_hsl_to_rgb_px(int hv, int sv, int lv, int max_value,
  * 乘积用 int64_t 累加（91881 * 32767 ≈ 3.0e9 已超 int32），`>> 16`
  * 为算术右移，与 Dart 64 位 int 的移位语义一致。
  */
-static inline void isp_csc_yuv_to_rgb_px(int y, int u_in, int v_in, int half,
-                                         int max_value, int *ri, int *gi, int *bi) {
+static inline void isp_csc_yuv_to_rgb_px_s(int y, int u_in, int v_in, int half,
+                                           int max_value, int standard,
+                                           int *ri, int *gi, int *bi) {
+  int crV, cgU, cgV, cbU;
   const int u = u_in - half;
   const int v = v_in - half;
-  const int r = y + (int)(((int64_t)ISP_CSC_CR_V * v + 32768) >> 16);
-  const int g =
-      y + (int)(((int64_t)ISP_CSC_CG_U * u + (int64_t)ISP_CSC_CG_V * v + 32768) >> 16);
-  const int b = y + (int)(((int64_t)ISP_CSC_CB_U * u + 32768) >> 16);
+  int r, g, b;
+  isp_csc_yuv_to_rgb_coef(standard, &crV, &cgU, &cgV, &cbU);
+  r = y + (int)(((int64_t)crV * v + 32768) >> 16);
+  g = y + (int)(((int64_t)cgU * u + (int64_t)cgV * v + 32768) >> 16);
+  b = y + (int)(((int64_t)cbU * u + 32768) >> 16);
   *ri = isp_clamp_int(r, 0, max_value);
   *gi = isp_clamp_int(g, 0, max_value);
   *bi = isp_clamp_int(b, 0, max_value);
@@ -221,14 +312,16 @@ static inline void isp_csc_yuv_to_rgb_px(int y, int u_in, int v_in, int half,
 /**
  * @brief 单像素 RGB→YUV 定点公式（Dart `rgbToYuv` 的循环体，BT.601 全范围）。
  */
-static inline void isp_csc_rgb_to_yuv_px(int r, int g, int b, int half, int max_value,
-                                         uint16_t *out) {
-  const int y = (int)(((int64_t)ISP_CSC_CY_R_601 * r + (int64_t)ISP_CSC_CY_G_601 * g +
-                       (int64_t)ISP_CSC_CY_B_601 * b + 32768) >> 16);
-  const int u = (int)(((int64_t)ISP_CSC_CU_R_601 * r + (int64_t)ISP_CSC_CU_G_601 * g +
-                       (int64_t)ISP_CSC_CU_B_601 * b + 32768) >> 16) + half;
-  const int v = (int)(((int64_t)ISP_CSC_CV_R_601 * r + (int64_t)ISP_CSC_CV_G_601 * g +
-                       (int64_t)ISP_CSC_CV_B_601 * b + 32768) >> 16) + half;
+static inline void isp_csc_rgb_to_yuv_px_s(int r, int g, int b, int half,
+                                           int max_value, int standard,
+                                           uint16_t *out) {
+  int cyR, cyG, cyB, cuR, cuG, cuB, cvR, cvG, cvB;
+  int y, u, v;
+  isp_csc_rgb_to_yuv_coef(standard, &cyR, &cyG, &cyB, &cuR, &cuG, &cuB, &cvR,
+                          &cvG, &cvB);
+  y = (int)(((int64_t)cyR * r + (int64_t)cyG * g + (int64_t)cyB * b + 32768) >> 16);
+  u = (int)(((int64_t)cuR * r + (int64_t)cuG * g + (int64_t)cuB * b + 32768) >> 16) + half;
+  v = (int)(((int64_t)cvR * r + (int64_t)cvG * g + (int64_t)cvB * b + 32768) >> 16) + half;
   out[0] = isp_clamp_u16(y, max_value);
   out[1] = isp_clamp_u16(u, max_value);
   out[2] = isp_clamp_u16(v, max_value);

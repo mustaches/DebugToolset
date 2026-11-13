@@ -26,13 +26,14 @@ const _vuiLieBanner = '''
 
 VideoInfo _info({double fps = 30, double tbr = 0, String pixFmt = ''}) =>
     VideoInfo(
-        width: 3840,
-        height: 2160,
-        fps: fps,
-        frameCount: 27000,
-        hasAudio: false,
-        tbr: tbr,
-        pixFmt: pixFmt);
+      width: 3840,
+      height: 2160,
+      fps: fps,
+      frameCount: 27000,
+      hasAudio: false,
+      tbr: tbr,
+      pixFmt: pixFmt,
+    );
 
 void main() {
   group('parseColorTransfer / parseColorMatrix', () {
@@ -44,6 +45,34 @@ void main() {
       expect(parseColorMatrix(_pqBanner), 2); // bt2020
       expect(parseColorMatrix(_sdr709Banner), 1); // bt709
       expect(parseColorMatrix('Video: mpeg4, yuv420p, 720x576'), 0); // 601
+    });
+  });
+
+  group('parseDisplayRotation（交付帧显示旋转）', () {
+    test('识别正负 90/270° 并归一化，无标记时为 0', () {
+      expect(
+        parseDisplayRotation(
+          'Side data:\n      Display Matrix: rotation of -90.00 degrees',
+        ),
+        270,
+      );
+      expect(
+        parseDisplayRotation(
+          'Side data:\n      Display Matrix: rotation of 90.00 degrees',
+        ),
+        90,
+      );
+      expect(
+        parseDisplayRotation(
+          'Side data:\n      Display Matrix: rotation of -270.00 degrees',
+        ),
+        90,
+      );
+      expect(
+        parseDisplayRotation('Display Matrix: rotation of 180.00 degrees'),
+        180,
+      );
+      expect(parseDisplayRotation('no display matrix'), 0);
     });
   });
 
@@ -63,12 +92,13 @@ void main() {
 
   group('VideoInfo.isHdr', () {
     VideoInfo info(int transfer) => VideoInfo(
-        width: 16,
-        height: 16,
-        fps: 25,
-        frameCount: 1,
-        hasAudio: false,
-        colorTransfer: transfer);
+      width: 16,
+      height: 16,
+      fps: 25,
+      frameCount: 1,
+      hasAudio: false,
+      colorTransfer: transfer,
+    );
 
     test('PQ/HLG 为 HDR，SDR 否', () {
       expect(info(1).isHdr, isTrue);
@@ -80,11 +110,12 @@ void main() {
   group('buildDecodeVf', () {
     test('HDR：rgba 档插入完整 tonemap 链', () {
       final vf = buildDecodeVf(
-          pixelFormat: 'rgba',
-          downsampleFactor: 1,
-          outWidth: 3840,
-          outHeight: 2160,
-          isHdr: true);
+        pixelFormat: 'rgba',
+        downsampleFactor: 1,
+        outWidth: 3840,
+        outHeight: 2160,
+        isHdr: true,
+      );
       expect(vf, kHdrTonemapFilter);
       expect(vf, contains('zscale=transfer=linear'));
       expect(vf, contains('tonemap=hable:desat=0'));
@@ -95,110 +126,132 @@ void main() {
     test('HDR：降采样/444/平面直出各形态链式拼接', () {
       // rgba + 降采样：tonemap 链在前、scale 在后。
       expect(
-          buildDecodeVf(
-              pixelFormat: 'rgba',
-              downsampleFactor: 2,
-              outWidth: 1920,
-              outHeight: 1080,
-              isHdr: true),
-          '$kHdrTonemapFilter,scale=1920:1080');
+        buildDecodeVf(
+          pixelFormat: 'rgba',
+          downsampleFactor: 2,
+          outWidth: 1920,
+          outHeight: 1080,
+          isHdr: true,
+        ),
+        '$kHdrTonemapFilter,scale=1920:1080',
+      );
       // yuv444p：tonemap 链在前、范围扩展在后。
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv444p',
-              downsampleFactor: 1,
-              outWidth: 3840,
-              outHeight: 2160,
-              isHdr: true),
-          '$kHdrTonemapFilter,scale=out_range=pc');
+        buildDecodeVf(
+          pixelFormat: 'yuv444p',
+          downsampleFactor: 1,
+          outWidth: 3840,
+          outHeight: 2160,
+          isHdr: true,
+        ),
+        '$kHdrTonemapFilter,scale=out_range=pc',
+      );
       // yuv420p 平面直出：HDR 也必须 tonemap（否则发灰发暗）。
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv420p',
-              downsampleFactor: 1,
-              outWidth: 3840,
-              outHeight: 2160,
-              isHdr: true),
-          kHdrTonemapFilter);
+        buildDecodeVf(
+          pixelFormat: 'yuv420p',
+          downsampleFactor: 1,
+          outWidth: 3840,
+          outHeight: 2160,
+          isHdr: true,
+        ),
+        kHdrTonemapFilter,
+      );
     });
 
     test('SDR：滤镜链零改动（回归红线）', () {
       expect(
-          buildDecodeVf(
-              pixelFormat: 'rgba',
-              downsampleFactor: 1,
-              outWidth: 1920,
-              outHeight: 1080,
-              isHdr: false),
-          isNull);
+        buildDecodeVf(
+          pixelFormat: 'rgba',
+          downsampleFactor: 1,
+          outWidth: 1920,
+          outHeight: 1080,
+          isHdr: false,
+        ),
+        isNull,
+      );
       expect(
-          buildDecodeVf(
-              pixelFormat: 'rgba',
-              downsampleFactor: 2,
-              outWidth: 960,
-              outHeight: 540,
-              isHdr: false),
-          'scale=960:540');
+        buildDecodeVf(
+          pixelFormat: 'rgba',
+          downsampleFactor: 2,
+          outWidth: 960,
+          outHeight: 540,
+          isHdr: false,
+        ),
+        'scale=960:540',
+      );
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv420p',
-              downsampleFactor: 1,
-              outWidth: 1920,
-              outHeight: 1080,
-              isHdr: false),
-          isNull);
+        buildDecodeVf(
+          pixelFormat: 'yuv420p',
+          downsampleFactor: 1,
+          outWidth: 1920,
+          outHeight: 1080,
+          isHdr: false,
+        ),
+        isNull,
+      );
       // yuv420p 降采样（平面直连的显示自适应降档）：插 scale。
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv420p',
-              downsampleFactor: 2,
-              outWidth: 960,
-              outHeight: 540,
-              isHdr: false),
-          'scale=960:540');
+        buildDecodeVf(
+          pixelFormat: 'yuv420p',
+          downsampleFactor: 2,
+          outWidth: 960,
+          outHeight: 540,
+          isHdr: false,
+        ),
+        'scale=960:540',
+      );
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv420p',
-              downsampleFactor: 2,
-              outWidth: 960,
-              outHeight: 540,
-              isHdr: true),
-          // HDR 降档：先 scale 后 tonemap（计算量按面积缩）。
-          'scale=960:540,$kHdrTonemapFilter');
+        buildDecodeVf(
+          pixelFormat: 'yuv420p',
+          downsampleFactor: 2,
+          outWidth: 960,
+          outHeight: 540,
+          isHdr: true,
+        ),
+        // HDR 降档：先 scale 后 tonemap（计算量按面积缩）。
+        'scale=960:540,$kHdrTonemapFilter',
+      );
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv444p',
-              downsampleFactor: 1,
-              outWidth: 1920,
-              outHeight: 1080,
-              isHdr: false),
-          'scale=out_range=pc');
+        buildDecodeVf(
+          pixelFormat: 'yuv444p',
+          downsampleFactor: 1,
+          outWidth: 1920,
+          outHeight: 1080,
+          isHdr: false,
+        ),
+        'scale=out_range=pc',
+      );
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv444p',
-              downsampleFactor: 2,
-              outWidth: 960,
-              outHeight: 540,
-              isHdr: false),
-          'scale=960:540:out_range=pc');
+        buildDecodeVf(
+          pixelFormat: 'yuv444p',
+          downsampleFactor: 2,
+          outWidth: 960,
+          outHeight: 540,
+          isHdr: false,
+        ),
+        'scale=960:540:out_range=pc',
+      );
     });
 
     test('HDR + toneMapHdr=false：SDR 直解（与 SDR 同形态，无 tonemap）', () {
       for (final fmt in ['rgba', 'yuv420p', 'yuv444p']) {
         for (final factor in [1, 2]) {
           final direct = buildDecodeVf(
-              pixelFormat: fmt,
-              downsampleFactor: factor,
-              outWidth: 960,
-              outHeight: 540,
-              isHdr: true,
-              toneMapHdr: false);
+            pixelFormat: fmt,
+            downsampleFactor: factor,
+            outWidth: 960,
+            outHeight: 540,
+            isHdr: true,
+            toneMapHdr: false,
+          );
           final sdr = buildDecodeVf(
-              pixelFormat: fmt,
-              downsampleFactor: factor,
-              outWidth: 960,
-              outHeight: 540,
-              isHdr: false);
+            pixelFormat: fmt,
+            downsampleFactor: factor,
+            outWidth: 960,
+            outHeight: 540,
+            isHdr: false,
+          );
           expect(direct, sdr, reason: '$fmt factor=$factor');
           if (direct != null) expect(direct, isNot(contains('tonemap')));
         }
@@ -208,13 +261,15 @@ void main() {
     test('HDR + toneMapHdr=true（缺省）：完整 tonemap 链', () {
       // 缺省参数即 true。
       expect(
-          buildDecodeVf(
-              pixelFormat: 'yuv420p',
-              downsampleFactor: 1,
-              outWidth: 3840,
-              outHeight: 2160,
-              isHdr: true),
-          kHdrTonemapFilter);
+        buildDecodeVf(
+          pixelFormat: 'yuv420p',
+          downsampleFactor: 1,
+          outWidth: 3840,
+          outHeight: 2160,
+          isHdr: true,
+        ),
+        kHdrTonemapFilter,
+      );
     });
   });
 
@@ -229,10 +284,11 @@ void main() {
       expect(vfAt, lessThan(hdr.indexOf('-f')));
 
       expect(videoDecodeArgs(pixelFormat: 'rgba'), isNot(contains('-vf')));
-      expect(videoDecodeArgs(pixelFormat: 'yuv420p', isHdr: true),
-          contains('-vf'));
-      expect(videoDecodeArgs(pixelFormat: 'yuv420p'),
-          isNot(contains('-vf')));
+      expect(
+        videoDecodeArgs(pixelFormat: 'yuv420p', isHdr: true),
+        contains('-vf'),
+      );
+      expect(videoDecodeArgs(pixelFormat: 'yuv420p'), isNot(contains('-vf')));
     });
   });
 
@@ -259,19 +315,27 @@ void main() {
     });
 
     test('正常片源：无病灶', () {
-      expect(videoPlaybackIssues(_info(fps: 30, tbr: 30), softwareDecode: false),
-          isEmpty);
+      expect(
+        videoPlaybackIssues(_info(fps: 30, tbr: 30), softwareDecode: false),
+        isEmpty,
+      );
       // tbr 未知（0）不误报。
-      expect(videoPlaybackIssues(_info(fps: 59.94), softwareDecode: false),
-          isEmpty);
+      expect(
+        videoPlaybackIssues(_info(fps: 59.94), softwareDecode: false),
+        isEmpty,
+      );
       // 偏差 ≤3% 不误报（29.97 vs 30）。
-      expect(videoPlaybackIssues(_info(fps: 30, tbr: 29.97), softwareDecode: false),
-          isEmpty);
+      expect(
+        videoPlaybackIssues(_info(fps: 30, tbr: 29.97), softwareDecode: false),
+        isEmpty,
+      );
     });
 
     test('VUI 虚标：报帧率标称异常并说明已按实际帧率播放', () {
-      final issues =
-          videoPlaybackIssues(_info(fps: 30, tbr: 60), softwareDecode: false);
+      final issues = videoPlaybackIssues(
+        _info(fps: 30, tbr: 60),
+        softwareDecode: false,
+      );
       expect(issues.length, 1);
       expect(issues.single.$1, contains('VUI'));
       expect(issues.single.$1, contains('60'));
@@ -279,16 +343,19 @@ void main() {
     });
 
     test('软解回退：报无硬件解码支持', () {
-      final issues =
-          videoPlaybackIssues(_info(fps: 30, tbr: 30), softwareDecode: true);
+      final issues = videoPlaybackIssues(
+        _info(fps: 30, tbr: 30),
+        softwareDecode: true,
+      );
       expect(issues.length, 1);
       expect(issues.single.$1, contains('软件解码'));
     });
 
     test('格式预判软解：yuv422p10le 超出 NVDEC（worker 不上报也报）', () {
       final issues = videoPlaybackIssues(
-          _info(fps: 30, tbr: 30, pixFmt: 'yuv422p10le'),
-          softwareDecode: false);
+        _info(fps: 30, tbr: 30, pixFmt: 'yuv422p10le'),
+        softwareDecode: false,
+      );
       expect(issues.length, 1);
       expect(issues.single.$1, contains('软件解码'));
       expect(issues.single.$1, contains('yuv422p10le'));
@@ -296,8 +363,9 @@ void main() {
 
     test('手术录像形态（虚标 + 4:2:2 软解）：两条病灶', () {
       final issues = videoPlaybackIssues(
-          _info(fps: 30, tbr: 60, pixFmt: 'yuv422p10le'),
-          softwareDecode: false);
+        _info(fps: 30, tbr: 60, pixFmt: 'yuv422p10le'),
+        softwareDecode: false,
+      );
       expect(issues.length, 2);
     });
   });

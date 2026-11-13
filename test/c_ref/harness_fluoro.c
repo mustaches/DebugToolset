@@ -257,6 +257,41 @@ int op_fluoro_fusion(CaseIO *io) {
  * 伪彩 LUT 查表（LUT 模式）：in0=mono 帧（w*h u16），in1/in2/in3 =
  * lutR/lutG/lutB（各 max_value+1 个 u16，Dart 建表经输入文件传入）。
  */
+int op_pseudo_color_q14(CaseIO *io) {
+  const int w = case_param_int(io, "width", 0);
+  const int h = case_param_int(io, "height", 0);
+  const char *name = case_param_str(io, "colormap", "green");
+  const double gain = case_param_double(io, "gain", 1.0);
+  const int max_value = case_param_int(io, "maxValue", 1023);
+  const size_t len = (size_t)w * (size_t)h;
+  IspFluoroColormap cmap;
+  uint16_t *mono, *out;
+  int rc;
+  if (w <= 0 || h <= 0) return ISP_ERR_SIZE;
+  if (strcmp(name, "green") == 0) {
+    cmap = ISP_FLUORO_CMAP_GREEN;
+  } else if (strcmp(name, "magenta") == 0) {
+    cmap = ISP_FLUORO_CMAP_MAGENTA;
+  } else if (strcmp(name, "hot") == 0) {
+    cmap = ISP_FLUORO_CMAP_HOT;
+  } else {
+    return ISP_ERR_ARG;
+  }
+  mono = case_load_in(io, 0, len);
+  out = (uint16_t *)malloc(len * 3 * sizeof(uint16_t));
+  if (mono == NULL || out == NULL) {
+    free(mono);
+    free(out);
+    return ISP_ERR_ARG;
+  }
+  rc = isp_fluoro_pseudo_color_q14_apply(
+      mono, out, w, h, cmap, (int32_t)llround(gain * 16384.0), max_value);
+  if (rc == ISP_OK) rc = case_write_out(io, 0, out, len * 3);
+  free(mono);
+  free(out);
+  return rc;
+}
+
 int op_pseudo_color_lut_apply(CaseIO *io) {
   const int w = case_param_int(io, "width", 0);
   const int h = case_param_int(io, "height", 0);

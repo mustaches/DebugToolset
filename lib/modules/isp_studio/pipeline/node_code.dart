@@ -28,12 +28,20 @@ class NodeCodeSeg {
 const Map<String, List<NodeCodeSeg>> nodeCodeSpec = {
   // ---- RAW / 图像 / 视频源 ----
   'bayer_source': [
-    NodeCodeSeg('isp_kernels.dart',
-        ['BayerPattern', 'bayerMaxValue', 'frameByteSize', 'unpackBayer']),
+    NodeCodeSeg('isp_kernels.dart', [
+      'BayerPattern',
+      'bayerMaxValue',
+      'frameByteSize',
+      'unpackBayer',
+    ]),
   ],
   'cis_bayer_rggb': [
-    NodeCodeSeg('isp_kernels.dart',
-        ['BayerPattern', 'bayerMaxValue', 'frameByteSize', 'unpackBayer']),
+    NodeCodeSeg('isp_kernels.dart', [
+      'BayerPattern',
+      'bayerMaxValue',
+      'frameByteSize',
+      'unpackBayer',
+    ]),
   ],
   'cis_rccb_rccg': [
     NodeCodeSeg('isp_kernels.dart', ['_rccbAt', '_rccgAt', 'unpackBayer']),
@@ -59,57 +67,126 @@ const Map<String, List<NodeCodeSeg>> nodeCodeSpec = {
     NodeCodeSeg('video_source.dart', ['decodeVideoFrameToRgb16']),
   ],
   // ---- RAW 域算子 ----
-  'black_level': [NodeCodeSeg('isp_kernels.dart', ['applyBlackLevel'])],
-  'dpc': [NodeCodeSeg('isp_kernels.dart', ['applyDpc'])],
-  'fpn': [NodeCodeSeg('isp_kernels.dart', ['applyFpn'])],
-  'lsc': [NodeCodeSeg('isp_kernels.dart', ['applyLsc'])],
-  'grgb_balance': [NodeCodeSeg('isp_kernels.dart', ['applyGrGbBalance'])],
-  'bayer_dnr': [NodeCodeSeg('isp_kernels.dart', ['applyBayerDenoise'])],
-  'highlight': [NodeCodeSeg('isp_kernels.dart', ['applyHighlightRecovery'])],
-  // ---- RGB/YUV/HSL 域算子 ----
-  'rgb_dnr': [NodeCodeSeg('isp_kernels.dart', ['applyRgbDenoise'])],
-  'sharpen': [NodeCodeSeg('isp_kernels.dart', ['applySharpen'])],
-  'gaussian_blur': [NodeCodeSeg('isp_kernels.dart', ['applyGaussianBlur'])],
-  'morphology': [NodeCodeSeg('isp_kernels.dart', ['applyMorphology'])],
-  'edge_extract': [NodeCodeSeg('isp_kernels.dart', ['extractHighFreq'])],
-  // ---- 色彩空间转换 ----
-  'csc_rgb2yuv': [NodeCodeSeg('isp_kernels.dart', ['convertRgbToYuvCsc'])],
-  'csc_rgb2hsl': [NodeCodeSeg('isp_kernels.dart', ['rgbToHsl'])],
-  'csc_yuv2rgb': [NodeCodeSeg('isp_kernels.dart', ['yuvToRgb'])],
-  'csc_yuv2hsl': [NodeCodeSeg('isp_kernels.dart', ['yuvToHsl'])],
-  'csc_hsl2rgb': [NodeCodeSeg('isp_kernels.dart', ['hslToRgb'])],
-  'csc_hsl2yuv': [NodeCodeSeg('isp_kernels.dart', ['hslToYuv'])],
-  // ---- 调节器 ----
-  'hsl_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustHsl'])],
-  'color_controller': [NodeCodeSeg('isp_kernels.dart', ['adjustHslBand'])],
-  'multi_band_eq': [
-    NodeCodeSeg('isp_kernels.dart', ['multiBandLuts', 'applyHslBandLuts'])
+  'black_level': [
+    NodeCodeSeg('isp_kernels.dart', ['applyBlackLevel']),
   ],
-  'rgb_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustRgb'])],
-  'yuv_debugger': [NodeCodeSeg('isp_kernels.dart', ['adjustYuv'])],
-  'sat_bright_adjuster': [NodeCodeSeg('isp_kernels.dart', ['adjustSatBright'])],
-  'bright_contrast_adjuster': [NodeCodeSeg('isp_kernels.dart', ['adjustBrightContrast'])],
+  'dpc': [
+    NodeCodeSeg('isp_kernels.dart', ['applyDpc']),
+  ],
+  'fpn': [
+    NodeCodeSeg('isp_kernels.dart', ['applyFpn']),
+  ],
+  'lsc': [
+    NodeCodeSeg('isp_kernels.dart', ['applyLsc']),
+  ],
+  'grgb_balance': [
+    NodeCodeSeg('isp_kernels.dart', ['applyGrGbBalance']),
+  ],
+  'bayer_dnr': [
+    NodeCodeSeg('isp_kernels.dart', ['applyBayerDenoise']),
+  ],
+  'highlight': [
+    NodeCodeSeg('isp_kernels.dart', ['applyHighlightRecovery']),
+  ],
+  // ---- RGB/YUV/HSL 域算子 ----
+  'rgb_dnr': [
+    NodeCodeSeg('isp_kernels.dart', ['applyRgbDenoise']),
+  ],
+  'sharpen': [
+    NodeCodeSeg('isp_kernels.dart', ['applySharpen']),
+  ],
+  'gaussian_blur': [
+    NodeCodeSeg('isp_kernels.dart', ['applyGaussianBlur']),
+  ],
+  'morphology': [
+    NodeCodeSeg('isp_kernels.dart', ['applyMorphology']),
+  ],
+  'edge_extract': [
+    NodeCodeSeg('isp_kernels.dart', ['extractHighFreq']),
+  ],
+  // ---- 色彩空间转换 ----
+  'csc_rgb2yuv': [
+    NodeCodeSeg('isp_kernels.dart', ['convertRgbToYuvCsc']),
+  ],
+  'csc_rgb2hsl': [
+    NodeCodeSeg('isp_kernels.dart', ['rgbToHsl']),
+  ],
+  'csc_yuv2rgb': [
+    NodeCodeSeg('isp_kernels.dart', ['yuvToRgb']),
+  ],
+  'csc_yuv2hsl': [
+    NodeCodeSeg('isp_kernels.dart', ['yuvToHsl']),
+  ],
+  'csc_hsl2rgb': [
+    NodeCodeSeg('isp_kernels.dart', ['hslToRgb']),
+  ],
+  'csc_hsl2yuv': [
+    NodeCodeSeg('isp_kernels.dart', ['hslToYuv']),
+  ],
+  // ---- 调节器 ----
+  'multi_band_eq': [
+    NodeCodeSeg('isp_kernels.dart', [
+      'multiBandLuts',
+      'applyHslBandLuts',
+      'multiBandComposeFx',
+      'applyMultiBandEqFx',
+    ]),
+  ],
+  'rgb_debugger': [
+    NodeCodeSeg('isp_kernels.dart', ['adjustRgb']),
+  ],
+  'yuv_debugger': [
+    NodeCodeSeg('isp_kernels.dart', ['adjustYuv']),
+  ],
+  'sat_bright_adjuster': [
+    NodeCodeSeg('isp_kernels.dart', ['adjustSatBright']),
+  ],
+  'bright_contrast_adjuster': [
+    NodeCodeSeg('isp_kernels.dart', ['adjustBrightContrast']),
+  ],
   'levels_curves': [
     NodeCodeSeg('levels_curve.dart', ['levelsCurveLut']),
     NodeCodeSeg('isp_kernels.dart', ['applyLevelsCurve']),
   ],
-  'color_balance': [NodeCodeSeg('isp_kernels.dart', ['applyColorBalance'])],
+  'color_balance': [
+    NodeCodeSeg('isp_kernels.dart', ['applyColorBalance']),
+  ],
   'color_temp_adjuster': [
     NodeCodeSeg('color_temp.dart', ['colorTempGains']),
     NodeCodeSeg('isp_kernels.dart', ['adjustRgb']),
   ],
   // ---- 荧光 mono 域 ----
-  'fluoro_leak': [NodeCodeSeg('isp_kernels.dart', ['applyFluoroLeak'])],
-  'fluoro_background': [NodeCodeSeg('isp_kernels.dart', ['applyFluoroBackground'])],
-  'fluoro_normalize': [NodeCodeSeg('isp_kernels.dart', ['applyFluoroNormalize'])],
-  'fluoro_temporal': [NodeCodeSeg('isp_kernels.dart', ['applyTemporalIir'])],
-  'pseudo_color': [NodeCodeSeg('isp_kernels.dart', ['monoPseudoColor'])],
-  'fluoro_fusion': [NodeCodeSeg('isp_kernels.dart', ['fuseFluorescence'])],
-  'multiplier': [NodeCodeSeg('isp_kernels.dart', ['multiplyMono'])],
-  'adder': [NodeCodeSeg('isp_kernels.dart', ['blendMono'])],
-  'blender': [NodeCodeSeg('isp_kernels.dart', ['blendMaskMono'])],
+  'fluoro_leak': [
+    NodeCodeSeg('isp_kernels.dart', ['applyFluoroLeak']),
+  ],
+  'fluoro_background': [
+    NodeCodeSeg('isp_kernels.dart', ['applyFluoroBackground']),
+  ],
+  'fluoro_normalize': [
+    NodeCodeSeg('isp_kernels.dart', ['applyFluoroNormalize']),
+  ],
+  'fluoro_temporal': [
+    NodeCodeSeg('isp_kernels.dart', ['applyTemporalIir']),
+  ],
+  'pseudo_color': [
+    NodeCodeSeg('isp_kernels.dart', ['monoPseudoColor']),
+  ],
+  'fluoro_fusion': [
+    NodeCodeSeg('isp_kernels.dart', ['fuseFluorescence']),
+  ],
+  'multiplier': [
+    NodeCodeSeg('isp_kernels.dart', ['multiplyMono']),
+  ],
+  'adder': [
+    NodeCodeSeg('isp_kernels.dart', ['blendMono']),
+  ],
+  'blender': [
+    NodeCodeSeg('isp_kernels.dart', ['blendMaskMono']),
+  ],
   // ---- 通路 ----
-  'mux4': [NodeCodeSeg('pipeline_runner.dart', ['case:mux4'])],
+  'mux4': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:mux4']),
+  ],
   'demosaic': [
     NodeCodeSeg('pipeline_runner.dart', ['case:demosaic']),
     NodeCodeSeg('isp_kernels.dart', [
@@ -127,28 +204,69 @@ const Map<String, List<NodeCodeSeg>> nodeCodeSpec = {
       'demosaicIgv',
     ]),
   ],
-  'white_balance': [NodeCodeSeg('isp_kernels.dart', ['autoWhiteBalanceGains', 'applyWhiteBalance'])],
-  'ccm': [NodeCodeSeg('isp_kernels.dart', ['applyCcm'])],
-  'gamma': [NodeCodeSeg('isp_kernels.dart', ['tonemapToRgba'])],
-  'ahe': [NodeCodeSeg('isp_kernels.dart', ['applyClahe', 'applyClaheMono'])],
-  'preview': [NodeCodeSeg('pipeline_runner.dart', ['case:preview'])],
+  'white_balance': [
+    NodeCodeSeg('isp_kernels.dart', [
+      'autoWhiteBalanceGains',
+      'applyWhiteBalance',
+    ]),
+  ],
+  'ccm': [
+    NodeCodeSeg('isp_kernels.dart', ['applyCcm']),
+  ],
+  'gamma': [
+    NodeCodeSeg('isp_kernels.dart', ['tonemapToRgba']),
+  ],
+  'ahe': [
+    NodeCodeSeg('isp_kernels.dart', ['applyClahe', 'applyClaheMono']),
+  ],
+  'preview': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:preview']),
+  ],
   // ---- 仪器 ----
-  'histogram': [NodeCodeSeg('instruments.dart', ['histogramRgb'])],
-  'waveform': [NodeCodeSeg('instruments.dart', ['waveformRgb'])],
-  'vectorscope': [NodeCodeSeg('instruments.dart', ['vectorscope'])],
-  'psnr': [NodeCodeSeg('instruments.dart', ['psnrRgba'])],
-  'ssim': [NodeCodeSeg('instruments.dart', ['ssimRgba'])],
-  'msssim': [NodeCodeSeg('instruments.dart', ['msssimRgba'])],
-  'fsim': [NodeCodeSeg('instruments.dart', ['fsimRgba'])],
-  'minmax': [NodeCodeSeg('instruments.dart', ['minmaxMono'])],
+  'histogram': [
+    NodeCodeSeg('instruments.dart', ['histogramRgb']),
+  ],
+  'waveform': [
+    NodeCodeSeg('instruments.dart', ['waveformRgb']),
+  ],
+  'vectorscope': [
+    NodeCodeSeg('instruments.dart', ['vectorscope']),
+  ],
+  'psnr': [
+    NodeCodeSeg('instruments.dart', ['psnrRgba']),
+  ],
+  'ssim': [
+    NodeCodeSeg('instruments.dart', ['ssimRgba']),
+  ],
+  'msssim': [
+    NodeCodeSeg('instruments.dart', ['msssimRgba']),
+  ],
+  'fsim': [
+    NodeCodeSeg('instruments.dart', ['fsimRgba']),
+  ],
+  'minmax': [
+    NodeCodeSeg('instruments.dart', ['minmaxMono']),
+  ],
   // ---- 无参考评价 ----
-  'niqe': [NodeCodeSeg('niqe.dart', ['niqeScore'])],
-  'brisque': [NodeCodeSeg('brisque.dart', ['brisqueScore'])],
-  'ilniqe': [NodeCodeSeg('ilniqe.dart', ['ilniqeScore'])],
-  'piqe': [NodeCodeSeg('piqe.dart', ['piqeScore'])],
+  'niqe': [
+    NodeCodeSeg('niqe.dart', ['niqeScore']),
+  ],
+  'brisque': [
+    NodeCodeSeg('brisque.dart', ['brisqueScore']),
+  ],
+  'ilniqe': [
+    NodeCodeSeg('ilniqe.dart', ['ilniqeScore']),
+  ],
+  'piqe': [
+    NodeCodeSeg('piqe.dart', ['piqeScore']),
+  ],
   // ---- 深度评价（进程内 Dart 实现）----
-  'lpips': [NodeCodeSeg('metrics/lpips_dart.dart', ['lpipsScore'])],
-  'dists': [NodeCodeSeg('metrics/dists_dart.dart', ['distsScore'])],
+  'lpips': [
+    NodeCodeSeg('metrics/lpips_dart.dart', ['lpipsScore']),
+  ],
+  'dists': [
+    NodeCodeSeg('metrics/dists_dart.dart', ['distsScore']),
+  ],
   'fid': [
     NodeCodeSeg('metrics/fid_kid_dart.dart', ['fidScoreFromFeatures']),
   ],
@@ -156,33 +274,65 @@ const Map<String, List<NodeCodeSeg>> nodeCodeSpec = {
     // KidGramAccum 是视频逐帧评分的增量核矩阵路径，与 kidCompute 并列入口。
     NodeCodeSeg('metrics/fid_kid_dart.dart', ['kidCompute', 'KidGramAccum']),
   ],
-  'musiq': [NodeCodeSeg('metrics/musiq_dart.dart', ['musiqScore'])],
+  'musiq': [
+    NodeCodeSeg('metrics/musiq_dart.dart', ['musiqScore']),
+  ],
   'clipiqa': [
-    NodeCodeSeg('metrics/clipiqa_dart.dart', ['clipiqaScore', 'clipiqaScoreFromFeat']),
+    NodeCodeSeg('metrics/clipiqa_dart.dart', [
+      'clipiqaScore',
+      'clipiqaScoreFromFeat',
+    ]),
   ],
   // ---- 输出 ----
   'image_output': [
     // 不含 encodeFrameInIsolate：它是后台导出时在 isolate 里重跑整条链
     // 的包装，若作为入口，闭包会把整个流水线（runChainFrame 全分发）
     // 拉进本节点页。
-    NodeCodeSeg('exporters.dart',
-        ['encodePngRgba', 'encodeJpgRgba', 'encodeJpgFfmpeg']),
+    NodeCodeSeg('exporters.dart', [
+      'encodePngRgba',
+      'encodeJpgRgba',
+      'encodeJpgFfmpeg',
+    ]),
   ],
-  'video_output': [NodeCodeSeg('exporters.dart', ['exportMp4'])],
+  'video_output': [
+    NodeCodeSeg('exporters.dart', ['exportMp4']),
+  ],
   // ---- 音频 ----
-  'audio_level': [NodeCodeSeg('audio_analysis.dart', ['audioLevels'])],
-  'audio_waveform': [NodeCodeSeg('audio_analysis.dart', ['audioWaveform'])],
+  'audio_level': [
+    NodeCodeSeg('audio_analysis.dart', ['audioLevels']),
+  ],
+  'audio_waveform': [
+    NodeCodeSeg('audio_analysis.dart', ['audioWaveform']),
+  ],
   'audio_eq': [
     // audioEqBandCenterHz 是界面标注频段中心频率的 API，与 audioEqBands 并列入口。
     NodeCodeSeg('audio_analysis.dart', ['audioEqBandCenterHz', 'audioEqBands']),
   ],
   // ---- 分路 / 合路 ----
-  'rgb_splitter': [NodeCodeSeg('pipeline_runner.dart', ['case:rgb_splitter'])],
-  'yuv_splitter': [NodeCodeSeg('pipeline_runner.dart', ['case:yuv_splitter'])],
-  'hsl_splitter': [NodeCodeSeg('pipeline_runner.dart', ['case:hsl_splitter'])],
-  'rgb_combiner': [NodeCodeSeg('pipeline_runner.dart', ['case:rgb_combiner'])],
-  'yuv_combiner': [NodeCodeSeg('pipeline_runner.dart', ['case:yuv_combiner'])],
-  'hsl_combiner': [NodeCodeSeg('pipeline_runner.dart', ['case:hsl_combiner'])],
+  'rgb_splitter': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:rgb_splitter']),
+  ],
+  'yuv_splitter': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:yuv_splitter']),
+  ],
+  'hsl_splitter': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:hsl_splitter']),
+  ],
+  'rgb_combiner': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:rgb_combiner']),
+  ],
+  'yuv_combiner': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:yuv_combiner']),
+  ],
+  'hsl_combiner': [
+    NodeCodeSeg('pipeline_runner.dart', ['case:hsl_combiner']),
+  ],
+  'format_converter': [
+    NodeCodeSeg('format_convert.dart', ['runFormatConvert']),
+  ],
+  'video_health_check': [
+    NodeCodeSeg('video_health.dart', ['runVideoHealthCheck']),
+  ],
 };
 
 /// pipeline/ 下源文件内容缓存（资产打包后内容只读，无需失效）。
@@ -202,12 +352,15 @@ const List<String> pipelineSourceFiles = [
   'c_def_index.dart',
   'code_variables.dart',
   'color_temp.dart',
+  'color_temp_hw.dart',
+  'csc_fixed.dart',
   'demosaic_advanced.dart',
   'dng_source.dart',
   'export_progress.dart',
   'export_segments.dart',
   'exporters.dart',
   'ffmpeg_pipe_win.dart',
+  'format_convert.dart',
   'frame3d.dart',
   'hsl_band_pool.dart',
   'ilniqe.dart',
@@ -227,6 +380,7 @@ const List<String> pipelineSourceFiles = [
   'pyiqa_worker.dart',
   'raw_sidecar.dart',
   'source_extract.dart',
+  'video_health.dart',
   'video_source.dart',
   'metrics/clip_rn50_dart.dart',
   'metrics/clip_rn50_gpu.dart',
@@ -377,8 +531,7 @@ Future<String> loadCodeWithClosure(
     if (!emitted.add(key)) continue; // 入口已含
     final text = (await indexOf(item.file))?[item.name];
     if (text == null) continue;
-    buf.writeln(
-        '// ── 来自 pipeline/${item.file}：${item.name} (被引用) ──');
+    buf.writeln('// ── 来自 pipeline/${item.file}：${item.name} (被引用) ──');
     buf.writeln(text);
     buf.writeln();
     keysOut?.add(key);
@@ -399,9 +552,10 @@ const List<CodeVariable> _rawSourceInputs = [
   CodeVariable(name: 'height', type: 'int', value: '帧高（节点参数）'),
   CodeVariable(name: 'bitDepth', type: 'int', value: '位深 8/10/12/16'),
   CodeVariable(
-      name: 'packing',
-      type: 'BayerPacking',
-      value: 'unpackedLsb / unpackedMsb / mipi'),
+    name: 'packing',
+    type: 'BayerPacking',
+    value: 'unpackedLsb / unpackedMsb / mipi',
+  ),
   CodeVariable(name: 'littleEndian', type: 'bool', value: '字节序（默认 true）'),
   CodeVariable(name: 'byteOffset', type: 'int', value: '帧起始偏移（默认 0）'),
 ];
@@ -422,9 +576,15 @@ const List<CodeVariable> _instrumentInputs = [
 /// 链末端显示帧 + 帧尺寸（两路一致）。
 const List<CodeVariable> _dualEvalInputs = [
   CodeVariable(
-      name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+    name: 'refRgba',
+    type: 'Uint8List',
+    value: '参考图链末端 RGBA8888 显示帧',
+  ),
   CodeVariable(
-      name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+    name: 'testRgba',
+    type: 'Uint8List',
+    value: '测试图链末端 RGBA8888 显示帧',
+  ),
   CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
   CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
 ];
@@ -433,11 +593,17 @@ const List<CodeVariable> _dualEvalInputs = [
 /// Bayer 马赛克或 16 位 mono 帧（二选一接入）+ 帧尺寸与节点参数。
 const List<CodeVariable> _rawDualInputsVars = [
   CodeVariable(
-      name: 'buf', type: 'Uint16List', value: 'RAW 帧（w*h，mosaic 或 mono）'),
+    name: 'buf',
+    type: 'Uint16List',
+    value: 'RAW 帧（w*h，mosaic 或 mono）',
+  ),
   CodeVariable(name: 'width', type: 'int', value: '帧宽'),
   CodeVariable(name: 'height', type: 'int', value: '帧高'),
   CodeVariable(
-      name: 'pattern', type: 'BayerPattern?', value: 'CFA 图案（mono 为 null）'),
+    name: 'pattern',
+    type: 'BayerPattern?',
+    value: 'CFA 图案（mono 为 null）',
+  ),
   CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
 ];
 
@@ -458,8 +624,7 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'path', type: 'String', value: '视频文件路径（节点参数）'),
     CodeVariable(name: 'frameIndex', type: 'int', value: '帧序号（0 起）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '16 位量级最大值'),
-    CodeVariable(
-        name: 'ffmpegPath', type: 'String', value: 'ffmpeg 路径（节点参数）'),
+    CodeVariable(name: 'ffmpegPath', type: 'String', value: 'ffmpeg 路径（节点参数）'),
   ],
   'black_level': [
     CodeVariable(name: 'bayer', type: 'Uint16List', value: '马赛克帧（w*h）'),
@@ -495,9 +660,10 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   ],
   'gaussian_blur': [
     CodeVariable(
-        name: 'data',
-        type: 'Uint16List',
-        value: '帧数据（RGB/YUV/HSL 交织 w*h*3，Mono 单通道 w*h）'),
+      name: 'data',
+      type: 'Uint16List',
+      value: '帧数据（RGB/YUV/HSL 交织 w*h*3，Mono 单通道 w*h）',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
     CodeVariable(name: 'height', type: 'int', value: '帧高'),
     CodeVariable(name: 'channels', type: 'int', value: '通道数（mono=1，其余=3）'),
@@ -506,28 +672,44 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   ],
   'morphology': [
     CodeVariable(
-        name: 'data',
-        type: 'Uint16List',
-        value: '输入帧（RGB 为 w*h*3 交织，Mono 为 w*h 单通道）'),
+      name: 'data',
+      type: 'Uint16List',
+      value: '输入帧（RGB 为 w*h*3 交织，Mono 为 w*h 单通道）',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
     CodeVariable(name: 'height', type: 'int', value: '帧高'),
     CodeVariable(name: 'channels', type: 'int', value: '通道数（RGB=3，Mono=1）'),
     CodeVariable(
-        name: 'erode', type: 'bool', value: 'true=腐蚀 / false=膨胀（节点参数 mode）'),
+      name: 'erode',
+      type: 'bool',
+      value: 'true=腐蚀 / false=膨胀（节点参数 mode）',
+    ),
     CodeVariable(name: 'radius', type: 'int', value: '结构元半径（节点参数）'),
   ],
   'edge_extract': [
-    CodeVariable(name: 'data', type: 'Uint16List', value: '输入帧（w*h*3，格式见 format）'),
+    CodeVariable(
+      name: 'data',
+      type: 'Uint16List',
+      value: '输入帧（w*h*3，格式见 format）',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
     CodeVariable(name: 'height', type: 'int', value: '帧高'),
-    CodeVariable(name: 'format', type: 'String', value: 'rgb / yuv / hsl（按接入端口）'),
+    CodeVariable(
+      name: 'format',
+      type: 'String',
+      value: 'rgb / yuv / hsl（按接入端口）',
+    ),
     CodeVariable(name: 'gain', type: 'double', value: '边缘增益（节点参数）'),
     CodeVariable(name: 'threshold', type: 'double', value: '噪声门限（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'csc_rgb2yuv': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
-    CodeVariable(name: 'standard', type: 'String', value: 'bt601 / bt709（节点参数）'),
+    CodeVariable(
+      name: 'standard',
+      type: 'String',
+      value: 'bt601 / bt709（节点参数）',
+    ),
     CodeVariable(name: 'range', type: 'String', value: 'full / limited（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
@@ -551,113 +733,114 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
-  'hsl_debugger': [
-    CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
-    CodeVariable(
-        name: 'hShiftDeg', type: 'double', value: '色相偏移角度（节点参数 h_shift）'),
-    CodeVariable(
-        name: 'sGain', type: 'double', value: '饱和度增益（节点参数 s_gain）'),
-    CodeVariable(
-        name: 'lGain', type: 'double', value: '亮度增益（节点参数 l_gain）'),
-    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
-  ],
-  'color_controller': [
-    CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
-    CodeVariable(
-        name: 'hCenterDeg', type: 'double', value: '色相中心（节点参数 h_center）'),
-    CodeVariable(
-        name: 'q', type: 'double', value: 'Q 值（带宽，节点参数 q）'),
-    CodeVariable(
-        name: 'hShiftDeg', type: 'double', value: '色相调整角度 ±180°（节点参数 h_shift）'),
-    CodeVariable(
-        name: 'sGain', type: 'double', value: '饱和度增益（节点参数 s_gain）'),
-    CodeVariable(
-        name: 'lGain', type: 'double', value: '亮度增益（节点参数 l_gain）'),
-    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
-  ],
   'multi_band_eq': [
     CodeVariable(name: 'hsl', type: 'Uint16List', value: 'HSL 帧（w*h*3）'),
     CodeVariable(
-        name: 'bands',
-        type: 'List<({double h, double q, double dh, double s, double l})>',
-        value: '段参数列表（色相中心 h、带宽 q、偏移 dh、饱和 s、亮度 l）'),
+      name: 'bands',
+      type: 'List<({double h, double q, double dh, double s, double l})>',
+      value: '段参数列表（色相中心 h、带宽 q、偏移 dh、饱和 s、亮度 l）',
+    ),
     CodeVariable(name: 'serial', type: 'bool', value: '串联模式（节点参数 band_mode）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'rgb_debugger': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
-    CodeVariable(
-        name: 'rGain', type: 'double', value: 'R 增益（节点参数 r_gain）'),
-    CodeVariable(
-        name: 'gGain', type: 'double', value: 'G 增益（节点参数 g_gain）'),
-    CodeVariable(
-        name: 'bGain', type: 'double', value: 'B 增益（节点参数 b_gain）'),
+    CodeVariable(name: 'rGain', type: 'double', value: 'R 增益（节点参数 r_gain）'),
+    CodeVariable(name: 'gGain', type: 'double', value: 'G 增益（节点参数 g_gain）'),
+    CodeVariable(name: 'bGain', type: 'double', value: 'B 增益（节点参数 b_gain）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'yuv_debugger': [
     CodeVariable(name: 'yuv', type: 'Uint16List', value: 'YUV 帧（w*h*3）'),
-    CodeVariable(
-        name: 'yGain', type: 'double', value: 'Y 增益（节点参数 y_gain）'),
-    CodeVariable(
-        name: 'uGain', type: 'double', value: 'U 色度增益（节点参数 u_gain）'),
-    CodeVariable(
-        name: 'vGain', type: 'double', value: 'V 色度增益（节点参数 v_gain）'),
+    CodeVariable(name: 'yGain', type: 'double', value: 'Y 增益（节点参数 y_gain）'),
+    CodeVariable(name: 'uGain', type: 'double', value: 'U 色度增益（节点参数 u_gain）'),
+    CodeVariable(name: 'vGain', type: 'double', value: 'V 色度增益（节点参数 v_gain）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'sat_bright_adjuster': [
     CodeVariable(
-        name: 'data', type: 'Uint16List', value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）'),
+      name: 'data',
+      type: 'Uint16List',
+      value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）',
+    ),
     CodeVariable(name: 'format', type: 'String', value: '帧格式（rgb/yuv/hsl）'),
     CodeVariable(
-        name: 'satGain', type: 'double', value: '色饱和度增益（节点参数 sat_gain）'),
+      name: 'satGain',
+      type: 'double',
+      value: '色饱和度增益（节点参数 sat_gain）',
+    ),
     CodeVariable(
-        name: 'brightGain', type: 'double', value: '亮度增益（节点参数 bright_gain）'),
+      name: 'brightGain',
+      type: 'double',
+      value: '亮度增益（节点参数 bright_gain）',
+    ),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'bright_contrast_adjuster': [
     CodeVariable(
-        name: 'data', type: 'Uint16List', value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）'),
+      name: 'data',
+      type: 'Uint16List',
+      value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）',
+    ),
     CodeVariable(name: 'format', type: 'String', value: '帧格式（rgb/yuv/hsl）'),
     CodeVariable(
-        name: 'brightPct', type: 'double', value: '亮度百分比（节点参数 bright）'),
+      name: 'brightPct',
+      type: 'double',
+      value: '亮度百分比（节点参数 bright）',
+    ),
     CodeVariable(
-        name: 'baselinePct', type: 'double', value: '基线百分比（节点参数 baseline）'),
-    CodeVariable(
-        name: 'gainPct', type: 'double', value: '增益百分比（节点参数 gain）'),
+      name: 'baselinePct',
+      type: 'double',
+      value: '基线百分比（节点参数 baseline）',
+    ),
+    CodeVariable(name: 'gainPct', type: 'double', value: '增益百分比（节点参数 gain）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'levels_curves': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
     CodeVariable(
-        name: 'lut',
-        type: 'Uint16List',
-        value: '传递函数 LUT（4096 级，由控制点参数 points 单调三次样条生成）'),
+      name: 'lut',
+      type: 'Uint16List',
+      value: '传递函数 LUT（4096 级，由控制点参数 points 单调三次样条生成）',
+    ),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'color_balance': [
     CodeVariable(
-        name: 'data', type: 'Uint16List', value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）'),
+      name: 'data',
+      type: 'Uint16List',
+      value: 'RGB/YUV/HSL 帧（w*h*3，格式随输入端口）',
+    ),
     CodeVariable(name: 'format', type: 'String', value: '帧格式（rgb/yuv/hsl）'),
     CodeVariable(
-        name: 'cyanRed', type: 'double', value: '青↔红偏移（节点参数 cyan_red，-100~100）'),
+      name: 'cyanRed',
+      type: 'double',
+      value: '青↔红偏移（节点参数 cyan_red，-100~100）',
+    ),
     CodeVariable(
-        name: 'magentaGreen',
-        type: 'double',
-        value: '洋红↔绿偏移（节点参数 magenta_green，-100~100）'),
+      name: 'magentaGreen',
+      type: 'double',
+      value: '洋红↔绿偏移（节点参数 magenta_green，-100~100）',
+    ),
     CodeVariable(
-        name: 'yellowBlue', type: 'double', value: '黄↔蓝偏移（节点参数 yellow_blue，-100~100）'),
+      name: 'yellowBlue',
+      type: 'double',
+      value: '黄↔蓝偏移（节点参数 yellow_blue，-100~100）',
+    ),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'color_temp_adjuster': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
     CodeVariable(
-        name: 'temperature',
-        type: 'double',
-        value: '目标色温 K（节点参数，1800~12000）'),
+      name: 'temperature',
+      type: 'int',
+      value: '目标色温 K（节点参数，整数，1800~12000）',
+    ),
     CodeVariable(
-        name: 'measuredCct',
-        type: 'int',
-        value: '参考色温 K（隐式参数 measured_cct，运行时自动测量写入，缺省 6500）'),
+      name: 'measuredCct',
+      type: 'int',
+      value: '参考色温 K（隐式参数 measured_cct，运行时自动测量写入，缺省 6500）',
+    ),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'fluoro_leak': [
@@ -687,7 +870,11 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   ],
   'pseudo_color': [
     CodeVariable(name: 'mono', type: 'Uint16List', value: '荧光 mono 帧（w*h）'),
-    CodeVariable(name: 'colormap', type: 'String', value: 'green / magenta / hot'),
+    CodeVariable(
+      name: 'colormap',
+      type: 'String',
+      value: 'green / magenta / hot',
+    ),
     CodeVariable(name: 'gain', type: 'double', value: '增益（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
@@ -704,59 +891,78 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   ],
   'multiplier': [
     CodeVariable(name: 'a', type: 'Uint16List', value: '输入源1 mono 帧（w*h）'),
-    CodeVariable(name: 'b', type: 'Uint16List', value: '输入源2 mono 帧（w*h，分辨率同源1）'),
+    CodeVariable(
+      name: 'b',
+      type: 'Uint16List',
+      value: '输入源2 mono 帧（w*h，分辨率同源1）',
+    ),
     CodeVariable(name: 'offset1', type: 'double', value: '源1 偏移（节点参数）'),
     CodeVariable(name: 'offset2', type: 'double', value: '源2 偏移（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'adder': [
     CodeVariable(name: 'a', type: 'Uint16List', value: '输入源1 mono 帧（w*h）'),
-    CodeVariable(name: 'b', type: 'Uint16List', value: '输入源2 mono 帧（w*h，分辨率同源1）'),
     CodeVariable(
-        name: 'balance', type: 'double', value: '平衡增益（节点参数，源1 权重，源2 = 1−balance）'),
+      name: 'b',
+      type: 'Uint16List',
+      value: '输入源2 mono 帧（w*h，分辨率同源1）',
+    ),
+    CodeVariable(
+      name: 'balance',
+      type: 'double',
+      value: '平衡增益（节点参数，源1 权重，源2 = 1−balance）',
+    ),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'blender': [
     CodeVariable(
-        name: 'base',
-        type: 'Uint16List',
-        value: '基图帧（RGB/YUV/HSL 为 w*h*3 交织，Mono 为 w*h）'),
+      name: 'base',
+      type: 'Uint16List',
+      value: '基图帧（RGB/YUV/HSL 为 w*h*3 交织，Mono 为 w*h）',
+    ),
     CodeVariable(
-        name: 'blend',
-        type: 'Uint16List',
-        value: '混叠图帧（mono 为 w*h，RGB/YUV/HSL 为 w*h*3 交织）'),
+      name: 'blend',
+      type: 'Uint16List',
+      value: '混叠图帧（mono 为 w*h，RGB/YUV/HSL 为 w*h*3 交织）',
+    ),
     CodeVariable(name: 'mask', type: 'Uint16List', value: '蒙版 mono 帧（w*h）'),
     CodeVariable(
-        name: 'format',
-        type: 'String',
-        value: '基图格式 rgb / yuv / hsl / mono（决定 mono 混叠图的叠加目标通道）'),
-    CodeVariable(
-        name: 'blendChannels', type: 'int', value: '混叠图通道数（1 / 3）'),
+      name: 'format',
+      type: 'String',
+      value: '基图格式 rgb / yuv / hsl / mono（决定 mono 混叠图的叠加目标通道）',
+    ),
+    CodeVariable(name: 'blendChannels', type: 'int', value: '混叠图通道数（1 / 3）'),
     CodeVariable(name: 'strength', type: 'double', value: '混叠强度（节点参数）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'mux4': [
+    CodeVariable(name: 'select', type: 'int', value: '选择源 1~4（节点参数/单选开关）'),
     CodeVariable(
-        name: 'select', type: 'int', value: '选择源 1~4（节点参数/单选开关）'),
-    CodeVariable(
-        name: 'in1~in4',
-        type: 'Uint16List',
-        value: '四路源输入帧（各 RGB/YUV/HSL/Mono 四域选一，只透传选中一路）'),
+      name: 'in1~in4',
+      type: 'Uint16List',
+      value: '四路源输入帧（各 RGB/YUV/HSL/Mono 四域选一，只透传选中一路）',
+    ),
   ],
   'demosaic': [
     CodeVariable(name: 'bayer', type: 'Uint16List', value: '马赛克帧（w*h）'),
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
     CodeVariable(name: 'height', type: 'int', value: '帧高'),
     CodeVariable(
-        name: 'pattern', type: 'BayerPattern', value: 'CFA 图案（Bayer 时）'),
+      name: 'pattern',
+      type: 'BayerPattern',
+      value: 'CFA 图案（Bayer 时）',
+    ),
     CodeVariable(
-        name: 'algorithm',
-        type: 'String',
-        value: 'bilinear/mhc/aahd/amaze/lmmse/igv（节点参数，Bayer 时）'),
+      name: 'algorithm',
+      type: 'String',
+      value: 'bilinear/mhc/aahd/amaze/lmmse/igv（节点参数，Bayer 时）',
+    ),
+    CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值（非 Bayer CFA）'),
     CodeVariable(
-        name: 'maxValue', type: 'int', value: '采样最大值（非 Bayer CFA）'),
-    CodeVariable(
-        name: 'irSubtraction', type: 'double', value: 'IR 扣除比例（RGB-IR）'),
+      name: 'irSubtraction',
+      type: 'double',
+      value: 'IR 扣除比例（RGB-IR）',
+    ),
   ],
   'white_balance': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
@@ -767,8 +973,7 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   ],
   'ccm': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3）'),
-    CodeVariable(
-        name: 'matrix', type: 'List<double>', value: '3x3 校正矩阵（9 元素）'),
+    CodeVariable(name: 'matrix', type: 'List<double>', value: '3x3 校正矩阵（9 元素）'),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'gamma': [
@@ -779,10 +984,12 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'contrast', type: 'double', value: '对比度（节点参数）'),
   ],
   'ahe': [
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3，in 通路）'),
     CodeVariable(
-        name: 'rgb', type: 'Uint16List', value: 'RGB 帧（w*h*3，in 通路）'),
-    CodeVariable(
-        name: 'mono', type: 'Uint16List', value: 'Mono 帧（w*h，in_mono 通路）'),
+      name: 'mono',
+      type: 'Uint16List',
+      value: 'Mono 帧（w*h，in_mono 通路）',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽'),
     CodeVariable(name: 'height', type: 'int', value: '帧高'),
     CodeVariable(name: 'blockSize', type: 'int', value: '分块大小（节点参数）'),
@@ -792,7 +999,10 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   ],
   'preview': [
     CodeVariable(
-        name: 'frame', type: 'Uint16List', value: '链末端帧数据（rgb/yuv/hsl）'),
+      name: 'frame',
+      type: 'Uint16List',
+      value: '链末端帧数据（rgb/yuv/hsl）',
+    ),
     CodeVariable(name: 'maxValue', type: 'int', value: '采样最大值'),
   ],
   'histogram': _instrumentInputs,
@@ -800,33 +1010,57 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
   'vectorscope': _instrumentInputs,
   'psnr': [
     CodeVariable(
-        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+      name: 'refRgba',
+      type: 'Uint8List',
+      value: '参考图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(
-        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+      name: 'testRgba',
+      type: 'Uint8List',
+      value: '测试图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
     CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
   ],
   'ssim': [
     CodeVariable(
-        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+      name: 'refRgba',
+      type: 'Uint8List',
+      value: '参考图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(
-        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+      name: 'testRgba',
+      type: 'Uint8List',
+      value: '测试图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
     CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
   ],
   'msssim': [
     CodeVariable(
-        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+      name: 'refRgba',
+      type: 'Uint8List',
+      value: '参考图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(
-        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+      name: 'testRgba',
+      type: 'Uint8List',
+      value: '测试图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
     CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
   ],
   'fsim': [
     CodeVariable(
-        name: 'refRgba', type: 'Uint8List', value: '参考图链末端 RGBA8888 显示帧'),
+      name: 'refRgba',
+      type: 'Uint8List',
+      value: '参考图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(
-        name: 'testRgba', type: 'Uint8List', value: '测试图链末端 RGBA8888 显示帧'),
+      name: 'testRgba',
+      type: 'Uint8List',
+      value: '测试图链末端 RGBA8888 显示帧',
+    ),
     CodeVariable(name: 'width', type: 'int', value: '帧宽（两路一致）'),
     CodeVariable(name: 'height', type: 'int', value: '帧高（两路一致）'),
   ],
@@ -888,25 +1122,51 @@ const Map<String, List<CodeVariable>> nodeInputVars = {
     CodeVariable(name: 'sData', type: 'Uint16List?', value: 'S 平面（w*h，可空）'),
     CodeVariable(name: 'lData', type: 'Uint16List?', value: 'L 平面（w*h，可空）'),
   ],
+  'format_converter': [
+    CodeVariable(
+      name: 'inputFile',
+      type: 'String',
+      value: '源视频文件（webm/mp4，节点属性里的输入路径）',
+    ),
+    CodeVariable(
+      name: 'encoder',
+      type: 'String',
+      value: '首选编码器：auto / libx264 / NVENC / QSV / AMF',
+    ),
+    CodeVariable(
+      name: 'outputRange',
+      type: 'String',
+      value: '输出动态范围：auto（跟随片源）/ SDR（tonemap）/ HDR（HEVC 10bit）',
+    ),
+  ],
+  'video_health_check': [
+    CodeVariable(
+      name: 'inputFile',
+      type: 'String',
+      value: '被检查的视频文件路径',
+    ),
+    CodeVariable(
+      name: 'scanDepth',
+      type: 'String',
+      value: '检查深度：fast（元数据+帧率）/ full（另加交付帧数与冻结帧）',
+    ),
+  ],
 };
 
 /// 音频仪器共用输入（音轨 PCM + 分析位置）。
 const List<CodeVariable> _audioInstrumentInputs = [
-  CodeVariable(
-      name: 'pcm', type: 'WavPcm', value: '视频音轨（44.1kHz 立体声 s16）'),
+  CodeVariable(name: 'pcm', type: 'WavPcm', value: '视频音轨（44.1kHz 立体声 s16）'),
   CodeVariable(name: 'seconds', type: 'double', value: '当前播放位置（秒）'),
 ];
 
 /// RAW 域算子共用输出：原地修改后的同格式帧。
 const List<CodeVariable> _rawDualOutputVars = [
-  CodeVariable(
-      name: 'buf', type: 'Uint16List', value: '处理后 RAW 帧（原地修改）'),
+  CodeVariable(name: 'buf', type: 'Uint16List', value: '处理后 RAW 帧（原地修改）'),
 ];
 
 /// 荧光 mono 域原地修改类算子共用输出。
 const List<CodeVariable> _monoInPlaceOutputVars = [
-  CodeVariable(
-      name: 'mono', type: 'Uint16List', value: '处理后 mono 帧（原地修改）'),
+  CodeVariable(name: 'mono', type: 'Uint16List', value: '处理后 mono 帧（原地修改）'),
 ];
 
 /// 节点类型 id → Output 变量（节点产出的数据）。
@@ -918,24 +1178,28 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'cis_ryycy': _rawSourceOutputs,
   'cis_rgb_ir': _rawSourceOutputs,
   'cis_mono': [
-    CodeVariable(
-        name: 'mono', type: 'Uint16List', value: '16 位单通道帧（w*h）'),
+    CodeVariable(name: 'mono', type: 'Uint16List', value: '16 位单通道帧（w*h）'),
   ],
   'image_source': [
     CodeVariable(
-        name: 'out', type: 'Uint16List', value: '交织 RGB（w*h*3，16 位量级）'),
+      name: 'out',
+      type: 'Uint16List',
+      value: '交织 RGB（w*h*3，16 位量级）',
+    ),
     CodeVariable(name: 'w', type: 'int', value: '图片宽'),
     CodeVariable(name: 'h', type: 'int', value: '图片高'),
   ],
   'video_source': [
     CodeVariable(
-        name: 'out', type: 'Uint16List', value: '交织 RGB（w*h*3，16 位量级）'),
+      name: 'out',
+      type: 'Uint16List',
+      value: '交织 RGB（w*h*3，16 位量级）',
+    ),
     CodeVariable(name: 'w', type: 'int', value: '视频帧宽'),
     CodeVariable(name: 'h', type: 'int', value: '视频帧高'),
   ],
   'black_level': [
-    CodeVariable(
-        name: 'bayer', type: 'Uint16List', value: '黑电平校正后（原地修改）'),
+    CodeVariable(name: 'bayer', type: 'Uint16List', value: '黑电平校正后（原地修改）'),
   ],
   'dpc': _rawDualOutputVars,
   'fpn': _rawDualOutputVars,
@@ -950,20 +1214,27 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(name: 'rgb', type: 'Uint16List', value: '锐化后（原地修改）'),
   ],
   'gaussian_blur': [
+    CodeVariable(name: 'data', type: 'Uint16List', value: '高斯模糊后（原地修改，格式同输入）'),
     CodeVariable(
-        name: 'data', type: 'Uint16List', value: '高斯模糊后（原地修改，格式同输入）'),
-    CodeVariable(
-        name: 'out_mono', type: 'Uint16List', value: '亮度单通道（非 mono 输入时提取登记）'),
+      name: 'out_mono',
+      type: 'Uint16List',
+      value: '亮度单通道（非 mono 输入时提取登记）',
+    ),
   ],
   'morphology': [
-    CodeVariable(
-        name: 'data', type: 'Uint16List', value: '腐蚀/膨胀后（原地修改，格式同输入）'),
+    CodeVariable(name: 'data', type: 'Uint16List', value: '腐蚀/膨胀后（原地修改，格式同输入）'),
   ],
   'edge_extract': [
     CodeVariable(
-        name: 'out', type: 'Uint16List', value: '黑底白线边缘图（w*h*3，gain×√rel×maxValue，格式同输入）'),
+      name: 'out',
+      type: 'Uint16List',
+      value: '黑底白线边缘图（w*h*3，gain×√rel×maxValue，格式同输入）',
+    ),
     CodeVariable(
-        name: 'out_mono', type: 'Uint16List', value: '单通道边缘亮度图（w*h，out_mono 端口）'),
+      name: 'out_mono',
+      type: 'Uint16List',
+      value: '单通道边缘亮度图（w*h，out_mono 端口）',
+    ),
   ],
   'csc_rgb2yuv': [
     CodeVariable(name: 'out', type: 'Uint16List', value: '交织 YUV（w*h*3）'),
@@ -983,47 +1254,41 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   'csc_hsl2yuv': [
     CodeVariable(name: 'out', type: 'Uint16List', value: '交织 YUV（w*h*3）'),
   ],
-  'hsl_debugger': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '调整后交织 HSL（w*h*3）'),
-  ],
-  'color_controller': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '带内调整后交织 HSL（w*h*3）'),
-  ],
   'multi_band_eq': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '多段均衡后交织 HSL（w*h*3）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '多段均衡后交织 HSL（w*h*3）'),
   ],
   'rgb_debugger': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '调整后交织 RGB（w*h*3）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '调整后交织 RGB（w*h*3）'),
   ],
   'yuv_debugger': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '调整后交织 YUV（w*h*3）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '调整后交织 YUV（w*h*3）'),
   ],
   'sat_bright_adjuster': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '调整后帧（w*h*3，格式同输入）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '调整后帧（w*h*3，格式同输入）'),
   ],
   'bright_contrast_adjuster': [
     CodeVariable(
-        name: 'out', type: 'Uint16List', value: '亮度/对比度调整后帧（w*h*3，格式同输入）'),
+      name: 'out',
+      type: 'Uint16List',
+      value: '亮度/对比度调整后帧（w*h*3，格式同输入）',
+    ),
   ],
   'levels_curves': [
     CodeVariable(
-        name: 'out', type: 'Uint16List', value: '传递函数映射后交织 RGB（w*h*3）'),
+      name: 'out',
+      type: 'Uint16List',
+      value: '传递函数映射后交织 RGB（w*h*3）',
+    ),
   ],
   'color_balance': [
     CodeVariable(
-        name: 'out',
-        type: 'Uint16List',
-        value: '色彩平衡调整后帧（w*h*3，格式同输入端口）'),
+      name: 'out',
+      type: 'Uint16List',
+      value: '色彩平衡调整后帧（w*h*3，格式同输入端口）',
+    ),
   ],
   'color_temp_adjuster': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '色温调整后交织 RGB（w*h*3）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '色温调整后交织 RGB（w*h*3）'),
   ],
   'fluoro_leak': _monoInPlaceOutputVars,
   'fluoro_background': _monoInPlaceOutputVars,
@@ -1039,45 +1304,36 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(name: 'out', type: 'Uint16List', value: '融合 RGB（w*h*3）'),
   ],
   'multiplier': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '归一化相乘后 mono 帧（w*h）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '归一化相乘后 mono 帧（w*h）'),
   ],
   'adder': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '平衡加权混合后 mono 帧（w*h）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '平衡加权混合后 mono 帧（w*h）'),
   ],
   'blender': [
     CodeVariable(
-        name: 'out',
-        type: 'Uint16List',
-        value: '混叠叠加后帧（格式同基图：RGB/YUV/HSL 为 w*h*3，Mono 为 w*h）'),
+      name: 'out',
+      type: 'Uint16List',
+      value: '混叠叠加后帧（格式同基图：RGB/YUV/HSL 为 w*h*3，Mono 为 w*h）',
+    ),
   ],
   'mux4': [
-    CodeVariable(
-        name: 'out', type: 'Uint16List', value: '所选源输入帧（透传，格式同输入）'),
+    CodeVariable(name: 'out', type: 'Uint16List', value: '所选源输入帧（透传，格式同输入）'),
   ],
   'demosaic': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: '插值 RGB（w*h*3）'),
   ],
   'white_balance': [
     CodeVariable(name: 'rgb', type: 'Uint16List', value: '增益后（原地修改）'),
-    CodeVariable(
-        name: 'rGain', type: 'double', value: 'auto 模式的实际 R 增益'),
-    CodeVariable(
-        name: 'bGain', type: 'double', value: 'auto 模式的实际 B 增益'),
+    CodeVariable(name: 'rGain', type: 'double', value: 'auto 模式的实际 R 增益'),
+    CodeVariable(name: 'bGain', type: 'double', value: 'auto 模式的实际 B 增益'),
   ],
-  'ccm': [
-    CodeVariable(name: 'rgb', type: 'Uint16List', value: '矩阵校正后（原地修改）'),
-  ],
+  'ccm': [CodeVariable(name: 'rgb', type: 'Uint16List', value: '矩阵校正后（原地修改）')],
   'gamma': [
-    CodeVariable(
-        name: 'out', type: 'Uint8List', value: '色调映射 RGBA（w*h*4）'),
+    CodeVariable(name: 'out', type: 'Uint8List', value: '色调映射 RGBA（w*h*4）'),
   ],
   'ahe': [
-    CodeVariable(
-        name: 'rgb', type: 'Uint16List', value: '均衡后 RGB（原地修改）'),
-    CodeVariable(
-        name: 'mono', type: 'Uint16List', value: '均衡后 Mono（原地修改）'),
+    CodeVariable(name: 'rgb', type: 'Uint16List', value: '均衡后 RGB（原地修改）'),
+    CodeVariable(name: 'mono', type: 'Uint16List', value: '均衡后 Mono（原地修改）'),
   ],
   'preview': [
     CodeVariable(name: 'rgba', type: 'Uint8List', value: 'RGBA8888 显示帧'),
@@ -1090,14 +1346,18 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   ],
   'waveform': [
     CodeVariable(
-        name: 'r/g/b/y',
-        type: 'Uint32List',
-        value: 'RGB+Y 波形计数（级*列数+列）'),
+      name: 'r/g/b/y',
+      type: 'Uint32List',
+      value: 'RGB+Y 波形计数（级*列数+列）',
+    ),
     CodeVariable(name: 'columns', type: 'int', value: '降采样后的列数'),
   ],
   'vectorscope': [
     CodeVariable(
-        name: 'counts', type: 'Uint32List', value: 'Cb/Cr 计数（256x256）'),
+      name: 'counts',
+      type: 'Uint32List',
+      value: 'Cb/Cr 计数（256x256）',
+    ),
   ],
   'psnr': [
     CodeVariable(name: 'psnr', type: 'double', value: '峰值信噪比（dB，完全相同为 ∞）'),
@@ -1110,7 +1370,11 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(name: 'ssimB', type: 'double', value: 'B 通道 SSIM'),
   ],
   'msssim': [
-    CodeVariable(name: 'ssim', type: 'double', value: '多尺度结构相似度（0..1，完全相同为 1.0）'),
+    CodeVariable(
+      name: 'ssim',
+      type: 'double',
+      value: '多尺度结构相似度（0..1，完全相同为 1.0）',
+    ),
     CodeVariable(name: 'ssimR', type: 'double', value: 'R 通道 MS-SSIM'),
     CodeVariable(name: 'ssimG', type: 'double', value: 'G 通道 MS-SSIM'),
     CodeVariable(name: 'ssimB', type: 'double', value: 'B 通道 MS-SSIM'),
@@ -1122,38 +1386,78 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(name: 'fsimB', type: 'double', value: 'B 通道 FSIM'),
   ],
   'niqe': [
-    CodeVariable(name: 'niqe', type: 'double', value: 'NIQE 质量分（无参考，越小越好；无法计算为 NaN）'),
+    CodeVariable(
+      name: 'niqe',
+      type: 'double',
+      value: 'NIQE 质量分（无参考，越小越好；无法计算为 NaN）',
+    ),
   ],
   'brisque': [
-    CodeVariable(name: 'brisque', type: 'double', value: 'BRISQUE 质量分（无参考，0..100 越小越好；无法计算为 NaN）'),
+    CodeVariable(
+      name: 'brisque',
+      type: 'double',
+      value: 'BRISQUE 质量分（无参考，0..100 越小越好；无法计算为 NaN）',
+    ),
   ],
   'ilniqe': [
-    CodeVariable(name: 'ilniqe', type: 'double', value: 'ILNIQE 质量分（无参考，越大越差；无法计算为 NaN）'),
+    CodeVariable(
+      name: 'ilniqe',
+      type: 'double',
+      value: 'ILNIQE 质量分（无参考，越大越差；无法计算为 NaN）',
+    ),
   ],
   'piqe': [
-    CodeVariable(name: 'piqe', type: 'double', value: 'PIQE 质量分（无参考，0..100 越小越好）'),
+    CodeVariable(
+      name: 'piqe',
+      type: 'double',
+      value: 'PIQE 质量分（无参考，0..100 越小越好）',
+    ),
   ],
   'lpips': [
-    CodeVariable(name: 'lpips', type: 'double', value: 'LPIPS 感知差异（0..~1，越小越好）'),
+    CodeVariable(
+      name: 'lpips',
+      type: 'double',
+      value: 'LPIPS 感知差异（0..~1，越小越好）',
+    ),
   ],
   'dists': [
-    CodeVariable(name: 'dists', type: 'double', value: 'DISTS 深度结构/纹理差异（0..~1，越小越好）'),
+    CodeVariable(
+      name: 'dists',
+      type: 'double',
+      value: 'DISTS 深度结构/纹理差异（0..~1，越小越好）',
+    ),
   ],
   'fid': [
-    CodeVariable(name: 'fid', type: 'double', value: 'FID 分布距离（≥0，越小越好；样本不足时不出分）'),
+    CodeVariable(
+      name: 'fid',
+      type: 'double',
+      value: 'FID 分布距离（≥0，越小越好；样本不足时不出分）',
+    ),
     CodeVariable(name: 'n_ref', type: 'int', value: '参考侧累计样本数（299² 图像块）'),
     CodeVariable(name: 'n_test', type: 'int', value: '测试侧累计样本数（299² 图像块）'),
   ],
   'kid': [
-    CodeVariable(name: 'kid', type: 'double', value: 'KID 分布距离（≥0，越小越好；样本不足时不出分）'),
+    CodeVariable(
+      name: 'kid',
+      type: 'double',
+      value: 'KID 分布距离（≥0，越小越好；样本不足时不出分）',
+    ),
     CodeVariable(name: 'n_ref', type: 'int', value: '参考侧累计样本数（299² 图像块）'),
     CodeVariable(name: 'n_test', type: 'int', value: '测试侧累计样本数（299² 图像块）'),
   ],
   'musiq': [
-    CodeVariable(name: 'musiq', type: 'double', value: 'MUSIQ 质量分（无参考，~0..100，越大越好）'),
+    CodeVariable(
+      name: 'musiq',
+      type: 'double',
+      value: 'MUSIQ 质量分（无参考，~0..100，越大越好）',
+    ),
   ],
   'clipiqa': [
-    CodeVariable(name: 'clipiqa', type: 'double', value: 'CLIPIQA 质量分（无参考，0..1，越大越好）'),
+    CodeVariable(
+      name: 'clipiqa',
+      type: 'double',
+      value: 'CLIPIQA 质量分（无参考，0..1，越大越好）',
+    ),
   ],
   'minmax': [
     CodeVariable(name: 'min', type: 'int', value: '当前帧最小值（0..255）'),
@@ -1162,12 +1466,10 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
     CodeVariable(name: 'holdMax', type: 'int', value: '跨帧保持最大值（UI 侧累计）'),
   ],
   'image_output': [
-    CodeVariable(
-        name: 'bytes', type: 'Uint8List', value: '编码后的 JPG/PNG 文件字节'),
+    CodeVariable(name: 'bytes', type: 'Uint8List', value: '编码后的 JPG/PNG 文件字节'),
   ],
   'video_output': [
-    CodeVariable(
-        name: 'outputPath', type: 'String', value: '写出的 MP4 文件'),
+    CodeVariable(name: 'outputPath', type: 'String', value: '写出的 MP4 文件'),
   ],
   'audio_level': [
     CodeVariable(name: 'left', type: 'double', value: '左声道峰值电平 0..1'),
@@ -1181,13 +1483,15 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   ],
   'audio_eq': [
     CodeVariable(
-        name: 'left',
-        type: 'Float64List',
-        value: '左声道 31 段幅度 0..1（20Hz–20kHz 1/3 倍频程等距分布）'),
+      name: 'left',
+      type: 'Float64List',
+      value: '左声道 31 段幅度 0..1（20Hz–20kHz 1/3 倍频程等距分布）',
+    ),
     CodeVariable(
-        name: 'right',
-        type: 'Float64List',
-        value: '右声道 31 段幅度 0..1（20Hz–20kHz 1/3 倍频程等距分布）'),
+      name: 'right',
+      type: 'Float64List',
+      value: '右声道 31 段幅度 0..1（20Hz–20kHz 1/3 倍频程等距分布）',
+    ),
   ],
   'rgb_splitter': [
     CodeVariable(name: 'rData', type: 'Uint16List', value: 'R 平面（w*h）'),
@@ -1212,6 +1516,30 @@ const Map<String, List<CodeVariable>> nodeOutputVars = {
   ],
   'hsl_combiner': [
     CodeVariable(name: 'combined', type: 'Uint16List', value: '交织 HSL（w*h*3）'),
+  ],
+  'format_converter': [
+    CodeVariable(
+      name: 'outputFile',
+      type: 'String',
+      value: '转码结果 mp4 路径',
+    ),
+    CodeVariable(
+      name: 'exitCode',
+      type: 'int',
+      value: 'ffmpeg 退出码（0 成功，-1 未设置输入，-2 已取消）',
+    ),
+  ],
+  'video_health_check': [
+    CodeVariable(
+      name: 'report',
+      type: 'String',
+      value: '逐项 [✓]/[⚠]/[✗] 的检查报告文本',
+    ),
+    CodeVariable(
+      name: 'exitCode',
+      type: 'int',
+      value: '退出码（0 通过 / 1 有告警 / -1 未设置输入 / -2 已取消）',
+    ),
   ],
 };
 

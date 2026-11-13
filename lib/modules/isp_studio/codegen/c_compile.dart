@@ -3365,9 +3365,21 @@ Future<CCompileResult> compileGroupCFiles(
     // 文件的编译器输出按文件缓冲、结束时整体 flush，避免并发输出交织。
     // 任一失败后停止调度新任务，已启动的跑完后按失败语义收尾。
     await Directory('${workDir.path}/objs').create();
+    // nosys.specs 不是所有工具链都带（如 Cypress EZ-USB FX3 的
+    // arm-none-eabi-gcc 只有 SDK 自带 specs）：探测不到就省略，裸机
+    // syscall 由 main.c 的桩提供，链接语义不变。
+    var useNosys = bareMetal;
+    if (bareMetal) {
+      final probeOut = StringBuffer();
+      await runStep(tc.compilerPath, ['-print-file-name=nosys.specs'],
+          sink: probeOut);
+      final resolved = probeOut.toString().trim();
+      useNosys = resolved.isNotEmpty && resolved != 'nosys.specs';
+    }
     commandLine = '"${tc.compilerPath}" ${gccFlags.join(' ')} '
         '<并行编译 ${sources.length} 个源文件> -o $artifact'
-        '${bareMetal ? ' -specs=nosys.specs' : ''} -lm';
+        '${useNosys ? ' -specs=nosys.specs' : (bareMetal ? ' -Wl,-e,main' : '')}'
+        ' -lm';
     emit('$commandLine\n\n');
     final jobs =
         sources.isEmpty ? 1 : math.min(Platform.numberOfProcessors, sources.length);
@@ -3399,7 +3411,10 @@ Future<CCompileResult> compileGroupCFiles(
       code = await runStep(tc.compilerPath, [
         ...objs.nonNulls,
         '-o', artifact,
-        if (bareMetal) '-specs=nosys.specs',
+        if (useNosys)
+          '-specs=nosys.specs'
+        else if (bareMetal)
+          '-Wl,-e,main', // 无 nosys：显式指定入口，避免 ld 的 _start 警告
         '-lm',
       ]);
     }

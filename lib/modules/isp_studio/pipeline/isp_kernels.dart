@@ -102,7 +102,10 @@ int frameByteSize({
       if (bitDepth == 10) return (pixels * 5 + 3) ~/ 4;
       if (bitDepth == 12) return (pixels * 3 + 1) ~/ 2;
       throw ArgumentError.value(
-          bitDepth, 'bitDepth', 'MIPI packing supports only 10 or 12 bits');
+        bitDepth,
+        'bitDepth',
+        'MIPI packing supports only 10 or 12 bits',
+      );
   }
 }
 
@@ -125,7 +128,11 @@ Uint16List unpackBayer(
   }
   final pixels = width * height;
   final needed = frameByteSize(
-      width: width, height: height, bitDepth: bitDepth, packing: packing);
+    width: width,
+    height: height,
+    bitDepth: bitDepth,
+    packing: packing,
+  );
   if (byteOffset < 0 || bytes.length - byteOffset < needed) {
     throw ArgumentError.value(
       bytes.length - byteOffset,
@@ -167,7 +174,10 @@ Uint16List unpackBayer(
         // standard sensor widths; treat as an error if present.
         if (pixels % 4 != 0) {
           throw ArgumentError.value(
-              width, 'width', 'MIPI 10-bit requires width*height % 4 == 0');
+            width,
+            'width',
+            'MIPI 10-bit requires width*height % 4 == 0',
+          );
         }
       } else if (bitDepth == 12) {
         // 2 pixels per 3 bytes: p0 = b0:b2[3:0], p1 = b1:b2[7:4].
@@ -180,11 +190,17 @@ Uint16List unpackBayer(
         }
         if (pixels % 2 != 0) {
           throw ArgumentError.value(
-              width, 'width', 'MIPI 12-bit requires width*height % 2 == 0');
+            width,
+            'width',
+            'MIPI 12-bit requires width*height % 2 == 0',
+          );
         }
       } else {
         throw ArgumentError.value(
-            bitDepth, 'bitDepth', 'MIPI packing supports only 10 or 12 bits');
+          bitDepth,
+          'bitDepth',
+          'MIPI packing supports only 10 or 12 bits',
+        );
       }
   }
   return out;
@@ -233,8 +249,16 @@ void applyBlackLevel(
 /// Averages the values of neighbors of pixel (x, y) that carry channel
 /// [color], considering only the given [offsets] (dx, dy pairs).
 /// Falls back to the pixel's own value if no valid neighbor exists.
-int _avgNeighbors(Uint16List bayer, int width, int height, int x, int y,
-    BayerPattern pattern, int color, List<List<int>> offsets) {
+int _avgNeighbors(
+  Uint16List bayer,
+  int width,
+  int height,
+  int x,
+  int y,
+  BayerPattern pattern,
+  int color,
+  List<List<int>> offsets,
+) {
   var sum = 0;
   var count = 0;
   for (final o in offsets) {
@@ -319,13 +343,16 @@ Uint16List demosaicBilinear(
         missing.add(_ChPlan(c, 4, -1, 1, -width, width));
       } else if (own == 1) {
         // G 站点缺 R/B：该颜色的两个轴向邻居（横向或纵向）。
-        missing.add(pattern.colorAt(px ^ 1, py) == c
-            ? _ChPlan(c, 2, -1, 1)
-            : _ChPlan(c, 2, -width, width));
+        missing.add(
+          pattern.colorAt(px ^ 1, py) == c
+              ? _ChPlan(c, 2, -1, 1)
+              : _ChPlan(c, 2, -width, width),
+        );
       } else {
         // R 站点缺 B（或反之）：4 个对角邻居。
         missing.add(
-            _ChPlan(c, 4, -width - 1, -width + 1, width - 1, width + 1));
+          _ChPlan(c, 4, -width - 1, -width + 1, width - 1, width + 1),
+        );
       }
     }
     return _PxPlan(own, missing[0], missing[1]);
@@ -344,19 +371,19 @@ Uint16List demosaicBilinear(
       rgb[i + m1.ch] = m1.n == 2
           ? (bayer[p + m1.a] + bayer[p + m1.b] + 1) >> 1
           : (bayer[p + m1.a] +
-                  bayer[p + m1.b] +
-                  bayer[p + m1.c] +
-                  bayer[p + m1.d] +
-                  2) >>
-              2;
+                    bayer[p + m1.b] +
+                    bayer[p + m1.c] +
+                    bayer[p + m1.d] +
+                    2) >>
+                2;
       rgb[i + m2.ch] = m2.n == 2
           ? (bayer[p + m2.a] + bayer[p + m2.b] + 1) >> 1
           : (bayer[p + m2.a] +
-                  bayer[p + m2.b] +
-                  bayer[p + m2.c] +
-                  bayer[p + m2.d] +
-                  2) >>
-              2;
+                    bayer[p + m2.b] +
+                    bayer[p + m2.c] +
+                    bayer[p + m2.d] +
+                    2) >>
+                2;
     }
   }
 
@@ -371,8 +398,15 @@ Uint16List demosaicBilinear(
 }
 
 /// 通用路径：按邻域搜索为 (x, y) 计算三个通道（用于边缘与小图）。
-void _demosaicPixel(Uint16List bayer, Uint16List rgb, int width, int height,
-    int x, int y, BayerPattern pattern) {
+void _demosaicPixel(
+  Uint16List bayer,
+  Uint16List rgb,
+  int width,
+  int height,
+  int x,
+  int y,
+  BayerPattern pattern,
+) {
   final i = (y * width + x) * 3;
   final own = pattern.colorAt(x, y);
   final self = bayer[y * width + x];
@@ -381,14 +415,40 @@ void _demosaicPixel(Uint16List bayer, Uint16List rgb, int width, int height,
       rgb[i + c] = self;
     } else if (c == 1) {
       // Green at an R/B site: axial neighbors.
-      rgb[i + c] = _avgNeighbors(bayer, width, height, x, y, pattern, c, _axial);
+      rgb[i + c] = _avgNeighbors(
+        bayer,
+        width,
+        height,
+        x,
+        y,
+        pattern,
+        c,
+        _axial,
+      );
     } else if (own == 1) {
       // R or B at a G site: the two axial neighbors of that color.
-      rgb[i + c] = _avgNeighbors(bayer, width, height, x, y, pattern, c, _axial);
+      rgb[i + c] = _avgNeighbors(
+        bayer,
+        width,
+        height,
+        x,
+        y,
+        pattern,
+        c,
+        _axial,
+      );
     } else {
       // R at a B site or B at an R site: diagonal neighbors.
-      rgb[i + c] =
-          _avgNeighbors(bayer, width, height, x, y, pattern, c, _diagonal);
+      rgb[i + c] = _avgNeighbors(
+        bayer,
+        width,
+        height,
+        x,
+        y,
+        pattern,
+        c,
+        _diagonal,
+      );
     }
   }
 }
@@ -396,7 +456,10 @@ void _demosaicPixel(Uint16List bayer, Uint16List rgb, int width, int height,
 /// Gray-world auto white balance. Samples every [sampleStride] pixels and
 /// returns (rGain, bGain) such that scaling R and B by those gains makes
 /// their means equal the green mean.
-(double, double) autoWhiteBalanceGains(Uint16List rgb, {int sampleStride = 16}) {
+(double, double) autoWhiteBalanceGains(
+  Uint16List rgb, {
+  int sampleStride = 16,
+}) {
   final pixels = rgb.length ~/ 3;
   if (pixels == 0) return (1.0, 1.0);
   final stride = sampleStride < 1 ? 1 : sampleStride;
@@ -430,8 +493,7 @@ Uint16List whiteBalanceGainLut(double gain, int maxValue) {
 
 /// 白平衡 LUT 查表施加（只调 R、B 两通道；与 [applyWhiteBalance]
 /// 直算逐位一致——直算内部本就是建表查表）。
-void applyWhiteBalanceLut(
-    Uint16List rgb, Uint16List lutR, Uint16List lutB) {
+void applyWhiteBalanceLut(Uint16List rgb, Uint16List lutR, Uint16List lutB) {
   for (var i = 0; i < rgb.length; i += 3) {
     rgb[i] = lutR[rgb[i]];
     rgb[i + 2] = lutB[rgb[i + 2]];
@@ -447,8 +509,11 @@ void applyWhiteBalance(
   required int maxValue,
 }) {
   if (rGain == 1.0 && bGain == 1.0) return;
-  applyWhiteBalanceLut(rgb, whiteBalanceGainLut(rGain, maxValue),
-      whiteBalanceGainLut(bGain, maxValue));
+  applyWhiteBalanceLut(
+    rgb,
+    whiteBalanceGainLut(rGain, maxValue),
+    whiteBalanceGainLut(bGain, maxValue),
+  );
 }
 
 /// Applies a 3x3 row-major color correction matrix in place,
@@ -460,7 +525,11 @@ void applyCcm(
   required int maxValue,
 }) {
   if (matrix.length != 9) {
-    throw ArgumentError.value(matrix.length, 'matrix', 'CCM must have 9 elements');
+    throw ArgumentError.value(
+      matrix.length,
+      'matrix',
+      'CCM must have 9 elements',
+    );
   }
   const scale = 1 << 20;
   const half = scale >> 1;
@@ -490,7 +559,11 @@ void applyCcm(
 /// 构建色调映射 LUT：normalize by [maxValue]、加 [brightness]、
 /// 绕 0.5 施加 [contrast]、`pow(c, 1 / gamma)`、钳位后映射到 0..255。
 Uint8List _tonemapLut(
-    int maxValue, double gamma, double brightness, double contrast) {
+  int maxValue,
+  double gamma,
+  double brightness,
+  double contrast,
+) {
   final lut = Uint8List(maxValue + 1);
   final invGamma = 1.0 / gamma;
   for (var v = 0; v <= maxValue; v++) {
@@ -575,7 +648,8 @@ Uint8List monoToRgba(
 
 /// 8 位 MONO 平面（视频 yuv444p 直出的 Y/U/V 平面视图）→ 8 位 RGBA：
 /// 256 项 LUT 一趟查表，全分辨率视频分路预览的高速路径。
-Uint8List mono8ToRgba(  Uint8List mono, {
+Uint8List mono8ToRgba(
+  Uint8List mono, {
   double gamma = 1.0,
   double brightness = 0.0,
   double contrast = 1.0,
@@ -608,7 +682,7 @@ Uint8List yuv444p8ToRgba(
   final yPlane = planes[0];
   final uPlane = planes[1];
   final vPlane = planes[2];
-  const crV = 91881;  // 1.402 * 65536
+  const crV = 91881; // 1.402 * 65536
   const cgU = -22553; // -0.344136 * 65536
   const cgV = -46801; // -0.714136 * 65536
   const cbU = 116130; // 1.772 * 65536
@@ -651,8 +725,14 @@ Uint8List limitedToFullLut8({bool chroma = false}) {
 /// 读取量与输出尺寸成正比。[limited] 为 true 时做 tv→pc 范围扩展，
 /// [matrix] 为 YUV→RGB 色彩矩阵（0=BT.601，1=BT.709，2=BT.2020），
 /// 均与 yuv_planes.frag 的显示一致。
-Uint8List yuv420p8ToRgbaStep(Uint8List src, int w, int h, int step,
-    {bool limited = false, int matrix = 0}) {
+Uint8List yuv420p8ToRgbaStep(
+  Uint8List src,
+  int w,
+  int h,
+  int step, {
+  bool limited = false,
+  int matrix = 0,
+}) {
   final outW = w ~/ step;
   final outH = h ~/ step;
   final cw = w >> 1;
@@ -662,7 +742,7 @@ Uint8List yuv420p8ToRgbaStep(Uint8List src, int w, int h, int step,
   final cLut = limited ? limitedToFullLut8(chroma: true) : null;
   final int crV, cgU, cgV, cbU;
   if (matrix == 0) {
-    crV = 91881;  // 1.402 * 65536
+    crV = 91881; // 1.402 * 65536
     cgU = -22553; // -0.344136 * 65536
     cgV = -46801; // -0.714136 * 65536
     cbU = 116130; // 1.772 * 65536
@@ -710,8 +790,13 @@ Uint8List yuv420p8ToRgbaStep(Uint8List src, int w, int h, int step,
 /// 减半）→ 步长抽样的小尺寸灰度 RGBA（分路预览的仪器馈源）。
 /// [limited] 为 true 时做 tv→pc 范围扩展。
 Uint8List yuv420pPlaneToRgbaStep(
-    Uint8List src, int w, int h, int planeIdx, int step,
-    {bool limited = false}) {
+  Uint8List src,
+  int w,
+  int h,
+  int planeIdx,
+  int step, {
+  bool limited = false,
+}) {
   final isLuma = planeIdx == 0;
   final pw = isLuma ? w : w >> 1;
   final ph = isLuma ? h : h >> 1;
@@ -753,7 +838,7 @@ Uint8List yuvToRgba(
   }
   final lut = _tonemapLut(maxValue, gamma, brightness, contrast);
   final half = maxValue >> 1;
-  const crV = 91881;  // 1.402 * 65536
+  const crV = 91881; // 1.402 * 65536
   const cgU = -22553; // -0.344136 * 65536
   const cgV = -46801; // -0.714136 * 65536
   const cbU = 116130; // 1.772 * 65536
@@ -804,13 +889,20 @@ Uint8List yuvToRgba(
 /// 循环造成掉帧，仪器馈源路径一律经此入口在后台执行。
 (Uint8List, int, int) downsampleRgba82xInIsolate(Map<String, Object?> args) =>
     downsampleRgba82x(
-        args['src'] as Uint8List, args['width'] as int, args['height'] as int);
+      args['src'] as Uint8List,
+      args['width'] as int,
+      args['height'] as int,
+    );
 
 /// 步长抽样降采样（RGBA8888）：一趟把 (w, h) 抽成 (w/step, h/step)。
 /// 仪器分析输入用：多级 2x 降采样的第一级要读全帧（4K ≈ 33MB），
 /// 改为按最终倍率点采样后，读取量与输出尺寸成正比。
 (Uint8List, int, int) downsampleRgba8Step(
-    Uint8List src, int w, int h, int step) {
+  Uint8List src,
+  int w,
+  int h,
+  int step,
+) {
   if (step <= 1) return (src, w, h);
   final outW = w ~/ step;
   final outH = h ~/ step;
@@ -834,7 +926,8 @@ Uint8List yuvToRgba(
 /// 连续播放高速预览降采样（2x）：平面 yuv444p（w*h*3，Y/U/V 三个 w*h
 /// 平面顺序排列）快速降采样为 (w/2 x h/2)，与 [downsampleRgba82x]
 /// 同为超高速步长采样。
-(Uint8List, int, int) downsampleYuv444p2x(Uint8List src, int w, int h) {  final outW = w >> 1;
+(Uint8List, int, int) downsampleYuv444p2x(Uint8List src, int w, int h) {
+  final outW = w >> 1;
   final outH = h >> 1;
   final plane = w * h;
   final outPlane = outW * outH;
@@ -897,8 +990,15 @@ int _rgbIrAt(int x, int y) {
 
 /// 通用通道插值：平均 3x3 邻域内属于通道 [ch] 的样本，
 /// 找不到时扩大到 5x5，仍没有则返回像素自身值。
-int _interpChannel(Uint16List mosaic, int width, int height, int x, int y,
-    int ch, int Function(int, int) channelAt) {
+int _interpChannel(
+  Uint16List mosaic,
+  int width,
+  int height,
+  int x,
+  int y,
+  int ch,
+  int Function(int, int) channelAt,
+) {
   for (final radius in [1, 2]) {
     var sum = 0;
     var count = 0;
@@ -919,8 +1019,15 @@ int _interpChannel(Uint16List mosaic, int width, int height, int x, int y,
 }
 
 /// 取像素 (x, y) 上通道 [ch] 的值：自身携带则用真值，否则邻域插值。
-int _channelAt(Uint16List mosaic, int width, int height, int x, int y,
-    int ch, int Function(int, int) channelAt) {
+int _channelAt(
+  Uint16List mosaic,
+  int width,
+  int height,
+  int x,
+  int y,
+  int ch,
+  int Function(int, int) channelAt,
+) {
   return channelAt(x, y) == ch
       ? mosaic[y * width + x]
       : _interpChannel(mosaic, width, height, x, y, ch, channelAt);
@@ -1023,11 +1130,17 @@ Uint16List demosaicRgbIr(
       final ir = _channelAt(mosaic, width, height, x, y, 6, _rgbIrAt);
       final sub = ir * irSubtraction;
       rgb[i] = _clampTo(
-          _channelAt(mosaic, width, height, x, y, 0, _rgbIrAt) - sub, maxValue);
+        _channelAt(mosaic, width, height, x, y, 0, _rgbIrAt) - sub,
+        maxValue,
+      );
       rgb[i + 1] = _clampTo(
-          _channelAt(mosaic, width, height, x, y, 1, _rgbIrAt) - sub, maxValue);
+        _channelAt(mosaic, width, height, x, y, 1, _rgbIrAt) - sub,
+        maxValue,
+      );
       rgb[i + 2] = _clampTo(
-          _channelAt(mosaic, width, height, x, y, 2, _rgbIrAt) - sub, maxValue);
+        _channelAt(mosaic, width, height, x, y, 2, _rgbIrAt) - sub,
+        maxValue,
+      );
     }
   }
   return rgb;
@@ -1055,7 +1168,11 @@ Uint16List monoToRgb(Uint16List mosaic) {
 /// bitDepth=8）时为纯交织拷贝。视频流式播放时由该函数一跳完成
 /// 「解码帧 → YUV 中间格式」，免去 RGBA→RGB16→YUV 两道全帧转换。
 Uint16List yuv444p8ToYuv16(
-    Uint8List planes, int width, int height, int maxValue) {
+  Uint8List planes,
+  int width,
+  int height,
+  int maxValue,
+) {
   final pixels = width * height;
   final out = Uint16List(pixels * 3);
   final uBase = pixels;
@@ -1085,15 +1202,15 @@ Uint16List rgbToYuv(Uint16List rgb, {required int maxValue}) {
   final half = maxValue >> 1;
   const cyR = 19595; // 0.299 * 65536
   const cyG = 38470; // 0.587 * 65536
-  const cyB = 7471;  // 0.114 * 65536
+  const cyB = 7471; // 0.114 * 65536
 
   const cuR = -11058; // -0.168736 * 65536
   const cuG = -21710; // -0.331264 * 65536
-  const cuB = 32768;  // 0.5 * 65536
+  const cuB = 32768; // 0.5 * 65536
 
-  const cvR = 32768;  // 0.5 * 65536
+  const cvR = 32768; // 0.5 * 65536
   const cvG = -27439; // -0.418688 * 65536
-  const cvB = -5329;  // -0.081312 * 65536
+  const cvB = -5329; // -0.081312 * 65536
 
   for (var i = 0; i < rgb.length; i += 3) {
     final r = rgb[i];
@@ -1111,14 +1228,28 @@ Uint16List rgbToYuv(Uint16List rgb, {required int maxValue}) {
   return out;
 }
 
+/// YUV→RGB 全范围定点系数（Q16）：BT.601 / BT.709 / BT.2020。
+({int crV, int cgU, int cgV, int cbU}) yuvToRgbCoefficients(String standard) =>
+    switch (standard) {
+      'bt709' => (crV: 103206, cgU: -12276, cgV: -30679, cbU: 121609),
+      'bt2020' ||
+      'bt2100' => (crV: 96639, cgU: -10784, cgV: -37444, cbU: 123299),
+      _ => (crV: 91881, cgU: -22553, cgV: -46801, cbU: 116130),
+    };
+
 /// YUV → RGB（[rgbToYuv] 的逆变换，16 位定点整数移位加速）。
-Uint16List yuvToRgb(Uint16List yuv, {required int maxValue}) {
+Uint16List yuvToRgb(
+  Uint16List yuv, {
+  required int maxValue,
+  String standard = 'bt601',
+}) {
   final out = Uint16List(yuv.length);
   final half = maxValue >> 1;
-  const crV = 91881;  // 1.402 * 65536
-  const cgU = -22553; // -0.344136 * 65536
-  const cgV = -46801; // -0.714136 * 65536
-  const cbU = 116130; // 1.772 * 65536
+  final coefficients = yuvToRgbCoefficients(standard);
+  final crV = coefficients.crV;
+  final cgU = coefficients.cgU;
+  final cgV = coefficients.cgV;
+  final cbU = coefficients.cbU;
 
   for (var i = 0; i < yuv.length; i += 3) {
     final y = yuv[i];
@@ -1207,11 +1338,13 @@ Uint16List hslToRgb(Uint16List hsl, {required int maxValue}) {
 /// HSL 调整（HSL 调节器节点）：H 在 0..360° 色环上循环偏移 [hShiftDeg]
 /// 度，S/L 分别乘增益 [sGain]/[lGain] 后钳位到 0..maxValue。
 /// 三个参数均为恒等值时直接返回原数据（不拷贝）。
-Uint16List adjustHsl(Uint16List hsl,
-    {required int maxValue,
-    double hShiftDeg = 0,
-    double sGain = 1.0,
-    double lGain = 1.0}) {
+Uint16List adjustHsl(
+  Uint16List hsl, {
+  required int maxValue,
+  double hShiftDeg = 0,
+  double sGain = 1.0,
+  double lGain = 1.0,
+}) {
   if (hShiftDeg == 0 && sGain == 1.0 && lGain == 1.0) return hsl;
   final out = Uint16List(hsl.length);
   final m = maxValue + 1; // 色环模数：H 在 0..maxValue 上循环
@@ -1232,21 +1365,27 @@ Uint16List adjustHsl(Uint16List hsl,
 /// H' = H + w·[hShiftDeg]（色环循环），S/L 的增益按 1+w·(gain-1) 插值，
 /// 即 w=1 处满增益、w=0 处恒等，钳位到 0..maxValue。
 /// 三个调整量均为恒等值时直接返回原数据（不拷贝）。
-Uint16List adjustHslBand(Uint16List hsl,
-    {required int maxValue,
-    double hCenterDeg = 0,
-    double q = 2.0,
-    double hShiftDeg = 0,
-    double sGain = 1.0,
-    double lGain = 1.0}) {
+Uint16List adjustHslBand(
+  Uint16List hsl, {
+  required int maxValue,
+  double hCenterDeg = 0,
+  double q = 2.0,
+  double hShiftDeg = 0,
+  double sGain = 1.0,
+  double lGain = 1.0,
+}) {
   if (hShiftDeg == 0 && sGain == 1.0 && lGain == 1.0) return hsl;
-  return adjustHslBandRows(hsl, 0, hsl.length ~/ 3,
-      maxValue: maxValue,
-      hCenterDeg: hCenterDeg,
-      q: q,
-      hShiftDeg: hShiftDeg,
-      sGain: sGain,
-      lGain: lGain);
+  return adjustHslBandRows(
+    hsl,
+    0,
+    hsl.length ~/ 3,
+    maxValue: maxValue,
+    hCenterDeg: hCenterDeg,
+    q: q,
+    hShiftDeg: hShiftDeg,
+    sGain: sGain,
+    lGain: lGain,
+  );
 }
 
 /// 色彩控制器的像素区间版本：处理 [startPx, endPx) 像素并返回新区间数据。
@@ -1259,13 +1398,14 @@ Uint16List adjustHslBand(Uint16List hsl,
 /// 色彩控制器（高斯色相带）的三张 H 域 LUT：H 偏移量（含高斯权重与
 /// 取整）、S 乘子、L 乘子（权重为该 H 值上的精确 exp，无角度插值）。
 /// LUT 模式预览与 C 导出生成期烘焙共用同一函数。
-(Int32List, Float64List, Float64List) hslBandLuts(
-    {required int maxValue,
-    required double hCenterDeg,
-    required double q,
-    required double hShiftDeg,
-    required double sGain,
-    required double lGain}) {
+(Int32List, Float64List, Float64List) hslBandLuts({
+  required int maxValue,
+  required double hCenterDeg,
+  required double q,
+  required double hShiftDeg,
+  required double sGain,
+  required double lGain,
+}) {
   final m = maxValue + 1; // 色环模数：H 在 0..maxValue 上循环
   final sigma = 45.0 / q;
   final shiftLut = Int32List(m);
@@ -1296,18 +1436,21 @@ Uint16List adjustHslBand(Uint16List hsl,
 /// 单段时两种模式均经 [hslBandLuts] 捷径返回，与色彩控制器逐位一致；
 /// 空段/全恒等段合成恒等 LUT（shift=0、乘子=1）。
 (Int32List, Float64List, Float64List) multiBandLuts(
-    List<({double h, double q, double dh, double s, double l})> bands,
-    {required bool serial, required int maxValue}) {
+  List<({double h, double q, double dh, double s, double l})> bands, {
+  required bool serial,
+  required int maxValue,
+}) {
   // 单段捷径：串联与并联语义相同，直接走色彩控制器建表（逐位一致）。
   if (bands.length == 1) {
     final b = bands[0];
     return hslBandLuts(
-        maxValue: maxValue,
-        hCenterDeg: b.h,
-        q: b.q,
-        hShiftDeg: b.dh,
-        sGain: b.s,
-        lGain: b.l);
+      maxValue: maxValue,
+      hCenterDeg: b.h,
+      q: b.q,
+      hShiftDeg: b.dh,
+      sGain: b.s,
+      lGain: b.l,
+    );
   }
   final m = maxValue + 1; // 色环模数：H 在 0..maxValue 上循环
   final shiftLut = Int32List(m);
@@ -1356,13 +1499,204 @@ Uint16List adjustHslBand(Uint16List hsl,
   return (shiftLut, sMulLut, lMulLut);
 }
 
+// ---------------------------------------------------------------------------
+// multi_band_eq func_fixed 定点口径（codegenMode=func_fixed 的 Dart 参考，
+// 与 c_ref isp_multi_band_eq.c 的 mb_compose_fx / 黑盒生成码 <id>_compose_fx
+// 逐行镜像、逐位一致）
+// ---------------------------------------------------------------------------
+
+/// 色环一圈（Q16 度）。
+const int mbFxCircleQ16 = 360 << 16;
+
+/// 色环半圈（Q16 度）：最短角距上界。
+const int mbFxHalfQ16 = 180 << 16;
+
+/// 0.5·log2(e) 的 Q20 定点值（u = 0.5·x²·log2e 的合并系数）。
+const int mbFxC2Q20 = 756405;
+
+/// 2^(−f)（f ∈ [0,1)）五次多项式系数的 Q16 定点值（dense grid 加权最小二乘
+/// 拟合，权重 2^x 即相对误差口径；double 系数最大相对误差 ~2e-7，Q16 量化
+/// + Q16 Horner（每级四舍五入）后最大误差 2 ulp(Q16)；拟合脚本
+/// scratch/fit_exp2_neg_poly.dart）。
+const List<int> mbFxExp2NegCoefQ16 = [65536, -45426, 15740, -3623, 603, -62];
+
+/// func_fixed 段常量（生成期/帧入口一次性换算，与 C IspMultiBandEqFxBand
+/// 及 double 段参数的换算公式同口径）。
+typedef MbFxBand = ({int hcQ16, int kQ20, int dhQ16, int s1Q14, int l1Q14});
+
+/// double 段参数 → 定点段常量（与 C 侧入口换算逐位一致）。
+MbFxBand multiBandFxBandConst({
+  required double h,
+  required double q,
+  required double dh,
+  required double s,
+  required double l,
+}) {
+  return (
+    hcQ16: (h * 65536.0).round() % mbFxCircleQ16,
+    kQ20: (q / 45.0 * 1048576.0).round(),
+    dhQ16: (dh * 65536.0).round(),
+    s1Q14: ((s - 1.0) * 16384.0).round(),
+    l1Q14: ((l - 1.0) * 16384.0).round(),
+  );
+}
+
+/// 半值远离零的整数除法（v/d，d 为正偶数；与 C 截断除法配对实现 round）。
+int _mbFxRoundDiv(int v, int d) => (v >= 0 ? v + (d >> 1) : v - (d >> 1)) ~/ d;
+
+/// 高斯权重 w = exp(−0.5·(d·q/45)²) 的 Q14 值：[hQ16]/[hcQ16] 为 Q16 度
+/// 色相，[kQ20] = round(q/45·2^20)。全整数（无 FP64/libm），与 FP64 口径
+/// 偏差 ≤1 ulp(Q14)。
+int multiBandFxWeightQ14(int hQ16, int hcQ16, int kQ20) {
+  var d = (hQ16 - hcQ16).abs();
+  if (d >= mbFxCircleQ16) d -= mbFxCircleQ16;
+  if (d > mbFxHalfQ16) d = mbFxCircleQ16 - d;
+  final xQ20 = (d * kQ20) >> 16;
+  final x2Q20 = (xQ20 * xQ20 + (1 << 19)) >> 20;
+  final uQ16 = (x2Q20 * mbFxC2Q20 + (1 << 23)) >> 24;
+  final n = uQ16 >> 16;
+  if (n >= 16) return 0;
+  final f = uQ16 & 0xFFFF;
+  var p = mbFxExp2NegCoefQ16[5];
+  for (var k = 4; k >= 0; k--) {
+    p = mbFxExp2NegCoefQ16[k] + ((f * p + 32768) >> 16);
+  }
+  return (p + (1 << (n + 1))) >> (n + 2);
+}
+
+/// func_fixed 逐 hv 合成（与 [multiBandLuts] 同语义的定点版）：返回
+/// (H 偏移, S 乘子 Q14, L 乘子 Q14)。[hv] 已钳到 0..maxValue。并联加权
+/// 求和后钳位、串联按段序级联、单段无钳位捷径均与 FP64 口径对应。
+(int, int, int) multiBandComposeFx(
+  int hv,
+  int maxValue,
+  List<MbFxBand> bands, {
+  required bool serial,
+}) {
+  final hQ16 = (hv * mbFxCircleQ16 + (maxValue >> 1)) ~/ maxValue;
+  if (bands.length == 1) {
+    // 单段捷径：串联与并联语义相同，无钳位路径（同 hslBandLuts 口径）。
+    final b = bands[0];
+    final w = multiBandFxWeightQ14(hQ16, b.hcQ16, b.kQ20);
+    final shift = _mbFxRoundDiv(w * b.dhQ16 * maxValue, 360 << 30);
+    final sMul = 16384 + ((w * b.s1Q14 + 8192) >> 14);
+    final lMul = 16384 + ((w * b.l1Q14 + 8192) >> 14);
+    return (shift, sMul, lMul);
+  }
+  if (!serial) {
+    var dhSum = 0, sSum = 0, lSum = 0; // Q30 / Q28 / Q28
+    for (final b in bands) {
+      final w = multiBandFxWeightQ14(hQ16, b.hcQ16, b.kQ20);
+      dhSum += w * b.dhQ16;
+      sSum += w * b.s1Q14;
+      lSum += w * b.l1Q14;
+    }
+    const dhCap = 180 << 30;
+    if (dhSum < -dhCap) {
+      dhSum = -dhCap;
+    } else if (dhSum > dhCap) {
+      dhSum = dhCap;
+    }
+    final shift = _mbFxRoundDiv(dhSum * maxValue, 360 << 30);
+    var sMul = 16384 + ((sSum + 8192) >> 14);
+    var lMul = 16384 + ((lSum + 8192) >> 14);
+    if (sMul < 0) {
+      sMul = 0;
+    } else if (sMul > 5 << 14) {
+      sMul = 5 << 14;
+    }
+    if (lMul < 0) {
+      lMul = 0;
+    } else if (lMul > 5 << 14) {
+      lMul = 5 << 14;
+    }
+    return (shift, sMul, lMul);
+  }
+  var hCur = hQ16, sAcc = 16384, lAcc = 16384;
+  for (final b in bands) {
+    final w = multiBandFxWeightQ14(hCur, b.hcQ16, b.kQ20);
+    sAcc = (sAcc * (16384 + ((w * b.s1Q14 + 8192) >> 14)) + 8192) >> 14;
+    lAcc = (lAcc * (16384 + ((w * b.l1Q14 + 8192) >> 14)) + 8192) >> 14;
+    hCur += (w * b.dhQ16 + 8192) >> 14;
+    // Dart % 为欧几里得取模（结果非负），等价 C 截断取模后负值加一圈。
+    hCur %= mbFxCircleQ16;
+  }
+  var dd = (hCur - hQ16) % mbFxCircleQ16;
+  if (dd > mbFxHalfQ16) dd -= mbFxCircleQ16;
+  final shift = _mbFxRoundDiv(dd * maxValue, 360 << 16);
+  var sMul = sAcc, lMul = lAcc;
+  if (sMul < 0) {
+    sMul = 0;
+  } else if (sMul > 5 << 14) {
+    sMul = 5 << 14;
+  }
+  if (lMul < 0) {
+    lMul = 0;
+  } else if (lMul > 5 << 14) {
+    lMul = 5 << 14;
+  }
+  return (shift, sMul, lMul);
+}
+
+/// Q14 定点乘 + 钳位（bb_clamp_q14 的 Dart 镜像）：clamp((v·q + 2^13)>>14)。
+int _mbFxClampQ14(int v, int q, int maxValue) {
+  final r = (v * q + 8192) >> 14;
+  return r < 0 ? 0 : (r > maxValue ? maxValue : r);
+}
+
+/// func_fixed 帧级施加（[multiBandComposeFx] 逐像素 + H 单次条件回绕 +
+/// Q14 乘加钳位；段常量帧入口换算一次，与 C isp_multi_band_eq_fx_apply
+/// 逐位一致）。与 FP64 口径（[multiBandLuts] + [applyHslBandLuts]）偏差
+/// ≤1 LSB。
+Uint16List applyMultiBandEqFx(
+  Uint16List hsl,
+  int startPx,
+  int endPx, {
+  required int maxValue,
+  required List<({double h, double q, double dh, double s, double l})> bands,
+  required bool serial,
+}) {
+  final fx = [
+    for (final b in bands)
+      multiBandFxBandConst(h: b.h, q: b.q, dh: b.dh, s: b.s, l: b.l),
+  ];
+  final m = maxValue + 1;
+  final out = Uint16List((endPx - startPx) * 3);
+  var o = 0;
+  for (var i = startPx * 3; i < endPx * 3; i += 3) {
+    var hv = hsl[i];
+    if (hv > maxValue) hv = maxValue;
+    final (shift, sMulQ14, lMulQ14) = multiBandComposeFx(
+      hv,
+      maxValue,
+      fx,
+      serial: serial,
+    );
+    var hnew = hv + shift;
+    if (hnew > maxValue) {
+      hnew -= m;
+    } else if (hnew < 0) {
+      hnew += m;
+    }
+    out[o] = hnew;
+    out[o + 1] = _mbFxClampQ14(hsl[i + 1], sMulQ14, maxValue);
+    out[o + 2] = _mbFxClampQ14(hsl[i + 2], lMulQ14, maxValue);
+    o += 3;
+  }
+  return out;
+}
+
 /// 色彩控制器 LUT 查表施加：逐像素 3 次查表 + 2 次乘法 + 1 次取模
 /// （与 adjustHslBandRows 的表内实现逐位一致）。
-Uint16List applyHslBandLuts(Uint16List hsl, int startPx, int endPx,
-    {required int maxValue,
-    required Int32List shiftLut,
-    required Float64List sMulLut,
-    required Float64List lMulLut}) {
+Uint16List applyHslBandLuts(
+  Uint16List hsl,
+  int startPx,
+  int endPx, {
+  required int maxValue,
+  required Int32List shiftLut,
+  required Float64List sMulLut,
+  required Float64List lMulLut,
+}) {
   final m = maxValue + 1;
   final out = Uint16List((endPx - startPx) * 3);
   var o = 0;
@@ -1377,25 +1711,34 @@ Uint16List applyHslBandLuts(Uint16List hsl, int startPx, int endPx,
   return out;
 }
 
-Uint16List adjustHslBandRows(Uint16List hsl, int startPx, int endPx,
-    {required int maxValue,
-    required double hCenterDeg,
-    required double q,
-    required double hShiftDeg,
-    required double sGain,
-    required double lGain}) {
+Uint16List adjustHslBandRows(
+  Uint16List hsl,
+  int startPx,
+  int endPx, {
+  required int maxValue,
+  required double hCenterDeg,
+  required double q,
+  required double hShiftDeg,
+  required double sGain,
+  required double lGain,
+}) {
   final (shiftLut, sMulLut, lMulLut) = hslBandLuts(
-      maxValue: maxValue,
-      hCenterDeg: hCenterDeg,
-      q: q,
-      hShiftDeg: hShiftDeg,
-      sGain: sGain,
-      lGain: lGain);
-  return applyHslBandLuts(hsl, startPx, endPx,
-      maxValue: maxValue,
-      shiftLut: shiftLut,
-      sMulLut: sMulLut,
-      lMulLut: lMulLut);
+    maxValue: maxValue,
+    hCenterDeg: hCenterDeg,
+    q: q,
+    hShiftDeg: hShiftDeg,
+    sGain: sGain,
+    lGain: lGain,
+  );
+  return applyHslBandLuts(
+    hsl,
+    startPx,
+    endPx,
+    maxValue: maxValue,
+    shiftLut: shiftLut,
+    sMulLut: sMulLut,
+    lMulLut: lMulLut,
+  );
 }
 
 /// 条带并行 CPU 池大小：全部处理器核心数 − 2（留 2 核给系统/调用侧），
@@ -1405,14 +1748,20 @@ int get cpuBandWorkers => math.max(2, Platform.numberOfProcessors - 2);
 
 /// RGB 调节器（RGB 域调参节点）：R/G/B 三通道分别乘增益后钳位到
 /// 0..maxValue。三个增益均为恒等 1 时直接返回原数据（不拷贝）。
-Uint16List adjustRgb(Uint16List rgb,
-    {required int maxValue,
-    double rGain = 1.0,
-    double gGain = 1.0,
-    double bGain = 1.0}) {
+Uint16List adjustRgb(
+  Uint16List rgb, {
+  required int maxValue,
+  double rGain = 1.0,
+  double gGain = 1.0,
+  double bGain = 1.0,
+}) {
   if (rGain == 1.0 && gGain == 1.0 && bGain == 1.0) return rgb;
-  return applyAdjustLut3(rgb, adjustGainLut(rGain, maxValue),
-      adjustGainLut(gGain, maxValue), adjustGainLut(bGain, maxValue));
+  return applyAdjustLut3(
+    rgb,
+    adjustGainLut(rGain, maxValue),
+    adjustGainLut(gGain, maxValue),
+    adjustGainLut(bGain, maxValue),
+  );
 }
 
 /// 通道增益映射表：lut[v] = clampTo(v * gain, maxValue)（先比界再 round
@@ -1425,9 +1774,34 @@ Uint16List adjustGainLut(double gain, int maxValue) {
   return lut;
 }
 
+/// Q14 定点通道增益映射表：增益先取 round(gain×2^14)，再按整数乘加
+/// clamp((v×q+2^13)>>14, 0..maxValue) 求值。
+Uint16List adjustQ14GainLut(double gain, int maxValue) {
+  final q = (gain * 16384.0).round();
+  final lut = Uint16List(maxValue + 1);
+  for (var v = 0; v <= maxValue; v++) {
+    lut[v] = ((v * q + 8192) >> 14).clamp(0, maxValue);
+  }
+  return lut;
+}
+
+/// 三通道 Q14 定点增益施加，供色温 func_fixed 代码生成对拍。
+Uint16List applyAdjustQ14Gain3(
+  Uint16List rgb,
+  List<double> gains, {
+  required int maxValue,
+}) {
+  final luts = [for (final g in gains) adjustQ14GainLut(g, maxValue)];
+  return applyAdjustLut3(rgb, luts[0], luts[1], luts[2]);
+}
+
 /// 三通道增益 LUT 查表施加（与 [adjustRgb] 直算逐位一致）。
 Uint16List applyAdjustLut3(
-    Uint16List rgb, Uint16List lutR, Uint16List lutG, Uint16List lutB) {
+  Uint16List rgb,
+  Uint16List lutR,
+  Uint16List lutG,
+  Uint16List lutB,
+) {
   final out = Uint16List(rgb.length);
   for (var i = 0; i < rgb.length; i += 3) {
     out[i] = lutR[rgb[i]];
@@ -1441,8 +1815,11 @@ Uint16List applyAdjustLut3(
 /// 定义域 0..4095）。帧值先按 maxValue 线性缩放到 LUT 域查表，结果再
 /// 缩放回 0..maxValue；maxValue == 4095 时直通查表。恒等 LUT 由调用方
 /// 判定并跳过本核（不拷贝）。
-Uint16List applyLevelsCurve(Uint16List rgb, Uint16List lut,
-    {required int maxValue}) {
+Uint16List applyLevelsCurve(
+  Uint16List rgb,
+  Uint16List lut, {
+  required int maxValue,
+}) {
   final out = Uint16List(rgb.length);
   if (maxValue == kLevelsMax) {
     for (var i = 0; i < rgb.length; i++) {
@@ -1471,33 +1848,51 @@ Uint16List applyLevelsCurve(Uint16List rgb, Uint16List lut,
 ///   直接取 Y 通道；
 /// - HSL：无直接的通道对应关系，经 hslToRgb/rgbToHsl 往返转换施加
 ///   RGB 域偏移（语义与 RGB 输入一致）。
-Uint16List applyColorBalance(Uint16List data,
-    {required String format,
-    required int maxValue,
-    double cyanRed = 0,
-    double magentaGreen = 0,
-    double yellowBlue = 0}) {
+Uint16List applyColorBalance(
+  Uint16List data, {
+  required String format,
+  required int maxValue,
+  double cyanRed = 0,
+  double magentaGreen = 0,
+  double yellowBlue = 0,
+}) {
   if (cyanRed == 0 && magentaGreen == 0 && yellowBlue == 0) return data;
   switch (format) {
     case 'rgb':
-      return _colorBalanceRgb(data, maxValue, cyanRed, magentaGreen,
-          yellowBlue);
+      return _colorBalanceRgb(
+        data,
+        maxValue,
+        cyanRed,
+        magentaGreen,
+        yellowBlue,
+      );
     case 'yuv':
-      return _colorBalanceYuv(data, maxValue, cyanRed, magentaGreen,
-          yellowBlue);
+      return _colorBalanceYuv(
+        data,
+        maxValue,
+        cyanRed,
+        magentaGreen,
+        yellowBlue,
+      );
     case 'hsl':
       final rgb = hslToRgb(data, maxValue: maxValue);
       return rgbToHsl(
-          _colorBalanceRgb(rgb, maxValue, cyanRed, magentaGreen, yellowBlue),
-          maxValue: maxValue);
+        _colorBalanceRgb(rgb, maxValue, cyanRed, magentaGreen, yellowBlue),
+        maxValue: maxValue,
+      );
     default:
       throw StateError('色彩平衡需要 RGB/YUV/HSL 输入（当前 $format）');
   }
 }
 
 /// RGB 域：按通道加性偏移（中间调权重按 BT.601 亮度计算）。
-Uint16List _colorBalanceRgb(Uint16List rgb, int maxValue, double cyanRed,
-    double magentaGreen, double yellowBlue) {
+Uint16List _colorBalanceRgb(
+  Uint16List rgb,
+  int maxValue,
+  double cyanRed,
+  double magentaGreen,
+  double yellowBlue,
+) {
   final dr = cyanRed / 100 * maxValue;
   final dg = magentaGreen / 100 * maxValue;
   final db = yellowBlue / 100 * maxValue;
@@ -1514,8 +1909,13 @@ Uint16List _colorBalanceRgb(Uint16List rgb, int maxValue, double cyanRed,
 }
 
 /// YUV 域：青↔红 → V 轴、黄↔蓝 → U 轴、洋红↔绿 → U/V 对角；Y 不变。
-Uint16List _colorBalanceYuv(Uint16List yuv, int maxValue, double cyanRed,
-    double magentaGreen, double yellowBlue) {
+Uint16List _colorBalanceYuv(
+  Uint16List yuv,
+  int maxValue,
+  double cyanRed,
+  double magentaGreen,
+  double yellowBlue,
+) {
   final k = maxValue / 2 / 100; // 色度偏移系数（值 100 = 半量程）
   final du = yellowBlue * k; // U：正值偏蓝
   final dv = cyanRed * k; // V：正值偏红
@@ -1534,11 +1934,13 @@ Uint16List _colorBalanceYuv(Uint16List yuv, int maxValue, double cyanRed,
 /// YUV 调节器（YUV 域调参节点）：Y 乘增益；U/V 围绕中点（maxValue>>1）
 /// 缩放（色度增益不改变中性色点），钳位到 0..maxValue。
 /// 三个增益均为恒等 1 时直接返回原数据（不拷贝）。
-Uint16List adjustYuv(Uint16List yuv,
-    {required int maxValue,
-    double yGain = 1.0,
-    double uGain = 1.0,
-    double vGain = 1.0}) {
+Uint16List adjustYuv(
+  Uint16List yuv, {
+  required int maxValue,
+  double yGain = 1.0,
+  double uGain = 1.0,
+  double vGain = 1.0,
+}) {
   if (yGain == 1.0 && uGain == 1.0 && vGain == 1.0) return yuv;
   final half = maxValue >> 1;
   final out = Uint16List(yuv.length);
@@ -1560,12 +1962,15 @@ Uint16List adjustYuv(Uint16List yuv,
 ///   （色度增益不改变中性色点）；
 /// - HSL 域：S 乘 satGain；L 乘 brightGain。
 /// 均四舍五入后钳位到 0..maxValue。
-Uint16List adjustSatBright(Uint16List data,
-    {required String format,
-    required int maxValue,
-    double satGain = 1.0,
-    double brightGain = 1.0}) {
-  if (satGain == 1.0 && brightGain == 1.0 &&
+Uint16List adjustSatBright(
+  Uint16List data, {
+  required String format,
+  required int maxValue,
+  double satGain = 1.0,
+  double brightGain = 1.0,
+}) {
+  if (satGain == 1.0 &&
+      brightGain == 1.0 &&
       (format == 'rgb' || format == 'yuv' || format == 'hsl')) {
     return data;
   }
@@ -1584,10 +1989,8 @@ Uint16List adjustSatBright(Uint16List data,
       final half = maxValue >> 1;
       for (var i = 0; i < data.length; i += 3) {
         out[i] = _clampTo(data[i] * brightGain, maxValue);
-        out[i + 1] =
-            _clampTo(half + (data[i + 1] - half) * satGain, maxValue);
-        out[i + 2] =
-            _clampTo(half + (data[i + 2] - half) * satGain, maxValue);
+        out[i + 1] = _clampTo(half + (data[i + 1] - half) * satGain, maxValue);
+        out[i + 2] = _clampTo(half + (data[i + 2] - half) * satGain, maxValue);
       }
     case 'hsl':
       for (var i = 0; i < data.length; i += 3) {
@@ -1616,11 +2019,12 @@ Uint16List adjustSatBright(Uint16List data,
 /// 亮度/对比度映射表（adjust 一维映射）：adjLut[y] =
 /// clampTo(((y*bs) - base) * gs + base, maxValue)。LUT 模式预览与 C 导出
 /// 生成期烘焙共用同一函数。
-Uint16List brightContrastAdjustLut(
-    {required int maxValue,
-    double brightPct = 100,
-    double baselinePct = 50,
-    double gainPct = 100}) {
+Uint16List brightContrastAdjustLut({
+  required int maxValue,
+  double brightPct = 100,
+  double baselinePct = 50,
+  double gainPct = 100,
+}) {
   final base = baselinePct / 100 * maxValue;
   final bs = brightPct / 100;
   final gs = gainPct / 100;
@@ -1635,10 +2039,12 @@ Uint16List brightContrastAdjustLut(
 /// mono/yuv(Y)/hsl(L) 域查 adjLut 一维映射表；RGB 域 adjust 映射改查表
 ///（除法保留——ratio = adjust(y.round()) / y 的分母是完整 double 亮度，
 /// 不是整数键，无法表化；LUT 化只消灭 adjust 映射的求值）。
-Uint16List applyBrightContrastLut(Uint16List data,
-    {required String format,
-    required int maxValue,
-    required Uint16List adjustLut}) {
+Uint16List applyBrightContrastLut(
+  Uint16List data, {
+  required String format,
+  required int maxValue,
+  required Uint16List adjustLut,
+}) {
   final out = Uint16List(data.length);
   switch (format) {
     case 'rgb':
@@ -1674,37 +2080,52 @@ Uint16List applyBrightContrastLut(Uint16List data,
   return out;
 }
 
-Uint16List adjustBrightContrast(Uint16List data,
-    {required String format,
-    required int maxValue,
-    double brightPct = 100,
-    double baselinePct = 50,
-    double gainPct = 100}) {
-  if (brightPct == 100 && gainPct == 100 &&
-      (format == 'rgb' || format == 'yuv' || format == 'hsl' ||
+Uint16List adjustBrightContrast(
+  Uint16List data, {
+  required String format,
+  required int maxValue,
+  double brightPct = 100,
+  double baselinePct = 50,
+  double gainPct = 100,
+}) {
+  if (brightPct == 100 &&
+      gainPct == 100 &&
+      (format == 'rgb' ||
+          format == 'yuv' ||
+          format == 'hsl' ||
           format == 'mono')) {
     return data;
   }
   final adjustLut = brightContrastAdjustLut(
-      maxValue: maxValue,
-      brightPct: brightPct,
-      baselinePct: baselinePct,
-      gainPct: gainPct);
-  return applyBrightContrastLut(data,
-      format: format, maxValue: maxValue, adjustLut: adjustLut);
+    maxValue: maxValue,
+    brightPct: brightPct,
+    baselinePct: baselinePct,
+    gainPct: gainPct,
+  );
+  return applyBrightContrastLut(
+    data,
+    format: format,
+    maxValue: maxValue,
+    adjustLut: adjustLut,
+  );
 }
 
 /// YUV → HSL：单遍融合实现——循环内先按 [yuvToRgb] 的定点公式算出 RGB
 /// 中间值（含钳位，不分配中间缓冲），再按 [rgbToHsl] 的逻辑求 H/S/L。
 /// 数学上等价于 YUV→RGB→HSL 两段中转，数值结果与之逐点一致。
-Uint16List yuvToHsl(Uint16List yuv, {required int maxValue}) {
+Uint16List yuvToHsl(
+  Uint16List yuv, {
+  required int maxValue,
+  String standard = 'bt601',
+}) {
   final out = Uint16List(yuv.length);
   final half = maxValue >> 1;
   final inv = 1.0 / maxValue;
-  const crV = 91881;  // 1.402 * 65536
-  const cgU = -22553; // -0.344136 * 65536
-  const cgV = -46801; // -0.714136 * 65536
-  const cbU = 116130; // 1.772 * 65536
+  final yc = yuvToRgbCoefficients(standard);
+  final crV = yc.crV;
+  final cgU = yc.cgU;
+  final cgV = yc.cgV;
+  final cbU = yc.cbU;
 
   for (var i = 0; i < yuv.length; i += 3) {
     final y = yuv[i];
@@ -1751,21 +2172,26 @@ Uint16List yuvToHsl(Uint16List yuv, {required int maxValue}) {
 /// HSL → YUV：单遍融合实现——循环内先按 [hslToRgb] 的逻辑算出 RGB
 /// 中间值（含钳位，不分配中间缓冲），再按 [rgbToYuv] 的定点公式求 Y/U/V。
 /// 数学上等价于 HSL→RGB→YUV 两段中转，数值结果与之逐点一致。
-Uint16List hslToYuv(Uint16List hsl, {required int maxValue}) {
+Uint16List hslToYuv(
+  Uint16List hsl, {
+  required int maxValue,
+  String standard = 'bt601',
+}) {
   final out = Uint16List(hsl.length);
   final half = maxValue >> 1;
   final inv = 1.0 / maxValue;
-  const cyR = 19595; // 0.299 * 65536
-  const cyG = 38470; // 0.587 * 65536
-  const cyB = 7471;  // 0.114 * 65536
+  final yc = rgbToYuvCoefficients(standard);
+  final cyR = yc.cyR;
+  final cyG = yc.cyG;
+  final cyB = yc.cyB;
 
-  const cuR = -11058; // -0.168736 * 65536
-  const cuG = -21710; // -0.331264 * 65536
-  const cuB = 32768;  // 0.5 * 65536
+  final cuR = yc.cuR;
+  final cuG = yc.cuG;
+  const cuB = 32768; // 0.5 * 65536
 
-  const cvR = 32768;  // 0.5 * 65536
-  const cvG = -27439; // -0.418688 * 65536
-  const cvB = -5329;  // -0.081312 * 65536
+  const cvR = 32768; // 0.5 * 65536
+  final cvG = yc.cvG;
+  final cvB = yc.cvB;
 
   for (var i = 0; i < hsl.length; i += 3) {
     // RGB 中间值：与 hslToRgb 完全一致。
@@ -1810,7 +2236,12 @@ Uint16List hslToYuv(Uint16List hsl, {required int maxValue}) {
 /// 收集 (x, y) 的处理邻域下标：mono（[pattern] 为 null）取 3x3 全像素
 /// 8 邻域，Bayer 取同相位（±2 步进）最多 8 邻域。
 List<int> _phaseNeighbors(
-    int width, int height, int x, int y, BayerPattern? pattern) {
+  int width,
+  int height,
+  int x,
+  int y,
+  BayerPattern? pattern,
+) {
   final idx = <int>[];
   final step = pattern == null ? 1 : 2;
   for (var dy = -step; dy <= step; dy += step) {
@@ -1942,9 +2373,12 @@ void applyFpn(
     // 水平边缘（垂直梯度）的垂直膨胀掩膜：这些像素的垂直低通被边缘
     // 污染，不参与行统计。
     final mask = _dilateMask(
-        _gradientEdge(buf, width, height, edgeThresh, vertical: true),
-        width, height, radius,
-        vertical: true);
+      _gradientEdge(buf, width, height, edgeThresh, vertical: true),
+      width,
+      height,
+      radius,
+      vertical: true,
+    );
     final buckets = Int32List(nb);
     for (var y = 0; y < height; y++) {
       buckets.fillRange(0, nb, 0);
@@ -1967,9 +2401,12 @@ void applyFpn(
   if (col) {
     final low = _horizontalBoxMean(buf, width, height, radius);
     final mask = _dilateMask(
-        _gradientEdge(buf, width, height, edgeThresh, vertical: false),
-        width, height, radius,
-        vertical: false);
+      _gradientEdge(buf, width, height, edgeThresh, vertical: false),
+      width,
+      height,
+      radius,
+      vertical: false,
+    );
     // 分块列统计：按 64 列一块、行优先对各列残差做桶计数（逐列跨步
     // 收集在 12MP 下缓存不命中是大头），统计与施加逐块完成。
     const tile = 64;
@@ -1991,8 +2428,13 @@ void applyFpn(
         }
       }
       for (var cx = 0; cx < tw; cx++) {
-        final corr = clampCorr(_clampedMedian(counts[cx], ceilM,
-            Int32List.sublistView(buckets, cx * nb, (cx + 1) * nb)));
+        final corr = clampCorr(
+          _clampedMedian(
+            counts[cx],
+            ceilM,
+            Int32List.sublistView(buckets, cx * nb, (cx + 1) * nb),
+          ),
+        );
         if (corr == 0) continue;
         final x = x0 + cx;
         for (var y = 0; y < height; y++) {
@@ -2006,8 +2448,13 @@ void applyFpn(
 }
 
 /// 梯度边缘图：vertical=true 检测水平边缘（垂直方向梯度超过 [thresh]）。
-Uint8List _gradientEdge(Uint16List buf, int w, int h, double thresh,
-    {required bool vertical}) {
+Uint8List _gradientEdge(
+  Uint16List buf,
+  int w,
+  int h,
+  double thresh, {
+  required bool vertical,
+}) {
   final out = Uint8List(w * h);
   if (vertical) {
     for (var y = 1; y < h - 1; y++) {
@@ -2034,8 +2481,13 @@ Uint8List _gradientEdge(Uint16List buf, int w, int h, double thresh,
 /// 边缘图按 [radius] 做滑窗膨胀（vertical=true 沿垂直方向）。
 /// 垂直方向用逐列计数数组 + 行优先遍历（列优先在 12MP 下缓存不命中
 /// 是主要耗时）。
-Uint8List _dilateMask(Uint8List edge, int w, int h, int radius,
-    {required bool vertical}) {
+Uint8List _dilateMask(
+  Uint8List edge,
+  int w,
+  int h,
+  int radius, {
+  required bool vertical,
+}) {
   final out = Uint8List(w * h);
   if (vertical) {
     final colCnt = Int32List(w);
@@ -2364,8 +2816,10 @@ void applyRgbDenoise(
             }
           }
           final avg = sum / count;
-          yuv[p * 3 + c] =
-              _clampTo(src[p * 3 + c] * (1 - blend) + avg * blend, maxValue);
+          yuv[p * 3 + c] = _clampTo(
+            src[p * 3 + c] * (1 - blend) + avg * blend,
+            maxValue,
+          );
         }
       }
     }
@@ -2389,8 +2843,8 @@ void applySharpen(
   final ys = Uint16List(pixels);
   for (var p = 0; p < pixels; p++) {
     final i = p * 3;
-    ys[p] = (19595 * rgb[i] + 38470 * rgb[i + 1] + 7471 * rgb[i + 2] + 32768) >>
-        16;
+    ys[p] =
+        (19595 * rgb[i] + 38470 * rgb[i + 1] + 7471 * rgb[i + 2] + 32768) >> 16;
   }
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
@@ -2556,13 +3010,15 @@ void applyMorphology(
 /// RGB 域求 BT.601 定点亮度，YUV 域取 Y 通道，HSL 域取 L 通道；输出
 /// 保持原格式的黑底白线图（RGB 三通道同值 / YUV 的 U=V=中灰 /
 /// HSL 的 H=0、S=0）。
-Uint16List extractHighFreq(Uint16List data,
-    {required int width,
-    required int height,
-    String format = 'rgb',
-    double gain = 1.0,
-    double threshold = 4.0,
-    int maxValue = 65535}) {
+Uint16List extractHighFreq(
+  Uint16List data, {
+  required int width,
+  required int height,
+  String format = 'rgb',
+  double gain = 1.0,
+  double threshold = 4.0,
+  int maxValue = 65535,
+}) {
   final pixels = width * height;
   final ys = Uint16List(pixels);
   switch (format) {
@@ -2570,8 +3026,11 @@ Uint16List extractHighFreq(Uint16List data,
       for (var p = 0; p < pixels; p++) {
         final i = p * 3;
         ys[p] =
-            (19595 * data[i] + 38470 * data[i + 1] + 7471 * data[i + 2] + 32768) >>
-                16;
+            (19595 * data[i] +
+                38470 * data[i + 1] +
+                7471 * data[i + 2] +
+                32768) >>
+            16;
       }
     case 'yuv':
       for (var p = 0; p < pixels; p++) {
@@ -2637,8 +3096,14 @@ const int _claheBins = 256;
 /// 裁剪、超出量均匀再分配，再由累积分布（CDF）得各 tile 的均衡 LUT
 /// （bin → 均衡亮度，0..maxValue）。返回长度 tilesX*tilesY*256 的表，
 /// tile 网格尺寸为 (width+blockSize-1)~/blockSize × (height+blockSize-1)~/blockSize。
-Float64List _claheTileLuts(Uint16List ys, int width, int height, int blockSize,
-    double clipLimit, int maxValue) {
+Float64List _claheTileLuts(
+  Uint16List ys,
+  int width,
+  int height,
+  int blockSize,
+  double clipLimit,
+  int maxValue,
+) {
   final tilesX = (width + blockSize - 1) ~/ blockSize;
   final tilesY = (height + blockSize - 1) ~/ blockSize;
   final luts = Float64List(tilesX * tilesY * _claheBins);
@@ -2680,8 +3145,16 @@ Float64List _claheTileLuts(Uint16List ys, int width, int height, int blockSize,
 /// CLAHE 双线性插值：像素 (x, y) 的均衡亮度由周围 4 个 tile 中心的 LUT
 /// 插值得到（tile 中心位于各 tile 中点，边缘像素钳到最近 tile），
 /// 避免块效应。[v] 为该像素亮度。
-double _claheBilinear(Float64List luts, int tilesX, int tilesY, int blockSize,
-    int x, int y, int v, int maxValue) {
+double _claheBilinear(
+  Float64List luts,
+  int tilesX,
+  int tilesY,
+  int blockSize,
+  int x,
+  int y,
+  int v,
+  int maxValue,
+) {
   final fy = (y + 0.5) / blockSize - 0.5;
   var ty0 = fy.floor();
   var wy = fy - ty0;
@@ -2717,9 +3190,14 @@ double _claheBilinear(Float64List luts, int tilesX, int tilesY, int blockSize,
 /// CLAHE 分块 LUT 的公开入口（GPU 链执行器复用：tile 直方图统计/CDF
 /// 仍在 CPU 计算，逐像素双线性插值放 shader）。bin 数恒为 256，
 /// 返回长度 tilesX*tilesY*256，布局见 [_claheTileLuts]。
-Float64List claheTileLuts(Uint16List ys, int width, int height,
-        int blockSize, double clipLimit, int maxValue) =>
-    _claheTileLuts(ys, width, height, blockSize, clipLimit, maxValue);
+Float64List claheTileLuts(
+  Uint16List ys,
+  int width,
+  int height,
+  int blockSize,
+  double clipLimit,
+  int maxValue,
+) => _claheTileLuts(ys, width, height, blockSize, clipLimit, maxValue);
 
 /// 自适应直方图均衡（CLAHE，对比度受限）：对亮度做分块直方图均衡，
 /// 三通道按亮度缩放比例等比缩放（保持 hue/sat 不变），原地修改。
@@ -2753,14 +3231,30 @@ void applyClahe(
   }
   final tilesX = (width + blockSize - 1) ~/ blockSize;
   final tilesY = (height + blockSize - 1) ~/ blockSize;
-  final luts = _claheTileLuts(ys, width, height, blockSize, clipLimit, maxValue);
+  final luts = _claheTileLuts(
+    ys,
+    width,
+    height,
+    blockSize,
+    clipLimit,
+    maxValue,
+  );
   // 2/3. 逐像素插值均衡亮度，按亮度比例缩放三通道。
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
       final p = y * width + x;
       final v = ys[p];
       if (v <= 0) continue; // 黑像素无亮度比例可言，保持不动
-      final le = _claheBilinear(luts, tilesX, tilesY, blockSize, x, y, v, maxValue);
+      final le = _claheBilinear(
+        luts,
+        tilesX,
+        tilesY,
+        blockSize,
+        x,
+        y,
+        v,
+        maxValue,
+      );
       // strength 混合在亮度域进行，再折算为通道缩放比。
       final scale = (v + (le - v) * strength) / v;
       final i = p * 3;
@@ -2788,15 +3282,29 @@ void applyClaheMono(
   if (clipLimit <= 0) clipLimit = 1.0;
   final tilesX = (width + blockSize - 1) ~/ blockSize;
   final tilesY = (height + blockSize - 1) ~/ blockSize;
-  final luts =
-      _claheTileLuts(mono, width, height, blockSize, clipLimit, maxValue);
+  final luts = _claheTileLuts(
+    mono,
+    width,
+    height,
+    blockSize,
+    clipLimit,
+    maxValue,
+  );
   for (var y = 0; y < height; y++) {
     for (var x = 0; x < width; x++) {
       final p = y * width + x;
       final v = mono[p];
       if (v <= 0) continue; // 与 RGB 版一致：纯黑保持不动
-      final le =
-          _claheBilinear(luts, tilesX, tilesY, blockSize, x, y, v, maxValue);
+      final le = _claheBilinear(
+        luts,
+        tilesX,
+        tilesY,
+        blockSize,
+        x,
+        y,
+        v,
+        maxValue,
+      );
       mono[p] = _clampTo(v + (le - v) * strength, maxValue);
     }
   }
@@ -2805,6 +3313,37 @@ void applyClaheMono(
 /// RGB → YUV 色彩空间转换（W36）：[standard] 为 'bt601'/'bt709' 定点
 /// 矩阵，[range] 为 'full'（全范围）/'limited'（tv 范围：Y 16..235、
 /// C 16..240 按 255 标度折算到 [maxValue] 量级）。
+({int cyR, int cyG, int cyB, int cuR, int cuG, int cvG, int cvB})
+rgbToYuvCoefficients(String standard) => switch (standard) {
+  'bt709' => (
+    cyR: 13933,
+    cyG: 46871,
+    cyB: 4732,
+    cuR: -7509,
+    cuG: -25260,
+    cvG: -29759,
+    cvB: -3009,
+  ),
+  'bt2020' || 'bt2100' => (
+    cyR: 17216,
+    cyG: 44433,
+    cyB: 3886,
+    cuR: -9151,
+    cuG: -23617,
+    cvG: -30133,
+    cvB: -2635,
+  ),
+  _ => (
+    cyR: 19595,
+    cyG: 38470,
+    cyB: 7471,
+    cuR: -11058,
+    cuG: -21710,
+    cvG: -27439,
+    cvB: -5329,
+  ),
+};
+
 Uint16List convertRgbToYuvCsc(
   Uint16List rgb, {
   required int width,
@@ -2813,22 +3352,13 @@ Uint16List convertRgbToYuvCsc(
   String range = 'full',
   int maxValue = 65535,
 }) {
-  if (standard != 'bt709' && range == 'full') {
+  if (standard == 'bt601' && range == 'full') {
     return rgbToYuv(rgb, maxValue: maxValue);
   }
-  // BT.601 全范围系数（与 rgbToYuv 一致）。
-  var cyR = 19595, cyG = 38470, cyB = 7471;
-  var cuR = -11058, cuG = -21710, cuB = 32768;
-  var cvR = 32768, cvG = -27439, cvB = -5329;
-  if (standard == 'bt709') {
-    cyR = 13933; // 0.2126 * 65536
-    cyG = 46871; // 0.7152 * 65536
-    cyB = 4732;  // 0.0722 * 65536
-    cuR = -7509;  // -0.1146 * 65536
-    cuG = -25260; // -0.3854 * 65536
-    cvG = -29759; // -0.4542 * 65536
-    cvB = -3009;  // -0.0458 * 65536
-  }
+  final c = rgbToYuvCoefficients(standard);
+  final cyR = c.cyR, cyG = c.cyG, cyB = c.cyB;
+  final cuR = c.cuR, cuG = c.cuG, cuB = 32768;
+  final cvR = 32768, cvG = c.cvG, cvB = c.cvB;
   final limited = range == 'limited';
   final half = maxValue >> 1;
   final offY = (maxValue * 16 + 127) ~/ 255;
@@ -2856,7 +3386,11 @@ Uint16List convertRgbToYuvCsc(
 
 /// 激发泄漏扣除（N17/N18）：统一扣除泄漏电平 [level]，扣除量限幅
 /// [maxSub]，结果钳位到 0。
-void applyFluoroLeak(Uint16List mono, {double level = 0, double maxSub = 65535}) {
+void applyFluoroLeak(
+  Uint16List mono, {
+  double level = 0,
+  double maxSub = 65535,
+}) {
   final sub = level < maxSub ? level : maxSub;
   if (sub <= 0) return;
   for (var i = 0; i < mono.length; i++) {
@@ -2961,7 +3495,10 @@ void applyFluoroNormalize(
 /// _clampTo(c*maxValue) 截位，三通道各一张。LUT 模式预览与 C 导出
 /// 生成期烘焙共用同一函数。
 (Uint16List, Uint16List, Uint16List) pseudoColorLuts(
-    String colormap, double gain, int maxValue) {
+  String colormap,
+  double gain,
+  int maxValue,
+) {
   final lutR = Uint16List(maxValue + 1);
   final lutG = Uint16List(maxValue + 1);
   final lutB = Uint16List(maxValue + 1);
@@ -2995,7 +3532,11 @@ void applyFluoroNormalize(
 
 /// 伪彩 LUT 查表施加（mono → 交织 RGB；与 [monoPseudoColor] 直算逐位一致）。
 Uint16List applyPseudoColorLut(
-    Uint16List mono, Uint16List lutR, Uint16List lutG, Uint16List lutB) {
+  Uint16List mono,
+  Uint16List lutR,
+  Uint16List lutG,
+  Uint16List lutB,
+) {
   final out = Uint16List(mono.length * 3);
   var j = 0;
   for (var i = 0; i < mono.length; i++, j += 3) {
@@ -3115,8 +3656,14 @@ Uint16List fuseFluorescence(
         if (a > alphaMax) a = alphaMax;
       }
       out[i] = _clampTo(rgbWl[i] * (1 - a) + pr * maxValue * a, maxValue);
-      out[i + 1] = _clampTo(rgbWl[i + 1] * (1 - a) + pg * maxValue * a, maxValue);
-      out[i + 2] = _clampTo(rgbWl[i + 2] * (1 - a) + pb * maxValue * a, maxValue);
+      out[i + 1] = _clampTo(
+        rgbWl[i + 1] * (1 - a) + pg * maxValue * a,
+        maxValue,
+      );
+      out[i + 2] = _clampTo(
+        rgbWl[i + 2] * (1 - a) + pb * maxValue * a,
+        maxValue,
+      );
     }
   }
   return out;
@@ -3127,13 +3674,17 @@ Uint16List fuseFluorescence(
 /// （归一化使输出仍在原量程内；offset 可用于黑电平抬升/符号偏移，
 /// 避免零值像素把另一路整体清零）。两路长度必须一致（分辨率一致性
 /// 的校验在 pipeline_runner 的节点分支完成，此处按短者兜底截断）。
-Uint16List multiplyMono(List<int> a, List<int> b,
-    {double offset1 = 0, double offset2 = 0, int maxValue = 65535}) {
+Uint16List multiplyMono(
+  List<int> a,
+  List<int> b, {
+  double offset1 = 0,
+  double offset2 = 0,
+  int maxValue = 65535,
+}) {
   final n = math.min(a.length, b.length);
   final out = Uint16List(n);
   for (var i = 0; i < n; i++) {
-    out[i] = _clampTo(
-        (a[i] + offset1) * (b[i] + offset2) / maxValue, maxValue);
+    out[i] = _clampTo((a[i] + offset1) * (b[i] + offset2) / maxValue, maxValue);
   }
   return out;
 }
@@ -3142,8 +3693,12 @@ Uint16List multiplyMono(List<int> a, List<int> b,
 /// out = round(a×balance + b×(1−balance))，两路增益总和恒为 1
 /// （balance 即源1 增益，源2 增益 = 1−balance），截位到 [maxValue]；
 /// 长度不一致按短者截断（同 [multiplyMono]）。
-Uint16List blendMono(List<int> a, List<int> b,
-    {double balance = 0.5, int maxValue = 65535}) {
+Uint16List blendMono(
+  List<int> a,
+  List<int> b, {
+  double balance = 0.5,
+  int maxValue = 65535,
+}) {
   final n = math.min(a.length, b.length);
   final out = Uint16List(n);
   final wb = 1 - balance;
@@ -3163,16 +3718,22 @@ Uint16List blendMono(List<int> a, List<int> b,
 /// （[blendChannels]=1，默认）或三通道交织（[blendChannels]=3，
 /// 逐通道对应叠加：Y 加到 Y、U 加到 U……），返回新缓冲
 /// （基图不被修改）。
-Uint16List blendMaskMono(List<int> base, List<int> blend, List<int> mask,
-    {String format = 'rgb',
-    int blendChannels = 1,
-    double strength = 1.0,
-    int maxValue = 65535}) {
+Uint16List blendMaskMono(
+  List<int> base,
+  List<int> blend,
+  List<int> mask, {
+  String format = 'rgb',
+  int blendChannels = 1,
+  double strength = 1.0,
+  int maxValue = 65535,
+}) {
   final out = Uint16List.fromList(base);
   if (strength == 0) return out;
   final channels = format == 'mono' ? 1 : 3;
-  final pixels = math.min(out.length ~/ channels,
-      math.min(blend.length ~/ blendChannels, mask.length));
+  final pixels = math.min(
+    out.length ~/ channels,
+    math.min(blend.length ~/ blendChannels, mask.length),
+  );
   final k = strength / maxValue;
   for (var p = 0; p < pixels; p++) {
     final i = p * channels;

@@ -92,6 +92,61 @@ int isp_highlight_apply(uint16_t *buf, int w, int h,
   return ISP_OK;
 }
 
+int isp_highlight_q14_apply(uint16_t *buf, int w, int h,
+                            const IspBayerPattern *pattern, int max_value,
+                            IspHighlightMode mode, int32_t knee_q14,
+                            uint16_t *scratch) {
+  int knee_pt;
+  if (buf == NULL) return ISP_ERR_ARG;
+  if (w <= 0 || h <= 0) return ISP_ERR_SIZE;
+  if (mode != ISP_HIGHLIGHT_RECOVER && mode != ISP_HIGHLIGHT_CLIP) {
+    return ISP_ERR_ARG;
+  }
+  if (max_value <= 0) return ISP_ERR_ARG;
+  knee_q14 = ISP_MAX(0, ISP_MIN(16384, knee_q14));
+  knee_pt = (int)(((int64_t)knee_q14 * max_value + 8192) >> 14);
+
+  if (mode == ISP_HIGHLIGHT_CLIP) {
+    const int range = max_value - knee_pt;
+    const int pixels = w * h;
+    int i;
+    if (range <= 0) return ISP_OK;
+    for (i = 0; i < pixels; i++) {
+      const int d = (int)buf[i] - knee_pt;
+      if (d <= 0) continue;
+      {
+        const int64_t num = (int64_t)d * range;
+        const int64_t den = range + d;
+        buf[i] = (uint16_t)(knee_pt + (num + (den >> 1)) / den);
+      }
+    }
+    return ISP_OK;
+  }
+
+  if (scratch == NULL) return ISP_ERR_ARG;
+  {
+    const uint16_t *src = (const uint16_t *)memcpy(
+        scratch, buf, (size_t)w * (size_t)h * sizeof(uint16_t));
+    int y, x;
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        const int i = y * w + x;
+        int sum = 0, count = 0, ncnt, k;
+        uint16_t nb[8];
+        if ((int)src[i] < knee_pt) continue;
+        ncnt = isp_phase_neighbors(src, w, h, x, y, pattern, nb);
+        for (k = 0; k < ncnt; k++) {
+          if ((int)nb[k] >= knee_pt) continue;
+          sum += (int)nb[k];
+          count++;
+        }
+        if (count > 0) buf[i] = (uint16_t)((sum + count / 2) / count);
+      }
+    }
+  }
+  return ISP_OK;
+}
+
 int isp_highlight_clip_lut_apply(uint16_t *buf, int w, int h,
                                  const uint16_t *lut) {
   const int64_t n = (int64_t)w * (int64_t)h;

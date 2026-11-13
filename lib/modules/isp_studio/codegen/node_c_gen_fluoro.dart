@@ -30,10 +30,10 @@ CNodeFiles? genFluoroCNode(CNodeGenCtx ctx) {
 
 /// 色表字符串 → c_ref 枚举常量（Dart 空串回退 'green'，未知值同兜底）。
 String _fluoroColormapEnum(String v) => switch (v) {
-      'magenta' => 'ISP_FLUORO_CMAP_MAGENTA',
-      'hot' => 'ISP_FLUORO_CMAP_HOT',
-      _ => 'ISP_FLUORO_CMAP_GREEN',
-    };
+  'magenta' => 'ISP_FLUORO_CMAP_MAGENTA',
+  'hot' => 'ISP_FLUORO_CMAP_HOT',
+  _ => 'ISP_FLUORO_CMAP_GREEN',
+};
 
 /// 融合模式字符串 → c_ref 枚举常量（Dart 空串回退 'alpha'）。
 String _fluoroFusionModeEnum(String v) =>
@@ -55,7 +55,8 @@ CNodeFiles _genFluoroLeak(CNodeGenCtx ctx) {
       '#define ${m}_LEVEL ${cNum(ctx.doubleParam('level'))}',
       '#define ${m}_MAX_SUB ${cNum(ctx.doubleParam('maxSub'))}',
     ],
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
   if (${m}_BYPASS) return ISP_OK;
   return isp_fluoro_leak_apply(out_mono, w, h, ${m}_LEVEL, ${m}_MAX_SUB);''',
@@ -77,7 +78,8 @@ CNodeFiles _genFluoroBackground(CNodeGenCtx ctx) {
       '#define ${m}_STRENGTH ${cNum(ctx.doubleParam('strength'))}',
     ],
     scratchExpr: 'ISP_FLUORO_BACKGROUND_SCRATCH_BYTES(w, h, ${m}_BLOCK_SIZE)',
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
   if (${m}_BYPASS) return ISP_OK;
   return isp_fluoro_background_apply(out_mono, w, h, ${m}_BLOCK_SIZE,
@@ -99,7 +101,8 @@ CNodeFiles _genFluoroNormalize(CNodeGenCtx ctx) {
       '#define ${m}_REFERENCE ${cNum(ctx.doubleParam('reference'))}',
       '#define ${m}_EPSILON ${cNum(ctx.doubleParam('epsilon'))}',
     ],
-    body: '''
+    body:
+        '''
 ${copyInToOut(input, output, '  ')}
   if (${m}_BYPASS) return ISP_OK;
   return isp_fluoro_normalize_apply(out_mono, w, h, ${m}_REFERENCE,
@@ -125,7 +128,8 @@ CNodeFiles _genFluoroTemporal(CNodeGenCtx ctx) {
       '#define ${m}_ALPHA ${cNum(ctx.doubleParam('alpha'))}',
       '#define ${m}_MOTION_ADAPT ${ctx.boolParam('motionAdapt') ? 1 : 0}',
     ],
-    body: '''
+    body:
+        '''
   static bool s_${ctx.ident}_has_history = false;
   if (${m}_BYPASS) {
 ${copyInToOut(input, output, '    ')}
@@ -146,12 +150,43 @@ ${copyInToOut(input, output, '    ')}
 /// 灰度直通（mono 原值复制到三个通道，视觉上不变）。
 CNodeFiles _genPseudoColor(CNodeGenCtx ctx) {
   final m = ctx.macro;
+  if (ctx.strParam('codegenMode') == 'func_fixed') {
+    final gainQ = (ctx.doubleParam('gain') * 16384).round();
+    return assembleCNode(
+      ctx: ctx,
+      algoIncludes: const ['isp_fluoro.h'],
+      inputs: const [CPort('in_mono')],
+      outputs: const [CPort('out', channels: 3)],
+      macroLines: [
+        '#define ${m}_COLORMAP ${_fluoroColormapEnum(ctx.strParam('colormap'))}',
+        '#define ${m}_GAIN_Q14 $gainQ',
+      ],
+      body:
+          '''
+  if (${m}_BYPASS) {
+    int i = 0;
+    const int n = w * h;
+    for (i = 0; i < n; i++) {
+      out[i * 3] = in_mono[i];
+      out[i * 3 + 1] = in_mono[i];
+      out[i * 3 + 2] = in_mono[i];
+    }
+    return ISP_OK;
+  }
+  return isp_fluoro_pseudo_color_q14_apply(
+      in_mono, out, w, h, (IspFluoroColormap)${m}_COLORMAP,
+      ${m}_GAIN_Q14, max_value);''',
+    );
+  }
   if (ctx.strParam('codegenMode') == 'lut') {
     // LUT 模式：色表三通道按生成期参数烘焙（Dart pseudoColorLuts，域
     // 0..ctx.lutDomainMax）；运行时 max_value 一致走纯查表，不一致回退
     // 直算（与函数方式同公式，数值一致）。
     final (lutR, lutG, lutB) = pseudoColorLuts(
-        ctx.strParam('colormap'), ctx.doubleParam('gain'), ctx.lutDomainMax);
+      ctx.strParam('colormap'),
+      ctx.doubleParam('gain'),
+      ctx.lutDomainMax,
+    );
     const input = CPort('in_mono');
     const output = CPort('out', channels: 3);
     return assembleCNode(
@@ -164,7 +199,8 @@ CNodeFiles _genPseudoColor(CNodeGenCtx ctx) {
         '#define ${m}_COLORMAP ${_fluoroColormapEnum(ctx.strParam('colormap'))}',
         '#define ${m}_GAIN ${cNum(ctx.doubleParam('gain'))}',
       ],
-      body: '''
+      body:
+          '''
   /* LUT 模式：以下三张色表由生成期按节点参数烘焙（Dart
    * pseudoColorLuts，域 0..${ctx.lutDomainMax}）。 */
   static const uint16_t ${ctx.ident}_lut_r[${ctx.lutDomainMax + 1}] = {
@@ -207,7 +243,8 @@ ${cU16Table(lutB)}
       '#define ${m}_COLORMAP ${_fluoroColormapEnum(ctx.strParam('colormap'))}',
       '#define ${m}_GAIN ${cNum(ctx.doubleParam('gain'))}',
     ],
-    body: '''
+    body:
+        '''
   if (${m}_BYPASS) {
     /* Bypass：灰度直通（mono 原值复制到三个通道，见文件头注释）。 */
     int i = 0;
@@ -241,7 +278,8 @@ CNodeFiles _genFluoroFusion(CNodeGenCtx ctx) {
       inputs: const [input],
       outputs: const [output],
       macroLines: const [],
-      body: '''
+      body:
+          '''
   /* 荧光输入未连接：白光直通（与 Dart 运行时语义一致）。 */
 ${copyInToOut(input, output, '  ')}
   return ISP_OK;''',
@@ -260,7 +298,8 @@ ${copyInToOut(input, output, '  ')}
       '#define ${m}_OFFSET_X ${cNum(ctx.doubleParam('offsetX'))}',
       '#define ${m}_OFFSET_Y ${cNum(ctx.doubleParam('offsetY'))}',
     ],
-    body: '''
+    body:
+        '''
   if (${m}_BYPASS) {
     /* Bypass：白光直通（与 Dart 跳过节点一致）。 */
 ${copyInToOut(input, output, '    ')}

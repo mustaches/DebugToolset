@@ -49,11 +49,7 @@ void main() {
     });
 
     test('非目标行不动（同一对象原样保留）', () {
-      final spans = [
-        sp('abc'),
-        sp('\n'),
-        sp('def'),
-      ];
+      final spans = [sp('abc'), sp('\n'), sp('def')];
       final out = applyIdentHighlight(spans, 0, 0, 2, hl);
       expect(out.map((s) => s.text), ['ab', 'c', '\n', 'def']);
       expect(identical(out[2], spans[1]), isTrue);
@@ -102,9 +98,7 @@ void main() {
   });
 
   group('CodeArea 行号与代码行对齐（strut 固定行高）', () {
-    testWidgets('含 CJK 注释行时 gutter 行号与代码区各行垂直位置一致', (
-      tester,
-    ) async {
+    testWidgets('含 CJK 注释行时 gutter 行号与代码区各行垂直位置一致', (tester) async {
       // 多行代码，中间夹中文注释行：CJK 走回退字体，ascent/descent 度量
       // 大于 Consolas。gutter 是单个 Text（行号 '\n' 连接），与代码区
       // 同样式同 strut、同一布局引擎逐行算行高，两边首字符框应逐行重合。
@@ -174,6 +168,51 @@ void main() {
         lessThanOrEqualTo(0.01),
         reason: 'gutter 高=${g.size.height}，代码区高=${c.size.height}',
       );
+    });
+  });
+
+  group('CodeArea 大文件虚拟化', () {
+    testWidgets('只构建可见行并支持滚动跳转', (tester) async {
+      final controller = CodeAreaController();
+      addTearDown(controller.dispose);
+      final spans = [
+        sp(
+          [
+            for (var i = 1; i <= 1000; i++) 'wire [7:0] signal_$i = $i;',
+          ].join('\n'),
+        ),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 400,
+              child: CodeArea(spans: spans, controller: controller),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(ListView), findsOneWidget);
+      expect(find.byType(SelectionArea), findsOneWidget);
+      expect(find.text('1000'), findsNothing);
+      expect(find.text('500'), findsNothing);
+      expect(
+        find
+            .byWidgetPredicate(
+              (w) =>
+                  w is Text &&
+                  (w.data?.startsWith('wire [7:0] signal_') ?? false),
+            )
+            .evaluate()
+            .length,
+        lessThan(50),
+      );
+      controller.jumpTo(800);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('800'), findsOneWidget);
+      expect(find.text('1'), findsNothing);
     });
   });
 }

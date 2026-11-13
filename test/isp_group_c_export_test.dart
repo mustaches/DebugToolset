@@ -56,7 +56,7 @@ void main() {
       expect(validateGroupCExport(graph, graph.groups.single), isNotNull);
     });
 
-    test('单节点编组：多段色彩均衡器与整行行核类型放行，其余拒绝', () async {
+    test('单节点编组：Process 与 Datapath 类型放行', () async {
       final graph = IspGraph();
       final eq = graph.addNode('multi_band_eq', 0, 0);
       graph.nodes[eq]!.name = 'mb';
@@ -64,11 +64,23 @@ void main() {
       expect(validateGroupCExport(graph, graph.groups.single), isNull);
 
       // 单节点编组可完整导出：节点封装 + top 层 + c_ref 并集。
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
-      expect(map.keys, containsAll(['mb.h', 'mb.c',
-          'isp_pipeline_eq.h', 'isp_pipeline_eq.c',
-          'isp_multi_band_eq.h', 'isp_multi_band_eq.c']));
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+        genTime: DateTime(2026, 1, 2, 3, 4, 5),
+      );
+      expect(
+        map.keys,
+        containsAll([
+          'mb.h',
+          'mb.c',
+          'isp_pipeline_eq.h',
+          'isp_pipeline_eq.c',
+          'isp_multi_band_eq.h',
+          'isp_multi_band_eq.c',
+        ]),
+      );
 
       // 有整行行核的类型（csc_rgb2yuv）同样放行。
       final graph3 = IspGraph();
@@ -76,12 +88,25 @@ void main() {
       graph3.groups.add(IspNodeGroup('g1', {csc}, name: 'c2y'));
       expect(validateGroupCExport(graph3, graph3.groups.single), isNull);
 
-      // 其它类型单节点仍拒绝（rgb_debugger 无整行行核）。
+      // 无整行行核的 Process 类型与 Datapath 类型也放行。
+      for (final typeId in const ['rgb_debugger', 'ahe', 'rgb_splitter']) {
+        final g = IspGraph();
+        final id = g.addNode(typeId, 0, 0);
+        g.groups.add(IspNodeGroup('g1', {id}, name: 'g'));
+        expect(
+          validateGroupCExport(g, g.groups.single),
+          isNull,
+          reason: typeId,
+        );
+      }
+
+      // 多输入节点仍需满足连接校验，但不再因单节点编组被拒绝。
       final graph2 = IspGraph();
-      final g = graph2.addNode('rgb_debugger', 0, 0);
+      final g = graph2.addNode('multiplier', 0, 0);
       graph2.groups.add(IspNodeGroup('g1', {g}, name: 'g'));
-      expect(validateGroupCExport(graph2, graph2.groups.single),
-          contains('不足'));
+      final error = validateGroupCExport(graph2, graph2.groups.single);
+      expect(error, contains('未连接'));
+      expect(error, isNot(contains('不足')));
     });
 
     test('multiplier 双输入未接全时报错', () {
@@ -129,35 +154,53 @@ void main() {
 
       // 两次调用注入同一固定时间戳，保证文件头注释逐字节一致。
       final genTime = DateTime(2026, 1, 2, 3, 4, 5);
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk, genTime: genTime);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+        genTime: genTime,
+      );
       // 导出物不含编译 stub main.c（main.c 仅供查看代码页「临时main调用（不导出）」
       // 分组展示与编译临时目录使用）。
       expect(map.keys, isNot(contains('main.c')));
       // 节点封装（拓扑序）在最前，随后是 top 层，最后是 c_ref 并集。
       expect(
-          map.keys.take(8).toList(),
-          equals([
-            'wb.h', 'wb.c', 'ccm.h', 'ccm.c', 'gamma.h', 'gamma.c',
-            'isp_pipeline_pipe.h', 'isp_pipeline_pipe.c',
-          ]));
+        map.keys.take(8).toList(),
+        equals([
+          'wb.h',
+          'wb.c',
+          'ccm.h',
+          'ccm.c',
+          'gamma.h',
+          'gamma.c',
+          'isp_pipeline_pipe.h',
+          'isp_pipeline_pipe.c',
+        ]),
+      );
       for (final f in [
-        'isp_common.h', 'isp_common.c',
-        'isp_white_balance.h', 'isp_white_balance.c',
-        'isp_ccm.h', 'isp_ccm.c', 'isp_gamma.h', 'isp_gamma.c',
+        'isp_common.h',
+        'isp_common.c',
+        'isp_white_balance.h',
+        'isp_white_balance.c',
+        'isp_ccm.h',
+        'isp_ccm.c',
+        'isp_gamma.h',
+        'isp_gamma.c',
       ]) {
         expect(map.containsKey(f), isTrue, reason: f);
       }
       // 微架构说明随整帧版一并导出，且注明「整帧版为标量参考实现」。
       expect(map.containsKey('cortex_a53_55_code_micro.md'), isTrue);
-      expect(map['cortex_a53_55_code_micro.md'],
-          contains('整帧版'));
+      expect(map['cortex_a53_55_code_micro.md'], contains('整帧版'));
 
       // 生成的 .h/.c（节点封装 + top 层）顶部带自动生成块注释与生成时间；
       // c_ref 算法参考文件原样拷贝，不含自动生成注释。
       for (final f in map.keys.take(8)) {
-        expect(map[f], startsWith('/* 本文件由 DebugToolSet ISP Studio 自动生成'),
-            reason: f);
+        expect(
+          map[f],
+          startsWith('/* 本文件由 DebugToolSet ISP Studio 自动生成'),
+          reason: f,
+        );
         expect(map[f], contains('生成时间：2026-01-02 03:04:05'), reason: f);
       }
       for (final f in map.keys.skip(8)) {
@@ -170,15 +213,22 @@ void main() {
       final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
       addTearDown(() => dir.delete(recursive: true));
       final result = await exportGroupCCode(
-          graph, graph.groups.single, dir.path,
-          readFile: readDisk, genTime: genTime);
+        graph,
+        graph.groups.single,
+        dir.path,
+        readFile: readDisk,
+        genTime: genTime,
+      );
 
       // 文件集合与顺序一致、内容逐文件一致。
       expect(result.topName, 'isp_pipeline_pipe');
       expect(result.files, map.keys.toList());
       for (final e in map.entries) {
-        expect(await File('${dir.path}/${e.key}').readAsString(), e.value,
-            reason: e.key);
+        expect(
+          await File('${dir.path}/${e.key}').readAsString(),
+          e.value,
+          reason: e.key,
+        );
       }
     });
 
@@ -197,16 +247,30 @@ void main() {
       final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
       addTearDown(() => dir.delete(recursive: true));
       final result = await exportGroupCCode(
-          graph, graph.groups.single, dir.path,
-          readFile: readDisk);
+        graph,
+        graph.groups.single,
+        dir.path,
+        readFile: readDisk,
+      );
 
       expect(result.topName, 'isp_pipeline_pipe');
       for (final f in [
-        'wb.h', 'wb.c', 'ccm.h', 'ccm.c', 'gamma.h', 'gamma.c',
-        'isp_pipeline_pipe.h', 'isp_pipeline_pipe.c',
-        'isp_common.h', 'isp_common.c',
-        'isp_white_balance.h', 'isp_white_balance.c',
-        'isp_ccm.h', 'isp_ccm.c', 'isp_gamma.h', 'isp_gamma.c',
+        'wb.h',
+        'wb.c',
+        'ccm.h',
+        'ccm.c',
+        'gamma.h',
+        'gamma.c',
+        'isp_pipeline_pipe.h',
+        'isp_pipeline_pipe.c',
+        'isp_common.h',
+        'isp_common.c',
+        'isp_white_balance.h',
+        'isp_white_balance.c',
+        'isp_ccm.h',
+        'isp_ccm.c',
+        'isp_gamma.h',
+        'isp_gamma.c',
       ]) {
         expect(File('${dir.path}/$f').existsSync(), isTrue, reason: f);
       }
@@ -220,10 +284,8 @@ void main() {
       final ccmC = await File('${dir.path}/ccm.c').readAsString();
       expect(ccmC, contains('static const double ccm_matrix[9]'));
 
-      final topH =
-          await File('${dir.path}/isp_pipeline_pipe.h').readAsString();
-      final topC =
-          await File('${dir.path}/isp_pipeline_pipe.c').readAsString();
+      final topH = await File('${dir.path}/isp_pipeline_pipe.h').readAsString();
+      final topC = await File('${dir.path}/isp_pipeline_pipe.c').readAsString();
 
       // 外部端口：wb 无上游 → const uint16_t *in0；gamma rgba → uint8_t。
       expect(topH, contains('const uint16_t *in0'));
@@ -234,10 +296,11 @@ void main() {
       expect(topC, contains('wb_run(in0, w, h, max_value, e0)'));
       expect(topC, contains('ccm_run(e0, w, h, max_value, e1)'));
       expect(
-          topC, contains('gamma_run(e1, w, h, max_value, out0, node_scratch)'));
+        topC,
+        contains('gamma_run(e1, w, h, max_value, out0, node_scratch)'),
+      );
       expect(topC.indexOf('wb_run('), lessThan(topC.indexOf('ccm_run(')));
-      expect(
-          topC.indexOf('ccm_run('), lessThan(topC.indexOf('gamma_run(')));
+      expect(topC.indexOf('ccm_run('), lessThan(topC.indexOf('gamma_run(')));
     });
 
     test('分路→合路回环：边缓冲按生产者端口一一对应', () async {
@@ -253,16 +316,17 @@ void main() {
 
       final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
       addTearDown(() => dir.delete(recursive: true));
-      await exportGroupCCode(graph, graph.groups.single, dir.path,
-          readFile: readDisk);
+      await exportGroupCCode(
+        graph,
+        graph.groups.single,
+        dir.path,
+        readFile: readDisk,
+      );
 
-      final topC =
-          await File('${dir.path}/isp_pipeline_loop.c').readAsString();
+      final topC = await File('${dir.path}/isp_pipeline_loop.c').readAsString();
       // splitter 三输出各写一条边；combiner 按同序读回。
-      expect(topC,
-          contains('split_run(in0, w, h, max_value, e0, e1, e2)'));
-      expect(topC,
-          contains('comb_run(e0, e1, e2, w, h, max_value, out0)'));
+      expect(topC, contains('split_run(in0, w, h, max_value, e0, e1, e2)'));
+      expect(topC, contains('comb_run(e0, e1, e2, w, h, max_value, out0)'));
     });
 
     test('格式推导：yuv 输入的 sat_bright 烘焙 YUV 格式宏', () async {
@@ -275,8 +339,12 @@ void main() {
 
       final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
       addTearDown(() => dir.delete(recursive: true));
-      await exportGroupCCode(graph, graph.groups.single, dir.path,
-          readFile: readDisk);
+      await exportGroupCCode(
+        graph,
+        graph.groups.single,
+        dir.path,
+        readFile: readDisk,
+      );
 
       final satH = await File('${dir.path}/sat.h').readAsString();
       expect(satH, contains('ISP_ADJ_FMT_YUV'));
@@ -289,22 +357,35 @@ void main() {
       final b = graph.addNode('csc_yuv2hsl', 0, 0);
       graph.nodes[a]!.name = 'to_yuv';
       graph.nodes[b]!.name = 'to_hsl';
+      graph.nodes[a]!.paramValues['codegenMode'] = 'func';
+      graph.nodes[b]!.paramValues['codegenMode'] = 'func';
       expect(graph.connect(a, 'out', b, 'in'), isNull);
       graph.groups.add(IspNodeGroup('g1', {a, b}, name: 'csc'));
 
       final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
       addTearDown(() => dir.delete(recursive: true));
-      await exportGroupCCode(graph, graph.groups.single, dir.path,
-          readFile: readDisk);
+      await exportGroupCCode(
+        graph,
+        graph.groups.single,
+        dir.path,
+        readFile: readDisk,
+      );
 
       final h = await File('${dir.path}/to_yuv.h').readAsString();
-      expect(h, contains('ISP_CSC_BT601'));
+      // 节点默认 standard=bt2020 → 烘焙 ISP_CSC_BT2020（三档枚举）。
+      expect(h, contains('ISP_CSC_BT2020'));
       expect(h, contains('ISP_CSC_RANGE_FULL'));
       final c = await File('${dir.path}/to_yuv.c').readAsString();
-      expect(c, contains('isp_csc_rgb_to_yuv(in, w, h, max_value,'));
+      expect(c, contains('TO_YUV_STANDARD'));
+      expect(c, contains('TO_YUV_RANGE'));
+      // YUV→HSL 同样透传 YUV 标准（新增行为）。
+      final hslH = await File('${dir.path}/to_hsl.h').readAsString();
+      expect(hslH, contains('TO_HSL_STANDARD'));
+      expect(hslH, contains('ISP_CSC_BT2020'));
+      final hslC = await File('${dir.path}/to_hsl.c').readAsString();
+      expect(hslC, contains('TO_HSL_STANDARD'));
       // top 链：to_yuv → to_hsl。
-      final topC =
-          await File('${dir.path}/isp_pipeline_csc.c').readAsString();
+      final topC = await File('${dir.path}/isp_pipeline_csc.c').readAsString();
       expect(topC, contains('to_yuv_run(in0, w, h, max_value, e0)'));
       expect(topC, contains('to_hsl_run(e0, w, h, max_value, out0)'));
     });
@@ -328,14 +409,17 @@ void main() {
       expect(graph.connect(wbDead, 'out', ccmDead, 'in'), isNull);
       expect(graph.connect(ccmDead, 'out', mux, 'in2'), isNull);
       expect(graph.connect(mux, 'out_rgb', gamma, 'in'), isNull);
-      graph.groups.add(IspNodeGroup(
-          'g1', {wbSel, wbDead, ccmDead, mux, gamma},
-          name: 'prune'));
+      graph.groups.add(
+        IspNodeGroup('g1', {wbSel, wbDead, ccmDead, mux, gamma}, name: 'prune'),
+      );
       // 选中支路已连接，校验通过（裁剪与校验不冲突）。
       expect(validateGroupCExport(graph, graph.groups.single), isNull);
 
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
       // 死支路两个节点的封装不生成；活管线三个节点 + top 层在列。
       expect(map.keys, containsAll(['wb_sel.h', 'mux.h', 'gamma.h']));
       expect(map.keys, isNot(contains('wb_dead.h')));
@@ -367,23 +451,39 @@ void main() {
       final gamma = graph.addNode('gamma', 0, 0);
       graph.nodes[csc]!.name = 'to_rgb';
       graph.nodes[gamma]!.name = 'gamma';
+      graph.nodes[csc]!.paramValues['codegenMode'] = 'func';
       expect(graph.connect(csc, 'out', gamma, 'in'), isNull);
       graph.groups.add(IspNodeGroup('g1', {csc, gamma}, name: 'csc_only'));
 
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
       // 用到的：变体文件对 + 共享内部头（无对应 .c）。
-      expect(map.keys, containsAll([
-        'isp_csc_hsl2rgb.h', 'isp_csc_hsl2rgb.c', 'isp_csc_common.h',
-      ]));
+      expect(
+        map.keys,
+        containsAll([
+          'isp_csc_hsl2rgb.h',
+          'isp_csc_hsl2rgb.c',
+          'isp_csc_common.h',
+        ]),
+      );
       // 未用到的五个变体与旧全家桶文件一律不在生成物中。
       for (final f in [
-        'isp_csc.h', 'isp_csc.c', 'isp_csc_common.c',
-        'isp_csc_rgb2yuv.h', 'isp_csc_rgb2yuv.c',
-        'isp_csc_rgb2hsl.h', 'isp_csc_rgb2hsl.c',
-        'isp_csc_yuv2rgb.h', 'isp_csc_yuv2rgb.c',
-        'isp_csc_yuv2hsl.h', 'isp_csc_yuv2hsl.c',
-        'isp_csc_hsl2yuv.h', 'isp_csc_hsl2yuv.c',
+        'isp_csc.h',
+        'isp_csc.c',
+        'isp_csc_common.c',
+        'isp_csc_rgb2yuv.h',
+        'isp_csc_rgb2yuv.c',
+        'isp_csc_rgb2hsl.h',
+        'isp_csc_rgb2hsl.c',
+        'isp_csc_yuv2rgb.h',
+        'isp_csc_yuv2rgb.c',
+        'isp_csc_yuv2hsl.h',
+        'isp_csc_yuv2hsl.c',
+        'isp_csc_hsl2yuv.h',
+        'isp_csc_hsl2yuv.c',
       ]) {
         expect(map.keys, isNot(contains(f)), reason: f);
       }
@@ -404,30 +504,38 @@ void main() {
       expect(wrapper, contains('#include "isp_csc_hsl2rgb.h"'));
       expect(wrapper, contains('#include "isp_csc_common.h"'));
       for (final h in [
-        'isp_csc_rgb2yuv.h', 'isp_csc_rgb2hsl.h', 'isp_csc_yuv2rgb.h',
-        'isp_csc_yuv2hsl.h', 'isp_csc_hsl2yuv.h',
+        'isp_csc_rgb2yuv.h',
+        'isp_csc_rgb2hsl.h',
+        'isp_csc_yuv2rgb.h',
+        'isp_csc_yuv2hsl.h',
+        'isp_csc_hsl2yuv.h',
       ]) {
         expect(wrapper, isNot(contains(h)), reason: h);
       }
       // wrapper 源文件调用本变体入口。
-      expect(map['to_rgb.c']!,
-          contains('isp_csc_hsl_to_rgb(in, w, h, max_value,'));
+      expect(
+        map['to_rgb.c']!,
+        contains('isp_csc_apply_modes(in, w, h, max_value, 4, 0,'),
+      );
     });
 
-    test('真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出',
-        () async {
+    test('真实 ispflow：荧光融合处理器（荧光 mono 链 + fusion 合流）导出', () async {
       // 回归：fluoro mono 节点 wrapper 端口名与注册表 in_mono/out_mono
       // 不一致导致「既不是组内边也不是组输出」StateError（查看代码页
       // 卡「生成中…」）。修复后应完整生成。
       final m = jsonDecode(
-          await File('IspFlow/ICG荧光融合ISP流程.ispflow').readAsString());
+        await File('IspFlow/ICG荧光融合ISP流程.ispflow').readAsString(),
+      );
       final graph = IspGraph.fromJson(m as Map<String, dynamic>);
       final group = graph.groups.single;
       expect(group.name, '荧光融合处理器');
       expect(validateGroupCExport(graph, group), isNull);
 
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
       // top 层名按组 id（组名全非 C 字符回退 g100）。
       expect(map.keys, contains('isp_pipeline_g100.h'));
       expect(map.keys, contains('isp_pipeline_g100.c'));
@@ -453,18 +561,21 @@ void main() {
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
-        await exportGroupCCode(graph, graph.groups.single, dir.path,
-            readFile: readDisk);
+        await exportGroupCCode(
+          graph,
+          graph.groups.single,
+          dir.path,
+          readFile: readDisk,
+        );
         final cFiles = [
           for (final f in Directory(dir.path).listSync().whereType<File>())
-            if (f.path.endsWith('.c'))
-              f.absolute.path.replaceAll('/', r'\'),
+            if (f.path.endsWith('.c')) f.absolute.path.replaceAll('/', r'\'),
         ]..sort();
-        final result = await Process.run(
-          'cmd',
-          ['/c', r'scripts\c_syntax_check.bat', ...cFiles],
-          workingDirectory: Directory.current.path,
-        );
+        final result = await Process.run('cmd', [
+          '/c',
+          r'scripts\c_syntax_check.bat',
+          ...cFiles,
+        ], workingDirectory: Directory.current.path);
         final output = '${result.stdout}\n${result.stderr}';
         expect(output, isNot(contains('error C')), reason: output);
       }
@@ -483,8 +594,11 @@ void main() {
       expect(graph.connect(wb, 'out', gamma, 'in'), isNull);
       graph.groups.add(IspNodeGroup('g1', {wb, gamma}, name: 'lut'));
 
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
       final wrapper = map['wb.c']!;
       // 生成期烘焙的双通道 static const 表（无上游源节点，烘焙域回退
       // 1023，表长 1024）。
@@ -507,18 +621,21 @@ void main() {
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
-        await exportGroupCCode(graph, graph.groups.single, dir.path,
-            readFile: readDisk);
+        await exportGroupCCode(
+          graph,
+          graph.groups.single,
+          dir.path,
+          readFile: readDisk,
+        );
         final cFiles = [
           for (final f in Directory(dir.path).listSync().whereType<File>())
-            if (f.path.endsWith('.c'))
-              f.absolute.path.replaceAll('/', r'\'),
+            if (f.path.endsWith('.c')) f.absolute.path.replaceAll('/', r'\'),
         ]..sort();
-        final result = await Process.run(
-          'cmd',
-          ['/c', r'scripts\c_syntax_check.bat', ...cFiles],
-          workingDirectory: Directory.current.path,
-        );
+        final result = await Process.run('cmd', [
+          '/c',
+          r'scripts\c_syntax_check.bat',
+          ...cFiles,
+        ], workingDirectory: Directory.current.path);
         final output = '${result.stdout}\n${result.stderr}';
         expect(output, isNot(contains('error C')), reason: output);
       }
@@ -540,15 +657,23 @@ void main() {
       expect(graph.connect(lv, 'out', gamma, 'in'), isNull);
       graph.groups.add(IspNodeGroup('g1', {lv, gamma}, name: 'lut'));
 
-      final map =
-          await buildGroupCFiles(graph, graph.groups.single, readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
       final wrapper = map['lv.c']!;
       // 生成期烘焙的 4096 级 static const LUT（与节点图表曲线同一求值口径）。
-      expect(wrapper,
-          contains('static const uint16_t lv_lut[ISP_LEVELS_LUT_SIZE]'));
+      expect(
+        wrapper,
+        contains('static const uint16_t lv_lut[ISP_LEVELS_LUT_SIZE]'),
+      );
       // 表内容 = Dart levelsCurveLut 逐值结果（位级一致抽查）。
-      final lut = levelsCurveLut(levelsPointsFromParam(points),
-          mode: levelsCurveModeFromParam('spline'), gamma: 1.0);
+      final lut = levelsCurveLut(
+        levelsPointsFromParam(points),
+        mode: levelsCurveModeFromParam('spline'),
+        gamma: 1.0,
+      );
       for (final x in [0, 512, 2048, 3072, 4095]) {
         expect(wrapper, contains('${lut[x]}'));
       }
@@ -563,8 +688,11 @@ void main() {
       final id = graph2.addNode('levels_curves', 0, 0);
       graph2.nodes[id]!.name = 'lv';
       graph2.groups.add(IspNodeGroup('g2', {id}, name: 'id'));
-      final map2 = await buildGroupCFiles(graph2, graph2.groups.single,
-          readFile: readDisk);
+      final map2 = await buildGroupCFiles(
+        graph2,
+        graph2.groups.single,
+        readFile: readDisk,
+      );
       expect(map2['lv.c']!, isNot(contains('_lut')));
       expect(map2['lv.c']!, contains('memcpy'));
 
@@ -575,18 +703,21 @@ void main() {
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
-        await exportGroupCCode(graph, graph.groups.single, dir.path,
-            readFile: readDisk);
+        await exportGroupCCode(
+          graph,
+          graph.groups.single,
+          dir.path,
+          readFile: readDisk,
+        );
         final cFiles = [
           for (final f in Directory(dir.path).listSync().whereType<File>())
-            if (f.path.endsWith('.c'))
-              f.absolute.path.replaceAll('/', r'\'),
+            if (f.path.endsWith('.c')) f.absolute.path.replaceAll('/', r'\'),
         ]..sort();
-        final result = await Process.run(
-          'cmd',
-          ['/c', r'scripts\c_syntax_check.bat', ...cFiles],
-          workingDirectory: Directory.current.path,
-        );
+        final result = await Process.run('cmd', [
+          '/c',
+          r'scripts\c_syntax_check.bat',
+          ...cFiles,
+        ], workingDirectory: Directory.current.path);
         final output = '${result.stdout}\n${result.stderr}';
         expect(output, isNot(contains('error C')), reason: output);
       }
@@ -602,31 +733,50 @@ void main() {
         return id;
       }
 
-      add('white_balance', 'wb',
-          {'mode': 'manual', 'rGain': 1.3, 'bGain': 0.7, 'codegenMode': 'lut'});
-      add('color_temp_adjuster', 'ct',
-          {'temperature': 5000.0, 'measured_cct': 6500, 'codegenMode': 'lut'});
-      add('pseudo_color', 'pc',
-          {'colormap': 'hot', 'gain': 2.0, 'codegenMode': 'lut'});
-      add('highlight', 'hl',
-          {'mode': 'clip', 'knee': 0.85, 'codegenMode': 'lut'});
-      add('bright_contrast_adjuster', 'bc',
-          {'bright': 110.0, 'gain': 130.0, 'codegenMode': 'lut'});
-      add('color_controller', 'cc', {
-        'h_center': 120.0,
-        'h_shift': 30.0,
-        's_gain': 0.8,
-        'codegenMode': 'lut'
+      add('white_balance', 'wb', {
+        'mode': 'manual',
+        'rGain': 1.3,
+        'bGain': 0.7,
+        'codegenMode': 'lut',
+      });
+      add('color_temp_adjuster', 'ct', {
+        'temperature': 5000.0,
+        'measured_cct': 6500,
+        'codegenMode': 'lut',
+      });
+      add('pseudo_color', 'pc', {
+        'colormap': 'hot',
+        'gain': 2.0,
+        'codegenMode': 'lut',
+      });
+      add('highlight', 'hl', {
+        'mode': 'clip',
+        'knee': 0.85,
+        'codegenMode': 'lut',
+      });
+      add('bright_contrast_adjuster', 'bc', {
+        'bright': 110.0,
+        'gain': 130.0,
+        'codegenMode': 'lut',
+      });
+      add('multi_band_eq', 'cc', {
+        'b0_h': 120.0,
+        'b0_dh': 30.0,
+        'b0_s': 0.8,
+        'codegenMode': 'lut',
       });
       final gamma = graph.addNode('gamma', 0, 0);
       graph.nodes[gamma]!.name = 'gamma';
-      expect(graph.connect(
-          graph.nodes.keys.first, 'out', gamma, 'in'), isNull);
-      graph.groups.add(IspNodeGroup(
-          'g1', {...graph.nodes.keys}, name: 'lutall'));
+      expect(graph.connect(graph.nodes.keys.first, 'out', gamma, 'in'), isNull);
+      graph.groups.add(
+        IspNodeGroup('g1', {...graph.nodes.keys}, name: 'lutall'),
+      );
 
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
 
       // wb：双通道增益表 + 查表。
       expect(map['wb.c'], contains('static const uint16_t wb_lut_r[1024]'));
@@ -637,22 +787,18 @@ void main() {
       expect(map['ct.c'], contains('isp_adjust_lut3_apply'));
       // pseudo_color：三张色表。
       expect(map['pc.c'], contains('static const uint16_t pc_lut_g[1024]'));
-      expect(map['pc.c'],
-          contains('isp_fluoro_pseudo_color_lut_apply'));
+      expect(map['pc.c'], contains('isp_fluoro_pseudo_color_lut_apply'));
       // highlight clip：膝点压缩表。
-      expect(map['hl.c'],
-          contains('static const uint16_t hl_clip_lut[1024]'));
+      expect(map['hl.c'], contains('static const uint16_t hl_clip_lut[1024]'));
       expect(map['hl.c'], contains('isp_highlight_clip_lut_apply'));
       // bright_contrast：adjust 映射表（无比例表，除法保留）。
       expect(map['bc.c'], contains('static const uint16_t bc_adj_lut[1024]'));
       expect(map['bc.c'], contains('isp_adjust_bc_lut_apply'));
       expect(map['bc.c'], isNot(contains('ratio_lut')));
-      // color_controller：H 域三表，wrapper 主循环无 exp。
-      expect(map['cc.c'],
-          contains('static const int32_t cc_shift_lut[1024]'));
+      // multi_band_eq：H 域三表，wrapper 主循环无 exp。
+      expect(map['cc.c'], contains('static const int32_t cc_shift_lut[1024]'));
       expect(map['cc.c'], contains('static const double cc_s_mul_lut[1024]'));
-      expect(map['cc.c'],
-          contains('isp_color_controller_lut_apply'));
+      expect(map['cc.c'], contains('isp_multi_band_eq_lut_apply'));
       expect(map['cc.c'], isNot(contains('exp(')));
       // 全部带运行时守卫回退。
       for (final f in ['wb.c', 'ct.c', 'pc.c', 'hl.c', 'bc.c', 'cc.c']) {
@@ -666,25 +812,59 @@ void main() {
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
-        await exportGroupCCode(graph, graph.groups.single, dir.path,
-            readFile: readDisk);
+        await exportGroupCCode(
+          graph,
+          graph.groups.single,
+          dir.path,
+          readFile: readDisk,
+        );
         final cFiles = [
           for (final f in Directory(dir.path).listSync().whereType<File>())
-            if (f.path.endsWith('.c'))
-              f.absolute.path.replaceAll('/', r'\'),
+            if (f.path.endsWith('.c')) f.absolute.path.replaceAll('/', r'\'),
         ]..sort();
-        final result = await Process.run(
-          'cmd',
-          ['/c', r'scripts\c_syntax_check.bat', ...cFiles],
-          workingDirectory: Directory.current.path,
-        );
+        final result = await Process.run('cmd', [
+          '/c',
+          r'scripts\c_syntax_check.bat',
+          ...cFiles,
+        ], workingDirectory: Directory.current.path);
         final output = '${result.stdout}\n${result.stderr}';
         expect(output, isNot(contains('error C')), reason: output);
       }
     });
 
-    test('multi_band_eq 封装：func 直算 / lut 烘焙三表 + MSVC 语法编译',
-        () async {
+    test('color_temp_adjuster 四档代码生成', () async {
+      for (final mode in ['func', 'func_fixed', 'lut', 'lut_fixed']) {
+        final graph = IspGraph();
+        final ct = graph.addNode('color_temp_adjuster', 0, 0);
+        graph.nodes[ct]!.name = 'ct';
+        graph.nodes[ct]!.paramValues['codegenMode'] = mode;
+        graph.nodes[ct]!.paramValues['temperature'] = 4200.0;
+        graph.groups.add(IspNodeGroup('g_$mode', {ct}, name: 'ct$mode'));
+        final map = await buildGroupCFiles(
+          graph,
+          graph.groups.single,
+          readFile: readDisk,
+        );
+        final source = map['ct.c']!;
+        if (mode == 'func') {
+          expect(source, contains('isp_color_temp_gains'));
+          expect(source, contains('isp_adjust_rgb'));
+        } else if (mode == 'lut') {
+          expect(source, contains('static const uint16_t ct_lut_r'));
+          expect(source, contains('isp_adjust_lut3_apply'));
+        } else {
+          expect(source, contains('isp_adjust_q14_gain3_apply'));
+          expect(source, isNot(contains('isp_color_temp_gains')));
+          if (mode == 'lut_fixed') {
+            expect(source, contains('static const uint16_t ct_lut_r'));
+          } else {
+            expect(source, isNot(contains('static const uint16_t ct_lut_r')));
+          }
+        }
+      }
+    });
+
+    test('multi_band_eq 封装：func 直算 / lut 烘焙三表 + MSVC 语法编译', () async {
       final graph = IspGraph();
       String add(String typeId, String name, Map<String, Object?> params) {
         final id = graph.addNode(typeId, 0, 0);
@@ -694,6 +874,7 @@ void main() {
       }
 
       final f = add('multi_band_eq', 'mbf', {
+        'codegenMode': 'func',
         'band_count': 3,
         'band_mode': 'serial',
         'b0_h': 30.0, 'b0_q': 0.5, 'b0_dh': 45.0, 'b0_s': 1.3,
@@ -704,88 +885,151 @@ void main() {
         'band_count': 2,
         'band_mode': 'parallel',
         'codegenMode': 'lut',
-        'b0_h': 0.0, 'b0_q': 2.0, 'b0_dh': 90.0,
-        'b1_h': 90.0, 'b1_q': 2.0, 'b1_dh': 90.0, 'b1_s': 2.0,
+        'b0_h': 0.0,
+        'b0_q': 2.0,
+        'b0_dh': 90.0,
+        'b1_h': 90.0,
+        'b1_q': 2.0,
+        'b1_dh': 90.0,
+        'b1_s': 2.0,
+      });
+      final fx = add('multi_band_eq', 'mbx', {
+        'band_count': 2,
+        'band_mode': 'serial',
+        'codegenMode': 'func_fixed',
+        'b0_h': 0.0,
+        'b0_q': 2.0,
+        'b0_dh': 90.0,
+        'b1_h': 90.0,
+        'b1_q': 2.0,
+        'b1_dh': 90.0,
+        'b1_s': 2.0,
       });
       expect(graph.connect(f, 'out', l, 'in'), isNull);
-      graph.groups.add(IspNodeGroup('g_mb', {f, l}, name: 'mbeq'));
+      expect(graph.connect(l, 'out', fx, 'in'), isNull);
+      graph.groups.add(IspNodeGroup('g_mb', {f, l, fx}, name: 'mbeq'));
 
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
       // func：段参数烘焙为 static const 数组 + 直算调用，无烘焙表。
-      expect(map['mbf.c'],
-          contains('static const IspMultiBandEqBand mbf_bands[3]'));
+      expect(
+        map['mbf.c'],
+        contains('static const IspMultiBandEqBand mbf_bands[3]'),
+      );
       expect(map['mbf.c'], contains('isp_multi_band_eq_apply'));
       expect(map['mbf.h'], contains('ISP_MBF_SERIAL 1'));
       expect(map['mbf.c'], isNot(contains('_shift_lut')));
       // lut：三表烘焙 + 查表调用 + 运行时守卫回退，wrapper 主循环无 exp。
-      expect(map['mbl.c'],
-          contains('static const int32_t mbl_shift_lut[1024]'));
-      expect(map['mbl.c'],
-          contains('static const double mbl_s_mul_lut[1024]'));
+      expect(
+        map['mbl.c'],
+        contains('static const int32_t mbl_shift_lut[1024]'),
+      );
+      expect(map['mbl.c'], contains('static const double mbl_s_mul_lut[1024]'));
       expect(map['mbl.c'], contains('isp_multi_band_eq_lut_apply'));
       expect(map['mbl.c'], contains('if (max_value == 1023)'));
       expect(map['mbl.c'], isNot(contains('exp(')));
+      // func_fixed：段参数烘焙为 static const 数组 + 定点直算调用，无烘
+      // 焙表、无 FP64 合成路径。
+      expect(
+        map['mbx.c'],
+        contains('static const IspMultiBandEqBand mbx_bands[2]'),
+      );
+      expect(map['mbx.c'], contains('isp_multi_band_eq_fx_apply'));
+      expect(map['mbx.c'], isNot(contains('_shift_lut')));
+      expect(map['mbx.c'], isNot(contains('isp_multi_band_eq_apply(')));
 
       // MSVC 语法编译（无 MSVC 自动 skip；探测同 detectMsvc 口径）。
       final msvcOk = detectMsvc() != null;
       if (msvcOk) {
         final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
         addTearDown(() => dir.delete(recursive: true));
-        await exportGroupCCode(graph, graph.groups.single, dir.path,
-            readFile: readDisk);
+        await exportGroupCCode(
+          graph,
+          graph.groups.single,
+          dir.path,
+          readFile: readDisk,
+        );
         final cFiles = [
           for (final f in Directory(dir.path).listSync().whereType<File>())
-            if (f.path.endsWith('.c'))
-              f.absolute.path.replaceAll('/', r'\'),
+            if (f.path.endsWith('.c')) f.absolute.path.replaceAll('/', r'\'),
         ]..sort();
-        final result = await Process.run(
-          'cmd',
-          ['/c', r'scripts\c_syntax_check.bat', ...cFiles],
-          workingDirectory: Directory.current.path,
-        );
+        final result = await Process.run('cmd', [
+          '/c',
+          r'scripts\c_syntax_check.bat',
+          ...cFiles,
+        ], workingDirectory: Directory.current.path);
         final output = '${result.stdout}\n${result.stderr}';
         expect(output, isNot(contains('error C')), reason: output);
       }
     });
 
     test('生成代码无未初始化声明（指针 NULL 化、标量零值）', () async {
-      // 全 49 类型编组，扫描 wrapper 与 top 层（c_ref 为资产不检查）。
+      // 全 47 类型编组，扫描 wrapper 与 top 层（c_ref 为资产不检查）。
       final graph = IspGraph();
       final ids = <String, String>{
         for (final t in cExportSupportedTypeIds) t: graph.addNode(t, 0, 0),
       };
-      expect(graph.connect(ids['white_balance']!, 'out', ids['ccm']!, 'in'),
-          isNull);
+      expect(
+        graph.connect(ids['white_balance']!, 'out', ids['ccm']!, 'in'),
+        isNull,
+      );
       expect(graph.connect(ids['ccm']!, 'out', ids['gamma']!, 'in'), isNull);
       expect(
-          graph.connect(
-              ids['rgb_splitter']!, 'out_r', ids['rgb_combiner']!, 'in_r'),
-          isNull);
+        graph.connect(
+          ids['rgb_splitter']!,
+          'out_r',
+          ids['rgb_combiner']!,
+          'in_r',
+        ),
+        isNull,
+      );
       expect(
-          graph.connect(
-              ids['rgb_splitter']!, 'out_g', ids['rgb_combiner']!, 'in_g'),
-          isNull);
+        graph.connect(
+          ids['rgb_splitter']!,
+          'out_g',
+          ids['rgb_combiner']!,
+          'in_g',
+        ),
+        isNull,
+      );
       expect(
-          graph.connect(
-              ids['rgb_splitter']!, 'out_b', ids['rgb_combiner']!, 'in_b'),
-          isNull);
+        graph.connect(
+          ids['rgb_splitter']!,
+          'out_b',
+          ids['rgb_combiner']!,
+          'in_b',
+        ),
+        isNull,
+      );
       expect(
-          graph.connect(ids['yuv_debugger']!, 'out', ids['sat_bright_adjuster']!,
-              'in_yuv'),
-          isNull);
+        graph.connect(
+          ids['yuv_debugger']!,
+          'out',
+          ids['sat_bright_adjuster']!,
+          'in_yuv',
+        ),
+        isNull,
+      );
       graph.groups.add(IspNodeGroup('g1', ids.values.toSet(), name: 'init'));
-      final map = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk);
+      final map = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+      );
 
       // 未初始化指针声明（`uint16_t *e0;` 形态）：应一律带初始化。
       final uninitPtr = RegExp(
-          r'^\s*(?:const\s+)?(?:u?int(?:8|16|32|64)_t|size_t|double|float|bool|int|char|void)\s*\*\s*\w+\s*;\s*$',
-          multiLine: true);
+        r'^\s*(?:const\s+)?(?:u?int(?:8|16|32|64)_t|size_t|double|float|bool|int|char|void)\s*\*\s*\w+\s*;\s*$',
+        multiLine: true,
+      );
       // 未初始化标量/数组声明（`int rc;` / `double gains[3];` 形态）。
       final uninitScalar = RegExp(
-          r'^\s*(?:u?int(?:8|16|32|64)_t|size_t|double|float|bool|int|char)\s+\w+(?:\[[^\]]*\])?\s*;\s*$',
-          multiLine: true);
+        r'^\s*(?:u?int(?:8|16|32|64)_t|size_t|double|float|bool|int|char)\s+\w+(?:\[[^\]]*\])?\s*;\s*$',
+        multiLine: true,
+      );
       for (final e in map.entries) {
         final isTop = e.key.startsWith('isp_pipeline_');
         final isWrapper = !e.key.startsWith('isp_');
@@ -797,7 +1041,7 @@ void main() {
   });
 
   test(
-    '全部 49 类型导出 + MSVC 语法编译',
+    '全部 47 类型导出 + MSVC 语法编译',
     () async {
       // 探测走 c_compile.dart 的 detectMsvc（vswhere 优先 + 目录枚举，
       // 覆盖 VS2022/2019/2026）。
@@ -813,51 +1057,128 @@ void main() {
         for (final t in cExportSupportedTypeIds) t: graph.addNode(t, 0, 0),
       };
       // 主链与回环：锻炼边缓冲、格式推导、gamma 链尾。
-      expect(graph.connect(ids['white_balance']!, 'out', ids['ccm']!, 'in'),
-          isNull);
+      expect(
+        graph.connect(ids['white_balance']!, 'out', ids['ccm']!, 'in'),
+        isNull,
+      );
       expect(graph.connect(ids['ccm']!, 'out', ids['gamma']!, 'in'), isNull);
       expect(
-          graph.connect(
-              ids['rgb_splitter']!, 'out_r', ids['rgb_combiner']!, 'in_r'),
-          isNull);
+        graph.connect(
+          ids['rgb_splitter']!,
+          'out_r',
+          ids['rgb_combiner']!,
+          'in_r',
+        ),
+        isNull,
+      );
       expect(
-          graph.connect(
-              ids['rgb_splitter']!, 'out_g', ids['rgb_combiner']!, 'in_g'),
-          isNull);
+        graph.connect(
+          ids['rgb_splitter']!,
+          'out_g',
+          ids['rgb_combiner']!,
+          'in_g',
+        ),
+        isNull,
+      );
       expect(
-          graph.connect(
-              ids['rgb_splitter']!, 'out_b', ids['rgb_combiner']!, 'in_b'),
-          isNull);
+        graph.connect(
+          ids['rgb_splitter']!,
+          'out_b',
+          ids['rgb_combiner']!,
+          'in_b',
+        ),
+        isNull,
+      );
       expect(
-          graph.connect(ids['yuv_debugger']!, 'out', ids['sat_bright_adjuster']!,
-              'in_yuv'),
-          isNull);
-      graph.groups.add(
-          IspNodeGroup('g1', ids.values.toSet(), name: 'all'));
+        graph.connect(
+          ids['yuv_debugger']!,
+          'out',
+          ids['sat_bright_adjuster']!,
+          'in_yuv',
+        ),
+        isNull,
+      );
+      graph.groups.add(IspNodeGroup('g1', ids.values.toSet(), name: 'all'));
 
       final dir = await Directory.systemTemp.createTemp('isp_grp_export_');
       addTearDown(() => dir.delete(recursive: true));
-      await exportGroupCCode(graph, graph.groups.single, dir.path,
-          readFile: readDisk);
+      await exportGroupCCode(
+        graph,
+        graph.groups.single,
+        dir.path,
+        readFile: readDisk,
+      );
 
       final cFiles = [
         for (final f in Directory(dir.path).listSync().whereType<File>())
-          if (f.path.endsWith('.c'))
-            f.absolute.path.replaceAll('/', r'\'),
+          if (f.path.endsWith('.c')) f.absolute.path.replaceAll('/', r'\'),
       ]..sort();
       // 48 封装 + 1 top + c_ref 实现，数量下限检查。
       expect(cFiles.length, greaterThan(48));
-      final result = await Process.run(
-        'cmd',
-        ['/c', r'scripts\c_syntax_check.bat', ...cFiles],
-        workingDirectory: Directory.current.path,
-      );
+      final result = await Process.run('cmd', [
+        '/c',
+        r'scripts\c_syntax_check.bat',
+        ...cFiles,
+      ], workingDirectory: Directory.current.path);
       final output = '${result.stdout}\n${result.stderr}';
       expect(output, isNot(contains('error C')), reason: output);
     },
     // 逐文件 cl 语法检查较慢，放宽超时。
     timeout: const Timeout(Duration(minutes: 10)),
   );
+
+  test('ColorTrans 六类型 × 四档生成与 MSVC 编译', () async {
+    const types = [
+      'csc_rgb2yuv',
+      'csc_rgb2hsl',
+      'csc_yuv2rgb',
+      'csc_yuv2hsl',
+      'csc_hsl2rgb',
+      'csc_hsl2yuv',
+    ];
+    const modes = ['func', 'func_fixed', 'lut', 'lut_fixed'];
+    final graph = IspGraph();
+    final ids = <String>{};
+    for (final type in types) {
+      for (final mode in modes) {
+        final id = graph.addNode(type, 0, 0);
+        final name = '${type}_$mode';
+        graph.nodes[id]!.name = name;
+        graph.nodes[id]!.paramValues['codegenMode'] = mode;
+        ids.add(id);
+        final source = (await buildGroupCFiles(
+          graph,
+          IspNodeGroup('g_$name', {id}, name: name),
+          readFile: readDisk,
+        ))['$name.c']!;
+        expect(source, contains('isp_csc_apply_modes'), reason: name);
+        if (mode == 'lut' || mode == 'lut_fixed') {
+          expect(source, contains('static const'), reason: name);
+        }
+      }
+    }
+    if (detectMsvc() == null) return;
+    graph.groups.add(IspNodeGroup('g_csc_modes', ids, name: 'csc_modes'));
+    final dir = await Directory.systemTemp.createTemp('isp_csc_modes_');
+    addTearDown(() => dir.delete(recursive: true));
+    await exportGroupCCode(
+      graph,
+      graph.groups.single,
+      dir.path,
+      readFile: readDisk,
+    );
+    final cFiles = [
+      for (final f in Directory(dir.path).listSync().whereType<File>())
+        if (f.path.endsWith('.c')) f.absolute.path.replaceAll('/', r'\'),
+    ]..sort();
+    final result = await Process.run('cmd', [
+      '/c',
+      r'scripts\c_syntax_check.bat',
+      ...cFiles,
+    ], workingDirectory: Directory.current.path);
+    final output = '${result.stdout}\n${result.stderr}';
+    expect(output, isNot(contains('error C')), reason: output);
+  }, timeout: const Timeout(Duration(minutes: 10)));
 
   group('Win32 可运行验证程序（main_win.c）', () {
     /// FNV-1a 32（与 main_win.c 的批模式哈希同口径；小端字节流）。
@@ -876,8 +1197,10 @@ void main() {
     List<String> eqExpectedHashes(int frames, {int max = 255}) {
       const w = 640, h = 360;
       final (shift, sMul, lMul) = multiBandLuts(
-          [(h: 0.0, q: 2.0, dh: 30.0, s: 1.0, l: 1.0)],
-          serial: false, maxValue: max);
+        [(h: 0.0, q: 2.0, dh: 30.0, s: 1.0, l: 1.0)],
+        serial: false,
+        maxValue: max,
+      );
       final expected = <String>[];
       for (var f = 0; f < frames; f++) {
         final rgb = Uint16List(w * h * 3);
@@ -899,17 +1222,28 @@ void main() {
           }
         }
         final hsl = rgbToHsl(rgb, maxValue: max);
-        final out = applyHslBandLuts(hsl, 0, hsl.length ~/ 3,
-            maxValue: max, shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+        final out = applyHslBandLuts(
+          hsl,
+          0,
+          hsl.length ~/ 3,
+          maxValue: max,
+          shiftLut: shift,
+          sMulLut: sMul,
+          lMulLut: lMul,
+        );
         expected.add(
-            'frame $f: ${fnv1a(out.buffer.asUint8List()).toRadixString(16).padLeft(8, '0')}');
+          'frame $f: ${fnv1a(out.buffer.asUint8List()).toRadixString(16).padLeft(8, '0')}',
+        );
       }
       return expected;
     }
 
     test('stubMainWinSource 内容：双模式/批模式/签名/HSL 转换', () {
       final src = stubMainWinSource(
-          topName: 'isp_pipeline_eq', inFormat: 'hsl', outFormat: 'hsl');
+        topName: 'isp_pipeline_eq',
+        inFormat: 'hsl',
+        outFormat: 'hsl',
+      );
       expect(src, contains('isp_pipeline_eq_run(g_in, g_w, g_h, MAXV, g_out'));
       expect(src, contains('ISP_PIPELINE_EQ_SCRATCH_BYTES'));
       expect(src, contains('模式: 单视频'));
@@ -931,14 +1265,25 @@ void main() {
       graph.nodes[eq]!.paramValues['b0_dh'] = 30.0;
       graph.groups.add(IspNodeGroup('g1', {eq}, name: 'eq'));
       expect(validateGroupCExport(graph, graph.groups.single), isNull);
-      final files = await buildGroupCFiles(graph, graph.groups.single,
-          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+      final files = await buildGroupCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+        genTime: DateTime(2026, 1, 2, 3, 4, 5),
+      );
 
-      final result = await buildWinVerifyApp(files,
-          topName: 'isp_pipeline_eq', inFormat: 'hsl', outFormat: 'hsl');
+      final result = await buildWinVerifyApp(
+        files,
+        topName: 'isp_pipeline_eq',
+        inFormat: 'hsl',
+        outFormat: 'hsl',
+      );
       expect(result.success, isTrue, reason: result.output);
-      final run = await Process.run(
-          result.artifactPath!, ['--frames', '3', '--dump-hash']);
+      final run = await Process.run(result.artifactPath!, [
+        '--frames',
+        '3',
+        '--dump-hash',
+      ]);
       expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
       final lines = '${run.stdout}'
           .trim()
@@ -959,21 +1304,28 @@ void main() {
       graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
       expect(validateGroupBlackBoxExport(graph, graph.groups.single), isNull);
       final files = await buildGroupBlackBoxCFiles(
-          graph, graph.groups.single,
-          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+        genTime: DateTime(2026, 1, 2, 3, 4, 5),
+      );
       final topName = groupBlackBoxTopName(graph.groups.single);
-      final hasScratch =
-          (files['$topName.h'] ?? '').contains('void *scratch');
+      final hasScratch = (files['$topName.h'] ?? '').contains('void *scratch');
       expect(hasScratch, isFalse, reason: '该编组黑盒 top 应无 scratch 参数');
 
-      final result = await buildWinVerifyApp(files,
-          topName: topName,
-          inFormat: 'hsl',
-          outFormat: 'hsl',
-          hasScratch: hasScratch);
+      final result = await buildWinVerifyApp(
+        files,
+        topName: topName,
+        inFormat: 'hsl',
+        outFormat: 'hsl',
+        hasScratch: hasScratch,
+      );
       expect(result.success, isTrue, reason: result.output);
-      final run = await Process.run(
-          result.artifactPath!, ['--frames', '2', '--dump-hash']);
+      final run = await Process.run(result.artifactPath!, [
+        '--frames',
+        '2',
+        '--dump-hash',
+      ]);
       expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
       final lines = '${run.stdout}'
           .trim()
@@ -983,8 +1335,7 @@ void main() {
       expect(lines.take(2).toList(), equals(eqExpectedHashes(2)));
     }, timeout: const Timeout(Duration(minutes: 5)));
 
-    test('LUT 模式 maxValue=1023：构建 + 批模式哈希与 Dart 查表逐位一致',
-        () async {
+    test('LUT 模式 maxValue=1023：构建 + 批模式哈希与 Dart 查表逐位一致', () async {
       if (detectMsvc() == null) return; // 无 MSVC 环境自动跳过
       // LUT 模式单节点编组：lutDomainMaxOf 无上游回退 1023，验证程序
       // maxValue 同域传入——查表快路径命中（255 会失配回退直算，本测试
@@ -997,25 +1348,32 @@ void main() {
       graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
       expect(validateGroupBlackBoxExport(graph, graph.groups.single), isNull);
       final files = await buildGroupBlackBoxCFiles(
-          graph, graph.groups.single,
-          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+        genTime: DateTime(2026, 1, 2, 3, 4, 5),
+      );
       final topName = groupBlackBoxTopName(graph.groups.single);
-      final hasScratch =
-          (files['$topName.h'] ?? '').contains('void *scratch');
+      final hasScratch = (files['$topName.h'] ?? '').contains('void *scratch');
       // 单节点 lut 独占阶段应走整行 <id>_row + omp 行域并行（守卫——否则
       // 本用例走融合行核，失去对整行函数路径的校验意义）。
       expect(files['$topName.c'], contains('_row(row_'));
       expect(files['$topName.c'], contains('#pragma omp parallel for'));
 
-      final result = await buildWinVerifyApp(files,
-          topName: topName,
-          inFormat: 'hsl',
-          outFormat: 'hsl',
-          hasScratch: hasScratch,
-          maxValue: 1023);
+      final result = await buildWinVerifyApp(
+        files,
+        topName: topName,
+        inFormat: 'hsl',
+        outFormat: 'hsl',
+        hasScratch: hasScratch,
+        maxValue: 1023,
+      );
       expect(result.success, isTrue, reason: result.output);
-      final run = await Process.run(
-          result.artifactPath!, ['--frames', '2', '--dump-hash']);
+      final run = await Process.run(result.artifactPath!, [
+        '--frames',
+        '2',
+        '--dump-hash',
+      ]);
       expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
       final lines = '${run.stdout}'
           .trim()
@@ -1039,8 +1397,10 @@ void main() {
     List<String> fxExpectedHashes(int frames, {int max = 1023}) {
       const w = 640, h = 360;
       final (shift, sMul, lMul) = multiBandLuts(
-          [(h: 0.0, q: 2.0, dh: 30.0, s: 1.0, l: 1.0)],
-          serial: false, maxValue: max);
+        [(h: 0.0, q: 2.0, dh: 30.0, s: 1.0, l: 1.0)],
+        serial: false,
+        maxValue: max,
+      );
       final expected = <String>[];
       final m = max + 1;
       for (var f = 0; f < frames; f++) {
@@ -1080,22 +1440,32 @@ void main() {
           out[j + 2] = fxClampQ14(hsl[j + 2], lMul[hv], max);
         }
         // 与 FP64 查表路径逐像素对比：偏差必须 ≤1 LSB。
-        final fp64 = applyHslBandLuts(hsl, 0, hsl.length ~/ 3,
-            maxValue: max, shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+        final fp64 = applyHslBandLuts(
+          hsl,
+          0,
+          hsl.length ~/ 3,
+          maxValue: max,
+          shiftLut: shift,
+          sMulLut: sMul,
+          lMulLut: lMul,
+        );
         for (var j = 0; j < out.length; j++) {
           final dev = (out[j] - fp64[j]).abs();
           if (dev > maxDev) maxDev = dev;
         }
-        expect(maxDev, lessThanOrEqualTo(1),
-            reason: 'lut_fixed 与 FP64 偏差超 1 LSB（帧 $f）');
+        expect(
+          maxDev,
+          lessThanOrEqualTo(1),
+          reason: 'lut_fixed 与 FP64 偏差超 1 LSB（帧 $f）',
+        );
         expected.add(
-            'frame $f: ${fnv1a(out.buffer.asUint8List()).toRadixString(16).padLeft(8, '0')}');
+          'frame $f: ${fnv1a(out.buffer.asUint8List()).toRadixString(16).padLeft(8, '0')}',
+        );
       }
       return expected;
     }
 
-    test('lut_fixed 定点模式：构建 + 与 Dart Q14 逐位一致 + 与 FP64 偏差 ≤1',
-        () async {
+    test('lut_fixed 定点模式：构建 + 与 Dart Q14 逐位一致 + 与 FP64 偏差 ≤1', () async {
       if (detectMsvc() == null) return; // 无 MSVC 环境自动跳过
       final graph = IspGraph();
       final eq = graph.addNode('multi_band_eq', 0, 0);
@@ -1105,23 +1475,30 @@ void main() {
       graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
       expect(validateGroupBlackBoxExport(graph, graph.groups.single), isNull);
       final files = await buildGroupBlackBoxCFiles(
-          graph, graph.groups.single,
-          readFile: readDisk, genTime: DateTime(2026, 1, 2, 3, 4, 5));
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+        genTime: DateTime(2026, 1, 2, 3, 4, 5),
+      );
       final topName = groupBlackBoxTopName(graph.groups.single);
-      final hasScratch =
-          (files['$topName.h'] ?? '').contains('void *scratch');
+      final hasScratch = (files['$topName.h'] ?? '').contains('void *scratch');
       expect(files['$topName.c'], contains('bb_clamp_q14'));
       expect(files['$topName.c'], contains('_s_mul_q14'));
 
-      final result = await buildWinVerifyApp(files,
-          topName: topName,
-          inFormat: 'hsl',
-          outFormat: 'hsl',
-          hasScratch: hasScratch,
-          maxValue: 1023);
+      final result = await buildWinVerifyApp(
+        files,
+        topName: topName,
+        inFormat: 'hsl',
+        outFormat: 'hsl',
+        hasScratch: hasScratch,
+        maxValue: 1023,
+      );
       expect(result.success, isTrue, reason: result.output);
-      final run = await Process.run(
-          result.artifactPath!, ['--frames', '2', '--dump-hash']);
+      final run = await Process.run(result.artifactPath!, [
+        '--frames',
+        '2',
+        '--dump-hash',
+      ]);
       expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
       final lines = '${run.stdout}'
           .trim()
@@ -1129,6 +1506,124 @@ void main() {
           .map((l) => l.trim())
           .toList();
       expect(lines.take(2).toList(), equals(fxExpectedHashes(2)));
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    /// func_fixed 期望哈希：图案 → 缩放 → rgbToHsl → 定点直算
+    /// （applyMultiBandEqFx，逐位基准）→ FNV-1a；并与 FP64 查表路径逐像
+    /// 素对比（偏差 ≤1 LSB）。
+    List<String> fxDirectExpectedHashes(int frames, {int max = 1023}) {
+      const w = 640, h = 360;
+      const bands = [(h: 0.0, q: 2.0, dh: 30.0, s: 1.0, l: 1.0)];
+      final (shift, sMul, lMul) = multiBandLuts(
+        bands,
+        serial: false,
+        maxValue: max,
+      );
+      final expected = <String>[];
+      for (var f = 0; f < frames; f++) {
+        final rgb = Uint16List(w * h * 3);
+        final bx = (f * 3) % (w + 80) - 40;
+        var i = 0;
+        for (var y = 0; y < h; y++) {
+          for (var x = 0; x < w; x++, i += 3) {
+            var r = (x * 255) ~/ (w - 1);
+            var g = (y * 255) ~/ (h - 1);
+            var b = ((x + y) * 255) ~/ (w + h - 2);
+            if (x >= bx && x < bx + 80 && y >= h ~/ 3 && y < h ~/ 3 + 80) {
+              r = (f * 5) & 255;
+              g = (255 - (f * 5)) & 255;
+              b = (f * 5 + 128) & 255;
+            }
+            rgb[i] = r * max ~/ 255;
+            rgb[i + 1] = g * max ~/ 255;
+            rgb[i + 2] = b * max ~/ 255;
+          }
+        }
+        final hsl = rgbToHsl(rgb, maxValue: max);
+        final out = applyMultiBandEqFx(
+          hsl,
+          0,
+          hsl.length ~/ 3,
+          maxValue: max,
+          bands: bands,
+          serial: false,
+        );
+        // 与 FP64 查表路径逐像素对比：偏差必须 ≤1 LSB。
+        final fp64 = applyHslBandLuts(
+          hsl,
+          0,
+          hsl.length ~/ 3,
+          maxValue: max,
+          shiftLut: shift,
+          sMulLut: sMul,
+          lMulLut: lMul,
+        );
+        var maxDev = 0;
+        for (var j = 0; j < out.length; j++) {
+          final dev = (out[j] - fp64[j]).abs();
+          if (dev > maxDev) maxDev = dev;
+        }
+        expect(
+          maxDev,
+          lessThanOrEqualTo(1),
+          reason: 'func_fixed 与 FP64 偏差超 1 LSB（帧 $f）',
+        );
+        expected.add(
+          'frame $f: ${fnv1a(out.buffer.asUint8List()).toRadixString(16).padLeft(8, '0')}',
+        );
+      }
+      return expected;
+    }
+
+    test('func_fixed 定点直算模式：构建 + 与 Dart 定点参考逐位一致 + 与 FP64 偏差 ≤1', () async {
+      if (detectMsvc() == null) return; // 无 MSVC 环境自动跳过
+      final graph = IspGraph();
+      final eq = graph.addNode('multi_band_eq', 0, 0);
+      graph.nodes[eq]!.name = 'mb';
+      graph.nodes[eq]!.paramValues['b0_dh'] = 30.0;
+      graph.nodes[eq]!.paramValues['codegenMode'] = 'func_fixed';
+      graph.groups.add(IspNodeGroup('g1', {eq}, name: 'n1'));
+      expect(validateGroupBlackBoxExport(graph, graph.groups.single), isNull);
+      final files = await buildGroupBlackBoxCFiles(
+        graph,
+        graph.groups.single,
+        readFile: readDisk,
+        genTime: DateTime(2026, 1, 2, 3, 4, 5),
+      );
+      final topName = groupBlackBoxTopName(graph.groups.single);
+      final hasScratch = (files['$topName.h'] ?? '').contains('void *scratch');
+      final c = files['$topName.c']!;
+      expect(c, contains('_compose_fx'));
+      expect(c, contains('bb_mb_fx_weight'));
+      expect(c, contains('bb_clamp_q14'));
+      // 无烘焙 H 域表（与 lut/lut_fixed 的本质区别）。
+      expect(c, isNot(contains('_shift_lut')));
+      expect(c, isNot(contains('_s_mul_q14[')));
+      // 单节点 func_fixed 独占阶段应走整行 <id>_row + omp 行域并行。
+      expect(c, contains('_row(row_'));
+      expect(c, contains('#pragma omp parallel for'));
+
+      final result = await buildWinVerifyApp(
+        files,
+        topName: topName,
+        inFormat: 'hsl',
+        outFormat: 'hsl',
+        hasScratch: hasScratch,
+        maxValue: 1023,
+      );
+      expect(result.success, isTrue, reason: result.output);
+      final run = await Process.run(result.artifactPath!, [
+        '--frames',
+        '2',
+        '--dump-hash',
+      ]);
+      expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
+      final lines = '${run.stdout}'
+          .trim()
+          .split('\n')
+          .map((l) => l.trim())
+          .toList();
+      expect(lines.take(2).toList(), equals(fxDirectExpectedHashes(2)));
     }, timeout: const Timeout(Duration(minutes: 5)));
   });
 }

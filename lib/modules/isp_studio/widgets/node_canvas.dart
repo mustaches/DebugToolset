@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 
 import '../../../providers/isp_studio_state.dart';
 import '../codegen/group_c_target.dart';
+import '../codegen/group_ip_export.dart';
 import '../codegen/ip_target.dart';
 import '../codegen/ip_validate.dart';
 import '../models/isp_graph.dart';
@@ -515,8 +516,11 @@ class IspNodeCanvasState extends State<IspNodeCanvas> {
       return;
     }
     if (!mounted) return;
-    final options = await showIpGenDialog(context,
-        initial: sessionIpGenOptions[groupId]);
+    final options = await showIpGenDialog(
+      context,
+      initial: sessionIpGenOptions[groupId],
+      hasYuvMatrix: groupHasYuvMatrix(state.graph, group),
+    );
     if (options == null || !mounted) return;
     state.openGroupIpTab(groupId, options);
   }

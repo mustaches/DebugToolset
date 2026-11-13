@@ -409,14 +409,22 @@ void main() {
       final stubC = File('${r.workDir}/main.c').readAsStringSync();
       expect(stubC, contains('_sbrk'));
       expect(stubC, contains('volatile entry'));
-      // 分步编译：终端有逐文件进度行与链接行（nosys.specs 只在链接步）。
+      // 分步编译：终端有逐文件进度行与链接行。链接参数随工具链能力分叉：
+      // 带 nosys.specs 的工具链传该 specs（桩仍由 main.c 提供）；不带
+      //（如 Cypress EZ-USB FX3 SDK 的 arm-none-eabi-gcc）探测后改为
+      // -Wl,-e,main 指定入口，绝不传不存在的 specs 文件。
       expect(r.output, contains('[1/'));
       expect(r.output, contains('wb.c'));
       expect(r.output, contains('链接 isp_pipeline_pipe-check.elf'));
-      expect(r.output, contains('-specs=nosys.specs'));
+      expect(
+        r.output,
+        anyOf(contains('-specs=nosys.specs'), contains('-Wl,-e,main')),
+      );
+      expect(r.output, isNot(contains('No such file or directory')));
       // 无 -Waddress（stub 函数地址比较）与 libnosys 桩警告。
       expect(r.output, isNot(contains('-Waddress')));
       expect(r.output, isNot(contains('is not implemented')));
+      expect(r.output, isNot(contains('cannot find entry symbol')));
     }, timeout: const Timeout(Duration(minutes: 5)));
   });
 }

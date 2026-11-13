@@ -135,8 +135,9 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
       'inputs': inConns,
     });
   }
-  final sources =
-      chain.where((op) => sourceTypes.contains(op['typeId'])).length;
+  final sources = chain
+      .where((op) => sourceTypes.contains(op['typeId']))
+      .length;
   if (sources == 0) {
     throw StateError('流水线缺少源节点');
   }
@@ -145,17 +146,20 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
   // 两路），多路选择器允许 4 个（源1~源4），其余链单源。
   final maxSources = chain.any((op) => op['typeId'] == 'mux4')
       ? 4
-      : chain.any((op) =>
+      : chain.any(
+          (op) =>
               op['typeId'] == 'fluoro_fusion' ||
               op['typeId'] == 'multiplier' ||
               op['typeId'] == 'adder' ||
               op['typeId'] == 'blender' ||
-              dualInputMetricTypes.contains(op['typeId']))
-          ? 2
-          : 1;
+              dualInputMetricTypes.contains(op['typeId']),
+        )
+      ? 2
+      : 1;
   if (sources > maxSources) {
     throw StateError(
-        maxSources > 1 ? '一条流水线最多 $maxSources 个源节点' : '一条流水线只能有一个源节点');
+      maxSources > 1 ? '一条流水线最多 $maxSources 个源节点' : '一条流水线只能有一个源节点',
+    );
   }
   if (!sourceTypes.contains(chain.first['typeId'])) {
     throw StateError('源节点必须位于流水线起点');
@@ -181,8 +185,7 @@ List<Map<String, Object?>> compileChain(IspGraph graph, String sinkNodeId) {
   return chain;
 }
 
-int _int(Map<String, Object?> p, String key) =>
-    (p[key] as num?)?.toInt() ?? 0;
+int _int(Map<String, Object?> p, String key) => (p[key] as num?)?.toInt() ?? 0;
 
 double _double(Map<String, Object?> p, String key) =>
     (p[key] as num?)?.toDouble() ?? 0.0;
@@ -190,17 +193,17 @@ double _double(Map<String, Object?> p, String key) =>
 String _str(Map<String, Object?> p, String key) => p[key]?.toString() ?? '';
 
 BayerPacking _packingOf(String name) => switch (name) {
-      'unpacked_msb' => BayerPacking.unpackedMsb,
-      'mipi' => BayerPacking.mipi,
-      _ => BayerPacking.unpackedLsb,
-    };
+  'unpacked_msb' => BayerPacking.unpackedMsb,
+  'mipi' => BayerPacking.mipi,
+  _ => BayerPacking.unpackedLsb,
+};
 
 int _sourceFrameBytes(Map<String, Object?> p) => frameByteSize(
-      width: _int(p, 'width'),
-      height: _int(p, 'height'),
-      bitDepth: int.parse(_str(p, 'bitDepth').isEmpty ? '10' : _str(p, 'bitDepth')),
-      packing: _packingOf(_str(p, 'packing')),
-    );
+  width: _int(p, 'width'),
+  height: _int(p, 'height'),
+  bitDepth: int.parse(_str(p, 'bitDepth').isEmpty ? '10' : _str(p, 'bitDepth')),
+  packing: _packingOf(_str(p, 'packing')),
+);
 
 /// 源节点的帧数。RAW 源 = 文件大小 / 单帧字节数；图片源恒为 1；
 /// 视频源 = 时长 × 帧率（ffmpeg 解析）。文件不存在或与参数不匹配时
@@ -214,8 +217,10 @@ Future<int> sourceFrameCount(String typeId, Map<String, Object?> params) async {
   }
   if (typeId == 'video_source') {
     if (path.isEmpty) throw StateError('视频源未设置文件路径');
-    final info =
-        await videoFileInfo(path, ffmpegPath: _str(params, 'ffmpegPath'));
+    final info = await videoFileInfo(
+      path,
+      ffmpegPath: _str(params, 'ffmpegPath'),
+    );
     return info.frameCount;
   }
   if (path.isEmpty) throw StateError('RAW 源未设置文件路径');
@@ -237,13 +242,17 @@ Future<int> sourceFrameCount(String typeId, Map<String, Object?> params) async {
 /// 源节点的像素尺寸。RAW 源取参数；图片源解码图片获得；视频源由
 /// ffmpeg 解析。
 Future<(int, int)> sourceDimensions(
-    String typeId, Map<String, Object?> params) async {
+  String typeId,
+  Map<String, Object?> params,
+) async {
   if (typeId == 'image_source') {
     return imageFileDimensions(_str(params, 'filePath'));
   }
   if (typeId == 'video_source') {
-    final info = await videoFileInfo(_str(params, 'filePath'),
-        ffmpegPath: _str(params, 'ffmpegPath'));
+    final info = await videoFileInfo(
+      _str(params, 'filePath'),
+      ffmpegPath: _str(params, 'ffmpegPath'),
+    );
     return (info.width, info.height);
   }
   return (_int(params, 'width'), _int(params, 'height'));
@@ -251,13 +260,13 @@ Future<(int, int)> sourceDimensions(
 
 /// RAW 源节点对应的 CFA 种类。
 String _rawCfaOf(String typeId, Map<String, Object?> p) => switch (typeId) {
-      'cis_rccb_rccg' => _str(p, 'cfaPattern') == 'RCCG' ? 'rccg' : 'rccb',
-      'cis_rccc' => 'rccc',
-      'cis_ryycy' => 'ryycy',
-      'cis_rgb_ir' => 'rgb_ir',
-      'cis_mono' => 'mono',
-      _ => 'bayer',
-    };
+  'cis_rccb_rccg' => _str(p, 'cfaPattern') == 'RCCG' ? 'rccg' : 'rccb',
+  'cis_rccc' => 'rccc',
+  'cis_ryycy' => 'ryycy',
+  'cis_rgb_ir' => 'rgb_ir',
+  'cis_mono' => 'mono',
+  _ => 'bayer',
+};
 
 /// 链内流动的帧数据。
 class _Frame {
@@ -327,22 +336,30 @@ class _Frame {
 /// 解码 RAW 源节点的一帧为 [_Frame]（读文件 + 解包）。
 /// MONO 无 CFA：保持 16 位单通道 mono 格式（w*h）入链，不再展开为 RGB。
 Future<_Frame> _decodeRawSource(
-    String typeId, Map<String, Object?> sp, int frameIndex) async {
+  String typeId,
+  Map<String, Object?> sp,
+  int frameIndex,
+) async {
   // DNG（TIFF 容器）：尺寸/位深/排列以文件头为准，走专用解析路径。
   if (isDngPath(_str(sp, 'filePath'))) {
     return _decodeDngSource(typeId, sp, frameIndex);
   }
   final width = _int(sp, 'width');
   final height = _int(sp, 'height');
-  final bitDepth =
-      int.parse(_str(sp, 'bitDepth').isEmpty ? '10' : _str(sp, 'bitDepth'));
+  final bitDepth = int.parse(
+    _str(sp, 'bitDepth').isEmpty ? '10' : _str(sp, 'bitDepth'),
+  );
   final packing = _packingOf(_str(sp, 'packing'));
   final littleEndian = sp['littleEndian'] != false;
   final baseFrame = _int(sp, 'frameIndex');
   final maxValue = bayerMaxValue(bitDepth);
 
   final frameBytes = frameByteSize(
-      width: width, height: height, bitDepth: bitDepth, packing: packing);
+    width: width,
+    height: height,
+    bitDepth: bitDepth,
+    packing: packing,
+  );
   final file = File(_str(sp, 'filePath'));
   final raf = await file.open();
   final Uint8List raw;
@@ -356,21 +373,24 @@ Future<_Frame> _decodeRawSource(
     throw StateError('帧 ${baseFrame + frameIndex} 超出文件范围');
   }
 
-  final mosaic = unpackBayer(raw,
-      width: width,
-      height: height,
-      bitDepth: bitDepth,
-      packing: packing,
-      littleEndian: littleEndian);
+  final mosaic = unpackBayer(
+    raw,
+    width: width,
+    height: height,
+    bitDepth: bitDepth,
+    packing: packing,
+    littleEndian: littleEndian,
+  );
   final cfa = _rawCfaOf(typeId, sp);
   if (cfa == 'mono') {
     // MONO 无 CFA：单通道直接入链（16 位 mono 中间格式）。
     return _Frame(
-        data: mosaic,
-        format: 'mono',
-        width: width,
-        height: height,
-        maxValue: maxValue);
+      data: mosaic,
+      format: 'mono',
+      width: width,
+      height: height,
+      maxValue: maxValue,
+    );
   }
   return _Frame(
     data: mosaic,
@@ -378,7 +398,10 @@ Future<_Frame> _decodeRawSource(
     cfa: cfa,
     bayerPattern: cfa == 'bayer'
         ? BayerPattern.fromName(
-            _str(sp, 'bayerPattern').isEmpty ? 'RGGB' : _str(sp, 'bayerPattern'))
+            _str(sp, 'bayerPattern').isEmpty
+                ? 'RGGB'
+                : _str(sp, 'bayerPattern'),
+          )
         : null,
     width: width,
     height: height,
@@ -392,7 +415,10 @@ Future<_Frame> _decodeRawSource(
 /// 相同值）。DNG 恒为单帧。CFA 种类仍由节点类型决定（DNG 只有 Bayer，
 /// 挂到非 Bayer 的 RAW 节点上时排列参数无意义，按直通处理）。
 Future<_Frame> _decodeDngSource(
-    String typeId, Map<String, Object?> sp, int frameIndex) async {
+  String typeId,
+  Map<String, Object?> sp,
+  int frameIndex,
+) async {
   final baseFrame = _int(sp, 'frameIndex');
   if (baseFrame + frameIndex > 0) {
     throw StateError('DNG 文件只有一帧');
@@ -401,25 +427,36 @@ Future<_Frame> _decodeDngSource(
   // 镜头阴影校正（GainMap 操作码）：DNG 解码的标准步骤，
   // 按相位减黑电平→乘网格增益→加回黑电平→截位到白电平。
   if (info.gainMaps.isNotEmpty) {
-    applyDngGainMaps(mosaic, info.width, info.height, info.gainMaps,
-        blackLevels: info.blackLevels, whiteLevel: info.whiteLevel);
+    applyDngGainMaps(
+      mosaic,
+      info.width,
+      info.height,
+      info.gainMaps,
+      blackLevels: info.blackLevels,
+      whiteLevel: info.whiteLevel,
+    );
   }
   final cfa = _rawCfaOf(typeId, sp);
   if (cfa == 'mono') {
     return _Frame(
-        data: mosaic,
-        format: 'mono',
-        width: info.width,
-        height: info.height,
-        maxValue: info.whiteLevel);
+      data: mosaic,
+      format: 'mono',
+      width: info.width,
+      height: info.height,
+      maxValue: info.whiteLevel,
+    );
   }
   return _Frame(
     data: mosaic,
     format: 'mosaic',
     cfa: cfa,
     bayerPattern: cfa == 'bayer'
-        ? BayerPattern.fromName(info.cfaPattern ??
-            (_str(sp, 'bayerPattern').isEmpty ? 'RGGB' : _str(sp, 'bayerPattern')))
+        ? BayerPattern.fromName(
+            info.cfaPattern ??
+                (_str(sp, 'bayerPattern').isEmpty
+                    ? 'RGGB'
+                    : _str(sp, 'bayerPattern')),
+          )
         : null,
     width: info.width,
     height: info.height,
@@ -449,7 +486,10 @@ typedef RawSourceFrame = ({
 /// 解码 RAW 源节点的一帧（读文件 + 解包），供 GPU 链执行器复用；
 /// 行为与链内源节点解码完全一致。
 Future<RawSourceFrame> decodeRawSourceFrame(
-    String typeId, Map<String, Object?> params, int frameIndex) async {
+  String typeId,
+  Map<String, Object?> params,
+  int frameIndex,
+) async {
   final f = await _decodeRawSource(typeId, params, frameIndex);
   return (
     data: f.data,
@@ -503,8 +543,14 @@ Uint16List _interleavePlanes8(List<Uint8List> planes, int pixels) {
 Future<Uint8List> runChainFrame(
   List<Map<String, Object?>> chain,
   int frameIndex, {
-  void Function(String nodeId, List<int> data, String format, int width,
-      int height)? onNodeOutput,
+  void Function(
+    String nodeId,
+    List<int> data,
+    String format,
+    int width,
+    int height,
+  )?
+  onNodeOutput,
   void Function(String nodeId)? onNodeStart,
   Uint8List? sourceRgba,
   int? sourceWidth,
@@ -518,7 +564,8 @@ Future<Uint8List> runChainFrame(
     throw StateError('算子链必须以源节点开头');
   }
   final firstType = chain.first['typeId'] as String;
-  final sp = (chain.first['params'] as Map?)?.cast<String, Object?>() ?? const {};
+  final sp =
+      (chain.first['params'] as Map?)?.cast<String, Object?>() ?? const {};
   final firstNodeId = chain.first['nodeId'] as String? ?? 'source';
 
   _Frame frame;
@@ -529,7 +576,8 @@ Future<Uint8List> runChainFrame(
       throw StateError('图片源只有一帧');
     }
     final maxValue = bayerMaxValue(
-        int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')));
+      int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')),
+    );
     final outFormat = chain.first['outFormat'] as String? ?? 'rgb';
     if (sourceYuv != null && outFormat == 'yuv') {
       // 视频流式播放的 YUV 直出帧：平面轨道（三个 8 位平面视图），
@@ -556,15 +604,20 @@ Future<Uint8List> runChainFrame(
       final (rgb, w, h) = sourceRgba != null
           ? rgba8ToRgb16(sourceRgba, sourceWidth!, sourceHeight!, maxValue)
           : firstType == 'image_source'
-              ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
-                  maxValue: maxValue)
-              : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
-                  maxValue: maxValue,
-                  ffmpegPath: _str(sp, 'ffmpegPath'),
-                  // 预览 HDR/SDR 开关经链参数 '_toneMapHdr' 注入（状态层
-                  // _withHdrToneMapFlag）；缺省 true（映射）——导出链不带
-                  // 该键，恒映射。
-                  toneMapHdr: sp['_toneMapHdr'] != false);
+          ? await decodeImageFileToRgb16(
+              _str(sp, 'filePath'),
+              maxValue: maxValue,
+            )
+          : await decodeVideoFrameToRgb16(
+              _str(sp, 'filePath'),
+              frameIndex,
+              maxValue: maxValue,
+              ffmpegPath: _str(sp, 'ffmpegPath'),
+              // 预览 HDR/SDR 开关经链参数 '_toneMapHdr' 注入（状态层
+              // _withHdrToneMapFlag）；缺省 true（映射）——导出链不带
+              // 该键，恒映射。
+              toneMapHdr: sp['_toneMapHdr'] != false,
+            );
       frame = _Frame(
         data: switch (outFormat) {
           'yuv' => rgbToYuv(rgb, maxValue: maxValue),
@@ -581,12 +634,17 @@ Future<Uint8List> runChainFrame(
     frame = await _decodeRawSource(firstType, sp, frameIndex);
   }
   if (nodeTimingsUs != null) {
-    nodeTimingsUs[firstNodeId] = (nodeTimingsUs[firstNodeId] ?? 0) +
-        srcSw!.elapsedMicroseconds;
+    nodeTimingsUs[firstNodeId] =
+        (nodeTimingsUs[firstNodeId] ?? 0) + srcSw!.elapsedMicroseconds;
   }
   // 源节点输出（解包/解码后的帧）。
   onNodeOutput?.call(
-      firstNodeId, frame.data, frame.format, frame.width, frame.height);
+    firstNodeId,
+    frame.data,
+    frame.format,
+    frame.width,
+    frame.height,
+  );
 
   final portOutputs = <String, Map<String, List<int>>>{};
   portOutputs[firstNodeId] = {
@@ -639,7 +697,12 @@ Future<Uint8List> runChainFrame(
             (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
       }
       onNodeOutput?.call(
-          nodeId, frame.data, frame.format, frame.width, frame.height);
+        nodeId,
+        frame.data,
+        frame.format,
+        frame.width,
+        frame.height,
+      );
       continue;
     }
     // 按视频组输入连接从 frames 取本算子的输入帧（分支感知，见上文）。
@@ -668,13 +731,15 @@ Future<Uint8List> runChainFrame(
                   width: upstream.width,
                   height: upstream.height,
                   maxValue: upstream.maxValue,
-                  mono8: pdata)
+                  mono8: pdata,
+                )
               : _Frame(
                   data: pdata as Uint16List,
                   format: 'mono',
                   width: upstream.width,
                   height: upstream.height,
-                  maxValue: upstream.maxValue);
+                  maxValue: upstream.maxValue,
+                );
         } else {
           frame = upstream;
         }
@@ -695,7 +760,12 @@ Future<Uint8List> runChainFrame(
             (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
       }
       onNodeOutput?.call(
-          nodeId, frame.data, frame.format, frame.width, frame.height);
+        nodeId,
+        frame.data,
+        frame.format,
+        frame.width,
+        frame.height,
+      );
       continue;
     }
     switch (typeId) {
@@ -713,61 +783,73 @@ Future<Uint8List> runChainFrame(
           break;
         }
         // 非 Bayer CFA 同样按 2x2 相位施加偏移（近似）。
-        applyBlackLevel(frame.data,
-            width: frame.width,
-            height: frame.height,
-            pattern: frame.bayerPattern ?? BayerPattern.rggb,
-            r: _double(p, 'r'),
-            gr: _double(p, 'gr'),
-            gb: _double(p, 'gb'),
-            b: _double(p, 'b'));
+        applyBlackLevel(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          pattern: frame.bayerPattern ?? BayerPattern.rggb,
+          r: _double(p, 'r'),
+          gr: _double(p, 'gr'),
+          gb: _double(p, 'gb'),
+          b: _double(p, 'b'),
+        );
       // ---- ICG 荧光内窥镜方案：RAW 域算子（mosaic/mono 双格式）----
       case 'dpc':
         frame.requireMosaicOrMono('坏点校正');
-        applyDpc(frame.data,
-            width: frame.width,
-            height: frame.height,
-            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
-            threshold: _double(p, 'threshold'),
-            mode: _str(p, 'mode').isEmpty ? 'median' : _str(p, 'mode'),
-            maxValue: frame.maxValue);
+        applyDpc(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+          threshold: _double(p, 'threshold'),
+          mode: _str(p, 'mode').isEmpty ? 'median' : _str(p, 'mode'),
+          maxValue: frame.maxValue,
+        );
       case 'fpn':
         frame.requireMosaicOrMono('FPN 校正');
-        applyFpn(frame.data,
-            width: frame.width,
-            height: frame.height,
-            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
-            row: p['row'] != false,
-            col: p['col'] != false,
-            maxCorr: _double(p, 'maxCorr'));
+        applyFpn(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+          row: p['row'] != false,
+          col: p['col'] != false,
+          maxCorr: _double(p, 'maxCorr'),
+        );
       case 'lsc':
         frame.requireMosaicOrMono('镜头阴影校正');
-        applyLsc(frame.data,
-            width: frame.width,
-            height: frame.height,
-            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
-            strength: _double(p, 'strength'),
-            centerX: _double(p, 'centerX'),
-            centerY: _double(p, 'centerY'),
-            maxValue: frame.maxValue);
+        applyLsc(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+          strength: _double(p, 'strength'),
+          centerX: _double(p, 'centerX'),
+          centerY: _double(p, 'centerY'),
+          maxValue: frame.maxValue,
+        );
       case 'grgb_balance':
         frame.requireMosaicOrMono('Gr/Gb 均衡');
         // mono 无 Gr/Gb 相位概念，直通。
         final bp = frame.format == 'mosaic' ? frame.bayerPattern : null;
         if (bp != null) {
-          applyGrGbBalance(frame.data,
-              width: frame.width,
-              height: frame.height,
-              pattern: bp,
-              strength: _double(p, 'strength'));
+          applyGrGbBalance(
+            frame.data,
+            width: frame.width,
+            height: frame.height,
+            pattern: bp,
+            strength: _double(p, 'strength'),
+          );
         }
       case 'bayer_dnr':
         frame.requireMosaicOrMono('Bayer 降噪');
-        applyBayerDenoise(frame.data,
-            width: frame.width,
-            height: frame.height,
-            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
-            strength: _double(p, 'strength'));
+        applyBayerDenoise(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+          strength: _double(p, 'strength'),
+        );
       case 'highlight':
         frame.requireMosaicOrMono('高光恢复');
         final hlMode = _str(p, 'mode').isEmpty ? 'recover' : _str(p, 'mode');
@@ -777,33 +859,41 @@ Future<Uint8List> runChainFrame(
         // 表化，仍走原实现。
         if (hlMode == 'clip' && _str(p, 'codegenMode') == 'lut') {
           applyHighlightClipLut(
-              frame.data, highlightClipLut(knee, frame.maxValue));
+            frame.data,
+            highlightClipLut(knee, frame.maxValue),
+          );
           break;
         }
-        applyHighlightRecovery(frame.data,
-            width: frame.width,
-            height: frame.height,
-            pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
-            maxValue: frame.maxValue,
-            mode: hlMode,
-            knee: knee);
+        applyHighlightRecovery(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          pattern: frame.format == 'mosaic' ? frame.bayerPattern : null,
+          maxValue: frame.maxValue,
+          mode: hlMode,
+          knee: knee,
+        );
       // ---- RGB 域算子 ----
       case 'rgb_dnr':
         frame.requireRgb('RGB 降噪');
-        applyRgbDenoise(frame.data,
-            width: frame.width,
-            height: frame.height,
-            luma: _double(p, 'luma'),
-            chroma: _double(p, 'chroma'),
-            maxValue: frame.maxValue);
+        applyRgbDenoise(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          luma: _double(p, 'luma'),
+          chroma: _double(p, 'chroma'),
+          maxValue: frame.maxValue,
+        );
       case 'sharpen':
         frame.requireRgb('锐化');
-        applySharpen(frame.data,
-            width: frame.width,
-            height: frame.height,
-            amount: _double(p, 'amount'),
-            threshold: _double(p, 'threshold'),
-            maxValue: frame.maxValue);
+        applySharpen(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          amount: _double(p, 'amount'),
+          threshold: _double(p, 'threshold'),
+          maxValue: frame.maxValue,
+        );
       case 'gaussian_blur':
         final w = frame.width;
         final h = frame.height;
@@ -817,14 +907,16 @@ Future<Uint8List> runChainFrame(
         final data = frame.yuvPlanes8 != null
             ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
             : frame.mono8 != null
-                ? Uint16List.fromList(frame.mono8!)
-                : frame.data;
-        applyGaussianBlur(data,
-            width: w,
-            height: h,
-            channels: fmt == 'mono' ? 1 : 3,
-            sigma: _double(p, 'sigma'),
-            strength: _double(p, 'strength'));
+            ? Uint16List.fromList(frame.mono8!)
+            : frame.data;
+        applyGaussianBlur(
+          data,
+          width: w,
+          height: h,
+          channels: fmt == 'mono' ? 1 : 3,
+          sigma: _double(p, 'sigma'),
+          strength: _double(p, 'strength'),
+        );
         frame = _Frame(
           data: data,
           format: fmt,
@@ -839,7 +931,8 @@ Future<Uint8List> runChainFrame(
           final mono = Uint16List(w * h);
           if (fmt == 'rgb') {
             for (var i = 0, j = 0; i < w * h; i++, j += 3) {
-              mono[i] = (19595 * data[j] +
+              mono[i] =
+                  (19595 * data[j] +
                       38470 * data[j + 1] +
                       7471 * data[j + 2] +
                       32768) >>
@@ -870,14 +963,16 @@ Future<Uint8List> runChainFrame(
             ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
             : frame.data;
         frame = _Frame(
-          data: extractHighFreq(data,
-              width: w,
-              height: h,
-              format: fmt,
-              // 增益缺省按 1.0 处理（参数缺失时不至于输出纯中灰）。
-              gain: (p['gain'] as num?)?.toDouble() ?? 1.0,
-              threshold: (p['threshold'] as num?)?.toDouble() ?? 4.0,
-              maxValue: max),
+          data: extractHighFreq(
+            data,
+            width: w,
+            height: h,
+            format: fmt,
+            // 增益缺省按 1.0 处理（参数缺失时不至于输出纯中灰）。
+            gain: (p['gain'] as num?)?.toDouble() ?? 1.0,
+            threshold: (p['threshold'] as num?)?.toDouble() ?? 4.0,
+            maxValue: max,
+          ),
           format: fmt,
           width: w,
           height: h,
@@ -902,38 +997,45 @@ Future<Uint8List> runChainFrame(
           // in_mono 侧支路：处理端口数据而非主链帧，拷贝后处理避免污染
           // 旁路（同 ahe），结果登记 out_mono 供下游取用。
           final mono = Uint16List.fromList(monoIn);
-          applyMorphology(mono,
-              width: frame.width,
-              height: frame.height,
-              erode: erode,
-              radius: radius);
+          applyMorphology(
+            mono,
+            width: frame.width,
+            height: frame.height,
+            erode: erode,
+            radius: radius,
+          );
           // in_mono 单接时主帧就是该 mono 的构造帧：必须同步更新主帧，
           // 否则循环末公用登记段（frame.format=='mono' 时
           // opOuts['out_mono']=frame.data）会用未处理数据覆盖 out_mono。
           // in 主链并存时主帧为 RGB，只登记 out_mono 即可。
           if (frame.format == 'mono') {
             frame = _Frame(
-                data: mono,
-                format: 'mono',
-                width: frame.width,
-                height: frame.height,
-                maxValue: frame.maxValue);
+              data: mono,
+              format: 'mono',
+              width: frame.width,
+              height: frame.height,
+              maxValue: frame.maxValue,
+            );
           }
           portOutputs[nodeId] = {'out_mono': mono};
         } else if (frame.format == 'rgb') {
-          applyMorphology(frame.data,
-              width: frame.width,
-              height: frame.height,
-              channels: 3,
-              erode: erode,
-              radius: radius);
+          applyMorphology(
+            frame.data,
+            width: frame.width,
+            height: frame.height,
+            channels: 3,
+            erode: erode,
+            radius: radius,
+          );
           portOutputs[nodeId] = {'out': frame.data};
         } else if (frame.format == 'mono') {
-          applyMorphology(frame.data,
-              width: frame.width,
-              height: frame.height,
-              erode: erode,
-              radius: radius);
+          applyMorphology(
+            frame.data,
+            width: frame.width,
+            height: frame.height,
+            erode: erode,
+            radius: radius,
+          );
           portOutputs[nodeId] = {'out': frame.data, 'out_mono': frame.data};
         } else {
           throw StateError('腐蚀/膨胀需要 RGB 或 Mono 输入');
@@ -944,12 +1046,16 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         frame = _Frame(
-          data: convertRgbToYuvCsc(frame.data,
-              width: w,
-              height: h,
-              standard: _str(p, 'standard').isEmpty ? 'bt601' : _str(p, 'standard'),
-              range: _str(p, 'range').isEmpty ? 'full' : _str(p, 'range'),
-              maxValue: max),
+          data: convertRgbToYuvCsc(
+            frame.data,
+            width: w,
+            height: h,
+            standard: _str(p, 'standard').isEmpty
+                ? 'bt2020'
+                : _str(p, 'standard'),
+            range: _str(p, 'range').isEmpty ? 'full' : _str(p, 'range'),
+            maxValue: max,
+          ),
           format: 'yuv',
           width: w,
           height: h,
@@ -973,7 +1079,13 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         frame = _Frame(
-          data: yuvToRgb(frame.data, maxValue: max),
+          data: yuvToRgb(
+            frame.data,
+            maxValue: max,
+            standard: _str(p, 'standard').isEmpty
+                ? 'bt2020'
+                : _str(p, 'standard'),
+          ),
           format: 'rgb',
           width: w,
           height: h,
@@ -985,7 +1097,13 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         frame = _Frame(
-          data: yuvToHsl(frame.data, maxValue: max),
+          data: yuvToHsl(
+            frame.data,
+            maxValue: max,
+            standard: _str(p, 'standard').isEmpty
+                ? 'bt2020'
+                : _str(p, 'standard'),
+          ),
           format: 'hsl',
           width: w,
           height: h,
@@ -1009,24 +1127,33 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         frame = _Frame(
-          data: hslToYuv(frame.data, maxValue: max),
+          data: hslToYuv(
+            frame.data,
+            maxValue: max,
+            standard: _str(p, 'standard').isEmpty
+                ? 'bt2020'
+                : _str(p, 'standard'),
+          ),
           format: 'yuv',
           width: w,
           height: h,
           maxValue: max,
         );
       // ---- HSL 调节器：HSL 域调参（恒等参数时核内直通不拷贝）----
-      case 'hsl_debugger':        frame.requireHsl('HSL调节器');
+      case 'hsl_debugger':
+        frame.requireHsl('HSL调节器');
         final w = frame.width;
         final h = frame.height;
         final max = frame.maxValue;
         frame = _Frame(
-          data: adjustHsl(frame.data,
-              maxValue: max,
-              hShiftDeg: _double(p, 'h_shift'),
-              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
-              sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,
-              lGain: (p['l_gain'] as num?)?.toDouble() ?? 1.0),
+          data: adjustHsl(
+            frame.data,
+            maxValue: max,
+            hShiftDeg: _double(p, 'h_shift'),
+            // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+            sGain: (p['s_gain'] as num?)?.toDouble() ?? 1.0,
+            lGain: (p['l_gain'] as num?)?.toDouble() ?? 1.0,
+          ),
           format: 'hsl',
           width: w,
           height: h,
@@ -1051,19 +1178,25 @@ Future<Uint8List> runChainFrame(
         final ccData = _str(p, 'codegenMode') == 'lut'
             ? () {
                 final (shift, sMul, lMul) = hslBandLuts(
-                    maxValue: max,
-                    hCenterDeg: ccParams.hCenterDeg,
-                    q: ccParams.q,
-                    hShiftDeg: ccParams.hShiftDeg,
-                    sGain: ccParams.sGain,
-                    lGain: ccParams.lGain);
-                return applyHslBandLuts(frame.data, 0, frame.data.length ~/ 3,
-                    maxValue: max,
-                    shiftLut: shift,
-                    sMulLut: sMul,
-                    lMulLut: lMul);
+                  maxValue: max,
+                  hCenterDeg: ccParams.hCenterDeg,
+                  q: ccParams.q,
+                  hShiftDeg: ccParams.hShiftDeg,
+                  sGain: ccParams.sGain,
+                  lGain: ccParams.lGain,
+                );
+                return applyHslBandLuts(
+                  frame.data,
+                  0,
+                  frame.data.length ~/ 3,
+                  maxValue: max,
+                  shiftLut: shift,
+                  sMulLut: sMul,
+                  lMulLut: lMul,
+                );
               }()
-            : await adjustHslBandParallel(frame.data,
+            : await adjustHslBandParallel(
+                frame.data,
                 width: w,
                 height: h,
                 maxValue: max,
@@ -1071,7 +1204,8 @@ Future<Uint8List> runChainFrame(
                 q: ccParams.q,
                 hShiftDeg: ccParams.hShiftDeg,
                 sGain: ccParams.sGain,
-                lGain: ccParams.lGain);
+                lGain: ccParams.lGain,
+              );
         frame = _Frame(
           // ≥1M 像素按行带多核并行（与串行逐位一致），小图核内自动回串行。
           data: ccData,
@@ -1106,16 +1240,21 @@ Future<Uint8List> runChainFrame(
         ];
         // 全部段恒等（无偏移且增益全 1）时直通不拷贝。
         if (!mbBands.every((b) => b.dh == 0 && b.s == 1.0 && b.l == 1.0)) {
-          final (mbShift, mbSMul, mbLMul) =
-              multiBandLuts(mbBands, serial: mbSerial, maxValue: max);
+          final (mbShift, mbSMul, mbLMul) = multiBandLuts(
+            mbBands,
+            serial: mbSerial,
+            maxValue: max,
+          );
           frame = _Frame(
-            data: await applyHslBandLutsParallel(frame.data,
-                width: w,
-                height: h,
-                maxValue: max,
-                shiftLut: mbShift,
-                sMulLut: mbSMul,
-                lMulLut: mbLMul),
+            data: await applyHslBandLutsParallel(
+              frame.data,
+              width: w,
+              height: h,
+              maxValue: max,
+              shiftLut: mbShift,
+              sMulLut: mbSMul,
+              lMulLut: mbLMul,
+            ),
             format: 'hsl',
             width: w,
             height: h,
@@ -1129,12 +1268,14 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         frame = _Frame(
-          data: adjustRgb(frame.data,
-              maxValue: max,
-              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
-              rGain: (p['r_gain'] as num?)?.toDouble() ?? 1.0,
-              gGain: (p['g_gain'] as num?)?.toDouble() ?? 1.0,
-              bGain: (p['b_gain'] as num?)?.toDouble() ?? 1.0),
+          data: adjustRgb(
+            frame.data,
+            maxValue: max,
+            // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+            rGain: (p['r_gain'] as num?)?.toDouble() ?? 1.0,
+            gGain: (p['g_gain'] as num?)?.toDouble() ?? 1.0,
+            bGain: (p['b_gain'] as num?)?.toDouble() ?? 1.0,
+          ),
           format: 'rgb',
           width: w,
           height: h,
@@ -1147,12 +1288,14 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         frame = _Frame(
-          data: adjustYuv(frame.data,
-              maxValue: max,
-              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
-              yGain: (p['y_gain'] as num?)?.toDouble() ?? 1.0,
-              uGain: (p['u_gain'] as num?)?.toDouble() ?? 1.0,
-              vGain: (p['v_gain'] as num?)?.toDouble() ?? 1.0),
+          data: adjustYuv(
+            frame.data,
+            maxValue: max,
+            // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+            yGain: (p['y_gain'] as num?)?.toDouble() ?? 1.0,
+            uGain: (p['u_gain'] as num?)?.toDouble() ?? 1.0,
+            vGain: (p['v_gain'] as num?)?.toDouble() ?? 1.0,
+          ),
           format: 'yuv',
           width: w,
           height: h,
@@ -1173,12 +1316,14 @@ Future<Uint8List> runChainFrame(
             ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
             : frame.data;
         frame = _Frame(
-          data: adjustSatBright(data,
-              format: fmt,
-              maxValue: max,
-              // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
-              satGain: (p['sat_gain'] as num?)?.toDouble() ?? 1.0,
-              brightGain: (p['bright_gain'] as num?)?.toDouble() ?? 1.0),
+          data: adjustSatBright(
+            data,
+            format: fmt,
+            maxValue: max,
+            // 增益缺省按恒等 1.0 处理（参数缺失时不至于把通道清零）。
+            satGain: (p['sat_gain'] as num?)?.toDouble() ?? 1.0,
+            brightGain: (p['bright_gain'] as num?)?.toDouble() ?? 1.0,
+          ),
           format: fmt,
           width: w,
           height: h,
@@ -1199,8 +1344,8 @@ Future<Uint8List> runChainFrame(
         final data = frame.yuvPlanes8 != null
             ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
             : frame.mono8 != null
-                ? Uint16List.fromList(frame.mono8!)
-                : frame.data;
+            ? Uint16List.fromList(frame.mono8!)
+            : frame.data;
         // LUT 模式（codegenMode=lut）：建表+查表路径，与 C 导出的烘焙
         // 映射/比例表查表逐位一致；函数方式直算内部本就建同表（见
         // adjustBrightContrast 实现）。
@@ -1210,20 +1355,27 @@ Future<Uint8List> runChainFrame(
         final bcData = _str(p, 'codegenMode') == 'lut'
             ? () {
                 final adjLut = brightContrastAdjustLut(
-                    maxValue: max,
-                    brightPct: brightPct,
-                    baselinePct: baselinePct,
-                    gainPct: gainPct);
-                return applyBrightContrastLut(data,
-                    format: fmt, maxValue: max, adjustLut: adjLut);
+                  maxValue: max,
+                  brightPct: brightPct,
+                  baselinePct: baselinePct,
+                  gainPct: gainPct,
+                );
+                return applyBrightContrastLut(
+                  data,
+                  format: fmt,
+                  maxValue: max,
+                  adjustLut: adjLut,
+                );
               }()
-            : adjustBrightContrast(data,
+            : adjustBrightContrast(
+                data,
                 format: fmt,
                 maxValue: max,
                 // 缺省按恒等（100/50/100）处理。
                 brightPct: brightPct,
                 baselinePct: baselinePct,
-                gainPct: gainPct);
+                gainPct: gainPct,
+              );
         frame = _Frame(
           data: bcData,
           format: fmt,
@@ -1239,7 +1391,8 @@ Future<Uint8List> runChainFrame(
           final mono = Uint16List(w * h);
           if (fmt == 'rgb') {
             for (var i = 0, j = 0; i < w * h; i++, j += 3) {
-              mono[i] = (19595 * data[j] +
+              mono[i] =
+                  (19595 * data[j] +
                       38470 * data[j + 1] +
                       7471 * data[j + 2] +
                       32768) >>
@@ -1273,8 +1426,10 @@ Future<Uint8List> runChainFrame(
           data: identity
               ? frame.data
               : applyLevelsCurve(
-                  frame.data, levelsCurveLut(points, mode: mode, gamma: gamma),
-                  maxValue: max),
+                  frame.data,
+                  levelsCurveLut(points, mode: mode, gamma: gamma),
+                  maxValue: max,
+                ),
           format: 'rgb',
           width: w,
           height: h,
@@ -1295,12 +1450,14 @@ Future<Uint8List> runChainFrame(
             ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
             : frame.data;
         frame = _Frame(
-          data: applyColorBalance(data,
-              format: fmt,
-              maxValue: max,
-              cyanRed: _double(p, 'cyan_red'),
-              magentaGreen: _double(p, 'magenta_green'),
-              yellowBlue: _double(p, 'yellow_blue')),
+          data: applyColorBalance(
+            data,
+            format: fmt,
+            maxValue: max,
+            cyanRed: _double(p, 'cyan_red'),
+            magentaGreen: _double(p, 'magenta_green'),
+            yellowBlue: _double(p, 'yellow_blue'),
+          ),
           format: fmt,
           width: w,
           height: h,
@@ -1316,8 +1473,9 @@ Future<Uint8List> runChainFrame(
         final h = frame.height;
         final max = frame.maxValue;
         final gains = colorTempGains(
-            (p['temperature'] as num?)?.toDouble() ?? kColorTempDefault,
-            _int(p, 'measured_cct'));
+          (p['temperature'] as num?)?.toDouble() ?? kColorTempDefault,
+          _int(p, 'measured_cct'),
+        );
         // LUT 模式（codegenMode=lut）：建表+查表路径，与 C 导出的烘焙
         // 增益表查表逐位一致；函数方式直算内部等价（见 adjustRgb 实现）。
         final data = _str(p, 'codegenMode') == 'lut'
@@ -1325,12 +1483,15 @@ Future<Uint8List> runChainFrame(
                 frame.data,
                 adjustGainLut(gains[0], max),
                 adjustGainLut(gains[1], max),
-                adjustGainLut(gains[2], max))
-            : adjustRgb(frame.data,
+                adjustGainLut(gains[2], max),
+              )
+            : adjustRgb(
+                frame.data,
                 maxValue: max,
                 rGain: gains[0],
                 gGain: gains[1],
-                bGain: gains[2]);
+                bGain: gains[2],
+              );
         frame = _Frame(
           data: data,
           format: 'rgb',
@@ -1341,21 +1502,28 @@ Future<Uint8List> runChainFrame(
       // ---- 荧光 mono 域算子 ----
       case 'fluoro_leak':
         frame.requireMono('激发泄漏扣除');
-        applyFluoroLeak(frame.data,
-            level: _double(p, 'level'), maxSub: _double(p, 'maxSub'));
+        applyFluoroLeak(
+          frame.data,
+          level: _double(p, 'level'),
+          maxSub: _double(p, 'maxSub'),
+        );
       case 'fluoro_background':
         frame.requireMono('背景扣除');
-        applyFluoroBackground(frame.data,
-            width: frame.width,
-            height: frame.height,
-            blockSize: _int(p, 'blockSize'),
-            strength: _double(p, 'strength'));
+        applyFluoroBackground(
+          frame.data,
+          width: frame.width,
+          height: frame.height,
+          blockSize: _int(p, 'blockSize'),
+          strength: _double(p, 'strength'),
+        );
       case 'fluoro_normalize':
         frame.requireMono('激发归一化');
-        applyFluoroNormalize(frame.data,
-            reference: _double(p, 'reference'),
-            epsilon: _double(p, 'epsilon'),
-            maxValue: frame.maxValue);
+        applyFluoroNormalize(
+          frame.data,
+          reference: _double(p, 'reference'),
+          epsilon: _double(p, 'epsilon'),
+          maxValue: frame.maxValue,
+        );
       case 'fluoro_temporal':
         frame.requireMono('时域降噪');
         final w = frame.width;
@@ -1365,17 +1533,20 @@ Future<Uint8List> runChainFrame(
         final motion = p['motionAdapt'] != false;
         // 时域历史按 nodeId 缓存：frameIndex 不连续或尺寸/参数变化时重置。
         final st = _temporalHistory[nodeId];
-        final valid = st != null &&
+        final valid =
+            st != null &&
             st['frame'] == frameIndex - 1 &&
             st['w'] == w &&
             st['h'] == h &&
             st['alpha'] == alpha &&
             st['motion'] == motion;
-        final (out, newHistory) = applyTemporalIir(frame.data,
-            history: valid ? st['history'] as Uint16List : null,
-            alpha: alpha,
-            motionAdapt: motion,
-            maxValue: max);
+        final (out, newHistory) = applyTemporalIir(
+          frame.data,
+          history: valid ? st['history'] as Uint16List : null,
+          alpha: alpha,
+          motionAdapt: motion,
+          maxValue: max,
+        );
         _temporalHistory[nodeId] = {
           'history': newHistory,
           'frame': frameIndex,
@@ -1385,14 +1556,21 @@ Future<Uint8List> runChainFrame(
           'motion': motion,
         };
         frame = _Frame(
-            data: out, format: 'mono', width: w, height: h, maxValue: max);
+          data: out,
+          format: 'mono',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
       // ---- 映射/融合 ----
       case 'pseudo_color':
         frame.requireMono('伪彩映射');
         final w = frame.width;
         final h = frame.height;
         final max = frame.maxValue;
-        final colormap = _str(p, 'colormap').isEmpty ? 'green' : _str(p, 'colormap');
+        final colormap = _str(p, 'colormap').isEmpty
+            ? 'green'
+            : _str(p, 'colormap');
         final gain = _double(p, 'gain');
         // LUT 模式（codegenMode=lut）：建表+查表路径，与 C 导出的烘焙
         // 色表查表逐位一致；函数方式直算内部本就建同三张表。
@@ -1401,12 +1579,14 @@ Future<Uint8List> runChainFrame(
                 final (lr, lg, lb) = pseudoColorLuts(colormap, gain, max);
                 return applyPseudoColorLut(frame.data, lr, lg, lb);
               }()
-            : monoPseudoColor(frame.data,
+            : monoPseudoColor(
+                frame.data,
                 width: w,
                 height: h,
                 colormap: colormap,
                 gain: gain,
-                maxValue: max);
+                maxValue: max,
+              );
         frame = _Frame(
           data: lutData,
           format: 'rgb',
@@ -1423,24 +1603,28 @@ Future<Uint8List> runChainFrame(
         final max = frame.maxValue;
         if (flData is Uint16List && flData.length == w * h) {
           frame = _Frame(
-            data: fuseFluorescence(frame.data, flData,
-                width: w,
-                height: h,
-                mode: _str(p, 'mode').isEmpty ? 'alpha' : _str(p, 'mode'),
-                threshold: _double(p, 'threshold'),
-                alphaMax: _double(p, 'alphaMax'),
-                colormap:
-                    _str(p, 'colormap').isEmpty ? 'green' : _str(p, 'colormap'),
-                offsetX: _double(p, 'offsetX'),
-                offsetY: _double(p, 'offsetY'),
-                maxValue: max),
+            data: fuseFluorescence(
+              frame.data,
+              flData,
+              width: w,
+              height: h,
+              mode: _str(p, 'mode').isEmpty ? 'alpha' : _str(p, 'mode'),
+              threshold: _double(p, 'threshold'),
+              alphaMax: _double(p, 'alphaMax'),
+              colormap: _str(p, 'colormap').isEmpty
+                  ? 'green'
+                  : _str(p, 'colormap'),
+              offsetX: _double(p, 'offsetX'),
+              offsetY: _double(p, 'offsetY'),
+              maxValue: max,
+            ),
             format: 'rgb',
             width: w,
             height: h,
             maxValue: max,
           );
         }
-        // 荧光输入未连接或尺寸不符：白光直通。
+      // 荧光输入未连接或尺寸不符：白光直通。
       // ---- 乘法器：（输入源1+offset1）×（输入源2+offset2）逐像素
       // 归一化相乘（out = (a+offset1)×(b+offset2)/maxValue），输出
       // Mono；两路输入分辨率必须一致 ----
@@ -1462,8 +1646,9 @@ Future<Uint8List> runChainFrame(
         }
         // 分辨率一致性校验：多源链可取上游帧的精确宽高，否则按数据
         // 长度兜底（同 fluoro_fusion 的尺寸约定）。
-        final conn2 = (op['inputs'] as Map<String, Object?>?)?['in_mono2']
-            as Map<String, Object?>?;
+        final conn2 =
+            (op['inputs'] as Map<String, Object?>?)?['in_mono2']
+                as Map<String, Object?>?;
         final up2 = conn2 == null
             ? null
             : frames[conn2['fromNodeId'] as String? ?? ''];
@@ -1471,19 +1656,25 @@ Future<Uint8List> runChainFrame(
             ? up2.width == w && up2.height == h
             : d1.length == w * h && d2.length == w * h;
         if (!sameResolution) {
-          throw StateError(up2 != null
-              ? '乘法器两路输入分辨率必须一致（源1: $w×$h，源2: ${up2.width}×${up2.height}）'
-              : '乘法器两路输入分辨率必须一致（源1: $w×$h）');
+          throw StateError(
+            up2 != null
+                ? '乘法器两路输入分辨率必须一致（源1: $w×$h，源2: ${up2.width}×${up2.height}）'
+                : '乘法器两路输入分辨率必须一致（源1: $w×$h）',
+          );
         }
         frame = _Frame(
-            data: multiplyMono(d1, d2,
-                offset1: _double(p, 'offset1'),
-                offset2: _double(p, 'offset2'),
-                maxValue: max),
-            format: 'mono',
-            width: w,
-            height: h,
-            maxValue: max);
+          data: multiplyMono(
+            d1,
+            d2,
+            offset1: _double(p, 'offset1'),
+            offset2: _double(p, 'offset2'),
+            maxValue: max,
+          ),
+          format: 'mono',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
       // ---- 加法器：源1×balance + 源2×(1−balance) 平衡加权混合，两路
       // mono 逐像素相加（增益总和恒为 1）；取数/校验口径同乘法器 ----
       case 'adder':
@@ -1500,8 +1691,9 @@ Future<Uint8List> runChainFrame(
         if (d2 == null) {
           throw StateError('加法器需要接入输入源2（in_mono2 端口）');
         }
-        final conn2 = (op['inputs'] as Map<String, Object?>?)?['in_mono2']
-            as Map<String, Object?>?;
+        final conn2 =
+            (op['inputs'] as Map<String, Object?>?)?['in_mono2']
+                as Map<String, Object?>?;
         final up2 = conn2 == null
             ? null
             : frames[conn2['fromNodeId'] as String? ?? ''];
@@ -1509,19 +1701,25 @@ Future<Uint8List> runChainFrame(
             ? up2.width == w && up2.height == h
             : d1.length == w * h && d2.length == w * h;
         if (!sameResolution) {
-          throw StateError(up2 != null
-              ? '加法器两路输入分辨率必须一致（源1: $w×$h，源2: ${up2.width}×${up2.height}）'
-              : '加法器两路输入分辨率必须一致（源1: $w×$h）');
+          throw StateError(
+            up2 != null
+                ? '加法器两路输入分辨率必须一致（源1: $w×$h，源2: ${up2.width}×${up2.height}）'
+                : '加法器两路输入分辨率必须一致（源1: $w×$h）',
+          );
         }
         frame = _Frame(
-            data: blendMono(d1, d2,
-                // 缺省按平衡中点 0.5（参数缺失时不至于把源2 清零）。
-                balance: (p['balance'] as num?)?.toDouble() ?? 0.5,
-                maxValue: max),
-            format: 'mono',
-            width: w,
-            height: h,
-            maxValue: max);
+          data: blendMono(
+            d1,
+            d2,
+            // 缺省按平衡中点 0.5（参数缺失时不至于把源2 清零）。
+            balance: (p['balance'] as num?)?.toDouble() ?? 0.5,
+            maxValue: max,
+          ),
+          format: 'mono',
+          width: w,
+          height: h,
+          maxValue: max,
+        );
       // ---- 混叠器：基图 + 混叠图×蒙版/maxValue×混叠强度（正常模式），
       // 输出保持基图格式（RGB/YUV/HSL/Mono）；混叠图/蒙版按侧向端口
       // 取数（同乘法器 in_mono2 口径），分辨率必须与基图一致 ----
@@ -1538,8 +1736,8 @@ Future<Uint8List> runChainFrame(
         final baseData = frame.yuvPlanes8 != null
             ? _interleavePlanes8(frame.yuvPlanes8!, w * h)
             : frame.mono8 != null
-                ? Uint16List.fromList(frame.mono8!)
-                : frame.data;
+            ? Uint16List.fromList(frame.mono8!)
+            : frame.data;
         final mask = getPortData(op, 'in_mask');
         if (mask == null) {
           throw StateError('混叠器需要接入蒙版（in_mask 端口）');
@@ -1549,7 +1747,11 @@ Future<Uint8List> runChainFrame(
         // 兼容旧流程文件 in_blend 直接接 mono 的连法。
         List<int>? blend;
         for (final bp in const [
-          'in_blend', 'in_blend_yuv', 'in_blend_hsl', 'in_blend_mono']) {
+          'in_blend',
+          'in_blend_yuv',
+          'in_blend_hsl',
+          'in_blend_mono',
+        ]) {
           blend = getPortData(op, bp);
           if (blend != null) break;
         }
@@ -1559,22 +1761,27 @@ Future<Uint8List> runChainFrame(
         final blendChannels = blend.length == w * h * 3
             ? 3
             : blend.length == w * h
-                ? 1
-                : 0;
+            ? 1
+            : 0;
         if (mask.length != w * h || blendChannels == 0) {
           throw StateError('混叠器蒙版/混叠图分辨率必须与基图一致');
         }
         frame = _Frame(
-            data: blendMaskMono(baseData, blend, mask,
-                format: fmt,
-                blendChannels: blendChannels,
-                // 缺省按全强度 1.0（参数缺失时不至于没有混叠效果）。
-                strength: (p['strength'] as num?)?.toDouble() ?? 1.0,
-                maxValue: max),
+          data: blendMaskMono(
+            baseData,
+            blend,
+            mask,
             format: fmt,
-            width: w,
-            height: h,
-            maxValue: max);
+            blendChannels: blendChannels,
+            // 缺省按全强度 1.0（参数缺失时不至于没有混叠效果）。
+            strength: (p['strength'] as num?)?.toDouble() ?? 1.0,
+            maxValue: max,
+          ),
+          format: fmt,
+          width: w,
+          height: h,
+          maxValue: max,
+        );
       // ---- 多路选择器（4选1）：把 select 选中的那路源输入透传到输出
       // （不改数据，输出格式 = 所选输入格式；端口数据与上游主帧不同
       // 时按单通道端口构造 mono 帧，与取帧逻辑同口径）----
@@ -1583,8 +1790,9 @@ Future<Uint8List> runChainFrame(
         final base = 'in$sel';
         Map<String, Object?>? conn;
         for (final suffix in const ['', '_yuv', '_hsl', '_mono']) {
-          final c = (op['inputs'] as Map<String, Object?>?)?['$base$suffix']
-              as Map<String, Object?>?;
+          final c =
+              (op['inputs'] as Map<String, Object?>?)?['$base$suffix']
+                  as Map<String, Object?>?;
           if (c != null) {
             conn = c;
             break;
@@ -1612,13 +1820,15 @@ Future<Uint8List> runChainFrame(
                   width: upstream.width,
                   height: upstream.height,
                   maxValue: upstream.maxValue,
-                  mono8: pdata)
+                  mono8: pdata,
+                )
               : _Frame(
                   data: pdata as Uint16List,
                   format: 'mono',
                   width: upstream.width,
                   height: upstream.height,
-                  maxValue: upstream.maxValue);
+                  maxValue: upstream.maxValue,
+                );
         } else {
           frame = upstream;
         }
@@ -1631,47 +1841,67 @@ Future<Uint8List> runChainFrame(
         frame = _Frame(
           data: switch (frame.cfa) {
             'bayer' => switch (_str(p, 'algorithm')) {
-                // 空（默认）/ bilinear：双线性。
-                '' || 'bilinear' => demosaicBilinear(data,
-                    width: w, height: h, pattern: frame.bayerPattern!),
-                'mhc' => demosaicMhc(data,
-                    width: w,
-                    height: h,
-                    pattern: frame.bayerPattern!,
-                    maxValue: max),
-                'aahd' => demosaicAahd(data,
-                    width: w,
-                    height: h,
-                    pattern: frame.bayerPattern!,
-                    maxValue: max),
-                'amaze' => demosaicAmaze(data,
-                    width: w,
-                    height: h,
-                    pattern: frame.bayerPattern!,
-                    maxValue: max),
-                'lmmse' => demosaicLmmse(data,
-                    width: w,
-                    height: h,
-                    pattern: frame.bayerPattern!,
-                    maxValue: max),
-                'igv' => demosaicIgv(data,
-                    width: w,
-                    height: h,
-                    pattern: frame.bayerPattern!,
-                    maxValue: max),
-                _ => throw StateError('未知去马赛克算法: ${_str(p, 'algorithm')}'),
-              },
-            'rccb' => demosaicRccb(data, width: w, height: h, maxValue: max),
-            'rccg' => demosaicRccb(data,
-                width: w, height: h, rccg: true, maxValue: max),
-            'rccc' => demosaicRccc(data, width: w, height: h, maxValue: max),
-            'ryycy' =>
-              demosaicRyycy(data, width: w, height: h, maxValue: max),
-            'rgb_ir' => demosaicRgbIr(data,
+              // 空（默认）/ bilinear：双线性。
+              '' || 'bilinear' => demosaicBilinear(
+                data,
                 width: w,
                 height: h,
+                pattern: frame.bayerPattern!,
+              ),
+              'mhc' => demosaicMhc(
+                data,
+                width: w,
+                height: h,
+                pattern: frame.bayerPattern!,
                 maxValue: max,
-                irSubtraction: frame.irSubtraction),
+              ),
+              'aahd' => demosaicAahd(
+                data,
+                width: w,
+                height: h,
+                pattern: frame.bayerPattern!,
+                maxValue: max,
+              ),
+              'amaze' => demosaicAmaze(
+                data,
+                width: w,
+                height: h,
+                pattern: frame.bayerPattern!,
+                maxValue: max,
+              ),
+              'lmmse' => demosaicLmmse(
+                data,
+                width: w,
+                height: h,
+                pattern: frame.bayerPattern!,
+                maxValue: max,
+              ),
+              'igv' => demosaicIgv(
+                data,
+                width: w,
+                height: h,
+                pattern: frame.bayerPattern!,
+                maxValue: max,
+              ),
+              _ => throw StateError('未知去马赛克算法: ${_str(p, 'algorithm')}'),
+            },
+            'rccb' => demosaicRccb(data, width: w, height: h, maxValue: max),
+            'rccg' => demosaicRccb(
+              data,
+              width: w,
+              height: h,
+              rccg: true,
+              maxValue: max,
+            ),
+            'rccc' => demosaicRccc(data, width: w, height: h, maxValue: max),
+            'ryycy' => demosaicRyycy(data, width: w, height: h, maxValue: max),
+            'rgb_ir' => demosaicRgbIr(
+              data,
+              width: w,
+              height: h,
+              maxValue: max,
+              irSubtraction: frame.irSubtraction,
+            ),
             _ => throw StateError('未知 CFA 种类: ${frame.cfa}'),
           },
           format: 'rgb',
@@ -1693,25 +1923,34 @@ Future<Uint8List> runChainFrame(
         // LUT 模式（codegenMode=lut）：显式走建表+查表路径，与 C 导出
         // 的烘焙表查表逐位一致；函数方式直算内部本就建同一张表。
         if (_str(p, 'codegenMode') == 'lut') {
-          applyWhiteBalanceLut(frame.data,
-              whiteBalanceGainLut(rGain, frame.maxValue),
-              whiteBalanceGainLut(bGain, frame.maxValue));
+          applyWhiteBalanceLut(
+            frame.data,
+            whiteBalanceGainLut(rGain, frame.maxValue),
+            whiteBalanceGainLut(bGain, frame.maxValue),
+          );
           break;
         }
-        applyWhiteBalance(frame.data,
-            rGain: rGain, bGain: bGain, maxValue: frame.maxValue);
+        applyWhiteBalance(
+          frame.data,
+          rGain: rGain,
+          bGain: bGain,
+          maxValue: frame.maxValue,
+        );
       case 'ccm':
         frame.requireRgb('CCM');
-        final m = (p['matrix'] as List?)?.cast<double>() ??
+        final m =
+            (p['matrix'] as List?)?.cast<double>() ??
             const [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0];
         applyCcm(frame.data, matrix: m, maxValue: frame.maxValue);
       case 'gamma':
         frame.requireRgb('Gamma');
-        rgba = tonemapToRgba(frame.data,
-            maxValue: frame.maxValue,
-            gamma: _double(p, 'gamma') <= 0 ? 2.2 : _double(p, 'gamma'),
-            brightness: _double(p, 'brightness'),
-            contrast: _double(p, 'contrast') <= 0 ? 1.0 : _double(p, 'contrast'));
+        rgba = tonemapToRgba(
+          frame.data,
+          maxValue: frame.maxValue,
+          gamma: _double(p, 'gamma') <= 0 ? 2.2 : _double(p, 'gamma'),
+          brightness: _double(p, 'brightness'),
+          contrast: _double(p, 'contrast') <= 0 ? 1.0 : _double(p, 'contrast'),
+        );
       case 'ahe':
         // RGB 与 Mono 双通路（in / in_mono 互斥，只能接入一路）。
         final monoIn = getPortData(op, 'in_mono');
@@ -1722,43 +1961,50 @@ Future<Uint8List> runChainFrame(
           // 其它节点共享（如分路器 out_y 同时接直方图），原地修改会
           // 污染旁路。
           final mono = Uint16List.fromList(monoIn);
-          applyClaheMono(mono,
-              width: frame.width,
-              height: frame.height,
-              blockSize: _int(p, 'blockSize'),
-              clipLimit: _double(p, 'clipLimit'),
-              strength: _double(p, 'strength'),
-              maxValue: frame.maxValue);
+          applyClaheMono(
+            mono,
+            width: frame.width,
+            height: frame.height,
+            blockSize: _int(p, 'blockSize'),
+            clipLimit: _double(p, 'clipLimit'),
+            strength: _double(p, 'strength'),
+            maxValue: frame.maxValue,
+          );
           // in_mono 单接时主帧就是该 mono 的构造帧：必须同步更新主帧，
           // 否则循环末公用登记段（frame.format=='mono' 时
           // opOuts['out_mono']=frame.data）会用未处理数据覆盖 out_mono。
           // in 主链并存时主帧为 RGB，只登记 out_mono 即可。
           if (frame.format == 'mono') {
             frame = _Frame(
-                data: mono,
-                format: 'mono',
-                width: frame.width,
-                height: frame.height,
-                maxValue: frame.maxValue);
+              data: mono,
+              format: 'mono',
+              width: frame.width,
+              height: frame.height,
+              maxValue: frame.maxValue,
+            );
           }
           portOutputs[nodeId] = {'out_mono': mono};
         } else if (frame.format == 'rgb') {
-          applyClahe(frame.data,
-              width: frame.width,
-              height: frame.height,
-              blockSize: _int(p, 'blockSize'),
-              clipLimit: _double(p, 'clipLimit'),
-              strength: _double(p, 'strength'),
-              maxValue: frame.maxValue);
+          applyClahe(
+            frame.data,
+            width: frame.width,
+            height: frame.height,
+            blockSize: _int(p, 'blockSize'),
+            clipLimit: _double(p, 'clipLimit'),
+            strength: _double(p, 'strength'),
+            maxValue: frame.maxValue,
+          );
           portOutputs[nodeId] = {'out': frame.data};
         } else if (frame.format == 'mono') {
-          applyClaheMono(frame.data,
-              width: frame.width,
-              height: frame.height,
-              blockSize: _int(p, 'blockSize'),
-              clipLimit: _double(p, 'clipLimit'),
-              strength: _double(p, 'strength'),
-              maxValue: frame.maxValue);
+          applyClaheMono(
+            frame.data,
+            width: frame.width,
+            height: frame.height,
+            blockSize: _int(p, 'blockSize'),
+            clipLimit: _double(p, 'clipLimit'),
+            strength: _double(p, 'strength'),
+            maxValue: frame.maxValue,
+          );
           portOutputs[nodeId] = {'out': frame.data, 'out_mono': frame.data};
         } else {
           throw StateError('自适应直方图均衡需要 RGB 或 Mono 输入');
@@ -1798,11 +2044,7 @@ Future<Uint8List> runChainFrame(
           gData[i] = frame.data[3 * i + 1];
           bData[i] = frame.data[3 * i + 2];
         }
-        portOutputs[nodeId] = {
-          'out_r': rData,
-          'out_g': gData,
-          'out_b': bData,
-        };
+        portOutputs[nodeId] = {'out_r': rData, 'out_g': gData, 'out_b': bData};
       case 'yuv_splitter':
         final w = frame.width;
         final h = frame.height;
@@ -1838,11 +2080,7 @@ Future<Uint8List> runChainFrame(
           uData[i] = src[srcIdx + 1];
           vData[i] = src[srcIdx + 2];
         }
-        portOutputs[nodeId] = {
-          'out_y': yData,
-          'out_u': uData,
-          'out_v': vData,
-        };
+        portOutputs[nodeId] = {'out_y': yData, 'out_u': uData, 'out_v': vData};
       case 'hsl_splitter':
         final w = frame.width;
         final h = frame.height;
@@ -1868,11 +2106,7 @@ Future<Uint8List> runChainFrame(
           sData[i] = src[srcIdx + 1];
           lData[i] = src[srcIdx + 2];
         }
-        portOutputs[nodeId] = {
-          'out_h': hData,
-          'out_s': sData,
-          'out_l': lData,
-        };
+        portOutputs[nodeId] = {'out_h': hData, 'out_s': sData, 'out_l': lData};
       case 'rgb_combiner':
         final w = frame.width;
         final h = frame.height;
@@ -1885,8 +2119,12 @@ Future<Uint8List> runChainFrame(
         var dstIdx = 0;
         for (var i = 0; i < pixels; i++, dstIdx += 3) {
           combined[dstIdx] = rData != null && i < rData.length ? rData[i] : 0;
-          combined[dstIdx + 1] = gData != null && i < gData.length ? gData[i] : 0;
-          combined[dstIdx + 2] = bData != null && i < bData.length ? bData[i] : 0;
+          combined[dstIdx + 1] = gData != null && i < gData.length
+              ? gData[i]
+              : 0;
+          combined[dstIdx + 2] = bData != null && i < bData.length
+              ? bData[i]
+              : 0;
         }
         frame = _Frame(
           data: combined,
@@ -1906,7 +2144,9 @@ Future<Uint8List> runChainFrame(
         final vData = getPortData(op, 'in_v');
         // 平面轨道：三路输入都是整帧 8 位平面时直接引用（零拷贝），
         // 数据与分路器输出同源时是纯粹的透传合路。
-        if (yData is Uint8List && uData is Uint8List && vData is Uint8List &&
+        if (yData is Uint8List &&
+            uData is Uint8List &&
+            vData is Uint8List &&
             yData.length == pixels &&
             uData.length == pixels &&
             vData.length == pixels) {
@@ -1926,8 +2166,12 @@ Future<Uint8List> runChainFrame(
         var dstIdx = 0;
         for (var i = 0; i < pixels; i++, dstIdx += 3) {
           combined[dstIdx] = yData != null && i < yData.length ? yData[i] : 0;
-          combined[dstIdx + 1] = uData != null && i < uData.length ? uData[i] : mid;
-          combined[dstIdx + 2] = vData != null && i < vData.length ? vData[i] : mid;
+          combined[dstIdx + 1] = uData != null && i < uData.length
+              ? uData[i]
+              : mid;
+          combined[dstIdx + 2] = vData != null && i < vData.length
+              ? vData[i]
+              : mid;
         }
         frame = _Frame(
           data: combined,
@@ -1948,8 +2192,12 @@ Future<Uint8List> runChainFrame(
         final combined = Uint16List(pixels * 3);
         for (var i = 0; i < pixels; i++) {
           combined[3 * i] = hData != null && i < hData.length ? hData[i] : 0;
-          combined[3 * i + 1] = sData != null && i < sData.length ? sData[i] : 0;
-          combined[3 * i + 2] = lData != null && i < lData.length ? lData[i] : 0;
+          combined[3 * i + 1] = sData != null && i < sData.length
+              ? sData[i]
+              : 0;
+          combined[3 * i + 2] = lData != null && i < lData.length
+              ? lData[i]
+              : 0;
         }
         frame = _Frame(
           data: combined,
@@ -2011,7 +2259,8 @@ Future<Uint8List> runChainFrame(
               // in_mono 接的是 3 通道交织数据：按 BT.601 加权转灰度。
               rgb = Uint16List(pixels * 3);
               for (var pIdx = 0; pIdx < pixels; pIdx++) {
-                final val = ((77 *
+                final val =
+                    ((77 *
                             (3 * pIdx < monoData.length
                                 ? monoData[3 * pIdx]
                                 : 0) +
@@ -2076,8 +2325,13 @@ Future<Uint8List> runChainFrame(
           (nodeTimingsUs[nodeId] ?? 0) + opSw!.elapsedMicroseconds;
     }
     // 每个节点处理完后的输出（Gamma 节点之后为 RGBA）。
-    onNodeOutput?.call(nodeId, rgba ?? frame.data,
-        rgba != null ? 'rgba' : frame.format, frame.width, frame.height);
+    onNodeOutput?.call(
+      nodeId,
+      rgba ?? frame.data,
+      rgba != null ? 'rgba' : frame.format,
+      frame.width,
+      frame.height,
+    );
   }
 
   // 链中没有 Gamma 节点时的默认色调映射：RAW 源（线性数据）按 gamma
@@ -2085,31 +2339,56 @@ Future<Uint8List> runChainFrame(
   final tailSw = nodeTimingsUs == null ? null : (Stopwatch()..start());
   final defaultGamma =
       firstType == 'image_source' || firstType == 'video_source' ? 1.0 : 2.2;
-  final Uint8List result = rgba ??
+  final Uint8List result =
+      rgba ??
       switch (frame.format) {
-        'rgb' => tonemapToRgba(frame.data,
-            maxValue: frame.maxValue, gamma: defaultGamma),
+        'rgb' => tonemapToRgba(
+          frame.data,
+          maxValue: frame.maxValue,
+          gamma: defaultGamma,
+        ),
         // 单通道 MONO：8 位平面轨道（视频分路预览）直接 LUT；
         // 16 位单通道一趟查表；三通道灰度（RAW MONO 源等）走通用 tonemap。
-        'mono' => frame.mono8 != null
-            ? mono8ToRgba(frame.mono8!, gamma: defaultGamma)
-            : frame.data.length == frame.width * frame.height
-                ? monoToRgba(frame.data,
-                    maxValue: frame.maxValue, gamma: defaultGamma)
-                : tonemapToRgba(frame.data,
-                    maxValue: frame.maxValue, gamma: defaultGamma),
+        'mono' =>
+          frame.mono8 != null
+              ? mono8ToRgba(frame.mono8!, gamma: defaultGamma)
+              : frame.data.length == frame.width * frame.height
+              ? monoToRgba(
+                  frame.data,
+                  maxValue: frame.maxValue,
+                  gamma: defaultGamma,
+                )
+              : tonemapToRgba(
+                  frame.data,
+                  maxValue: frame.maxValue,
+                  gamma: defaultGamma,
+                ),
         // 平面轨道（视频 YUV 直出/零拷贝合路）：定点 8 位一趟出图。
-        'yuv' => frame.yuvPlanes8 != null
-            ? yuv444p8ToRgba(frame.yuvPlanes8!, frame.width, frame.height,
-                gamma: defaultGamma)
-            : yuvToRgba(frame.data,
-                maxValue: frame.maxValue, gamma: defaultGamma),
-        'hsl' => tonemapToRgba(hslToRgb(frame.data, maxValue: frame.maxValue),
-            maxValue: frame.maxValue, gamma: defaultGamma),
+        'yuv' =>
+          frame.yuvPlanes8 != null
+              ? yuv444p8ToRgba(
+                  frame.yuvPlanes8!,
+                  frame.width,
+                  frame.height,
+                  gamma: defaultGamma,
+                )
+              : yuvToRgba(
+                  frame.data,
+                  maxValue: frame.maxValue,
+                  gamma: defaultGamma,
+                ),
+        'hsl' => tonemapToRgba(
+          hslToRgb(frame.data, maxValue: frame.maxValue),
+          maxValue: frame.maxValue,
+          gamma: defaultGamma,
+        ),
         // RAW 马赛克直显（预览节点 in_raw 接入）：不做去马赛克，每个像素
         // 的值直接作为亮度出灰度图（棋盘格原样可见）。
-        'mosaic' => monoToRgba(frame.data,
-            maxValue: frame.maxValue, gamma: defaultGamma),
+        'mosaic' => monoToRgba(
+          frame.data,
+          maxValue: frame.maxValue,
+          gamma: defaultGamma,
+        ),
         _ => throw StateError('流水线末端不是图像数据（缺少去马赛克）'),
       };
   // 汇点（预览）节点的最终输出恒为 RGBA；链末默认色调映射的耗时
@@ -2119,40 +2398,64 @@ Future<Uint8List> runChainFrame(
     nodeTimingsUs[sinkNodeId] =
         (nodeTimingsUs[sinkNodeId] ?? 0) + tailSw!.elapsedMicroseconds;
   }
-  onNodeOutput?.call(sinkNodeId, result, 'rgba',
-      frame.width, frame.height);
+  onNodeOutput?.call(sinkNodeId, result, 'rgba', frame.width, frame.height);
   // 被覆盖链汇点的显示图：与本链末端同一默认色调映射。
   if (capturedRgba != null) {
     for (final e in monoCaptures.entries) {
       final v = e.value;
       capturedRgba[e.key] = v is Uint8List
           ? mono8ToRgba(v, gamma: defaultGamma)
-          : monoToRgba(v as Uint16List,
-              maxValue: frame.maxValue, gamma: defaultGamma);
+          : monoToRgba(
+              v as Uint16List,
+              maxValue: frame.maxValue,
+              gamma: defaultGamma,
+            );
     }
     for (final e in passthroughCaptures.entries) {
       final f0 = e.value;
       final Uint8List? rgba2;
       if (f0.yuvPlanes8 != null) {
-        rgba2 = yuv444p8ToRgba(f0.yuvPlanes8!, f0.width, f0.height,
-            gamma: defaultGamma);
+        rgba2 = yuv444p8ToRgba(
+          f0.yuvPlanes8!,
+          f0.width,
+          f0.height,
+          gamma: defaultGamma,
+        );
       } else if (f0.mono8 != null) {
         rgba2 = mono8ToRgba(f0.mono8!, gamma: defaultGamma);
       } else {
         rgba2 = switch (f0.format) {
-          'rgb' => tonemapToRgba(f0.data,
-              maxValue: f0.maxValue, gamma: defaultGamma),
-          'mono' when f0.data.length == f0.width * f0.height =>
-            monoToRgba(f0.data, maxValue: f0.maxValue, gamma: defaultGamma),
-          'mono' => tonemapToRgba(f0.data,
-              maxValue: f0.maxValue, gamma: defaultGamma),
-          'yuv' =>
-            yuvToRgba(f0.data, maxValue: f0.maxValue, gamma: defaultGamma),
-          'hsl' => tonemapToRgba(hslToRgb(f0.data, maxValue: f0.maxValue),
-              maxValue: f0.maxValue, gamma: defaultGamma),
+          'rgb' => tonemapToRgba(
+            f0.data,
+            maxValue: f0.maxValue,
+            gamma: defaultGamma,
+          ),
+          'mono' when f0.data.length == f0.width * f0.height => monoToRgba(
+            f0.data,
+            maxValue: f0.maxValue,
+            gamma: defaultGamma,
+          ),
+          'mono' => tonemapToRgba(
+            f0.data,
+            maxValue: f0.maxValue,
+            gamma: defaultGamma,
+          ),
+          'yuv' => yuvToRgba(
+            f0.data,
+            maxValue: f0.maxValue,
+            gamma: defaultGamma,
+          ),
+          'hsl' => tonemapToRgba(
+            hslToRgb(f0.data, maxValue: f0.maxValue),
+            maxValue: f0.maxValue,
+            gamma: defaultGamma,
+          ),
           // RAW 马赛克直显：像素值即亮度。
-          'mosaic' => monoToRgba(f0.data,
-              maxValue: f0.maxValue, gamma: defaultGamma),
+          'mosaic' => monoToRgba(
+            f0.data,
+            maxValue: f0.maxValue,
+            gamma: defaultGamma,
+          ),
           _ => null, // 非图像格式：不捕获，由调用方回退单独执行该链
         };
       }
@@ -2169,11 +2472,14 @@ Future<Uint8List> runChainFrame(
 /// （平面 yuv444p 帧）。
 Future<Uint8List> runChainFrameInIsolate(Map<String, Object?> msg) {
   final chain = (msg['chain'] as List).cast<Map<String, Object?>>();
-  return runChainFrame(chain, msg['frameIndex'] as int,
-      sourceRgba: msg['sourceRgba'] as Uint8List?,
-      sourceWidth: msg['sourceWidth'] as int?,
-      sourceHeight: msg['sourceHeight'] as int?,
-      sourceYuv: msg['sourceYuv'] as Uint8List?);
+  return runChainFrame(
+    chain,
+    msg['frameIndex'] as int,
+    sourceRgba: msg['sourceRgba'] as Uint8List?,
+    sourceWidth: msg['sourceWidth'] as int?,
+    sourceHeight: msg['sourceHeight'] as int?,
+    sourceYuv: msg['sourceYuv'] as Uint8List?,
+  );
 }
 
 /// 每个节点输出采样的元素个数上限（防止大帧撑爆消息与界面）。
@@ -2186,23 +2492,27 @@ const int kNodeOutputSampleSize = 256;
 /// 供调试变量表展示运行值；timings 为 nodeId → 执行耗时微秒数，
 /// 供节点卡片显示节点工作时间。
 Future<Map<String, Object?>> runChainFrameCapturedInIsolate(
-    Map<String, Object?> msg) async {
+  Map<String, Object?> msg,
+) async {
   final chain = (msg['chain'] as List).cast<Map<String, Object?>>();
   final snapshots = <String, Map<String, Object?>>{};
   final timings = <String, int>{};
-  final rgba = await runChainFrame(chain, msg['frameIndex'] as int,
-      nodeTimingsUs: timings,
-      onNodeOutput: (nodeId, data, format, width, height) {
-    snapshots[nodeId] = {
-      'format': format,
-      'length': data.length,
-      'width': width,
-      'height': height,
-      'sample': data.length <= kNodeOutputSampleSize
-          ? List<int>.of(data)
-          : List<int>.of(data.sublist(0, kNodeOutputSampleSize)),
-    };
-  });
+  final rgba = await runChainFrame(
+    chain,
+    msg['frameIndex'] as int,
+    nodeTimingsUs: timings,
+    onNodeOutput: (nodeId, data, format, width, height) {
+      snapshots[nodeId] = {
+        'format': format,
+        'length': data.length,
+        'width': width,
+        'height': height,
+        'sample': data.length <= kNodeOutputSampleSize
+            ? List<int>.of(data)
+            : List<int>.of(data.sublist(0, kNodeOutputSampleSize)),
+      };
+    },
+  );
   return {'rgba': rgba, 'captures': snapshots, 'timings': timings};
 }
 
@@ -2222,30 +2532,34 @@ Future<void> _chainFrameProgressWorker(List<Object?> args) async {
     final timings = <String, int>{};
     final total = chain.length;
     var index = 0;
-    final rgba = await runChainFrame(chain, args[2] as int,
-        sourceRgba: args.length > 3 ? args[3] as Uint8List? : null,
-        sourceWidth: args.length > 4 ? args[4] as int? : null,
-        sourceHeight: args.length > 5 ? args[5] as int? : null,
-        nodeTimingsUs: timings,
-        onNodeStart: (nodeId) {
-      send.send(<String, Object?>{
-        'type': 'nodeStart',
-        'nodeId': nodeId,
-        'index': index,
-        'total': total,
-      });
-      index++;
-    }, onNodeOutput: (nodeId, data, format, width, height) {
-      snapshots[nodeId] = {
-        'format': format,
-        'length': data.length,
-        'width': width,
-        'height': height,
-        'sample': data.length <= kNodeOutputSampleSize
-            ? List<int>.of(data)
-            : List<int>.of(data.sublist(0, kNodeOutputSampleSize)),
-      };
-    });
+    final rgba = await runChainFrame(
+      chain,
+      args[2] as int,
+      sourceRgba: args.length > 3 ? args[3] as Uint8List? : null,
+      sourceWidth: args.length > 4 ? args[4] as int? : null,
+      sourceHeight: args.length > 5 ? args[5] as int? : null,
+      nodeTimingsUs: timings,
+      onNodeStart: (nodeId) {
+        send.send(<String, Object?>{
+          'type': 'nodeStart',
+          'nodeId': nodeId,
+          'index': index,
+          'total': total,
+        });
+        index++;
+      },
+      onNodeOutput: (nodeId, data, format, width, height) {
+        snapshots[nodeId] = {
+          'format': format,
+          'length': data.length,
+          'width': width,
+          'height': height,
+          'sample': data.length <= kNodeOutputSampleSize
+              ? List<int>.of(data)
+              : List<int>.of(data.sublist(0, kNodeOutputSampleSize)),
+        };
+      },
+    );
     send.send(<String, Object?>{
       'type': 'done',
       'rgba': rgba,
@@ -2279,17 +2593,27 @@ Future<Map<String, Object?>> runChainFrameWithProgress(
     if (msg is! Map) return;
     switch (msg['type']) {
       case 'nodeStart':
-        onNodeStart?.call(msg['nodeId'] as String, msg['index'] as int,
-            msg['total'] as int);
+        onNodeStart?.call(
+          msg['nodeId'] as String,
+          msg['index'] as int,
+          msg['total'] as int,
+        );
       case 'done':
         completer.complete(msg.cast<String, Object?>());
       case 'error':
         completer.completeError(
-            StateError(msg['message']?.toString() ?? '流水线执行失败'));
+          StateError(msg['message']?.toString() ?? '流水线执行失败'),
+        );
     }
   });
-  final isolate = await Isolate.spawn(_chainFrameProgressWorker,
-      [port.sendPort, chain, frameIndex, sourceRgba, sourceWidth, sourceHeight]);
+  final isolate = await Isolate.spawn(_chainFrameProgressWorker, [
+    port.sendPort,
+    chain,
+    frameIndex,
+    sourceRgba,
+    sourceWidth,
+    sourceHeight,
+  ]);
   try {
     return await completer.future;
   } finally {
@@ -2311,16 +2635,19 @@ Future<int> runChainValueAtInIsolate(Map<String, Object?> msg) async {
   final targetId = chain.last['nodeId'] as String;
   int? value;
   try {
-    await runChainFrame(chain, msg['frameIndex'] as int,
-        onNodeOutput: (nodeId, data, format, width, height) {
-      if (nodeId != targetId) return;
-      RangeError.checkValueInInterval(x, 0, width - 1, 'x');
-      RangeError.checkValueInInterval(y, 0, height - 1, 'y');
-      final channels = Frame3D.channelsOf(format);
-      // 末端节点先以中间格式回调、最后以 RGBA 回调：通道不够时等下一次。
-      if (channel >= channels) return;
-      value = data[(y * width + x) * channels + channel];
-    });
+    await runChainFrame(
+      chain,
+      msg['frameIndex'] as int,
+      onNodeOutput: (nodeId, data, format, width, height) {
+        if (nodeId != targetId) return;
+        RangeError.checkValueInInterval(x, 0, width - 1, 'x');
+        RangeError.checkValueInInterval(y, 0, height - 1, 'y');
+        final channels = Frame3D.channelsOf(format);
+        // 末端节点先以中间格式回调、最后以 RGBA 回调：通道不够时等下一次。
+        if (channel >= channels) return;
+        value = data[(y * width + x) * channels + channel];
+      },
+    );
   } on StateError {
     // 链末端不是图像数据（如马赛克节点）时 runChainFrame 在回调之后抛错；
     // 目标值已取到则忽略，否则（错误发生在目标节点之前）继续抛出。
@@ -2334,16 +2661,23 @@ Future<int> runChainValueAtInIsolate(Map<String, Object?> msg) async {
 /// 按仪器类型计算分析数据（常驻 worker isolate 使用，见
 /// instrument_worker.dart）。
 Map<String, Object?> instrumentAnalyze(
-        String kind, Uint8List rgba, int w, int h,
-        {Set<String>? visible}) =>
-    _instrumentResult(kind, rgba, w, h, visible: visible);
+  String kind,
+  Uint8List rgba,
+  int w,
+  int h, {
+  Set<String>? visible,
+}) => _instrumentResult(kind, rgba, w, h, visible: visible);
 
 /// 按仪器类型计算分析数据（analyze*InIsolate 共用）。
 /// [visible] 仅波形使用：只统计可见通道（播放中示波器通常只看
 /// 部分通道，全通道统计有 3/4 是无用功）；为 null 时全通道。
 Map<String, Object?> _instrumentResult(
-    String kind, Uint8List rgba, int w, int h,
-    {Set<String>? visible}) {
+  String kind,
+  Uint8List rgba,
+  int w,
+  int h, {
+  Set<String>? visible,
+}) {
   switch (kind) {
     case 'histogram':
       final (r, g, b, y) = histogramRgb(rgba);
@@ -2354,14 +2688,7 @@ Map<String, Object?> _instrumentResult(
         return {'kind': kind, ...tables, 'columns': cols};
       }
       final (r, g, b, y, cols) = waveformRgb(rgba, w, h);
-      return {
-        'kind': kind,
-        'r': r,
-        'g': g,
-        'b': b,
-        'y': y,
-        'columns': cols,
-      };
+      return {'kind': kind, 'r': r, 'g': g, 'b': b, 'y': y, 'columns': cols};
     case 'vectorscope':
       return {'kind': kind, 'counts': vectorscope(rgba)};
     case 'minmax':
@@ -2385,13 +2712,15 @@ Map<String, Object?> _instrumentResult(
 /// 波形为 counts+columns，矢量示波器为 256x256 counts。
 @pragma('vm:entry-point')
 Future<Map<String, Object?>> analyzeInstrumentInIsolate(
-    Map<String, Object?> msg) async {
+  Map<String, Object?> msg,
+) async {
   final chain = (msg['chain'] as List).cast<Map<String, Object?>>();
   final kind = msg['kind'] as String;
   final rgba = await runChainFrame(chain, msg['frameIndex'] as int);
   final (w, h) = await sourceDimensions(
-      chain.first['typeId'] as String,
-      chain.first['params'] as Map<String, Object?>);
+    chain.first['typeId'] as String,
+    chain.first['params'] as Map<String, Object?>,
+  );
   return _instrumentResult(kind, rgba, w, h);
 }
 
@@ -2400,7 +2729,8 @@ Future<Map<String, Object?>> analyzeInstrumentInIsolate(
 /// 播放中复用预览已算出的帧，无需重跑流水线。
 @pragma('vm:entry-point')
 Future<Map<String, Object?>> analyzeRgbaInIsolate(
-    Map<String, Object?> msg) async {
+  Map<String, Object?> msg,
+) async {
   return _instrumentResult(
     msg['kind'] as String,
     msg['rgba'] as Uint8List,

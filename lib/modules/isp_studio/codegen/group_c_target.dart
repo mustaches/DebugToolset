@@ -7,28 +7,6 @@
 /// 其余生成代码为纯标量 C99，与目标无关、数值口径不变。
 library;
 
-/// 允许单节点编组的节点类型：编组后即可经右键菜单查看/导出 C 代码。
-/// `multi_band_eq` 为既有例外（等效多个色彩控制器混叠）；其余为有整行
-/// 行核（`<id>_row` NEON/SSE2 行核）的类型——单节点独占阶段走整行行核。
-/// 与 `_rowNodeId`（group_c_export_bb.dart）的类型判断保持同步扩展。
-const Set<String> kSingleNodeGroupTypeIds = {
-  'multi_band_eq',
-  'csc_rgb2yuv',
-  'csc_yuv2rgb',
-  'csc_hsl2rgb',
-  'csc_rgb2hsl',
-  'white_balance',
-  'ccm',
-  'levels_curves',
-  'color_temp_adjuster',
-  'pseudo_color',
-  'highlight',
-  'gamma',
-  'sat_bright_adjuster',
-  'black_level',
-  'color_controller',
-};
-
 /// 编组导出目标 CPU 族（标签 key 以 `@<name>` 后缀携带，见
 /// isp_studio_state.dart 的 openGroupCodeTab/openGroupBlackBoxCodeTab）。
 enum GroupCTarget {
@@ -55,65 +33,64 @@ enum GroupCTarget {
 extension GroupCTargetInfo on GroupCTarget {
   /// 菜单/页头显示名。
   String get displayName => switch (this) {
-        GroupCTarget.cortexA32_35 => 'Cortex-A32/A34/A35',
-        GroupCTarget.cortexA53_55 => 'Cortex-A53/A55',
-        GroupCTarget.cortexA72_78 => 'Cortex-A72/A73/A75/A76/A77/A78',
-        GroupCTarget.cortexA510_520 => 'Cortex-A510/A520',
-        GroupCTarget.cortexA710_725 => 'Cortex-A710/A715/A720/A725',
-        GroupCTarget.x86 => 'x86（SSE2）',
-      };
+    GroupCTarget.cortexA32_35 => 'Cortex-A32/A34/A35',
+    GroupCTarget.cortexA53_55 => 'Cortex-A53/A55',
+    GroupCTarget.cortexA72_78 => 'Cortex-A72/A73/A75/A76/A77/A78',
+    GroupCTarget.cortexA510_520 => 'Cortex-A510/A520',
+    GroupCTarget.cortexA710_725 => 'Cortex-A710/A715/A720/A725',
+    GroupCTarget.x86 => 'x86（SSE2）',
+  };
 
   /// 标签页标题短名。
   String get tabShort => switch (this) {
-        GroupCTarget.cortexA32_35 => 'A32/35',
-        GroupCTarget.cortexA53_55 => 'A53/55',
-        GroupCTarget.cortexA72_78 => 'A72-78',
-        GroupCTarget.cortexA510_520 => 'A510/520',
-        GroupCTarget.cortexA710_725 => 'A710-725',
-        GroupCTarget.x86 => 'x86',
-      };
+    GroupCTarget.cortexA32_35 => 'A32/35',
+    GroupCTarget.cortexA53_55 => 'A53/55',
+    GroupCTarget.cortexA72_78 => 'A72-78',
+    GroupCTarget.cortexA510_520 => 'A510/520',
+    GroupCTarget.cortexA710_725 => 'A710-725',
+    GroupCTarget.x86 => 'x86',
+  };
 
   bool get isArm => this != GroupCTarget.x86;
   bool get isX86 => this == GroupCTarget.x86;
 
   /// 架构特征一句话（顺序/乱序、FP64 SIMD 强弱、AArch32 双态）。
   String get archNote => switch (this) {
-        GroupCTarget.cortexA32_35 =>
-          'ARMv8-A 顺序执行小核，可 AArch32 双态（AArch32 下 NEON 由 __ARM_NEON__ 预定义），FP64 SIMD 弱',
-        GroupCTarget.cortexA53_55 =>
-          'ARMv8.2-A AArch64 顺序执行小核，NEON FP64 仅标量级吞吐（FP64 SIMD 弱）',
-        GroupCTarget.cortexA72_78 => 'AArch64 乱序执行大核，NEON FP64 SIMD 完整',
-        GroupCTarget.cortexA510_520 => 'ARMv9 顺序执行小核，FP64 SIMD 弱',
-        GroupCTarget.cortexA710_725 => 'ARMv9 乱序执行大核，FP64 SIMD 完整',
-        GroupCTarget.x86 => 'x86/x64 基线 SSE2（x64 恒含 SSE2）',
-      };
+    GroupCTarget.cortexA32_35 =>
+      'ARMv8-A 顺序执行小核，可 AArch32 双态（AArch32 下 NEON 由 __ARM_NEON__ 预定义），FP64 SIMD 弱',
+    GroupCTarget.cortexA53_55 =>
+      'ARMv8.2-A AArch64 顺序执行小核，NEON FP64 仅标量级吞吐（FP64 SIMD 弱）',
+    GroupCTarget.cortexA72_78 => 'AArch64 乱序执行大核，NEON FP64 SIMD 完整',
+    GroupCTarget.cortexA510_520 => 'ARMv9 顺序执行小核，FP64 SIMD 弱',
+    GroupCTarget.cortexA710_725 => 'ARMv9 乱序执行大核，FP64 SIMD 完整',
+    GroupCTarget.x86 => 'x86/x64 基线 SSE2（x64 恒含 SSE2）',
+  };
 
   /// 推荐编译选项（写入文件头注释）。
   String get cFlags => switch (this) {
-        GroupCTarget.cortexA32_35 => '-mcpu=cortex-a35 -mfpu=neon -O2',
-        GroupCTarget.cortexA53_55 => '-mcpu=cortex-a55 -O2',
-        GroupCTarget.cortexA72_78 => '-mcpu=cortex-a76 -O2',
-        GroupCTarget.cortexA510_520 => '-mcpu=cortex-a520 -O2',
-        GroupCTarget.cortexA710_725 => '-mcpu=cortex-a725 -O2',
-        GroupCTarget.x86 => '-msse2 -O2（MSVC /arch:SSE2；x64 恒含 SSE2）',
-      };
+    GroupCTarget.cortexA32_35 => '-mcpu=cortex-a35 -mfpu=neon -O2',
+    GroupCTarget.cortexA53_55 => '-mcpu=cortex-a55 -O2',
+    GroupCTarget.cortexA72_78 => '-mcpu=cortex-a76 -O2',
+    GroupCTarget.cortexA510_520 => '-mcpu=cortex-a520 -O2',
+    GroupCTarget.cortexA710_725 => '-mcpu=cortex-a725 -O2',
+    GroupCTarget.x86 => '-msse2 -O2（MSVC /arch:SSE2；x64 恒含 SSE2）',
+  };
 
   /// FP64 SIMD 弱（顺序小核）：LUT 模式建议 lut_fixed（Q14 定点）。
   bool get fp64Weak => switch (this) {
-        GroupCTarget.cortexA32_35 ||
-        GroupCTarget.cortexA53_55 ||
-        GroupCTarget.cortexA510_520 =>
-          true,
-        _ => false,
-      };
+    GroupCTarget.cortexA32_35 ||
+    GroupCTarget.cortexA53_55 ||
+    GroupCTarget.cortexA510_520 => true,
+    _ => false,
+  };
 
   /// 文件头注释的目标块（每行带 ` * ` 前缀，直接嵌入现有块注释）。
   List<String> headerBlock() => [
-        ' * 目标 CPU：$displayName（$archNote）。',
-        ' * 推荐编译选项：$cFlags',
-        if (fp64Weak)
-          ' * FP64 SIMD 弱：LUT 模式建议 codegenMode=lut_fixed（Q14 定点，避免逐像素 FP64 乘加）。',
-      ];
+    ' * 目标 CPU：$displayName（$archNote）。',
+    ' * 推荐编译选项：$cFlags',
+    if (fp64Weak)
+      ' * FP64 SIMD 弱：LUT 模式建议 codegenMode=lut_fixed（Q14 定点，避免逐像素 FP64 乘加）。',
+  ];
 
   /// 本目标的 SIMD 变体名（micro 文档/注释复用）。
   String get simdKind => isX86 ? 'SSE2' : 'NEON';
@@ -168,6 +145,7 @@ String buildTargetCodeMicroDoc(GroupCTarget target, {required bool blackBox}) {
     '|---|---|---|',
     '| multi_band_eq（lut_fixed） | HSL 3ch→3ch | $deint → $gatherNote → $q14 → $reint；与 FP64 口径偏差 ≤1 LSB、与标量变体逐位一致 |',
     '| multi_band_eq（lut） | HSL 3ch→3ch | 标量行核（FP64 三表 + compose 回退；收益为整行函数化 + 行域并行） |',
+    '| multi_band_eq（func_fixed） | HSL 3ch→3ch | 标量定点行核（运行期直算：角距条件回绕 + x² 整数乘 + 2^(−u) 多项式 Q14 权重 + Q14 乘加，无表无 FP64/libm 无回退；收益为整行函数化 + 行域并行） |',
     '| csc_rgb2yuv / csc_yuv2rgb | RGB↔YUV 3ch→3ch | $deint → $cscQ16 → $reint（系数随生成期烘焙；`max_value ≤ 32767` SIMD 域保证） |',
     '| ccm | RGB 3ch→3ch | $deint → $ccm64 → $reint（Q20 矩阵 int64 累加，|m| ≤ INT32_MAX 生成期守卫） |',
     '| white_balance / levels_curves / color_temp / pseudo_color / highlight clip | LUT gather 类 | $deint → $gatherNote → $reint（pseudo_color 为 mono→RGB 1→3 形态：`VLD1`/`_mm_loadu` 载入） |',
@@ -184,9 +162,9 @@ String buildTargetCodeMicroDoc(GroupCTarget target, {required bool blackBox}) {
   故该节点保持融合行核（OpenMP 行域并行仍生效）。''';
   final buildLine = target.isX86
       ? '- MSVC：`cl /O2 /arch:SSE2 /openmp ...`（x64 恒含 SSE2）\n'
-          '- GCC/Clang：`gcc -O2 -msse2 -fopenmp ...`'
+            '- GCC/Clang：`gcc -O2 -msse2 -fopenmp ...`'
       : '- 交叉 gcc：`aarch64-linux-gnu-gcc ${target.cFlags} -fopenmp ...`'
-          '（不开 `-fopenmp` 自动串行；`__ARM_NEON` 由 `-mcpu` 自动定义）';
+            '（不开 `-fopenmp` 自动串行；`__ARM_NEON` 由 `-mcpu` 自动定义）';
   final accelSection = blackBox
       ? '''
 ### 3.1 整行 SIMD 行核（$simd，单节点独占编组）

@@ -20,7 +20,7 @@ int isp_csc_yuv_to_hsl(const uint16_t *yuv, int w, int h, int max_value,
     int r, g, b;
     /* 单遍融合：先按 yuvToRgb 定点公式求 RGB 中间值（含钳位），
      * 再按 rgbToHsl 逻辑求 H/S/L；不分配中间缓冲，结果与两段中转逐点一致 */
-    isp_csc_yuv_to_rgb_px(yuv[i], yuv[i + 1], yuv[i + 2], half, max_value,
+    isp_csc_yuv_to_rgb_px_s(yuv[i], yuv[i + 1], yuv[i + 2], half, max_value, ISP_CSC_STD_601,
                           &r, &g, &b);
     isp_csc_rgb_to_hsl_px(r, g, b, max_value, inv, out + i);
   }

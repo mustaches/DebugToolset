@@ -122,3 +122,21 @@ Linux_setup/Output/
 # netlistsvg/ 已移除：电路图布局与绘制改由应用自研完成，不再需要 Node.js。
 /tools/yosys/
 
+
+# Vivado 批处理/交互运行残留（.jou/.str/.backup.jou/.Xil/波形转储）
+/vivado*.jou
+/vivado*.str/
+/vivado*.str
+/vivado*.backup.jou
+/.Xil/
+/wave.vcd/
+/scratch/**/*.jou
+
+# ISP Studio 现场生成的 IP/demo 工程（单包可达数百 MB～GB，不入库；
+# 由「生成Verilog IP」「导出demo_prj」随时重建）
+/IspFlow/IP_Gen_flow/
+/IspFlow/ISP_IPgen_out/*/
+!/IspFlow/ISP_IPgen_out/README.md
+
+# AI/CLI 工具本地状态
+/.codely-cli/

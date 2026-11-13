@@ -57,6 +57,11 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+set(PDFium_DIR "${CMAKE_BINARY_DIR}/pdfium-src")
+find_package(PDFium REQUIRED)
+add_executable(debug_pdf_printer WIN32 "runner/pdf_print_worker.cpp")
+apply_standard_settings(debug_pdf_printer)
+target_link_libraries(debug_pdf_printer PRIVATE pdfium)
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
@@ -72,8 +77,8 @@ endif()
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
-install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
-  COMPONENT Runtime)
+install(TARGETS ${BINARY_NAME} debug_pdf_printer
+  RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)

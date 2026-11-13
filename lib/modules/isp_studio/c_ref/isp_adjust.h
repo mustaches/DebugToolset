@@ -95,6 +95,16 @@ int isp_adjust_rgb(uint16_t *rgb, int w, int h, int max_value,
                    double r_gain, double g_gain, double b_gain);
 
 /**
+ * @brief 三通道 Q14 定点增益施加（色温 func_fixed 路径）。
+ *
+ * gains_q14[c] = round(gain[c] × 2^14)，逐像素执行
+ * clamp((v × gains_q14[c] + 2^13) >> 14, 0..max_value)，无浮点运算。
+ * 与 FP64 增益路径的量化误差不超过 1 LSB。
+ */
+int isp_adjust_q14_gain3_apply(uint16_t *rgb, int w, int h, int max_value,
+                               const int32_t gains_q14[3]);
+
+/**
  * @brief YUV 调节器：Y 乘增益；U/V 绕中点缩放，原地修改。
  *
  * Dart 来源：isp_kernels.dart adjustYuv。
@@ -169,6 +179,13 @@ int isp_adjust_bright_contrast(uint16_t *data, int w, int h,
                                IspAdjustFormat format, int max_value,
                                double bright_pct, double baseline_pct,
                                double gain_pct);
+
+/* func_fixed：bright/baseline/gain 均为对应百分比除以 100 后的 Q14。
+ * 逐像素仅使用整数乘加、移位和整数除法。 */
+int isp_adjust_bright_contrast_q14(uint16_t *data, int w, int h,
+                                   IspAdjustFormat format, int max_value,
+                                   int32_t bright_q14, int32_t baseline_q14,
+                                   int32_t gain_q14);
 
 /**
  * @brief 色彩平衡：RGB/YUV/HSL 三域中间调色彩偏移，原地修改。

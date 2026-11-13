@@ -82,12 +82,14 @@ const double kWaveSeparatorHeight = 12;
 const double kWaveGapHeight = 12;
 
 /// 总线数据显示格式（Signal 面板右键菜单设定，按信号路径保存）。
-enum BusDisplayFormat { hex, decimal, binary, ascii }
+enum BusDisplayFormat { hex, decimal, binary, ascii, float }
 
 /// 总线位串按格式转文本：hex=0x…（高位 0 补全到信号位宽），decimal=
 /// 十进制（高位 0 补全到最大值位数），binary=每 4 位空一格（左侧补 0
-/// 到 4 的倍数），ascii=逐字节字符（不可打印显示 ·）。[width] 为信号
-/// 位宽（缺省取位串长度）：VCD 值的高位 0 可能被省略，按位宽补齐显示。
+/// 到 4 的倍数），ascii=逐字节字符（不可打印显示 ·），float=IEEE 754
+/// 浮点解释（16 位半精度/32 位单精度/64 位双精度，其余位宽显示 —）。
+/// [width] 为信号位宽（缺省取位串长度）：VCD 值的高位 0 可能被省略，
+/// 按位宽补齐显示。
 /// 含 x/z 时：binary 原样分组（保留 x/z 字符），其余显示 x。
 String formatBusBits(String bits, BusDisplayFormat fmt, {int? width}) {
   final unknown = bits.contains('x') || bits.contains('z');
@@ -107,7 +109,33 @@ String formatBusBits(String bits, BusDisplayFormat fmt, {int? width}) {
       return _groupBits(padded, unknown);
     case BusDisplayFormat.ascii:
       return _bitsToAscii(bits);
+    case BusDisplayFormat.float:
+      return _bitsToFloat(padded);
   }
+}
+
+/// IEEE 754 浮点解释（16/32/64 位；其余位宽返回 —）。
+String _bitsToFloat(String bits) {
+  final double? v = switch (bits.length) {
+    16 => _halfToDouble(int.parse(bits, radix: 2)),
+    32 => (ByteData(4)..setUint32(0, int.parse(bits, radix: 2)))
+        .getFloat32(0)
+        .toDouble(),
+    64 => (ByteData(8)..setUint64(0, BigInt.parse(bits, radix: 2).toInt()))
+        .getFloat64(0),
+    _ => null,
+  };
+  return v == null ? '—' : v.toString();
+}
+
+/// 半精度（binary16）位模式 → double（符号 + 5 位指数 + 10 位尾数，
+/// 含次正规/Inf/NaN）。
+double _halfToDouble(int h) {
+  final s = (h >> 15) & 1, e = (h >> 10) & 0x1F, m = h & 0x3FF;
+  final sign = s == 1 ? -1.0 : 1.0;
+  if (e == 0) return sign * m * math.pow(2.0, -24).toDouble(); // 次正规
+  if (e == 31) return m == 0 ? sign * double.infinity : double.nan;
+  return sign * (1 + m / 1024) * math.pow(2.0, e - 15).toDouble();
 }
 
 /// 左侧补齐到 4 的倍数后每 4 位空一格。
@@ -1942,6 +1970,19 @@ class _SimWaveTabState extends State<SimWaveTab> {
     state.setIpCodeHighlight(signalName);
   }
 
+  /// 跳转到该编组的层级原理图，并高亮信号相关网/元件/端口。
+  void _jumpToSchematic(String signalName) {
+    final store = SimWaveStore.instance;
+    final groupId = store.sourceGroupId;
+    if (groupId == null) return;
+    final state = context.read<IspStudioState>();
+    state.openSchematicTab(
+      groupId,
+      store.sourceVendor ?? IpVendor.generic,
+      highlightSignal: signalName,
+    );
+  }
+
   /// 删除分隔符（从显示路径列表移除 `#sep:` 标记）。
   void _deleteSeparator(String sepId) {
     setState(() => _displayedPaths?.remove(sepId));
@@ -1976,8 +2017,8 @@ class _SimWaveTabState extends State<SimWaveTab> {
   }
 
   /// Signal 面板右键菜单：分隔符行仅「删除分隔符」；总线行含数据
-  /// 格式（十进制/十六进制/二进制/ASCII，勾选当前项）+ 等效模拟通道
-  /// + X10/X20 + 色彩解码（关闭/HSL/RGB/YUV + 字节顺序）；所有整信号
+  /// 格式（十进制/十六进制/二进制/ASCII/浮点数，勾选当前项）+ 等效模拟
+  /// 通道 + X10/X20 + 色彩解码（关闭/HSL/RGB/YUV + 字节顺序）；所有整信号
   /// 行尾部含「在当前信号上方/下方插入分隔符」与「删除当前信号」。
   List<Widget> _namesMenuChildren() {
     const labelStyle = TextStyle(fontSize: 12);
@@ -2017,6 +2058,19 @@ class _SimWaveTabState extends State<SimWaveTab> {
       );
     }
 
+    Widget schematicItem() {
+      final store = SimWaveStore.instance;
+      final gid = store.sourceGroupId;
+      final canJump = sig != null &&
+          gid != null &&
+          context.read<IspStudioState>().graph.groups.any((g) => g.id == gid);
+      return MenuItemButton(
+        onPressed: canJump ? () => _jumpToSchematic(sig.name) : null,
+        style: itemStyle,
+        child: const Text('跳转到原理图', style: labelStyle),
+      );
+    }
+
     Widget sepItem(String label, bool above) => MenuItemButton(
           onPressed: () => _insertSeparator(path, above),
           style: itemStyle,
@@ -2030,6 +2084,7 @@ class _SimWaveTabState extends State<SimWaveTab> {
     if (!isBus) {
       return [
         jumpItem(),
+        schematicItem(),
         const Divider(height: 6),
         sepItem('在当前信号上方插入分隔符', true),
         sepItem('在当前信号下方插入分隔符', false),
@@ -2050,11 +2105,13 @@ class _SimWaveTabState extends State<SimWaveTab> {
     );
     return [
       jumpItem(),
+      schematicItem(),
       const Divider(height: 6),
       fmtItem(BusDisplayFormat.decimal, '十进制'),
       fmtItem(BusDisplayFormat.hex, '十六进制'),
       fmtItem(BusDisplayFormat.binary, '二进制'),
       fmtItem(BusDisplayFormat.ascii, 'ASCII'),
+      fmtItem(BusDisplayFormat.float, '浮点数'),
       const Divider(height: 6),
       MenuItemButton(
         leadingIcon: checkIcon(analog),

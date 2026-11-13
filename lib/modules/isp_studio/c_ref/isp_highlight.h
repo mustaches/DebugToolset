@@ -86,6 +86,12 @@ int isp_highlight_apply(uint16_t *buf, int w, int h,
                         IspHighlightMode mode, double knee,
                         uint16_t *scratch);
 
+/* func_fixed：knee_q14 = round(knee × 2^14)，clip 与 recover 均为全整数路径。 */
+int isp_highlight_q14_apply(uint16_t *buf, int w, int h,
+                            const IspBayerPattern *pattern, int max_value,
+                            IspHighlightMode mode, int32_t knee_q14,
+                            uint16_t *scratch);
+
 /* ---------------------------------------------------------------------------
  * LUT 模式（节点属性 codegenMode=lut，仅 clip 分支）：膝点压缩表按生成
  * 期参数烘焙为 static const（wrapper 内），运行期纯查表零建表成本。

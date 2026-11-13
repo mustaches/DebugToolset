@@ -49,8 +49,8 @@ class IspGraph {
   /// 节点实例名按同类型自动编号（「直方图#2」），图中唯一。
   String addNode(String typeId, double x, double y) {
     final type = IspNodeRegistry.byId(typeId);
-    if (type == null) {
-      throw ArgumentError('未知节点类型: $typeId');
+    if (type == null || typeId == 'hsl_debugger') {
+      throw ArgumentError('未知或已移除的节点类型: $typeId');
     }
     final id = 'n${nextId++}';
     nodes[id] = IspNode.create(type, id, x, y, name: _uniqueNodeName(type));
@@ -85,18 +85,18 @@ class IspGraph {
     return '$prefix${max + 1}';
   }
 
-  /// 编组在节点删除后是否仍然成立：≥2 成员恒成立；单成员仅当该
-  /// 成员是多段色彩均衡器（等效多个色彩控制器混叠，允许单节点编组，
-  /// 见 IspStudioState.canGroupSelectedNodes）。
+  /// 编组在节点删除后是否仍然成立：≥2 成员恒成立；Process（含
+  /// ColorTrans/Fluorescence）与 Datapath 的单成员编组也成立。
   bool _isGroupValid(IspNodeGroup g) {
     if (g.nodeIds.length >= 2) return true;
     if (g.nodeIds.isEmpty) return false;
-    return nodes[g.nodeIds.first]?.typeId == 'multi_band_eq';
+    final node = nodes[g.nodeIds.first];
+    return node != null && IspNodeRegistry.supportsSingleNodeGroup(node.typeId);
   }
 
   /// 删除节点，并级联删除其所有连接与编组成员关系
-  /// （组成员不足 2 个时编组自动解散；多段色彩均衡器的单节点
-  /// 编组除外，见 [_isGroupValid]）。
+  /// （组成员不足 2 个时编组自动解散；允许单独编组的类型除外，见
+  /// [_isGroupValid]）。
   void removeNode(String id) {
     nodes.remove(id);
     connections.removeWhere((c) => c.fromNodeId == id || c.toNodeId == id);
@@ -144,13 +144,15 @@ class IspGraph {
     }
     // 输入端口只允许一条连接：替换旧连接。
     disconnectInput(toNodeId, toPort);
-    connections.add(IspConnection(
-      id: 'c${nextId++}',
-      fromNodeId: fromNodeId,
-      fromPort: fromPort,
-      toNodeId: toNodeId,
-      toPort: toPort,
-    ));
+    connections.add(
+      IspConnection(
+        id: 'c${nextId++}',
+        fromNodeId: fromNodeId,
+        fromPort: fromPort,
+        toNodeId: toNodeId,
+        toPort: toPort,
+      ),
+    );
     return null;
   }
 
@@ -239,39 +241,35 @@ class IspGraph {
 
   /// 序列化为 JSON 可编码结构（节点 + 连接 + id 计数器）。
   Map<String, Object?> toJson() => {
-        'nodes': [
-          for (final n in nodes.values)
-            {
-              'id': n.id,
-              'typeId': n.typeId,
-              'x': n.x,
-              'y': n.y,
-              'width': n.width,
-              'extraHeight': n.extraHeight,
-              'name': n.name,
-              'params': n.paramValues,
-            },
-        ],
-        'connections': [
-          for (final c in connections)
-            {
-              'id': c.id,
-              'from': c.fromNodeId,
-              'fromPort': c.fromPort,
-              'to': c.toNodeId,
-              'toPort': c.toPort,
-            },
-        ],
-        'groups': [
-          for (final g in groups)
-            {
-              'id': g.id,
-              'name': g.name,
-              'nodes': g.nodeIds.toList(),
-            },
-        ],
-        'nextId': nextId,
-      };
+    'nodes': [
+      for (final n in nodes.values)
+        {
+          'id': n.id,
+          'typeId': n.typeId,
+          'x': n.x,
+          'y': n.y,
+          'width': n.width,
+          'extraHeight': n.extraHeight,
+          'name': n.name,
+          'params': n.paramValues,
+        },
+    ],
+    'connections': [
+      for (final c in connections)
+        {
+          'id': c.id,
+          'from': c.fromNodeId,
+          'fromPort': c.fromPort,
+          'to': c.toNodeId,
+          'toPort': c.toPort,
+        },
+    ],
+    'groups': [
+      for (final g in groups)
+        {'id': g.id, 'name': g.name, 'nodes': g.nodeIds.toList()},
+    ],
+    'nextId': nextId,
+  };
 
   /// 从 [toJson] 的结构恢复。未知节点类型抛 [FormatException]；
   /// 引用缺失节点的连接直接跳过。
@@ -281,13 +279,43 @@ class IspGraph {
     final nameSeqs = <String, int>{};
     for (final raw in json['nodes'] as List? ?? const []) {
       final m = (raw as Map).cast<String, Object?>();
-      final typeId = m['typeId'] as String;
+      final storedTypeId = m['typeId'] as String;
+      final isLegacyColorController = storedTypeId == 'color_controller';
+      final typeId = isLegacyColorController ? 'multi_band_eq' : storedTypeId;
       final type = IspNodeRegistry.byId(typeId);
       if (type == null) {
         throw FormatException('未知节点类型: $typeId');
       }
       final id = m['id'] as String;
+      final params = Map<String, Object?>.from(m['params'] as Map? ?? const {});
+      // 色温调节器的目标/参考色温整数化：滑杆拖动与面板提交只产出整数，
+      // 旧档里可能留着分数（例如 8960.895645692835），这里统一取整。
+      if (typeId == 'color_temp_adjuster') {
+        final t = params['temperature'];
+        if (t is num) params['temperature'] = t.round();
+        final r = params['measured_cct'];
+        if (r is num) params['measured_cct'] = r.round();
+      }
+      if (isLegacyColorController) {
+        params['band_count'] = 1;
+        params['band_mode'] = 'parallel';
+        const legacyParams = {
+          'h_center': 'b0_h',
+          'q': 'b0_q',
+          'h_shift': 'b0_dh',
+          's_gain': 'b0_s',
+          'l_gain': 'b0_l',
+        };
+        for (final entry in legacyParams.entries) {
+          if (params.containsKey(entry.key)) {
+            params[entry.value] = params.remove(entry.key);
+          }
+        }
+      }
       var name = m['name'] as String? ?? '';
+      if (isLegacyColorController && name.startsWith('色彩控制器#')) {
+        name = name.replaceFirst('色彩控制器#', '多段色彩均衡器#');
+      }
       if (name.isEmpty) {
         final seq = (nameSeqs[typeId] ?? 0) + 1;
         nameSeqs[typeId] = seq;
@@ -301,13 +329,20 @@ class IspGraph {
         width: (m['width'] as num?)?.toDouble() ?? kNodeWidth,
         // 视频输出节点尺寸固定（无拖动手柄）：旧版存档的 234/244/264
         //（总高 360/370/390）统一迁移为 254（总高 380）。
-        extraHeight: typeId == 'video_output' &&
-                {234.0, 244.0, 264.0}.contains(
-                    (m['extraHeight'] as num?)?.toDouble() ?? 234)
+        extraHeight: isLegacyColorController
+            ? ((m['extraHeight'] as num?)?.toDouble() ??
+                      kDefaultNodeExtraHeight) +
+                  30
+            : typeId == 'video_output' &&
+                  {
+                    234.0,
+                    244.0,
+                    264.0,
+                  }.contains((m['extraHeight'] as num?)?.toDouble() ?? 234)
             ? 254
             : (m['extraHeight'] as num?)?.toDouble() ?? kDefaultNodeExtraHeight,
         name: name,
-        paramValues: Map<String, Object?>.from(m['params'] as Map? ?? const {}),
+        paramValues: params,
       );
     }
     for (final raw in json['connections'] as List? ?? const []) {
@@ -317,13 +352,15 @@ class IspGraph {
       if (!graph.nodes.containsKey(from) || !graph.nodes.containsKey(to)) {
         continue;
       }
-      graph.connections.add(IspConnection(
-        id: m['id'] as String,
-        fromNodeId: from,
-        fromPort: m['fromPort'] as String,
-        toNodeId: to,
-        toPort: m['toPort'] as String,
-      ));
+      graph.connections.add(
+        IspConnection(
+          id: m['id'] as String,
+          fromNodeId: from,
+          fromPort: m['fromPort'] as String,
+          toNodeId: to,
+          toPort: m['toPort'] as String,
+        ),
+      );
     }
     graph.nextId = (json['nextId'] as num?)?.toInt() ?? graph._deriveNextId();
     // 编组：旧文件无此字段；成员引用缺失节点时剔除，剔除后按
@@ -336,9 +373,11 @@ class IspGraph {
           if (graph.nodes.containsKey(id)) id as String,
       };
       final group = IspNodeGroup(
-          m['id'] as String? ?? 'g${graph.nextId++}', members,
-          // 旧文件无编组名：按现有最大序号补默认名。
-          name: m['name'] as String? ?? graph.uniqueGroupName());
+        m['id'] as String? ?? 'g${graph.nextId++}',
+        members,
+        // 旧文件无编组名：按现有最大序号补默认名。
+        name: m['name'] as String? ?? graph.uniqueGroupName(),
+      );
       if (!graph._isGroupValid(group)) continue;
       graph.groups.add(group);
     }
@@ -366,15 +405,15 @@ class IspGraph {
       final type = IspNodeRegistry.byId(node.typeId);
       if (type == null) continue;
       if (sinkTypes.contains(node.typeId)) {
-        final hasInput =
-            type.inputs.any((p) => connectionAt(node.id, p.name) != null);
+        final hasInput = type.inputs.any(
+          (p) => connectionAt(node.id, p.name) != null,
+        );
         if (!hasInput) {
           errors.add('「${type.displayName}」的输入未连接');
         }
       }
       // 源节点（无输入且有 filePath 参数）必须设置文件路径。
-      if (type.inputs.isEmpty &&
-          type.params.any((p) => p.key == 'filePath')) {
+      if (type.inputs.isEmpty && type.params.any((p) => p.key == 'filePath')) {
         final path = node.paramValues['filePath'];
         if (path == null || (path as String).isEmpty) {
           errors.add('「${type.displayName}」未设置文件路径');
@@ -423,8 +462,11 @@ IspGraph defaultGraph() {
     }
     prev = id;
   }
-  final outputId =
-      graph.addNode('image_output', 100.0 + (chain.length - 1) * 230.0, 340);
+  final outputId = graph.addNode(
+    'image_output',
+    100.0 + (chain.length - 1) * 230.0,
+    340,
+  );
   graph.connect(prev!, 'out', outputId, 'in');
   return graph;
 }

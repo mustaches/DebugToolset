@@ -8,6 +8,7 @@ import 'codegen/group_c_target.dart';
 import 'codegen/ip_target.dart';
 import 'models/isp_align_mode.dart';
 import 'models/isp_node.dart';
+import 'widgets/demo_prj_log_tab.dart';
 import 'widgets/editor_tab_bar.dart';
 import 'widgets/flow_file_dialog.dart';
 import 'widgets/group_code_page.dart';
@@ -138,14 +139,20 @@ class IspStudioView extends StatelessWidget {
                   ],
                 ),
                 for (final tab in state.openCodeTabs)
-                  tab.startsWith('wave:')
+                  tab.startsWith('demo:')
+                      ? DemoPrjLogTab(
+                          key: ValueKey(tab),
+                          groupId: tab.substring(5),
+                        )
+                      : tab.startsWith('wave:')
                       ? SimWaveTab(key: ValueKey(tab))
                       : tab.startsWith('sch:')
-                          ? SchematicTab(
-                              key: ValueKey(tab),
-                              groupId: _groupTabId(tab.substring(4)),
-                              vendor: _ipTabVendor(tab.substring(4)))
-                          : tab.startsWith('group:')
+                      ? SchematicTab(
+                          key: ValueKey(tab),
+                          groupId: _groupTabId(tab.substring(4)),
+                          vendor: _ipTabVendor(tab.substring(4)),
+                        )
+                      : tab.startsWith('group:')
                       ? GroupCodePage(
                           key: ValueKey(tab),
                           groupId: _groupTabId(tab.substring(6)),

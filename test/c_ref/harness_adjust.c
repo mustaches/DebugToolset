@@ -155,6 +155,33 @@ int op_adjust_brightcontrast(CaseIO *io) {
   return rc;
 }
 
+/* params: format=rgb/yuv/hsl/mono, brightPct, baselinePct, gainPct（double） */
+int op_adjust_brightcontrast_q14(CaseIO *io) {
+  int w, h;
+  size_t len;
+  uint16_t *frame;
+  int fmt, rc;
+  const double bright = case_param_double(io, "brightPct", 100.0);
+  const double baseline = case_param_double(io, "baselinePct", 50.0);
+  const double gain = case_param_double(io, "gainPct", 100.0);
+  if (!adj_frame_len(io, "adjust_brightcontrast_q14", 1, &w, &h, &len)) {
+    return ISP_ERR_SIZE;
+  }
+  fmt = parse_format(case_param_str(io, "format", "rgb"));
+  if (fmt < 0) return ISP_ERR_ARG;
+  frame = case_load_in(io, 0, len);
+  if (frame == NULL) return ISP_ERR_ARG;
+  rc = isp_adjust_bright_contrast_q14(
+      frame, w, h, (IspAdjustFormat)fmt,
+      case_param_int(io, "max_value", 1023),
+      (int32_t)llround(bright / 100.0 * 16384.0),
+      (int32_t)llround(baseline / 100.0 * 16384.0),
+      (int32_t)llround(gain / 100.0 * 16384.0));
+  if (rc == ISP_OK) rc = case_write_out(io, 0, frame, len);
+  free(frame);
+  return rc;
+}
+
 /* params: format=rgb/yuv/hsl, cyanRed, magentaGreen, yellowBlue（double，±100） */
 int op_adjust_colorbalance(CaseIO *io) {
   int w, h;
@@ -382,6 +409,57 @@ int op_multi_band_eq(CaseIO *io) {
   free(shift_lut);
   free(s_mul_lut);
   free(l_mul_lut);
+  free(dst);
+  return rc;
+}
+
+/**
+ * 多段色彩均衡器 func_fixed 定点模式（multi_band_eq_fx）：C 侧
+ * isp_multi_band_eq_fx_apply 全整数定点直算，与 Dart 参考
+ * applyMultiBandEqFx 逐位一致对拍。参数同 op_multi_band_eq。
+ */
+int op_multi_band_eq_fx(CaseIO *io) {
+  int w, h;
+  size_t len;
+  const int max_value = case_param_int(io, "max_value", 1023);
+  const int serial = case_param_int(io, "serial", 0);
+  int band_count = case_param_int(io, "band_count", 1);
+  IspMultiBandEqBand bands[ISP_MULTI_BAND_EQ_MAX_BANDS];
+  uint16_t *src, *dst;
+  int i;
+  int rc;
+  if (band_count < 1) band_count = 1;
+  if (band_count > ISP_MULTI_BAND_EQ_MAX_BANDS) {
+    band_count = ISP_MULTI_BAND_EQ_MAX_BANDS;
+  }
+  for (i = 0; i < band_count; i++) {
+    char key[16];
+    snprintf(key, sizeof(key), "b%d_h", i);
+    bands[i].h = case_param_double(io, key, 0.0);
+    snprintf(key, sizeof(key), "b%d_q", i);
+    bands[i].q = case_param_double(io, key, 2.0);
+    snprintf(key, sizeof(key), "b%d_dh", i);
+    bands[i].dh = case_param_double(io, key, 0.0);
+    snprintf(key, sizeof(key), "b%d_s", i);
+    bands[i].s = case_param_double(io, key, 1.0);
+    snprintf(key, sizeof(key), "b%d_l", i);
+    bands[i].l = case_param_double(io, key, 1.0);
+  }
+  if (!adj_frame_len(io, "multi_band_eq_fx", 0, &w, &h, &len)) {
+    return ISP_ERR_SIZE;
+  }
+  src = case_load_in(io, 0, len);
+  dst = (uint16_t *)malloc(len * sizeof(uint16_t));
+  if (src == NULL || dst == NULL) {
+    snprintf(io->err, CASE_ERR_LEN, "multi_band_eq_fx: out of memory");
+    free(src);
+    free(dst);
+    return ISP_ERR_ARG;
+  }
+  rc = isp_multi_band_eq_fx_apply(src, dst, w, h, max_value, serial,
+                                  band_count, bands);
+  if (rc == ISP_OK) rc = case_write_out(io, 0, dst, len);
+  free(src);
   free(dst);
   return rc;
 }

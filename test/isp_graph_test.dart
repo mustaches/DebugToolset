@@ -6,7 +6,7 @@ import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
 
 void main() {
   group('IspNodeRegistry', () {
-    test('包含全部 84 种节点类型', () {
+    test('包含全部 82 种可创建节点类型', () {
       const expected = [
         'bayer_source',
         'cis_bayer_rggb',
@@ -35,8 +35,6 @@ void main() {
         'csc_yuv2hsl',
         'csc_hsl2rgb',
         'csc_hsl2yuv',
-        'hsl_debugger',
-        'color_controller',
         'multi_band_eq',
         'rgb_debugger',
         'yuv_debugger',
@@ -96,7 +94,9 @@ void main() {
       for (final id in expected) {
         expect(IspNodeRegistry.byId(id), isNotNull, reason: id);
       }
-      expect(IspNodeRegistry.types.length, 84);
+      expect(IspNodeRegistry.byId('color_controller'), isNull);
+      expect(IspNodeRegistry.types.containsKey('hsl_debugger'), isFalse);
+      expect(IspNodeRegistry.types.length, 82);
     });
 
     test('端口类型符合预期', () {
@@ -138,7 +138,11 @@ void main() {
 
     test('IspNode.create 按默认值初始化参数', () {
       final node = IspNode.create(
-          IspNodeRegistry.byId('bayer_source')!, 'n1', 0, 0);
+        IspNodeRegistry.byId('bayer_source')!,
+        'n1',
+        0,
+        0,
+      );
       expect(node.paramValues['width'], 3840);
       expect(node.paramValues['height'], 2160);
       expect(node.paramValues['bitDepth'], '10');
@@ -167,28 +171,60 @@ void main() {
       graph.addNode('histogram', 0, 0);
       graph.addNode('histogram', 0, 0);
       final restored = IspGraph.fromJson(graph.toJson());
-      expect(restored.nodes.values.map((n) => n.name),
-          ['直方图#1', '直方图#2']);
+      expect(restored.nodes.values.map((n) => n.name), ['直方图#1', '直方图#2']);
 
       // 模拟旧格式（无 name 字段）：加载时按同类型出现顺序补编号。
       final legacy = graph.toJson();
       for (final n in (legacy['nodes'] as List).cast<Map>()) {
         n.remove('name');
       }
-      final legacyRestored =
-          IspGraph.fromJson(legacy.cast<String, Object?>());
-      expect(legacyRestored.nodes.values.map((n) => n.name),
-          ['直方图#1', '直方图#2']);
+      final legacyRestored = IspGraph.fromJson(legacy.cast<String, Object?>());
+      expect(legacyRestored.nodes.values.map((n) => n.name), [
+        '直方图#1',
+        '直方图#2',
+      ]);
+    });
+
+    test('ColorTrans 六类型均提供四档代码生成方式并默认 func_fixed', () {
+      for (final id in [
+        'csc_rgb2yuv',
+        'csc_rgb2hsl',
+        'csc_yuv2rgb',
+        'csc_yuv2hsl',
+        'csc_hsl2rgb',
+        'csc_hsl2yuv',
+      ]) {
+        final type = IspNodeRegistry.byId(id)!;
+        final mode = type.params.singleWhere((p) => p.key == 'codegenMode');
+        expect(mode.options, ['func', 'func_fixed', 'lut', 'lut_fixed']);
+        expect(mode.defaultValue, 'func_fixed');
+      }
+    });
+
+    test('其余代码生成节点均支持并默认 func_fixed', () {
+      for (final id in [
+        'multi_band_eq',
+        'color_temp_adjuster',
+        'highlight',
+        'bright_contrast_adjuster',
+        'pseudo_color',
+        'white_balance',
+      ]) {
+        final type = IspNodeRegistry.byId(id)!;
+        final mode = type.params.singleWhere((p) => p.key == 'codegenMode');
+        expect(mode.options, contains('func_fixed'), reason: id);
+        expect(mode.defaultValue, 'func_fixed', reason: id);
+        final node = IspNode.create(type, 'n1', 0, 0);
+        expect(node.paramValues['codegenMode'], 'func_fixed', reason: id);
+      }
     });
 
     test('ccm 矩阵默认值为单位矩阵', () {
-      final node =
-          IspNode.create(IspNodeRegistry.byId('ccm')!, 'n1', 0, 0);
-      expect(node.paramValues['matrix'],
-          <double>[1, 0, 0, 0, 1, 0, 0, 0, 1]);
+      final node = IspNode.create(IspNodeRegistry.byId('ccm')!, 'n1', 0, 0);
+      expect(node.paramValues['matrix'], <double>[1, 0, 0, 0, 1, 0, 0, 0, 1]);
     });
 
-    test('hsl_debugger 注册信息与参数默认值', () {
+    test('hsl_debugger 保留旧流程兼容规格但禁止新建', () {
       final type = IspNodeRegistry.byId('hsl_debugger')!;
       expect(type.displayName, 'HSL调节器');
       // HSL 入、HSL 出。
@@ -201,16 +237,26 @@ void main() {
       // 双联对比预览：默认宽度加倍，附加区含 3 行滑块故默认更高。
       expect(node.width, kNodeWidth * 2);
       expect(node.extraHeight, greaterThan(kDefaultNodeExtraHeight));
+      expect(
+        () => IspGraph().addNode('hsl_debugger', 0, 0),
+        throwsArgumentError,
+      );
     });
 
     test('sat_bright_adjuster 注册信息与参数默认值', () {
       final type = IspNodeRegistry.byId('sat_bright_adjuster')!;
       expect(type.displayName, '色饱和度/亮度调节器');
       // RGB/YUV/HSL 三路输入（互斥视频输入组）+ 三路同格式输出。
-      expect(type.inputs.map((p) => p.type),
-          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl]);
-      expect(type.outputs.map((p) => p.type),
-          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl]);
+      expect(type.inputs.map((p) => p.type), [
+        IspPortType.rgb,
+        IspPortType.yuv,
+        IspPortType.hsl,
+      ]);
+      expect(type.outputs.map((p) => p.type), [
+        IspPortType.rgb,
+        IspPortType.yuv,
+        IspPortType.hsl,
+      ]);
       expect(type.hasVideoInputGroup, isTrue);
       final node = IspNode.create(type, 'n1', 0, 0);
       expect(node.paramValues['sat_gain'], 1.0);
@@ -226,10 +272,18 @@ void main() {
       final type = IspNodeRegistry.byId('bright_contrast_adjuster')!;
       expect(type.displayName, '亮度/对比度调节器');
       // RGB/YUV/HSL/Mono 四路输入（互斥视频输入组）+ 四路同格式输出。
-      expect(type.inputs.map((p) => p.type),
-          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl, IspPortType.mono]);
-      expect(type.outputs.map((p) => p.type),
-          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl, IspPortType.mono]);
+      expect(type.inputs.map((p) => p.type), [
+        IspPortType.rgb,
+        IspPortType.yuv,
+        IspPortType.hsl,
+        IspPortType.mono,
+      ]);
+      expect(type.outputs.map((p) => p.type), [
+        IspPortType.rgb,
+        IspPortType.yuv,
+        IspPortType.hsl,
+        IspPortType.mono,
+      ]);
       expect(type.hasVideoInputGroup, isTrue);
       final node = IspNode.create(type, 'n1', 0, 0);
       expect(node.paramValues['bright'], 100.0);
@@ -246,8 +300,10 @@ void main() {
       final type = IspNodeRegistry.byId('multiplier')!;
       expect(type.displayName, '乘法器');
       expect(type.inputs.map((p) => p.name), ['in_mono', 'in_mono2']);
-      expect(type.inputs.map((p) => p.type),
-          [IspPortType.mono, IspPortType.mono]);
+      expect(type.inputs.map((p) => p.type), [
+        IspPortType.mono,
+        IspPortType.mono,
+      ]);
       expect(type.outputs.single.type, IspPortType.mono);
       // 输入源2（in_mono2）不在视频互斥组：两路可同时接入。
       expect(type.hasVideoInputGroup, isFalse);
@@ -268,10 +324,17 @@ void main() {
       expect(type.displayName, '高频边缘提取');
       // RGB/YUV/HSL 三路输入（互斥视频输入组）+ 三路同格式输出 +
       // Mono 单通道边缘图输出。
-      expect(type.inputs.map((p) => p.type),
-          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl]);
-      expect(type.outputs.map((p) => p.type),
-          [IspPortType.rgb, IspPortType.yuv, IspPortType.hsl, IspPortType.mono]);
+      expect(type.inputs.map((p) => p.type), [
+        IspPortType.rgb,
+        IspPortType.yuv,
+        IspPortType.hsl,
+      ]);
+      expect(type.outputs.map((p) => p.type), [
+        IspPortType.rgb,
+        IspPortType.yuv,
+        IspPortType.hsl,
+        IspPortType.mono,
+      ]);
       expect(type.hasVideoInputGroup, isTrue);
       final node = IspNode.create(type, 'n1', 0, 0);
       expect(node.paramValues['gain'], 1.0);
@@ -359,8 +422,11 @@ void main() {
       expect(order, hasLength(g.nodes.length));
       final pos = {for (var i = 0; i < order.length; i++) order[i]: i};
       for (final c in g.connections) {
-        expect(pos[c.fromNodeId]! < pos[c.toNodeId]!, isTrue,
-            reason: '${c.fromNodeId} -> ${c.toNodeId}');
+        expect(
+          pos[c.fromNodeId]! < pos[c.toNodeId]!,
+          isTrue,
+          reason: '${c.fromNodeId} -> ${c.toNodeId}',
+        );
       }
     });
 
@@ -371,9 +437,19 @@ void main() {
       final b = g.addNode('gamma', 0, 0);
       g.connections.addAll([
         IspConnection(
-            id: 'c1', fromNodeId: a, fromPort: 'out', toNodeId: b, toPort: 'in'),
+          id: 'c1',
+          fromNodeId: a,
+          fromPort: 'out',
+          toNodeId: b,
+          toPort: 'in',
+        ),
         IspConnection(
-            id: 'c2', fromNodeId: b, fromPort: 'out', toNodeId: a, toPort: 'in'),
+          id: 'c2',
+          fromNodeId: b,
+          fromPort: 'out',
+          toNodeId: a,
+          toPort: 'in',
+        ),
       ]);
       expect(g.topologicalOrder(), isEmpty);
     });
@@ -385,17 +461,17 @@ void main() {
           .key;
       final upstream = g.upstreamOf(gammaId);
       expect(upstream, hasLength(5));
-      final upstreamTypes =
-          upstream.map((id) => g.nodes[id]!.typeId).toSet();
+      final upstreamTypes = upstream.map((id) => g.nodes[id]!.typeId).toSet();
       expect(
-          upstreamTypes,
-          containsAll([
-            'bayer_source',
-            'black_level',
-            'demosaic',
-            'white_balance',
-            'ccm',
-          ]));
+        upstreamTypes,
+        containsAll([
+          'bayer_source',
+          'black_level',
+          'demosaic',
+          'white_balance',
+          'ccm',
+        ]),
+      );
       final imageOutId = g.nodes.entries
           .firstWhere((e) => e.value.typeId == 'image_output')
           .key;
@@ -448,8 +524,10 @@ void main() {
       expect(g.videoInputPortAvailable(hist, 'in_hsl'), isFalse);
       expect(g.videoInputPortAvailable(hist, 'in'), isTrue); // 同端口可重连
       // 第二路接入被拒绝，原连接不变。
-      expect(g.connect(yuvSrc, 'out_yuv', hist, 'in_yuv'),
-          'RGB/YUV/HSL/Mono/RAW 输入只能接入一路，请先断开已有连接');
+      expect(
+        g.connect(yuvSrc, 'out_yuv', hist, 'in_yuv'),
+        'RGB/YUV/HSL/Mono/RAW 输入只能接入一路，请先断开已有连接',
+      );
       expect(g.connections, hasLength(1));
       // 同端口重连（替换旧连接）不受限。
       final rgbSrc2 = g.addNode('video_source', 0, 0);
@@ -476,11 +554,18 @@ void main() {
       expect(IspNodeRegistry.byId('audio_level')!.hasVideoInputGroup, isFalse);
       // 仪器/预览/输出节点带互斥组。
       for (final id in [
-        'histogram', 'waveform', 'vectorscope', 'preview',
-        'image_output', 'video_output',
+        'histogram',
+        'waveform',
+        'vectorscope',
+        'preview',
+        'image_output',
+        'video_output',
       ]) {
-        expect(IspNodeRegistry.byId(id)!.hasVideoInputGroup, isTrue,
-            reason: id);
+        expect(
+          IspNodeRegistry.byId(id)!.hasVideoInputGroup,
+          isTrue,
+          reason: id,
+        );
       }
     });
   });
@@ -504,7 +589,17 @@ void main() {
       final ccmId = g.nodes.entries
           .firstWhere((e) => e.value.typeId == 'ccm')
           .key;
-      g.nodes[ccmId]!.paramValues['matrix'] = [1.0, 0.1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+      g.nodes[ccmId]!.paramValues['matrix'] = [
+        1.0,
+        0.1,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+      ];
 
       // 经过 JSON 编解码（模拟写盘再读回，类型擦除为 dynamic）。
       final decoded =
@@ -521,10 +616,55 @@ void main() {
       final preview = restored.nodes[previewId]!;
       expect(preview.width, 320);
       expect(preview.extraHeight, 480);
-      expect(restored.nodes[ccmId]!.paramValues['matrix'],
-          [1.0, 0.1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+      expect(restored.nodes[ccmId]!.paramValues['matrix'], [
+        1.0,
+        0.1,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+      ]);
       // 拓扑序与连接关系一致。
       expect(restored.topologicalOrder(), g.topologicalOrder());
+    });
+
+    test('旧色彩控制器迁移为单段多段色彩均衡器', () {
+      final g = IspGraph.fromJson({
+        'nodes': [
+          {
+            'id': 'n1',
+            'typeId': 'color_controller',
+            'name': '色彩控制器#1',
+            'x': 10,
+            'y': 20,
+            'extraHeight': 134,
+            'params': {
+              'h_center': 120.0,
+              'q': 3.0,
+              'h_shift': -15.0,
+              's_gain': 1.2,
+              'l_gain': 0.8,
+              'codegenMode': 'lut',
+            },
+          },
+        ],
+      });
+      final node = g.nodes['n1']!;
+      expect(node.typeId, 'multi_band_eq');
+      expect(node.name, '多段色彩均衡器#1');
+      expect(node.extraHeight, 164);
+      expect(node.paramValues['band_count'], 1);
+      expect(node.paramValues['band_mode'], 'parallel');
+      expect(node.paramValues['b0_h'], 120.0);
+      expect(node.paramValues['b0_q'], 3.0);
+      expect(node.paramValues['b0_dh'], -15.0);
+      expect(node.paramValues['b0_s'], 1.2);
+      expect(node.paramValues['b0_l'], 0.8);
+      expect(node.paramValues['codegenMode'], 'lut');
+      expect(node.paramValues.containsKey('h_center'), isFalse);
     });
 
     test('fromJson 拒绝未知节点类型，跳过引用缺失节点的连接', () {
@@ -541,7 +681,13 @@ void main() {
           {'id': 'n1', 'typeId': 'bayer_source', 'x': 0, 'y': 0},
         ],
         'connections': [
-          {'id': 'c9', 'from': 'n1', 'fromPort': 'out', 'to': 'nX', 'toPort': 'in'},
+          {
+            'id': 'c9',
+            'from': 'n1',
+            'fromPort': 'out',
+            'to': 'nX',
+            'toPort': 'in',
+          },
         ],
       });
       expect(g.connections, isEmpty);

@@ -51,6 +51,9 @@ dependencies:
   dartssh2: ^2.22.3
   package_info_plus: ^9.0.0
   flutter_markdown: ^0.7.4
+  markdown: ^7.3.1
+  pdf: ^3.12.0
+  printing: ^5.14.2
 
 dev_dependencies:
   flutter_test:
@@ -78,6 +81,11 @@ flutter:
   assets:
     - LXI_Logo/LXI_Logo.svg
     - LXI_Logo/LXI_Logo_2.png
+    # Verilog 打印的等宽英文字体与 Unicode 中文回退字体。
+    - Font/unifont13.0.06/unifont-13.0.06.ttf
+    - Font/ark-pixel-16px.ttf
+    - Font/fusion-pixel-12px.ttf
+    - Font/zpix.ttf
     # ISP Studio 代码页工具栏图标（codicons，自 codicons-ico-multi 的 .ico
     # 提取 64x64 PNG 并重着色为纯白；禁用态运行时压暗）。
     - icons/build.png
@@ -203,6 +211,20 @@ flutter:
     - shaders/nn/nn_chstats_f16.frag
     - shaders/nn/nn_pixnorm_f16.frag
     - shaders/nn/nn_lpips_stats_f16.frag
+
+  fonts:
+    - family: Unifont
+      fonts:
+        - asset: Font/unifont13.0.06/unifont-13.0.06.ttf
+    - family: ArkPixel
+      fonts:
+        - asset: Font/ark-pixel-16px.ttf
+    - family: FusionPixel
+      fonts:
+        - asset: Font/fusion-pixel-12px.ttf
+    - family: Zpix
+      fonts:
+        - asset: Font/zpix.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

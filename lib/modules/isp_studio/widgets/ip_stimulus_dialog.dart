@@ -1,5 +1,5 @@
 /// IP 一键仿真「仿真激励参数」对话框：帧尺寸/帧数/帧间隔/激励图案/随机
-/// 种子/握手压力率（输入气泡、输出背压）。默认 64×8×6 帧、帧间隔 10 拍。
+/// 种子/握手压力率（输入气泡、输出背压）。默认 64×8×1 帧、帧间隔 10 拍。
 /// 返回 null 表示取消。
 library;
 
@@ -17,7 +17,8 @@ Future<IpSimStimulus?> showIpStimulusDialog(
 }) {
   return showDialog<IpSimStimulus>(
     context: context,
-    builder: (ctx) => _IpStimulusDialog(initial: initial, confirmText: confirmText),
+    builder: (ctx) =>
+        _IpStimulusDialog(initial: initial, confirmText: confirmText),
   );
 }
 
@@ -52,7 +53,8 @@ class _IpStimulusDialogState extends State<_IpStimulusDialog> {
     _framesCtrl = TextEditingController(text: '${s.frames}');
     _frameGapCtrl = TextEditingController(text: '${s.frameGapCycles}');
     _seedCtrl = TextEditingController(
-        text: '0x${s.seed.toRadixString(16).padLeft(8, '0')}');
+      text: '0x${s.seed.toRadixString(16).padLeft(8, '0')}',
+    );
     _clkCtrl = TextEditingController(text: fmtClkMHz(s.clkMHz));
     _pattern = s.pattern;
     _inGapPct = s.inGapPct;
@@ -100,7 +102,7 @@ class _IpStimulusDialogState extends State<_IpStimulusDialog> {
       return null;
     }
     if (clk == null) {
-      setState(() => _error = 'CLK频率须为数值（MHz，默认 100）');
+      setState(() => _error = 'CLK频率须为数值（MHz，默认 25）');
       return null;
     }
     final s = IpSimStimulus(
@@ -154,119 +156,123 @@ class _IpStimulusDialogState extends State<_IpStimulusDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-            _label('帧尺寸（宽 × 高）、帧数与帧间隔'),
-            Row(
-              children: [
-                Expanded(child: _intField(_wCtrl, '宽')),
-                const SizedBox(width: 8),
-                Expanded(child: _intField(_hCtrl, '高')),
-                const SizedBox(width: 8),
-                Expanded(child: _intField(_framesCtrl, '帧数')),
-                const SizedBox(width: 8),
-                Expanded(child: _intField(_frameGapCtrl, '间隔(拍)')),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '激励像素总数：$total${total > 200000 ? '（较大，仿真较慢）' : ''}'
-              '；帧间隔单位为时钟周期数（仅多帧时生效）',
-              style: TextStyle(
-                fontSize: 11,
-                color: total > 200000 ? Colors.orange : Colors.grey,
+              _label('帧尺寸（宽 × 高）、帧数与帧间隔'),
+              Row(
+                children: [
+                  Expanded(child: _intField(_wCtrl, '宽')),
+                  const SizedBox(width: 8),
+                  Expanded(child: _intField(_hCtrl, '高')),
+                  const SizedBox(width: 8),
+                  Expanded(child: _intField(_framesCtrl, '帧数')),
+                  const SizedBox(width: 8),
+                  Expanded(child: _intField(_frameGapCtrl, '间隔(拍)')),
+                ],
               ),
-            ),
-            const SizedBox(height: 12),
-            _label('CLK 频率（MHz，默认 100；决定 tb 时钟周期）'),
-            SizedBox(
-              width: 160,
-              child: TextFormField(
-                controller: _clkCtrl,
+              const SizedBox(height: 4),
+              Text(
+                '激励像素总数：$total${total > 200000 ? '（较大，仿真较慢）' : ''}'
+                '；帧间隔单位为时钟周期数（仅多帧时生效）',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: total > 200000 ? Colors.orange : Colors.grey,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _label('CLK 频率（MHz，默认 25；决定 tb 时钟周期）'),
+              SizedBox(
+                width: 160,
+                child: TextFormField(
+                  controller: _clkCtrl,
+                  style: const TextStyle(fontSize: 12, fontFamily: 'Consolas'),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: '25',
+                    suffixText: 'MHz',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              _label('激励图案'),
+              DropdownButtonFormField<IpSimPattern>(
+                initialValue: _pattern,
+                items: [
+                  for (final p in IpSimPattern.values)
+                    DropdownMenuItem(value: p, child: Text(p.displayName)),
+                ],
+                onChanged: (v) {
+                  if (v != null) setState(() => _pattern = v);
+                },
+              ),
+              const SizedBox(height: 12),
+              _label('随机种子（随机图案与握手压力的随机源，0x 前缀十六进制）'),
+              TextFormField(
+                controller: _seedCtrl,
                 style: const TextStyle(fontSize: 12, fontFamily: 'Consolas'),
                 decoration: const InputDecoration(
                   isDense: true,
-                  hintText: '100',
-                  suffixText: 'MHz',
+                  hintText: '0x12345678',
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            _label('激励图案'),
-            DropdownButtonFormField<IpSimPattern>(
-              initialValue: _pattern,
-              items: [
-                for (final p in IpSimPattern.values)
-                  DropdownMenuItem(value: p, child: Text(p.displayName)),
-              ],
-              onChanged: (v) {
-                if (v != null) setState(() => _pattern = v);
-              },
-            ),
-            const SizedBox(height: 12),
-            _label('随机种子（随机图案与握手压力的随机源，0x 前缀十六进制）'),
-            TextFormField(
-              controller: _seedCtrl,
-              style: const TextStyle(fontSize: 12, fontFamily: 'Consolas'),
-              decoration: const InputDecoration(
-                isDense: true,
-                hintText: '0x12345678',
-              ),
-            ),
-            const SizedBox(height: 12),
-            _label('握手压力（验证 ready 握手健壮性；不影响 golden 数据）'),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _inGapPct,
-                    decoration: const InputDecoration(
-                        isDense: true, labelText: '输入气泡率'),
-                    items: [
-                      for (final p in const [0, 10, 25, 50])
-                        DropdownMenuItem(value: p, child: Text('$p%')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _inGapPct = v);
-                    },
+              const SizedBox(height: 12),
+              _label('握手压力（验证 ready 握手健壮性；不影响 golden 数据）'),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      initialValue: _inGapPct,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: '输入气泡率',
+                      ),
+                      items: [
+                        for (final p in const [0, 10, 25, 50])
+                          DropdownMenuItem(value: p, child: Text('$p%')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _inGapPct = v);
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _outStallPct,
-                    decoration: const InputDecoration(
-                        isDense: true, labelText: '输出背压率'),
-                    items: [
-                      for (final p in const [0, 10, 25, 50])
-                        DropdownMenuItem(value: p, child: Text('$p%')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _outStallPct = v);
-                    },
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      initialValue: _outStallPct,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: '输出背压率',
+                      ),
+                      items: [
+                        for (final p in const [0, 10, 25, 50])
+                          DropdownMenuItem(value: p, child: Text('$p%')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _outStallPct = v);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _error!,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFFCF6679),
                   ),
                 ),
               ],
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 10),
-              Text(
-                _error!,
-                style: const TextStyle(fontSize: 12, color: Color(0xFFCF6679)),
+              const SizedBox(height: 8),
+              const Text(
+                '参数随「一键仿真」重新生成 tb/golden 生效；导出 IP 包亦携带同一激励。',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
               ),
             ],
-            const SizedBox(height: 8),
-            const Text(
-              '参数随「一键仿真」重新生成 tb/golden 生效；导出 IP 包亦携带同一激励。',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ],
           ),
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _resetDefaults,
-          child: const Text('恢复默认'),
-        ),
+        TextButton(onPressed: _resetDefaults, child: const Text('恢复默认')),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('取消'),
@@ -283,9 +289,9 @@ class _IpStimulusDialogState extends State<_IpStimulusDialog> {
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Text(text, style: const TextStyle(fontSize: 12)),
-      );
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Text(text, style: const TextStyle(fontSize: 12)),
+  );
 
   Widget _intField(TextEditingController ctrl, String label) {
     return TextFormField(

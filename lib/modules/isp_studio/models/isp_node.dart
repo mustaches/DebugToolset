@@ -51,19 +51,18 @@ enum IspPortType {
 
 /// 是否为单通道端口类型（R/G/B/Y/U/V/H/S/L/Mono）。
 bool isSingleChannelPort(IspPortType type) => switch (type) {
-      IspPortType.r ||
-      IspPortType.g ||
-      IspPortType.b ||
-      IspPortType.y ||
-      IspPortType.u ||
-      IspPortType.v ||
-      IspPortType.h ||
-      IspPortType.s ||
-      IspPortType.l ||
-      IspPortType.mono =>
-        true,
-      _ => false,
-    };
+  IspPortType.r ||
+  IspPortType.g ||
+  IspPortType.b ||
+  IspPortType.y ||
+  IspPortType.u ||
+  IspPortType.v ||
+  IspPortType.h ||
+  IspPortType.s ||
+  IspPortType.l ||
+  IspPortType.mono => true,
+  _ => false,
+};
 
 /// 参数类型。
 enum IspParamType {
@@ -121,6 +120,9 @@ class IspPortSpec {
 class IspNodeType {
   final String typeId;
   final String displayName;
+
+  /// 节点英文名；Process/Datapath 用于生成 `ISP_IP_<英文名>`。
+  final String? englishName;
   final List<IspPortSpec> inputs;
   final List<IspPortSpec> outputs;
   final List<IspParamSpec> params;
@@ -131,6 +133,7 @@ class IspNodeType {
   const IspNodeType({
     required this.typeId,
     required this.displayName,
+    this.englishName,
     this.inputs = const [],
     this.outputs = const [],
     this.params = const [],
@@ -242,8 +245,13 @@ class IspNode {
   }) : name = name ?? IspNodeRegistry.byId(typeId)?.displayName ?? typeId;
 
   /// 按类型默认值初始化参数创建节点。
-  factory IspNode.create(IspNodeType type, String id, double x, double y,
-      {String? name}) {
+  factory IspNode.create(
+    IspNodeType type,
+    String id,
+    double x,
+    double y, {
+    String? name,
+  }) {
     final values = <String, Object?>{};
     for (final p in type.params) {
       values[p.key] = p.defaultValue;
@@ -257,61 +265,66 @@ class IspNode {
       // 高频边缘提取与曲线调节器内嵌附加显示区（双联预览、波形示波器或
       // 曲线编辑器），默认宽度加倍；加法器的平衡控制条需要更长行程，
       // 默认宽度 3 倍。其附加区比预览多若干行滑块，默认高度相应加大。
-      width: type.typeId == 'format_converter' ||
+      width:
+          type.typeId == 'format_converter' ||
               type.typeId == 'video_health_check'
           // 格式转换/视频健康检查节点尺寸固定 1500x1200（min=max 不可调），
           // 内嵌终端整页显示 ffmpeg 处理信息。
           ? 1500
           : type.typeId == 'video_output'
-              // 视频输出节点尺寸固定 860x380（min=max 不可调），
-              // 内嵌终端显示导出过程。
-              ? 860
+          // 视频输出节点尺寸固定 860x380（min=max 不可调），
+          // 内嵌终端显示导出过程。
+          ? 860
           : type.typeId == 'multi_band_eq'
-              // 多段色彩均衡器节点尺寸固定 1920x1770（min=max 不可调，
-              // 无拖动手柄）。
-              ? 1920
-              : type.typeId == 'adder'
-              ? kNodeWidth * 3
-              : type.typeId == 'video_source'
-                  // 视频源：附加区有大字时间码（00:00/00:00 约需 240+
-                  // 画布宽），默认加宽避免截断。
-                  ? 260
-              : type.typeId == 'hsl_debugger' ||
-                      type.typeId == 'rgb_debugger' ||
-                      type.typeId == 'yuv_debugger' ||
-                      type.typeId == 'sat_bright_adjuster' ||
-                      type.typeId == 'bright_contrast_adjuster' ||
-                      type.typeId == 'color_balance' ||
-                      type.typeId == 'color_temp_adjuster' ||
-                      type.typeId == 'color_controller' ||
-                      type.typeId == 'multi_band_eq' ||
-                      type.typeId == 'edge_extract' ||
-                      type.typeId == 'levels_curves'
-                  ? kNodeWidth * 2
-                  : kNodeWidth,
-      extraHeight: type.typeId == 'format_converter' ||
+          // 多段色彩均衡器节点尺寸固定 1920x1770（min=max 不可调，
+          // 无拖动手柄）。
+          ? 1920
+          : type.typeId == 'adder'
+          ? kNodeWidth * 3
+          : type.typeId == 'video_source'
+          // 视频源：附加区有大字时间码（00:00/00:00 约需 240+
+          // 画布宽），默认加宽避免截断。
+          ? 260
+          : type.typeId == 'hsl_debugger' ||
+                type.typeId == 'rgb_debugger' ||
+                type.typeId == 'yuv_debugger' ||
+                type.typeId == 'sat_bright_adjuster' ||
+                type.typeId == 'bright_contrast_adjuster' ||
+                type.typeId == 'color_balance' ||
+                type.typeId == 'color_temp_adjuster' ||
+                type.typeId == 'color_controller' ||
+                type.typeId == 'multi_band_eq' ||
+                type.typeId == 'edge_extract' ||
+                type.typeId == 'levels_curves'
+          ? kNodeWidth * 2
+          : kNodeWidth,
+      extraHeight:
+          type.typeId == 'format_converter' ||
               type.typeId == 'video_health_check'
           // 1162 = 总高 1200 − 标题 30 − 底部留白 8（内嵌终端占满其余）。
           ? 1162
           : type.typeId == 'video_output'
-              // 254 = 总高 380 − 标题 30 − 4 端口行 88 − 底部留白 8。
-              ? 254
+          // 254 = 总高 380 − 标题 30 − 4 端口行 88 − 底部留白 8。
+          ? 254
           : type.typeId == 'multi_band_eq'
           // 1710 = 总高 1770 − 标题 30 − 1 端口行 22 − 底部留白 8。
           // 附加区 = 取色器工具栏 64 + 双联矢量示波器方格（1:1，高 = 半格
           // 宽 = (1920-20)/2 = 950）+ 双联预览图（542 ≈ 16:9）+ 5 行滑块
           // + 播放控制条 26 + 间隔 8（尺寸锁定，无手柄行）。
           ? 1710
+          : type.typeId == 'color_temp_adjuster'
+          // 306 = 温度行 24 + 滑块 24 + 底行（CCM/直方图）64 +
+          // 播放控制条 26 + 顶部留白 4 + 手柄 10 + 双联预览图 154。
+          ? 306
           : type.typeId == 'hsl_debugger' ||
-              type.typeId == 'color_controller' ||
-              type.typeId == 'rgb_debugger' ||
-              type.typeId == 'yuv_debugger' ||
-              type.typeId == 'sat_bright_adjuster' ||
-              type.typeId == 'bright_contrast_adjuster' ||
-              type.typeId == 'color_balance' ||
-              type.typeId == 'color_temp_adjuster' ||
-              type.typeId == 'edge_extract' ||
-              type.typeId == 'levels_curves'
+                type.typeId == 'color_controller' ||
+                type.typeId == 'rgb_debugger' ||
+                type.typeId == 'yuv_debugger' ||
+                type.typeId == 'sat_bright_adjuster' ||
+                type.typeId == 'bright_contrast_adjuster' ||
+                type.typeId == 'color_balance' ||
+                type.typeId == 'edge_extract' ||
+                type.typeId == 'levels_curves'
           ? 280
           : kDefaultNodeExtraHeight,
       name: name,
@@ -323,60 +336,60 @@ class IspNode {
 /// 节点类型注册表。
 abstract final class IspNodeRegistry {
   /// CIS RAW 源节点的公共参数（文件/分辨率/位深/打包/端序/起始帧）。
-  static List<IspParamSpec> _rawSourceParams(
-          [List<IspParamSpec> extra = const []]) =>
-      [
-        const IspParamSpec(
-          key: 'filePath',
-          label: '文件路径',
-          type: IspParamType.filePath,
-          defaultValue: '',
-        ),
-        const IspParamSpec(
-          key: 'width',
-          label: '宽度',
-          type: IspParamType.intNumber,
-          defaultValue: 3840,
-          min: 16,
-          max: 16384,
-        ),
-        const IspParamSpec(
-          key: 'height',
-          label: '高度',
-          type: IspParamType.intNumber,
-          defaultValue: 2160,
-          min: 16,
-          max: 16384,
-        ),
-        const IspParamSpec(
-          key: 'bitDepth',
-          label: '位深',
-          type: IspParamType.choice,
-          defaultValue: '10',
-          options: ['8', '10', '12', '14', '16'],
-        ),
-        const IspParamSpec(
-          key: 'packing',
-          label: '打包方式',
-          type: IspParamType.choice,
-          defaultValue: 'unpacked_lsb',
-          options: ['unpacked_lsb', 'unpacked_msb', 'mipi'],
-        ),
-        const IspParamSpec(
-          key: 'littleEndian',
-          label: '小端序',
-          type: IspParamType.boolean,
-          defaultValue: true,
-        ),
-        const IspParamSpec(
-          key: 'frameIndex',
-          label: '起始帧',
-          type: IspParamType.intNumber,
-          defaultValue: 0,
-          min: 0,
-        ),
-        ...extra,
-      ];
+  static List<IspParamSpec> _rawSourceParams([
+    List<IspParamSpec> extra = const [],
+  ]) => [
+    const IspParamSpec(
+      key: 'filePath',
+      label: '文件路径',
+      type: IspParamType.filePath,
+      defaultValue: '',
+    ),
+    const IspParamSpec(
+      key: 'width',
+      label: '宽度',
+      type: IspParamType.intNumber,
+      defaultValue: 3840,
+      min: 16,
+      max: 16384,
+    ),
+    const IspParamSpec(
+      key: 'height',
+      label: '高度',
+      type: IspParamType.intNumber,
+      defaultValue: 2160,
+      min: 16,
+      max: 16384,
+    ),
+    const IspParamSpec(
+      key: 'bitDepth',
+      label: '位深',
+      type: IspParamType.choice,
+      defaultValue: '10',
+      options: ['8', '10', '12', '14', '16'],
+    ),
+    const IspParamSpec(
+      key: 'packing',
+      label: '打包方式',
+      type: IspParamType.choice,
+      defaultValue: 'unpacked_lsb',
+      options: ['unpacked_lsb', 'unpacked_msb', 'mipi'],
+    ),
+    const IspParamSpec(
+      key: 'littleEndian',
+      label: '小端序',
+      type: IspParamType.boolean,
+      defaultValue: true,
+    ),
+    const IspParamSpec(
+      key: 'frameIndex',
+      label: '起始帧',
+      type: IspParamType.intNumber,
+      defaultValue: 0,
+      min: 0,
+    ),
+    ...extra,
+  ];
 
   /// RAW 域处理算子的双输入端口（Bayer 或 Mono 二选一，互斥组自动生效）。
   static const List<IspPortSpec> _rawDualInputs = [
@@ -390,7 +403,85 @@ abstract final class IspNodeRegistry {
     IspPortSpec(name: 'out_mono', type: IspPortType.mono, label: 'Mono'),
   ];
 
-  static final Map<String, IspNodeType> types = _injectBypass({
+  static const _cscCodegenParam = IspParamSpec(
+    key: 'codegenMode',
+    label: '代码生成方式',
+    type: IspParamType.choice,
+    defaultValue: 'func_fixed',
+    options: ['func', 'func_fixed', 'lut', 'lut_fixed'],
+    optionLabels: {
+      'func': '函数（运行期直算）',
+      'func_fixed': '函数（运行期直算，定点优化，嵌入式）',
+      'lut': 'LUT（生成期烘焙查找表）',
+      'lut_fixed': 'LUT 定点（Q14，嵌入式）',
+    },
+  );
+
+  static const _yuv2RgbStandardParam = IspParamSpec(
+    key: 'standard',
+    label: 'YUV 标准',
+    type: IspParamType.choice,
+    defaultValue: 'bt2020',
+    options: ['bt601', 'bt709', 'bt2020'],
+    optionLabels: {
+      'bt601': 'BT.601（SD）',
+      'bt709': 'BT.709（HD）',
+      'bt2020': 'BT.2020（UHD）',
+    },
+  );
+
+  /// Process（含 ColorTrans/Fluorescence）与 Datapath 节点的英文 IP 名。
+  static const _nodeEnglishNames = <String, String>{
+    'black_level': 'Black_Level',
+    'dpc': 'DPC',
+    'fpn': 'FPN_Correction',
+    'lsc': 'Lens_Shading_Correction',
+    'grgb_balance': 'GRGB_Balance',
+    'bayer_dnr': 'Bayer_DNR',
+    'highlight': 'Highlight',
+    'demosaic': 'Demosaic',
+    'white_balance': 'White_Balance',
+    'ccm': 'Color_Correction_Matrix',
+    'rgb_dnr': 'RGB_DNR',
+    'sharpen': 'Sharpen',
+    'gaussian_blur': 'Gaussian_Blur',
+    'edge_extract': 'Edge_Extract',
+    'morphology': 'Morphology',
+    'gamma': 'Gamma',
+    'ahe': 'Adaptive_Histogram_Equalization',
+    'csc_rgb2yuv': 'RGB_to_YUV',
+    'csc_rgb2hsl': 'RGB_to_HSL',
+    'csc_yuv2rgb': 'YUV_to_RGB',
+    'csc_yuv2hsl': 'YUV_to_HSL',
+    'csc_hsl2rgb': 'HSL_to_RGB',
+    'csc_hsl2yuv': 'HSL_to_YUV',
+    'multi_band_eq': 'MBC_EQ',
+    'rgb_debugger': 'RGB_Debugger',
+    'yuv_debugger': 'YUV_Debugger',
+    'sat_bright_adjuster': 'Saturation_Brightness',
+    'bright_contrast_adjuster': 'Brightness_Contrast',
+    'levels_curves': 'Levels_Curves',
+    'color_balance': 'Color_Balance',
+    'color_temp_adjuster': 'Color_Temperature',
+    'fluoro_leak': 'Fluorescence_Leak',
+    'fluoro_background': 'Fluorescence_Background',
+    'fluoro_normalize': 'Fluorescence_Normalize',
+    'fluoro_temporal': 'Fluorescence_Temporal',
+    'pseudo_color': 'Pseudo_Color',
+    'fluoro_fusion': 'Fluorescence_Fusion',
+    'rgb_splitter': 'RGB_Splitter',
+    'yuv_splitter': 'YUV_Splitter',
+    'hsl_splitter': 'HSL_Splitter',
+    'rgb_combiner': 'RGB_Combiner',
+    'yuv_combiner': 'YUV_Combiner',
+    'hsl_combiner': 'HSL_Combiner',
+    'multiplier': 'Multiplier',
+    'adder': 'Adder',
+    'blender': 'Blender',
+    'mux4': 'MUX4',
+  };
+
+  static final Map<String, IspNodeType> _allTypes = _injectNodeMetadata({
     'bayer_source': IspNodeType(
       typeId: 'bayer_source',
       displayName: 'Bayer RAW 源',
@@ -792,9 +883,13 @@ abstract final class IspNodeRegistry {
           key: 'codegenMode',
           label: '代码生成方式',
           type: IspParamType.choice,
-          defaultValue: 'func',
-          options: ['func', 'lut'],
-          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
+          defaultValue: 'func_fixed',
+          options: ['func', 'func_fixed', 'lut'],
+          optionLabels: {
+            'func': '函数（运行期直算）',
+            'func_fixed': '函数（运行期直算，定点优化，嵌入式）',
+            'lut': 'LUT（生成期烘焙查找表）',
+          },
         ),
       ],
     ),
@@ -803,12 +898,8 @@ abstract final class IspNodeRegistry {
       typeId: 'rgb_dnr',
       displayName: 'RGB 降噪',
       colorValue: 0xFF4E5A66,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'luma',
@@ -832,12 +923,8 @@ abstract final class IspNodeRegistry {
       typeId: 'sharpen',
       displayName: '锐化',
       colorValue: 0xFF5E5A66,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'amount',
@@ -977,19 +1064,20 @@ abstract final class IspNodeRegistry {
       typeId: 'csc_rgb2yuv',
       displayName: 'RGB→YUV 转换',
       colorValue: 0xFF565E6A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV')],
       params: [
         IspParamSpec(
           key: 'standard',
           label: '标准',
           type: IspParamType.choice,
-          defaultValue: 'bt601',
-          options: ['bt601', 'bt709'],
+          defaultValue: 'bt2020',
+          options: ['bt601', 'bt709', 'bt2020'],
+          optionLabels: {
+            'bt601': 'BT.601（SD）',
+            'bt709': 'BT.709（HD）',
+            'bt2020': 'BT.2020（UHD）',
+          },
         ),
         IspParamSpec(
           key: 'range',
@@ -998,80 +1086,57 @@ abstract final class IspNodeRegistry {
           defaultValue: 'full',
           options: ['full', 'limited'],
         ),
+        _cscCodegenParam,
       ],
     ),
-    // ---- 色彩空间转换（BT.601 全范围定点，无参数）----
+    // ---- 色彩空间转换（BT.601 全范围 + 四档代码生成）----
     'csc_rgb2hsl': IspNodeType(
       typeId: 'csc_rgb2hsl',
       displayName: 'RGB→HSL 转换',
       colorValue: 0xFF565E6A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      params: [],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL')],
+      params: [_cscCodegenParam],
     ),
     'csc_yuv2rgb': IspNodeType(
       typeId: 'csc_yuv2rgb',
       displayName: 'YUV→RGB 转换',
       colorValue: 0xFF565E6A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      params: [],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
+      params: [_yuv2RgbStandardParam, _cscCodegenParam],
     ),
     'csc_yuv2hsl': IspNodeType(
       typeId: 'csc_yuv2hsl',
       displayName: 'YUV→HSL 转换',
       colorValue: 0xFF565E6A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      params: [],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL')],
+      params: [_yuv2RgbStandardParam, _cscCodegenParam],
     ),
     'csc_hsl2rgb': IspNodeType(
       typeId: 'csc_hsl2rgb',
       displayName: 'HSL→RGB 转换',
       colorValue: 0xFF565E6A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      params: [],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
+      params: [_cscCodegenParam],
     ),
     'csc_hsl2yuv': IspNodeType(
       typeId: 'csc_hsl2yuv',
       displayName: 'HSL→YUV 转换',
       colorValue: 0xFF565E6A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV'),
-      ],
-      params: [],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV')],
+      params: [_yuv2RgbStandardParam, _cscCodegenParam],
     ),
     // ---- HSL 调节器：HSL 域交互调参（节点内嵌 H/S/L 滑块 + 预览窗）----
     'hsl_debugger': IspNodeType(
       typeId: 'hsl_debugger',
       displayName: 'HSL调节器',
       colorValue: 0xFF565E6A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL')],
       params: [
         IspParamSpec(
           key: 'h_shift',
@@ -1099,70 +1164,7 @@ abstract final class IspNodeRegistry {
         ),
       ],
     ),
-    // ---- 色彩控制器：选定色相中心 H + Q 值控制的高斯色相带（Q 越高带越窄，
-    // 左右边带正态分布衰减），带内像素按权重施加 ±180° 色相调整与 S/L 增益 ----
-    'color_controller': IspNodeType(
-      typeId: 'color_controller',
-      displayName: '色彩控制器',
-      colorValue: 0xFF5E566A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      params: [
-        IspParamSpec(
-          key: 'h_center',
-          label: '色相中心(°)',
-          type: IspParamType.doubleNumber,
-          defaultValue: 0.0,
-          min: 0,
-          max: 360,
-        ),
-        IspParamSpec(
-          key: 'q',
-          label: 'Q值(带宽)',
-          type: IspParamType.doubleNumber,
-          defaultValue: 2.0,
-          min: 0.5,
-          max: 100,
-        ),
-        IspParamSpec(
-          key: 'h_shift',
-          label: '色相调整(°)',
-          type: IspParamType.doubleNumber,
-          defaultValue: 0.0,
-          min: -180,
-          max: 180,
-        ),
-        IspParamSpec(
-          key: 's_gain',
-          label: '饱和度增益',
-          type: IspParamType.doubleNumber,
-          defaultValue: 1.0,
-          min: 0,
-          max: 5,
-        ),
-        IspParamSpec(
-          key: 'l_gain',
-          label: '亮度增益',
-          type: IspParamType.doubleNumber,
-          defaultValue: 1.0,
-          min: 0,
-          max: 5,
-        ),
-        IspParamSpec(
-          key: 'codegenMode',
-          label: '代码生成方式',
-          type: IspParamType.choice,
-          defaultValue: 'func',
-          options: ['func', 'lut'],
-          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
-        ),
-      ],
-    ),
-    // ---- 多段色彩均衡器：多组（≤24 段）色彩控制器式高斯色相带的并联/串联
+    // ---- 多段色彩均衡器：多组（≤24 段）高斯色相带的并联/串联
     // 合成。每段参数为拍平键 b{i}_h/q/dh/s/l（段数动态，不进参数 spec，
     // 由卡片 UI 直接写 paramValues，读取侧全部缺省回退恒等值），此处仅
     // 登记段数/工作方式/选中段等固定参数 ----
@@ -1170,12 +1172,8 @@ abstract final class IspNodeRegistry {
       typeId: 'multi_band_eq',
       displayName: '多段色彩均衡器',
       colorValue: 0xFF6A5670,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL')],
       params: [
         IspParamSpec(
           key: 'band_count',
@@ -1205,10 +1203,11 @@ abstract final class IspNodeRegistry {
           key: 'codegenMode',
           label: '代码生成方式',
           type: IspParamType.choice,
-          defaultValue: 'func',
-          options: ['func', 'lut', 'lut_fixed'],
+          defaultValue: 'func_fixed',
+          options: ['func', 'func_fixed', 'lut', 'lut_fixed'],
           optionLabels: {
             'func': '函数（运行期直算）',
+            'func_fixed': '函数（运行期直算，定点优化，嵌入式）',
             'lut': 'LUT（生成期烘焙查找表）',
             'lut_fixed': 'LUT 定点（Q14，嵌入式）',
           },
@@ -1216,15 +1215,12 @@ abstract final class IspNodeRegistry {
       ],
     ),
     // ---- RGB 调节器：RGB 域交互调参（节点内嵌 R/G/B 增益滑块 + 双联预览）----
-    'rgb_debugger': IspNodeType(      typeId: 'rgb_debugger',
+    'rgb_debugger': IspNodeType(
+      typeId: 'rgb_debugger',
       displayName: 'RGB调节器',
       colorValue: 0xFF6A5E56,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'r_gain',
@@ -1257,12 +1253,8 @@ abstract final class IspNodeRegistry {
       typeId: 'yuv_debugger',
       displayName: 'YUV调节器',
       colorValue: 0xFF56566A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV')],
       params: [
         IspParamSpec(
           key: 'y_gain',
@@ -1372,9 +1364,13 @@ abstract final class IspNodeRegistry {
           key: 'codegenMode',
           label: '代码生成方式',
           type: IspParamType.choice,
-          defaultValue: 'func',
-          options: ['func', 'lut'],
-          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
+          defaultValue: 'func_fixed',
+          options: ['func', 'func_fixed', 'lut'],
+          optionLabels: {
+            'func': '函数（运行期直算）',
+            'func_fixed': '函数（运行期直算，定点优化，嵌入式）',
+            'lut': 'LUT（生成期烘焙查找表）',
+          },
         ),
       ],
     ),
@@ -1385,12 +1381,8 @@ abstract final class IspNodeRegistry {
       typeId: 'levels_curves',
       displayName: '曲线调节器',
       colorValue: 0xFF5E566A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'curveMode',
@@ -1461,20 +1453,20 @@ abstract final class IspNodeRegistry {
       typeId: 'color_temp_adjuster',
       displayName: '色温调节器',
       colorValue: 0xFF6A5A46,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
       outputs: [
         IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
       ],
       params: [
         // 色温值域 1800~12000K、默认 D65 6500K（与 pipeline/color_temp.dart
         // 的 kColorTempMin/Max/Default 一致；models 层不引 pipeline，常量内联）。
-        IspParamSpec(
+        // 目标/参考色温一律整数（开尔文无小数意义）：面板按整数提交，滑杆
+        // 拖动取整，旧档载入时归一化（见 IspGraph.fromJson）。
+        const IspParamSpec(
           key: 'temperature',
           label: '色温 (K)',
-          type: IspParamType.doubleNumber,
-          defaultValue: 6500.0,
+          type: IspParamType.intNumber,
+          defaultValue: 6500,
           min: 1800,
           max: 12000,
         ),
@@ -1482,9 +1474,14 @@ abstract final class IspNodeRegistry {
           key: 'codegenMode',
           label: '代码生成方式',
           type: IspParamType.choice,
-          defaultValue: 'func',
-          options: ['func', 'lut'],
-          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
+          defaultValue: 'func_fixed',
+          options: ['func', 'func_fixed', 'lut', 'lut_fixed'],
+          optionLabels: {
+            'func': '函数（运行期直算）',
+            'func_fixed': '函数（运行期直算，定点优化，嵌入式）',
+            'lut': 'LUT（生成期烘焙查找表）',
+            'lut_fixed': 'LUT 定点（Q14，嵌入式）',
+          },
         ),
       ],
     ),
@@ -1610,9 +1607,7 @@ abstract final class IspNodeRegistry {
       inputs: [
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: 'Mono'),
       ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'colormap',
@@ -1633,9 +1628,13 @@ abstract final class IspNodeRegistry {
           key: 'codegenMode',
           label: '代码生成方式',
           type: IspParamType.choice,
-          defaultValue: 'func',
-          options: ['func', 'lut'],
-          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
+          defaultValue: 'func_fixed',
+          options: ['func', 'func_fixed', 'lut'],
+          optionLabels: {
+            'func': '函数（运行期直算）',
+            'func_fixed': '函数（运行期直算，定点优化，嵌入式）',
+            'lut': 'LUT（生成期烘焙查找表）',
+          },
         ),
       ],
     ),
@@ -1647,11 +1646,13 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in', type: IspPortType.rgb, label: '白光 RGB'),
         // 荧光输入不在视频互斥组（'in'/'in_yuv'/'in_hsl'/'in_mono'）内，
         // 可与 'in' 同时接入（白光 + 荧光双源链）。
-        IspPortSpec(name: 'in_fluoro', type: IspPortType.mono, label: '荧光 Mono'),
+        IspPortSpec(
+          name: 'in_fluoro',
+          type: IspPortType.mono,
+          label: '荧光 Mono',
+        ),
       ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'mode',
@@ -1784,9 +1785,21 @@ abstract final class IspNodeRegistry {
         // 混叠图四域互斥输入组（blendInputGroupPorts，组内只接一路，
         // 与基图视频输入组互不干扰）。
         IspPortSpec(name: 'in_blend', type: IspPortType.rgb, label: '混叠 RGB'),
-        IspPortSpec(name: 'in_blend_yuv', type: IspPortType.yuv, label: '混叠 YUV'),
-        IspPortSpec(name: 'in_blend_hsl', type: IspPortType.hsl, label: '混叠 HSL'),
-        IspPortSpec(name: 'in_blend_mono', type: IspPortType.mono, label: '混叠 Mono'),
+        IspPortSpec(
+          name: 'in_blend_yuv',
+          type: IspPortType.yuv,
+          label: '混叠 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_blend_hsl',
+          type: IspPortType.hsl,
+          label: '混叠 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_blend_mono',
+          type: IspPortType.mono,
+          label: '混叠 Mono',
+        ),
       ],
       outputs: [
         IspPortSpec(name: 'out_rgb', type: IspPortType.rgb, label: 'RGB'),
@@ -1863,9 +1876,7 @@ abstract final class IspNodeRegistry {
       inputs: [
         IspPortSpec(name: 'in', type: IspPortType.bayer, label: 'Bayer'),
       ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'algorithm',
@@ -1880,12 +1891,8 @@ abstract final class IspNodeRegistry {
       typeId: 'white_balance',
       displayName: '白平衡',
       colorValue: 0xFF4E5A6E,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'mode',
@@ -1914,9 +1921,13 @@ abstract final class IspNodeRegistry {
           key: 'codegenMode',
           label: '代码生成方式',
           type: IspParamType.choice,
-          defaultValue: 'func',
-          options: ['func', 'lut'],
-          optionLabels: {'func': '函数（运行期直算）', 'lut': 'LUT（生成期烘焙查找表）'},
+          defaultValue: 'func_fixed',
+          options: ['func', 'func_fixed', 'lut'],
+          optionLabels: {
+            'func': '函数（运行期直算）',
+            'func_fixed': '函数（运行期直算，定点优化，嵌入式）',
+            'lut': 'LUT（生成期烘焙查找表）',
+          },
         ),
       ],
     ),
@@ -1924,12 +1935,8 @@ abstract final class IspNodeRegistry {
       typeId: 'ccm',
       displayName: '色彩校正 CCM',
       colorValue: 0xFF5A4E6E,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'matrix',
@@ -1943,12 +1950,8 @@ abstract final class IspNodeRegistry {
       typeId: 'gamma',
       displayName: 'Gamma/色调',
       colorValue: 0xFF6E4E5A,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
       params: [
         IspParamSpec(
           key: 'gamma',
@@ -2083,9 +2086,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- SSIM 数字表：双输入仪器（同 PSNR 数字表的端口布局与数据
@@ -2101,9 +2116,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- MS-SSIM 数字表：双输入仪器（同 PSNR/SSIM 数字表的端口布局
@@ -2119,9 +2146,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- FSIM 数字表：双输入仪器（同 PSNR/SSIM 数字表的端口布局与
@@ -2137,9 +2176,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- NIQE 数字表：无参考评价仪器（单输入，四域选一），NSS 特征
@@ -2210,9 +2261,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- DISTS 数字表：双输入深度评价（同 LPIPS 的端口与桥接路径），
@@ -2228,9 +2291,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- FID 数字表：双输入分布级评价（同 LPIPS 的端口与桥接路径），
@@ -2247,9 +2322,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- KID 数字表：双输入分布级评价（同 FID 的端口与桥接路径），两路帧集 Inception
@@ -2265,9 +2352,21 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_hsl', type: IspPortType.hsl, label: '参考 HSL'),
         IspPortSpec(name: 'in_mono', type: IspPortType.mono, label: '参考 Mono'),
         IspPortSpec(name: 'in_test', type: IspPortType.rgb, label: '测试 RGB'),
-        IspPortSpec(name: 'in_test_yuv', type: IspPortType.yuv, label: '测试 YUV'),
-        IspPortSpec(name: 'in_test_hsl', type: IspPortType.hsl, label: '测试 HSL'),
-        IspPortSpec(name: 'in_test_mono', type: IspPortType.mono, label: '测试 Mono'),
+        IspPortSpec(
+          name: 'in_test_yuv',
+          type: IspPortType.yuv,
+          label: '测试 YUV',
+        ),
+        IspPortSpec(
+          name: 'in_test_hsl',
+          type: IspPortType.hsl,
+          label: '测试 HSL',
+        ),
+        IspPortSpec(
+          name: 'in_test_mono',
+          type: IspPortType.mono,
+          label: '测试 Mono',
+        ),
       ],
     ),
     // ---- MUSIQ 数字表：无参考深度评价（单输入，四域选一），多尺度
@@ -2463,9 +2562,7 @@ abstract final class IspNodeRegistry {
       typeId: 'rgb_splitter',
       displayName: 'RGB 分路器',
       colorValue: 0xFF3E6E5E,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.rgb, label: 'RGB')],
       outputs: [
         IspPortSpec(name: 'out_r', type: IspPortType.r, label: 'R'),
         IspPortSpec(name: 'out_g', type: IspPortType.g, label: 'G'),
@@ -2476,9 +2573,7 @@ abstract final class IspNodeRegistry {
       typeId: 'yuv_splitter',
       displayName: 'YUV 分路器',
       colorValue: 0xFF3E5E7E,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.yuv, label: 'YUV')],
       outputs: [
         IspPortSpec(name: 'out_y', type: IspPortType.y, label: 'Y'),
         IspPortSpec(name: 'out_u', type: IspPortType.u, label: 'U'),
@@ -2489,9 +2584,7 @@ abstract final class IspNodeRegistry {
       typeId: 'hsl_splitter',
       displayName: 'HSL 分路器',
       colorValue: 0xFF7E3E5E,
-      inputs: [
-        IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL'),
-      ],
+      inputs: [IspPortSpec(name: 'in', type: IspPortType.hsl, label: 'HSL')],
       outputs: [
         IspPortSpec(name: 'out_h', type: IspPortType.h, label: 'H'),
         IspPortSpec(name: 'out_s', type: IspPortType.s, label: 'S'),
@@ -2507,9 +2600,7 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_g', type: IspPortType.g, label: 'G'),
         IspPortSpec(name: 'in_b', type: IspPortType.b, label: 'B'),
       ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB'),
-      ],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.rgb, label: 'RGB')],
     ),
     'yuv_combiner': IspNodeType(
       typeId: 'yuv_combiner',
@@ -2520,9 +2611,7 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_u', type: IspPortType.u, label: 'U'),
         IspPortSpec(name: 'in_v', type: IspPortType.v, label: 'V'),
       ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV'),
-      ],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.yuv, label: 'YUV')],
     ),
     'hsl_combiner': IspNodeType(
       typeId: 'hsl_combiner',
@@ -2533,9 +2622,7 @@ abstract final class IspNodeRegistry {
         IspPortSpec(name: 'in_s', type: IspPortType.s, label: 'S'),
         IspPortSpec(name: 'in_l', type: IspPortType.l, label: 'L'),
       ],
-      outputs: [
-        IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL'),
-      ],
+      outputs: [IspPortSpec(name: 'out', type: IspPortType.hsl, label: 'HSL')],
     ),
     // 纯工具节点：无任何输入/输出端口，不参与图像流水线。点击节点上的
     // 「开始转换」经内置 ffmpeg 做 webm → mp4 转码（NVENC 优先，失败回退
@@ -2620,6 +2707,65 @@ abstract final class IspNodeRegistry {
     ),
   });
 
+  static final Map<String, IspNodeType> types = Map.unmodifiable(
+    {..._allTypes}..remove('hsl_debugger'),
+  );
+
+  /// 允许单独编组的类型：Process（含 ColorTrans/Fluorescence）与 Datapath。
+  /// 与 C 导出的 `cExportSupportedTypeIds` 覆盖范围一致，由回归测试防止漂移。
+  static const singleNodeGroupTypeIds = <String>{
+    'black_level',
+    'dpc',
+    'fpn',
+    'lsc',
+    'grgb_balance',
+    'bayer_dnr',
+    'highlight',
+    'demosaic',
+    'white_balance',
+    'ccm',
+    'rgb_dnr',
+    'sharpen',
+    'gaussian_blur',
+    'edge_extract',
+    'morphology',
+    'gamma',
+    'ahe',
+    'csc_rgb2yuv',
+    'csc_rgb2hsl',
+    'csc_yuv2rgb',
+    'csc_yuv2hsl',
+    'csc_hsl2rgb',
+    'csc_hsl2yuv',
+    'multi_band_eq',
+    'rgb_debugger',
+    'yuv_debugger',
+    'sat_bright_adjuster',
+    'bright_contrast_adjuster',
+    'levels_curves',
+    'color_balance',
+    'color_temp_adjuster',
+    'fluoro_leak',
+    'fluoro_background',
+    'fluoro_normalize',
+    'fluoro_temporal',
+    'pseudo_color',
+    'fluoro_fusion',
+    'rgb_splitter',
+    'yuv_splitter',
+    'hsl_splitter',
+    'rgb_combiner',
+    'yuv_combiner',
+    'hsl_combiner',
+    'multiplier',
+    'adder',
+    'blender',
+    'mux4',
+  };
+
+  static bool supportsSingleNodeGroup(String typeId) =>
+      singleNodeGroupTypeIds.contains(typeId);
+
   /// Process 分组（含 Fluorescence 子分组）的处理节点类型：全部注入
   /// Bypass 参数（勾选后输入原样直通输出，见 pipeline_runner /
   /// gpu_pipeline 的 bypass 分支）。
@@ -2646,7 +2792,6 @@ abstract final class IspNodeRegistry {
     'csc_hsl2rgb',
     'csc_hsl2yuv',
     'hsl_debugger',
-    'color_controller',
     'multi_band_eq',
     'rgb_debugger',
     'yuv_debugger',
@@ -2672,24 +2817,32 @@ abstract final class IspNodeRegistry {
   /// 是否为 Process 类处理节点（带 Bypass 开关）。
   static bool isProcessType(String typeId) => processTypeIds.contains(typeId);
 
-  /// 给 Process 类节点类型的参数表注入 Bypass 参数（幂等）。
-  static Map<String, IspNodeType> _injectBypass(Map<String, IspNodeType> m) {
-    for (final id in processTypeIds) {
+  /// 给节点类型注入英文名与 Process Bypass 参数（幂等）。
+  static Map<String, IspNodeType> _injectNodeMetadata(
+    Map<String, IspNodeType> m,
+  ) {
+    for (final id in {...processTypeIds, ..._nodeEnglishNames.keys}) {
       final t = m[id];
-      if (t == null || t.params.any((p) => p.key == 'bypass')) continue;
+      if (t == null) continue;
+      final englishName = _nodeEnglishNames[id] ?? t.englishName;
+      final needsBypass =
+          processTypeIds.contains(id) &&
+          !t.params.any((p) => p.key == 'bypass');
+      if (t.englishName == englishName && !needsBypass) continue;
       m[id] = IspNodeType(
         typeId: t.typeId,
         displayName: t.displayName,
+        englishName: englishName,
         inputs: t.inputs,
         outputs: t.outputs,
-        params: [bypassParam, ...t.params],
+        params: needsBypass ? [bypassParam, ...t.params] : t.params,
         colorValue: t.colorValue,
       );
     }
     return m;
   }
 
-  static IspNodeType? byId(String typeId) => types[typeId];
+  static IspNodeType? byId(String typeId) => _allTypes[typeId];
 }
 
 /// 仪器类节点（直方图/示波器/矢量示波器/PSNR/SSIM/MS-SSIM/FSIM/NIQE/
@@ -2720,11 +2873,7 @@ const instrumentTypes = {
 
 /// 音频类仪器节点（电平/波形/EQ 频谱）：数据来自视频音轨 PCM 而非
 /// 图像帧，走独立的刷新路径（isp_studio_state._runAudioInstruments）。
-const audioInstrumentTypes = {
-  'audio_level',
-  'audio_waveform',
-  'audio_eq',
-};
+const audioInstrumentTypes = {'audio_level', 'audio_waveform', 'audio_eq'};
 
 /// 全部仪器类节点（图像仪器 + 音频仪器）：只进不出、内嵌显示区。
 const allInstrumentTypes = {...instrumentTypes, ...audioInstrumentTypes};

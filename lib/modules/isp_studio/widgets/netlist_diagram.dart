@@ -25,6 +25,9 @@ import 'ip_block_diagram.dart' show SchPalette, schFitView;
 
 /// 统一布局网格：pin、连接点与块边缘全部落在 15px 整数倍上。
 const nlLayoutGrid = 15.0;
+
+/// SimWave「跳转到原理图」的亮黄色高亮。
+const nlJumpHighlightColor = Color(0xFFFFD400);
 const _kGrid = nlLayoutGrid;
 double _gridCeil(double v) => (v / _kGrid).ceil() * _kGrid;
 double _gridFloor(double v) => (v / _kGrid).floor() * _kGrid;
@@ -99,6 +102,9 @@ class NlBlock {
   /// 上下镜像：输入/输出槽位上下反转、顶↔底针脚互换。
   bool pinFlip = false;
 
+  /// 左右镜像：输入/输出换边（左↔右），符号水平翻转。
+  bool flipH = false;
+
   /// 左/右/上/下各边针脚槽位序（端口名；null = 声明序）。
   List<String>? inPinOrder;
   List<String>? outPinOrder;
@@ -142,12 +148,18 @@ class NlLevel {
   final List<NlPin> ports;
   final Offset offset;
 
+  /// 该层自身模型的画布尺寸（flattened 时携带；展开子层=子模型画布）。
+  /// 布线边界用——层内坐标 + 该尺寸恰好落在容器框内（用父级画布会把线
+  /// 绕出容器框）。
+  final Size? canvasSize;
+
   const NlLevel({
     required this.blocks,
     required this.wires,
     required this.pins,
     required this.ports,
     required this.offset,
+    this.canvasSize,
   });
 }
 
@@ -289,6 +301,7 @@ class NetlistDiagramModel {
               if (b.isIo) ...[...b.ins, ...b.outs],
           ],
           offset: off,
+          canvasSize: m.canvasSize,
         ),
       );
       if (depth <= 0) return;
@@ -342,6 +355,7 @@ NetlistDiagramModel buildNetlistDiagramModel(
   Map<String, List<String>> pinOrders = const {},
   NlLayoutAlgorithm layout = NlLayoutAlgorithm.compact,
   Map<int, int> columnGapExtra = const {},
+  Map<String, NetlistDiagramModel> subModels = const {},
 }) {
   return _buildNetlistDiagramModelOnce(
     module,
@@ -355,6 +369,7 @@ NetlistDiagramModel buildNetlistDiagramModel(
     pinOrders: pinOrders,
     layout: layout,
     columnGapExtra: columnGapExtra,
+    subModels: subModels,
   );
 }
 
@@ -639,6 +654,76 @@ class NlAutoRouteResult {
     required this.junctions,
     this.fallbackCount = 0,
   });
+}
+
+/// 单层的布线画布：该层内容包围盒 + 4 Grid 余量。展开/层级视图中各层
+/// 坐标是层内局部坐标——若用父级画布尺寸布线，A* 会把线绕到子层内容
+/// 之外（视觉上越出容器框，见 2026-10-24 decisions）。
+Size nlLevelCanvasSize(NlLevel lv) {
+  var maxX = 0.0, maxY = 0.0;
+  for (final b in lv.blocks) {
+    maxX = math.max(maxX, b.boxOrigin.dx + b.boxSize.width);
+    maxY = math.max(maxY, b.boxOrigin.dy + b.boxSize.height);
+  }
+  for (final p in [...lv.pins, ...lv.ports]) {
+    maxX = math.max(maxX, p.pos.dx);
+    maxY = math.max(maxY, p.pos.dy);
+  }
+  const margin = 4 * 15.0; // 4 Grid（针脚逃生/绕线余量）
+  return Size(maxX + margin, maxY + margin);
+}
+
+/// 在后台 isolate 里逐层布线（并行）：大单层 15px 网格 A* 一次可达 ~10s，
+/// 主 isolate 同步执行会冻结 UI（大电路展开/手动布线的卡顿教训）。
+/// 每层布线画布取该层内容包围盒（[nlLevelCanvasSize]），不用父级画布——
+/// 否则走线会绕出子层内容/容器框。
+/// [levels] 各层对象图按值拷入 isolate，结果按该层 wires 顺序索引回映射
+/// （isolate 内是对象副本）。逐层完成经 [onLevelDone] 回调（done, total）。
+Future<NlAutoRouteResult> routeNlLevelsInIsolate(
+  List<NlLevel> levels, {
+  void Function(int done, int total)? onLevelDone,
+}) async {
+  final segments = <NlWire, List<(Offset, Offset)>>{};
+  final junctions = <NlWire, List<Offset>>{};
+  var fallback = 0;
+  var done = 0;
+  await Future.wait([
+    for (var li = 0; li < levels.length; li++)
+      Isolate.run(() {
+        final lv = levels[li];
+        final local = NlLevel(
+          blocks: lv.blocks,
+          wires: lv.wires,
+          pins: lv.pins,
+          ports: lv.ports,
+          offset: Offset.zero,
+        );
+        final r = routeNetlistWires([local], lv.canvasSize ?? nlLevelCanvasSize(lv));
+        return (
+          li,
+          [
+            for (final w in lv.wires)
+              r.segments[w] ?? const <(Offset, Offset)>[],
+          ],
+          [for (final w in lv.wires) r.junctions[w] ?? const <Offset>[]],
+          r.fallbackCount,
+        );
+      }).then((res) {
+        final (li, segs, juncs, fb) = res;
+        final wires = levels[li].wires;
+        for (var i = 0; i < wires.length; i++) {
+          if (segs[i].isNotEmpty) segments[wires[i]] = segs[i];
+          if (juncs[i].isNotEmpty) junctions[wires[i]] = juncs[i];
+        }
+        fallback += fb;
+        onLevelDone?.call(++done, levels.length);
+      }),
+  ]);
+  return NlAutoRouteResult(
+    segments: segments,
+    junctions: junctions,
+    fallbackCount: fallback,
+  );
 }
 
 /// **自动布线**：15px 网格 A*，按网建树（驱动 → 各负载逐条接到已有树），
@@ -2125,9 +2210,12 @@ void nlLayoutBlockPins(NlBlock b) {
         ..addAll(reversed);
     }
     for (var i = 0; i < ordered.length; i++) {
-      final x = ordered.length == 1
+      final rawX = ordered.length == 1
           ? symbolRect.center.dx
           : symbolRect.left + symbolRect.width * (i + 1) / (ordered.length + 1);
+      final x = b.flipH
+          ? symbolRect.left + symbolRect.right - rawX
+          : rawX;
       ordered[i].edge = Offset(x, y);
       ordered[i].pos = Offset(x, y + outward);
     }
@@ -2137,9 +2225,14 @@ void nlLayoutBlockPins(NlBlock b) {
   placeEdgePins(bottomPins, b.bottomPinOrder, symbolRect.bottom, _kStub);
   for (final p in sideIns) {
     final y = inputY[p]!;
-    final edgeX = _gridRound(netlistSymbolInputEdgeX(b.cell, symbolRect, y));
+    final edgeX = b.flipH
+        ? symbolRect.right
+        : _gridRound(netlistSymbolInputEdgeX(b.cell, symbolRect, y));
     p.edge = Offset(edgeX, y);
-    p.pos = Offset(b.boxOrigin.dx - _kStub, y);
+    p.pos = Offset(
+      b.flipH ? symbolRect.right + _kStub : b.boxOrigin.dx - _kStub,
+      y,
+    );
   }
   for (var i = 0; i < b.outs.length; i++) {
     // 镜像时右侧输出针脚同样上下反序（单输出为恒等）。
@@ -2154,8 +2247,14 @@ void nlLayoutBlockPins(NlBlock b) {
     final y = centeredSingleOutput
         ? symbolRect.center.dy
         : b.boxOrigin.dy + _kPinPadV + slot * _kPinRowH + _kPinRowH / 2;
-    b.outs[i].edge = Offset(symbolRect.right, y);
-    b.outs[i].pos = Offset(symbolRect.right + _kStub, y);
+    b.outs[i].edge = Offset(
+      b.flipH ? symbolRect.left : symbolRect.right,
+      y,
+    );
+    b.outs[i].pos = Offset(
+      b.flipH ? symbolRect.left - _kStub : symbolRect.right + _kStub,
+      y,
+    );
   }
 }
 
@@ -2314,6 +2413,9 @@ class NlRoutingOptimizationResult {
   /// 达到 16 轮上限仍有改善时为 false——不得冒充最优。
   final bool converged;
 
+  /// 因时间预算（timeBudget）提前终止（返回当前最优，非自然收敛）。
+  final bool budgetExceeded;
+
   const NlRoutingOptimizationResult({
     required this.result,
     required this.initialLength,
@@ -2326,6 +2428,7 @@ class NlRoutingOptimizationResult {
     this.movedBlocks = 0,
     this.passes = 0,
     this.converged = false,
+    this.budgetExceeded = false,
   });
 
   bool get improved =>
@@ -2668,8 +2771,21 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
   NlRouteOptOptions? options,
   int parallelMinWires = 16,
   NlRoutingProgress? onProgress,
+  Duration? timeBudget,
 }) async {
   final baseline = initial ?? routeNetlistWires(levels, canvasSize);
+  // 时间预算兜底（大网表单次重布即数秒，候选轮次多会数十分钟不收敛——
+  // 超预算即中止并返回当前最优，budgetExceeded 置位）。
+  final budgetWatch = timeBudget == null ? null : (Stopwatch()..start());
+  var budgetHit = false;
+  bool overBudget() {
+    if (budgetWatch != null && budgetWatch.elapsed > timeBudget!) {
+      budgetHit = true;
+      return true;
+    }
+    return false;
+  }
+
   final totalWires = [for (final l in levels) ...l.wires].length;
   // 多 CPU 并行：候选评估（布线顺序 / 元件移位 / 针脚变换 / 端口对齐）
   // 相互独立，放 isolate 并行跑；获胜候选回主 isolate 重放（结果以主
@@ -2742,6 +2858,7 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
     await Future<void>.delayed(const Duration(milliseconds: 16));
   } else {
     for (var i = 0; i < attempts; i++) {
+      if (overBudget()) break;
       final candidate = routeNetlistWires(
         levels,
         canvasSize,
@@ -2769,6 +2886,7 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
   var converged = false;
   // 列内上下移动反复迭代，直到某一轮没有任何改善（不再收敛）为止。
   for (var pass = 0; pass < 16; pass++) {
+    if (overBudget()) break;
     final hot = _nlHotBlocks(best, levels).toList();
     if (hot.isEmpty) {
       converged = true;
@@ -2776,6 +2894,7 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
     }
     var improvedPass = false;
     for (final block in hot.take(8)) {
+      if (overBudget()) break;
       final level = levels.firstWhere(
         (l) => l.blocks.any((b) => identical(b, block)),
       );
@@ -3025,6 +3144,7 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
 
   // 端口块（输入/输出整组）也允许上下移动；只接受字典序更优的移动。
   for (final level in levels) {
+    if (overBudget()) break;
     for (final block in level.blocks.where((b) => b.isIo)) {
       if (block.boxSize.width <= 0) continue;
       final all = [
@@ -3147,10 +3267,12 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
   // 端口相连的线/总线没有折线）。
   Future<void> portAlignPass({int? maxTargets}) async {
     for (final level in levels) {
+      if (overBudget()) return;
       var portBends = nlPortBendCount([level], best);
       final ports = level.ports.toList()
         ..sort((a, b) => a.pos.dy.compareTo(b.pos.dy));
       for (final pin in ports) {
+        if (overBudget()) return;
         await Future<void>.delayed(Duration.zero);
         NlWire? wire;
         for (final w in level.wires) {
@@ -3449,7 +3571,9 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
   // 只在线本身折弯减少、不引入硬约束、交叉不增超过 1 时采纳。----
   Future<void> portTrackPass() async {
     for (final level in levels) {
+      if (overBudget()) return;
       for (final pin in level.ports) {
+        if (overBudget()) return;
         // 末段每个端口都让出一次事件循环，避免连续局部重布把 UI 卡成无响应。
         await Future<void>.delayed(Duration.zero);
         NlWire? wire;
@@ -3533,7 +3657,9 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
     for (var pass = 0; pass < 2; pass++) {
       var improved = false;
       for (final level in levels) {
+        if (overBudget()) return;
         for (final block in level.blocks) {
+          if (overBudget()) return;
           // 每个元件候选前让出事件循环（局部重布是主 isolate 同步计算）。
           await Future<void>.delayed(Duration.zero);
           if (block.isIo || block.isContainer || block.boxSize.height <= 0) {
@@ -3653,7 +3779,8 @@ Future<NlRoutingOptimizationResult> optimizeNetlistRouting(
     bends: bestMetrics.bends,
     movedBlocks: movedBlocks,
     passes: passes,
-    converged: converged,
+    converged: converged && !budgetHit,
+    budgetExceeded: budgetHit,
   );
 }
 
@@ -4189,6 +4316,9 @@ class NlLayoutOptimizationResult {
   final Set<String> mirroredBlocks;
   final Map<String, List<String>> pinOrders;
 
+  /// 因时间预算（timeBudget）提前终止（返回当前最优，非自然收敛）。
+  final bool budgetExceeded;
+
   const NlLayoutOptimizationResult({
     required this.model,
     required this.nodes,
@@ -4200,7 +4330,14 @@ class NlLayoutOptimizationResult {
     this.rowOrders = const {},
     this.mirroredBlocks = const {},
     this.pinOrders = const {},
+    this.budgetExceeded = false,
   });
+}
+
+/// 布局优化的时间预算/取消中止（控制流用——从任意嵌套候选循环安全
+/// 展开到 optimizeNetlistLayout 顶层，返回当前最优）。
+class _NlLayoutAborted implements Exception {
+  const _NlLayoutAborted();
 }
 
 /// 布局候选评估任务（跨 isolate 传递；全部为可发送纯数据）。
@@ -4257,6 +4394,139 @@ double _nlEvalLayoutCandidate(_NlLayoutCandidateJob job) {
 /// 多 CPU 并行：传入 [netlist] 且单元数 ≥ [parallelMinCells] 时，候选
 /// （行序移动/引脚交换/镜像）按批在 isolate 中并行构建评估（模型与网表均
 /// 为纯数据可跨 isolate 传递），每批采纳最优者；小图保持串行。
+/// 按网表连接生成“链路感知”的列内顺序候选：
+/// - 以每个块连接的对端块实际 y 为中位目标；
+/// - 正向（输入→输出）与反向（输出→输入）交替扫描；
+/// - 收敛结构以反向扫描收尾，发散结构以正向扫描收尾，两个候选都返回，
+///   由调用方用精确总直线长度择优。
+List<Map<int, List<String>>> _nlTopologyOrderPlans(
+  NetlistDiagramModel model,
+) {
+  final blocks = [for (final b in model.blocks) if (!b.isIo) b];
+  if (blocks.isEmpty) return const [];
+  final pinBlock = <NlPin, NlBlock>{};
+  for (final b in blocks) {
+    for (final p in [...b.ins, ...b.outs]) {
+      pinBlock[p] = b;
+    }
+  }
+  final adj = <String, Map<String, int>>{};
+  void link(NlBlock a, NlBlock b) {
+    if (a.id == b.id) return;
+    (adj[a.id] ??= {})[b.id] = ((adj[a.id]![b.id]) ?? 0) + 1;
+    (adj[b.id] ??= {})[a.id] = ((adj[b.id]![a.id]) ?? 0) + 1;
+  }
+
+  for (final w in model.wires) {
+    final a = pinBlock[w.from];
+    if (a == null) continue;
+    for (final l in w.loads) {
+      final b = pinBlock[l];
+      if (b != null) link(a, b);
+    }
+  }
+
+  final byColumn = <int, List<NlBlock>>{};
+  for (final b in blocks) {
+    (byColumn[b.column] ??= []).add(b);
+  }
+  final columns = byColumn.keys.toList()..sort();
+
+  double medianOf(List<double> values) {
+    if (values.isEmpty) return 0;
+    values.sort();
+    return values[values.length ~/ 2];
+  }
+
+  List<String> orderOfColumn(int c, Map<String, double> pos) {
+    final list = [...(byColumn[c] ?? const <NlBlock>[])];
+    list.sort((a, b) {
+      final pa = pos[a.id] ?? a.boxOrigin.dy;
+      final pb = pos[b.id] ?? b.boxOrigin.dy;
+      final d = pa.compareTo(pb);
+      return d != 0 ? d : a.id.compareTo(b.id);
+    });
+    return [for (final b in list) b.id];
+  }
+
+  List<Map<int, List<String>>> evaluate(bool backwardLast) => [
+    _sweepPlan(
+      byColumn,
+      columns,
+      adj,
+      backwardFirst: !backwardLast,
+      backwardLast: backwardLast,
+      orderOfColumn: orderOfColumn,
+      medianOf: medianOf,
+    ),
+  ];
+
+  return [
+    ...evaluate(false),
+    ...evaluate(true),
+  ];
+}
+
+Map<int, List<String>> _sweepPlan(
+  Map<int, List<NlBlock>> byColumn,
+  List<int> columns,
+  Map<String, Map<String, int>> adj, {
+  required bool backwardFirst,
+  required bool backwardLast,
+  required List<String> Function(int, Map<String, double>) orderOfColumn,
+  required double Function(List<double>) medianOf,
+}) {
+  final pos = <String, double>{};
+  for (final list in byColumn.values) {
+    for (final b in list) {
+      pos[b.id] = b.boxOrigin.dy + b.boxSize.height / 2;
+    }
+  }
+
+  void sweep(bool backward) {
+    final iterable = backward ? columns.reversed : columns;
+    for (final c in iterable) {
+      final list = [...(byColumn[c] ?? const <NlBlock>[])];
+      if (list.isEmpty) continue;
+      final targets = <String, double>{};
+      for (final b in list) {
+        final values = <double>[];
+        for (final e in (adj[b.id] ?? const <String, int>{}).entries) {
+          final p = pos[e.key];
+          if (p == null) continue;
+          for (var i = 0; i < e.value; i++) {
+            values.add(p);
+          }
+        }
+        if (values.isNotEmpty) targets[b.id] = medianOf(values);
+      }
+      list.sort((a, b) {
+        final ta = targets[a.id] ?? pos[a.id] ?? a.boxOrigin.dy;
+        final tb = targets[b.id] ?? pos[b.id] ?? b.boxOrigin.dy;
+        final d = ta.compareTo(tb);
+        return d != 0 ? d : a.id.compareTo(b.id);
+      });
+      var y = list.map((b) => b.boxOrigin.dy).reduce(math.min);
+      for (final b in list) {
+        pos[b.id] = y + b.boxSize.height / 2;
+        y += b.boxSize.height + 7 * _kGrid;
+      }
+    }
+  }
+
+  if (backwardFirst) {
+    sweep(true);
+    if (!backwardLast) sweep(false);
+  } else {
+    sweep(false);
+    if (backwardLast) sweep(true);
+  }
+
+  return {
+    for (final c in columns) c: orderOfColumn(c, pos),
+  };
+}
+
 Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
   NetlistModule module, {
   Set<String> expanded = const {},
@@ -4274,6 +4544,7 @@ Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
   int parallelMinCells = 12,
   void Function(NlLayoutOptimizationProgress progress)? onProgress,
   bool Function()? isCancelled,
+  Duration? timeBudget,
 }) async {
   final plan = <int, List<String>>{
     for (final e in initialRowOrders.entries) e.key: [...e.value],
@@ -4303,6 +4574,22 @@ Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
     longWireWeight: longWireWeight,
   );
   var bestLength = initialLength;
+  // 链路感知初始解：按对端块实际 y 中位数做正/反向扫描，精确总长择优。
+  for (final topoPlan in _nlTopologyOrderPlans(best)) {
+    final candidate = build(topoPlan, pinPlan, mirrored);
+    final length = nlLayoutScore(
+      candidate,
+      topology: topology,
+      longWireWeight: longWireWeight,
+    );
+    if (length < bestLength - 0.5) {
+      best = candidate;
+      bestLength = length;
+      plan
+        ..clear()
+        ..addAll(topoPlan);
+    }
+  }
   final nodes = best.blocks.where((b) => !b.isIo).length;
   var evaluations = 0;
   var rounds = 0;
@@ -4416,6 +4703,25 @@ Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
     );
   }
 
+  // 心跳：即使本轮没有采纳更优候选（大网表上常见），也按 ~300ms 节奏
+  // 上报进度，让浮层的评估数/用时持续走动（此前只在采纳时回调，预算
+  // 版在大网表上 90 秒全程静止，观感等同卡死）。
+  final emitWatch = Stopwatch()..start();
+  var lastEmitMs = 0;
+  void emitThrottled() {
+    if (onProgress == null) return;
+    final now = emitWatch.elapsedMilliseconds;
+    if (now - lastEmitMs >= 300) {
+      lastEmitMs = now;
+      emit();
+    }
+  }
+
+  // 时间预算兜底（大网表候选评估慢、轮数多，可能数十分钟不收敛——
+  // 超预算即中止并返回当前最优，budgetExceeded 置位）。
+  final budgetWatch = timeBudget == null ? null : (Stopwatch()..start());
+  var budgetHit = false;
+
   NlLayoutOptimizationResult result() => NlLayoutOptimizationResult(
     model: best,
     nodes: nodes,
@@ -4431,16 +4737,28 @@ Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
     pinOrders: {
       for (final e in pinPlan.entries) e.key: [...e.value],
     },
+    budgetExceeded: budgetHit,
   );
 
   bool cancelled() => isCancelled?.call() ?? false;
+
+  bool aborted() {
+    if (cancelled()) return true;
+    if (budgetWatch != null && budgetWatch.elapsed > timeBudget!) {
+      budgetHit = true;
+      return true;
+    }
+    return false;
+  }
 
   /// 评估一个候选；严格更短才接受，并把候选方案写回 [accept]。
   Future<bool> evaluate(
     NetlistDiagramModel model,
     void Function() accept,
   ) async {
+    if (aborted()) throw const _NlLayoutAborted();
     evaluations++;
+    emitThrottled();
     final length = nlLayoutScore(
       model,
       topology: topology,
@@ -4472,8 +4790,10 @@ Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
     List<(Map<int, List<String>>, Map<String, List<String>>, Set<String>)>
     batch,
   ) async {
+    if (aborted()) throw const _NlLayoutAborted();
     if (batch.isEmpty) return false;
     evaluations += batch.length;
+    emitThrottled();
     final jobs = [
       for (final (orders, pinOrds, mirrors) in batch)
         _NlLayoutCandidateJob(
@@ -4519,7 +4839,10 @@ Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
 
   emit();
 
-  for (var round = 0; round < maxRounds; round++) {
+  // 时间预算/取消经 evaluate/evaluateBatch 抛 _NlLayoutAborted 中止——从任意
+  // 嵌套候选循环安全展开，返回当前最优（budgetExceeded/cancel 语义不变）。
+  try {
+    for (var round = 0; round < maxRounds; round++) {
     rounds = round + 1;
     improvedThisRound = false;
 
@@ -4750,6 +5073,9 @@ Future<NlLayoutOptimizationResult> optimizeNetlistLayout(
 
     if (!improvedThisRound) break;
   }
+  } on _NlLayoutAborted {
+    // 时间预算/取消：返回当前最优。
+  }
 
   emit();
   return result();
@@ -4817,6 +5143,55 @@ List<(NlPin, double)> nlPlacePortRows(
   return out;
 }
 
+/// 展开子模型构建：父级为分层布局时，子模型先按紧凑布局（既有口径）；
+/// 竖向细高（h > 2×w 且单元数 > 8）时回退分层重排（func_fixed 流水核心
+/// 展开 18225px 细条、内容坍缩的教训）。父级为紧凑时子模型恒紧凑。
+NetlistDiagramModel _buildChildModel(
+  NetlistModule child,
+  Set<String> expanded,
+  NetlistModule? Function(String cellType)? resolve,
+  String idPrefix,
+  String name,
+  int depth,
+  NlLayoutAlgorithm layout,
+  Map<String, NetlistDiagramModel> subModels,
+) {
+  final id = '$idPrefix$name/';
+  if (layout != NlLayoutAlgorithm.layered) {
+    return _buildNetlistDiagramModelOnce(
+      child,
+      expanded: expanded,
+      resolve: resolve,
+      idPrefix: id,
+      depth: depth + 1,
+      layout: NlLayoutAlgorithm.compact,
+      subModels: subModels,
+    );
+  }
+  final compact = _buildNetlistDiagramModelOnce(
+    child,
+    expanded: expanded,
+    resolve: resolve,
+    idPrefix: id,
+    depth: depth + 1,
+    layout: NlLayoutAlgorithm.compact,
+    subModels: subModels,
+  );
+  final cs = compact.canvasSize;
+  if (child.cells.length > 8 && cs.height > cs.width * 2) {
+    return _buildNetlistDiagramModelOnce(
+      child,
+      expanded: expanded,
+      resolve: resolve,
+      idPrefix: id,
+      depth: depth + 1,
+      layout: NlLayoutAlgorithm.layered,
+      subModels: subModels,
+    );
+  }
+  return compact;
+}
+
 NetlistDiagramModel _buildNetlistDiagramModelOnce(
   NetlistModule module, {
   int? columns,
@@ -4829,9 +5204,11 @@ NetlistDiagramModel _buildNetlistDiagramModelOnce(
   Map<String, List<String>> pinOrders = const {},
   NlLayoutAlgorithm layout = NlLayoutAlgorithm.compact,
   Map<int, int> columnGapExtra = const {},
+  Map<String, NetlistDiagramModel> subModels = const {},
 }) {
   final blocks = <String, NlBlock>{};
   final cellBlocks = <NetlistCell, NlBlock>{};
+
 
   // ---- 单元块 ----
   for (final c in module.cells) {
@@ -4889,25 +5266,27 @@ NetlistDiagramModel _buildNetlistDiagramModelOnce(
       if (child == null || child.cells.isEmpty) continue;
       final b = blocks[c.name];
       if (b == null) continue;
-      b.sub = _buildNetlistDiagramModelOnce(
-        child,
-        expanded: expanded,
-        resolve: resolve,
-        idPrefix: '$idPrefix${c.name}/',
-        depth: depth + 1,
-        layout: NlLayoutAlgorithm.compact,
-      );
+      b.sub = subModels[c.name] ??
+          _buildChildModel(child, expanded, resolve, idPrefix, c.name, depth,
+              layout, subModels);
       // 子模型整体平移进容器：顶部标题带 + 左右边缘针脚区留白。
       b.subOffset = const Offset(_kContainerPadX, _kContainerHead);
     }
   }
 
   // ---- 顶层端口（输入在左；输出与双向在右，符号与标注区分方向）----
+  String portDisplay(NetlistPort p) {
+    final range = p.net.range;
+    if (range.isNotEmpty) return '${p.name}$range';
+    if (p.net.width > 1) return '${p.name}[${p.net.width - 1}:0]';
+    return p.name;
+  }
+
   final inPins = <NlPin>[
     for (final p in module.inputs)
       NlPin(
         port: p.name,
-        display: p.name,
+        display: portDisplay(p),
         width: p.net.width,
         bits: p.net.bits,
         nets: [p.net],
@@ -4921,7 +5300,7 @@ NetlistDiagramModel _buildNetlistDiagramModelOnce(
     for (final p in module.outputs)
       NlPin(
         port: p.name,
-        display: p.name,
+        display: portDisplay(p),
         width: p.net.width,
         bits: p.net.bits,
         nets: [p.net],
@@ -4935,7 +5314,7 @@ NetlistDiagramModel _buildNetlistDiagramModelOnce(
     for (final p in module.inouts)
       NlPin(
         port: p.name,
-        display: p.name,
+        display: portDisplay(p),
         width: p.net.width,
         bits: p.net.bits,
         nets: [p.net],
@@ -5200,9 +5579,18 @@ NetlistDiagramModel _buildNetlistDiagramModelOnce(
       final rank = <int, int>{
         for (var i = 0; i < order.length; i++) order[i]: i,
       };
+      // 行序查表用未加前缀的单元名（展开子模型的块 id 带 idPrefix，
+      // 直接拿 b.id 查不到——此前展开子图列内退化为名称排序，几何与
+      // 独立布局不一致、布线 fallback 暴涨的教训）。
+      int rankOf(NlBlock b) {
+        final name = b.cell?.name;
+        final idx = name == null ? null : indexOf[name];
+        return idx == null ? 1 << 20 : (rank[idx] ?? 1 << 20);
+      }
+
       e.value.sort((a, b) {
-        final ra = rank[indexOf[a.id]] ?? 1 << 20;
-        final rb = rank[indexOf[b.id]] ?? 1 << 20;
+        final ra = rankOf(a);
+        final rb = rankOf(b);
         return ra != rb ? ra.compareTo(rb) : a.title.compareTo(b.title);
       });
     }
@@ -5774,6 +6162,7 @@ class NetlistDiagram extends StatefulWidget {
   final void Function(NlBlock block)? onBlockDragStart;
   final void Function(NlBlock block, double dx, double dy)? onBlockDragEnd;
   final void Function(NlBlock block)? onMirrorBlock;
+  final void Function(NlBlock block)? onFlipHBlock;
   final void Function(NlBlock block, NlPin pin)? onPinDragStart;
   final void Function(NlBlock block, NlPin pin, double dy)? onPinDragEnd;
   final void Function(NlBlock block, NlPin pin)? onPinDragUpdate;
@@ -5788,6 +6177,9 @@ class NetlistDiagram extends StatefulWidget {
 
   /// 直线预览画成虚线（编辑模式保持直线时使用）。
   final bool straightDashed;
+
+  /// 需要高亮的信号名（SimWave 跳转原理图）：匹配网名/引脚网。
+  final String? highlightSignal;
 
   const NetlistDiagram({
     super.key,
@@ -5809,6 +6201,7 @@ class NetlistDiagram extends StatefulWidget {
     this.onBlockDragStart,
     this.onBlockDragEnd,
     this.onMirrorBlock,
+    this.onFlipHBlock,
     this.onPinDragStart,
     this.onPinDragEnd,
     this.onPinDragUpdate,
@@ -5819,6 +6212,7 @@ class NetlistDiagram extends StatefulWidget {
     this.onSegmentDragUpdate,
     this.onSegmentDragEnd,
     this.straightDashed = false,
+    this.highlightSignal,
   });
 
   @override
@@ -5830,10 +6224,14 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
       widget.controller ?? TransformationController();
   Size? _fittedFor;
   NlBlock? _hoverBlock;
+  Set<NlBlock> _highlightBlocks = {};
   NlBlock? _hoverExpand;
 
   /// 鼠标悬停的常量引脚（悬停时标记方框填充为实心黄，气泡由 Tooltip 显示）。
   NlPin? _hoverConstPin;
+
+  /// 鼠标悬停的元件引脚（显示“引脚 ← 实际信号位域”气泡）。
+  NlPin? _hoverPin;
 
   /// 鼠标悬停到的网（临时显示网名）与点选固定的网，含所在层的平移。
   (NlWire, Offset)? _hoverNet;
@@ -5879,6 +6277,8 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
   NlPin? _dragPin;
   double _pinStartY = 0;
   double _pinApplied = 0;
+  /// 拖动元件/端口时显示的十字对齐参考线中心（画布坐标）。
+  Offset? _guideCenter;
   double _segStartX = 0;
   double _segStartY = 0;
   double _segApplied = 0;
@@ -5926,6 +6326,24 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
     return (5.0 / (s <= 0 ? 1 : s)).clamp(1.5, 40.0);
   }
 
+  Offset? _blockCenterOnCanvas(NlBlock block) {
+    for (final lv in _levels) {
+      if (!lv.blocks.any((b) => identical(b, block))) continue;
+      return lv.offset +
+          block.boxOrigin +
+          Offset(block.boxSize.width / 2, block.boxSize.height / 2);
+    }
+    return null;
+  }
+
+  Offset? _portCenterOnCanvas(NlPin pin) {
+    for (final lv in _levels) {
+      if (!lv.ports.any((p) => identical(p, pin))) continue;
+      return lv.offset + pin.pos;
+    }
+    return null;
+  }
+
   void _updateHover(Offset p) {
     final hit = nlWireAtLevels(
       _levels,
@@ -5934,8 +6352,12 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
       widget.topology,
       widget.autoRoutes,
     );
-    if (hit?.$1 == _hoverNet?.$1) return;
-    setState(() => _hoverNet = hit);
+    final pin = nlBlockPinAt(_levels, p)?.$2;
+    if (hit?.$1 == _hoverNet?.$1 && identical(pin, _hoverPin)) return;
+    setState(() {
+      _hoverNet = hit;
+      _hoverPin = pin;
+    });
   }
 
   void _onPointerDown(PointerDownEvent e) {
@@ -5954,6 +6376,7 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
       final port = nlPortAt(_levels, p);
       if (port != null) {
         _dragPort = port;
+        _guideCenter = _portCenterOnCanvas(port);
         _dragStartX = p.dx;
         _dragStartY = p.dy;
         _dragAppliedX = 0;
@@ -5973,18 +6396,6 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
         _lastDownAt = null;
         return;
       }
-      final blk = nlBlockAt(_levels, p);
-      if (blk != null && !blk.isIo && blk.boxSize.height > 0) {
-        _dragBlock = blk;
-        _dragStartX = p.dx;
-        _dragStartY = p.dy;
-        _dragAppliedX = 0;
-        _dragAppliedY = 0;
-        _dragTotalDy = 0;
-        widget.onBlockDragStart?.call(blk);
-        _lastDownAt = null;
-        return;
-      }
       final segHit = nlSegmentAtLevels(
         _levels,
         p,
@@ -6001,26 +6412,37 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
         _lastDownAt = null;
         return;
       }
+      final blk = nlBlockAt(_levels, p);
+      if (blk != null && !blk.isIo && blk.boxSize.height > 0) {
+        _dragBlock = blk;
+        _guideCenter = _blockCenterOnCanvas(blk);
+        _dragStartX = p.dx;
+        _dragStartY = p.dy;
+        _dragAppliedX = 0;
+        _dragAppliedY = 0;
+        _dragTotalDy = 0;
+        widget.onBlockDragStart?.call(blk);
+        _lastDownAt = null;
+        return;
+      }
     }
-    // 先看是否点在实例块左上角的 ＋/− 上（原位展开/收起）。
-    final cell = nlExpandTargetAt(_levels, p);
-    if (cell != null) {
+    // ＋/− 命中由 Listener 统一处理；按钮自身的 GestureDetector 不再
+    // 重复触发，避免一次点击 toggle 两次（展开后又立刻收起）。
+    final expandCell = nlExpandTargetAt(_levels, p);
+    if (expandCell != null) {
       _lastDownAt = null;
-      widget.onToggleExpand?.call(cell);
+      widget.onToggleExpand?.call(expandCell);
       return;
     }
-    // 双击块 → 进入整页下钻（在 Listener 里自己判定，不依赖层叠手势）。
+    // 双击不再触发任何模块操作（展开/下钻都只通过工具栏或 ＋/−）。
     final now = DateTime.now();
     final last = _lastDownAt;
     if (last != null &&
         now.difference(last.$1) < const Duration(milliseconds: 350) &&
         (last.$2 - p).distance < 8) {
-      final blk = nlBlockAt(_levels, p) ?? last.$3;
       _lastDownAt = null;
-      if (blk?.cell != null && blk!.cell!.isInstance) {
-        widget.onTapCell?.call(blk.cell!);
-        return;
-      }
+      _togglePin(p);
+      return;
     }
     _lastDownAt = (now, p, nlBlockAt(_levels, p));
     _togglePin(p);
@@ -6077,10 +6499,12 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
       nlShiftBlockXY(block, allowedDx, allowedDy);
       _dragAppliedX += allowedDx;
       _dragAppliedY += allowedDy;
+      _guideCenter = _blockCenterOnCanvas(block);
     } else {
       _dragAppliedX = targetX;
       _dragAppliedY = targetY;
       _nlShiftPin(port!, dy);
+      _guideCenter = _portCenterOnCanvas(port);
       widget.onPortDragUpdate?.call(port, dy);
     }
     _dragTotalDy = targetY;
@@ -6088,6 +6512,7 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
   }
 
   void _onPointerUp() {
+    _guideCenter = null;
     final pinBlock = _dragPinBlock;
     final pin = _dragPin;
     if (pinBlock != null && pin != null) {
@@ -6113,6 +6538,15 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
     _dragBlock = null;
     _dragPort = null;
     if (block != null) {
+      if (_dragAppliedX.abs() < _kGrid && _dragAppliedY.abs() < _kGrid) {
+        // 编辑模式下“左键单击”（没有拖动）→ 左右镜像翻转。
+        _dragBlock = null;
+        _dragAppliedX = 0;
+        _dragAppliedY = 0;
+        widget.onFlipHBlock?.call(block);
+        _dragTotalDy = 0;
+        return;
+      }
       widget.onBlockDragEnd?.call(block, _dragAppliedX, _dragAppliedY);
     } else {
       widget.onPortDragEnd?.call(port!, _dragTotalDy);
@@ -6141,6 +6575,48 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
     super.dispose();
   }
 
+  Widget? _pinHoverBubble(SchPalette palette) {
+    final pin = _hoverPin;
+    if (pin == null) return null;
+    Offset? offset;
+    for (final lv in _levels) {
+      if (lv.blocks.any((b) => [...b.ins, ...b.outs].any(
+        (p) => identical(p, pin),
+      ))) {
+        offset = lv.offset;
+        break;
+      }
+    }
+    offset ??= Offset.zero;
+    final net = pin.nets.where((n) => !n.isConst).firstOrNull;
+    final detail = net == null ? pin.constText ?? '' : net.display;
+    final text = detail.isEmpty || detail == pin.display
+        ? pin.display
+        : '${pin.display}  ←  $detail';
+    return Positioned(
+      left: offset.dx + pin.pos.dx + 12,
+      top: offset.dy + pin.pos.dy + 8,
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          decoration: BoxDecoration(
+            color: palette.canvasBg.withValues(alpha: 0.95),
+            border: Border.all(color: palette.hover.withValues(alpha: 0.6)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 10,
+              color: palette.netLabel,
+              fontFamily: palette.fontFamily,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette =
@@ -6160,17 +6636,48 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
           });
         }
         final hover = _hoverBlock;
+        final pinBubble = _pinHoverBubble(palette);
         // 悬停/点选的网（含悬停单元的相连网）才显示网名——跨层用同一套
         // 块/网对象，展开容器内外一视同仁。
         final hiWires = <NlWire>[
           if (hover != null)
             ..._levels.expand((lv) => lv.wires).where((w) => w.touches(hover)),
         ];
+        final signal = widget.highlightSignal;
+        bool pinMatches(NlPin p) {
+          if (signal == null) return false;
+          bool nameMatches(String n) =>
+              n == signal ||
+              n.endsWith('.$signal') ||
+              n.split('.').last == signal;
+          return p.port == signal ||
+              p.display == signal ||
+              p.nets.any((n) => nameMatches(n.name));
+        }
+
+        final jumpWires = <NlWire>{
+          if (signal != null)
+            ..._levels.expand((lv) => lv.wires).where(
+              (w) =>
+                  w.label == signal ||
+                  w.label.contains(signal) ||
+                  pinMatches(w.from) ||
+                  w.loads.any(pinMatches),
+            ),
+        };
         final active = <NlWire>{
           if (_hoverNet != null) _hoverNet!.$1,
           if (_pinnedNet != null) _pinnedNet!.$1,
           ...hiWires,
+          ...jumpWires,
         };
+        final highlightBlocks = <NlBlock>{
+          if (signal != null)
+            for (final lv in _levels)
+              for (final b in lv.blocks)
+                if ([...b.ins, ...b.outs].any(pinMatches)) b,
+        };
+        _highlightBlocks = highlightBlocks;
         return ColoredBox(
           color: palette.canvasBg,
           child: InteractiveViewer(
@@ -6207,6 +6714,8 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
                         autoJunctions: widget.autoJunctions,
                         hoverConst: _hoverConstPin,
                         dashed: widget.straightDashed,
+                        highlightSignal: widget.highlightSignal,
+                        highlightWires: jumpWires,
                       ),
                     ),
                     if (widget.heatmap)
@@ -6270,6 +6779,15 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
                         ),
                       ),
                     ),
+                    ?pinBubble,
+                    if (_guideCenter != null)
+                      IgnorePointer(
+                        key: const ValueKey('nl-guide-layer'),
+                        child: CustomPaint(
+                          size: widget.model.canvasSize,
+                          painter: _NlGuidePainter(_guideCenter!, palette),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -6318,7 +6836,7 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
         waitDuration: const Duration(milliseconds: 600),
         child: GestureDetector(
           key: ValueKey('${expanded ? 'nl-minus' : 'nl-plus'}-${b.id}'),
-          onTap: () => widget.onToggleExpand?.call(cell),
+          onTap: null,
           child: Container(
             width: _kPlus,
             height: _kPlus,
@@ -6361,11 +6879,10 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
         onExit: (_) => setState(() => _hoverBlock = null),
         child: Tooltip(
           message:
-              '${b.title} · ${b.subtitle} · 已展开（点击 − 收起，'
-              '双击进入子模块）',
+              '${b.title} · ${b.subtitle} · 已展开（点击 − 收起）',
           waitDuration: const Duration(milliseconds: 600),
           child: GestureDetector(
-            onDoubleTap: () => _drill(cell),
+            onDoubleTap: null,
             child: SizedBox(
               width: b.size.width,
               height: b.size.height,
@@ -6443,6 +6960,7 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
               painter: NetlistCellPainter(
                 block: b,
                 hover: identical(_hoverBlock, b),
+                highlight: _highlightBlocks.contains(b),
                 palette: palette,
               ),
             ),
@@ -6453,8 +6971,11 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
             decoration: BoxDecoration(
               color: fill,
               border: Border.all(
-                color: identical(_hoverBlock, b)
-                    ? palette.hover
+                color: identical(_hoverBlock, b) ||
+                        _highlightBlocks.contains(b)
+                    ? _highlightBlocks.contains(b)
+                          ? nlJumpHighlightColor
+                          : palette.hover
                     : palette.blockBorder,
                 width: _kBoxBorder,
               ),
@@ -6587,15 +7108,8 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
         child: cell == null
             ? content
             : cell.isInstance
-            // 实例块：单击 = 原位展开/收起，双击 = 进入整页；
-            // 不能与 InkWell 的 tap 识别器嵌套（双击会被单点吃掉）。
-            ? GestureDetector(
-                onTap: widget.editMode
-                    ? null
-                    : () => widget.onToggleExpand?.call(cell),
-                onDoubleTap: widget.editMode ? null : () => _drill(cell),
-                child: content,
-              )
+            // 实例块：不再响应单击/双击，展开只通过 ＋/− 按钮。
+            ? content
             : InkWell(
                 onTap: widget.editMode
                     ? null
@@ -6605,13 +7119,6 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
       ),
     );
   }
-
-  /// 双击块：进入整页下钻视图（原有行为）。编辑模式下禁用。
-  void _drill(NetlistCell? cell) {
-    if (widget.editMode) return;
-    if (cell == null || !cell.isInstance) return;
-    widget.onTapCell?.call(cell);
-  }
 }
 
 /// 标准单元符号绘制：轮廓与 SVG 共用 [buildNetlistSymbol]，这里只负责
@@ -6619,12 +7126,14 @@ class _NetlistDiagramState extends State<NetlistDiagram> {
 class NetlistCellPainter extends CustomPainter {
   final NlBlock block;
   final bool hover;
+  final bool highlight;
   final SchPalette palette;
 
   const NetlistCellPainter({
     required this.block,
     required this.hover,
     required this.palette,
+    this.highlight = false,
   });
 
   @override
@@ -6646,14 +7155,38 @@ class NetlistCellPainter extends CustomPainter {
           isInput: false,
         ),
     ];
-    final geometry = buildNetlistSymbol(block.cell, rect, pins: pins);
+    final geometryPins = block.flipH
+        ? [
+            for (final p in pins)
+              NetlistSymbolPin(
+                port: p.port,
+                display: p.display,
+                edge: Offset(rect.width - p.edge.dx, p.edge.dy),
+                isInput: p.isInput,
+              ),
+          ]
+        : pins;
+    final geometry = buildNetlistSymbol(
+      block.cell,
+      rect,
+      pins: geometryPins,
+    );
     final fill = netlistCellFill(block.cell?.kind, palette);
-    final border = hover ? palette.hover : palette.blockBorder;
+    final border = highlight
+        ? nlJumpHighlightColor
+        : hover
+        ? palette.hover
+        : palette.blockBorder;
     final stroke = Paint()
       ..color = border
       ..style = PaintingStyle.stroke
       ..strokeWidth = _kBoxBorder
       ..strokeJoin = StrokeJoin.round;
+    if (block.flipH) {
+      canvas.save();
+      canvas.translate(rect.width, 0);
+      canvas.scale(-1, 1);
+    }
     canvas.drawPath(geometry.outline.toPath(), Paint()..color = fill);
     canvas.drawPath(geometry.outline.toPath(), stroke);
     for (final detail in geometry.details) {
@@ -6663,6 +7196,7 @@ class NetlistCellPainter extends CustomPainter {
       canvas.drawCircle(bubble.center, bubble.radius, Paint()..color = fill);
       canvas.drawCircle(bubble.center, bubble.radius, stroke);
     }
+    if (block.flipH) canvas.restore();
 
     final label = geometry.centerLabel;
     if (label != null && label.isNotEmpty) {
@@ -6674,12 +7208,23 @@ class NetlistCellPainter extends CustomPainter {
     }
     for (final p in pins) {
       final tp = _text(p.display, 10, palette.pinText);
-      final at = netlistSymbolPinLabelTopLeft(
+      var at = netlistSymbolPinLabelTopLeft(
         geometry.kind,
         p,
         rect,
         Size(tp.width, tp.height),
       );
+      if (block.flipH) {
+        final horizontal = p.isInput
+            ? p.edge.dx > rect.center.dx
+            : p.edge.dx < rect.center.dx;
+        if (horizontal) {
+          at = Offset(
+            p.isInput ? p.edge.dx - tp.width - 5 : p.edge.dx + 5,
+            p.edge.dy - tp.height / 2,
+          );
+        }
+      }
       tp.paint(canvas, at);
     }
   }
@@ -6700,6 +7245,7 @@ class NetlistCellPainter extends CustomPainter {
   bool shouldRepaint(NetlistCellPainter old) =>
       !identical(old.block, block) ||
       old.hover != hover ||
+      old.highlight != highlight ||
       old.palette != palette;
 }
 
@@ -6740,6 +7286,46 @@ Color netlistCellFill(NetlistCellKind? kind, SchPalette p) {
 ///
 /// **所有网名与位域默认都不画**；仅 [active] 里的高亮网（鼠标悬停、点选
 /// 或悬停单元的相连网）显示其完整标签，且底板**半透明**。
+class _NlGuidePainter extends CustomPainter {
+  final Offset center;
+  final SchPalette palette;
+
+  _NlGuidePainter(this.center, this.palette);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFF4EA1FF).withValues(alpha: 0.75)
+      ..strokeWidth = 1;
+    _nlDrawDashedLine(
+      canvas,
+      Offset(0, center.dy),
+      Offset(size.width, center.dy),
+      paint,
+      dash: 8,
+      gap: 6,
+    );
+    _nlDrawDashedLine(
+      canvas,
+      Offset(center.dx, 0),
+      Offset(center.dx, size.height),
+      paint,
+      dash: 8,
+      gap: 6,
+    );
+    canvas.drawCircle(
+      center,
+      3,
+      Paint()
+        ..color = const Color(0xFF4EA1FF)
+        ..style = PaintingStyle.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_NlGuidePainter old) => old.center != center;
+}
+
 class NetlistWirePainter extends CustomPainter {
   /// 展平后的各层（顶层 + 展开容器内部各层，含平移）。
   final List<NlLevel> levels;
@@ -6770,6 +7356,12 @@ class NetlistWirePainter extends CustomPainter {
   /// 直线预览画成虚线（编辑模式保持直线时使用）。
   final bool dashed;
 
+  /// 高亮信号名（端口/网匹配时用悬停色）。
+  final String? highlightSignal;
+
+  /// 跳转高亮的网集合（亮黄色）。
+  final Set<NlWire> highlightWires;
+
   NetlistWirePainter(
     this.levels, {
     this.hover,
@@ -6782,6 +7374,8 @@ class NetlistWirePainter extends CustomPainter {
     this.autoJunctions,
     this.hoverConst,
     this.dashed = false,
+    this.highlightSignal,
+    this.highlightWires = const {},
   });
 
   @override
@@ -6810,6 +7404,7 @@ class NetlistWirePainter extends CustomPainter {
           labels: drawLabels,
           autoRoutes: autoRoutes,
           autoJunctions: autoJunctions,
+          highlight: highlightWires,
         );
       } else {
         for (final p in lv.pins) {
@@ -6856,6 +7451,7 @@ class NetlistWirePainter extends CustomPainter {
           autoRoutes: autoRoutes,
           autoJunctions: autoJunctions,
           dashed: dashed,
+          highlight: highlightWires,
         );
         for (final p in lv.ports) {
           _paintPort(canvas, p);
@@ -6905,11 +7501,16 @@ class NetlistWirePainter extends CustomPainter {
         ..lineTo(rect.left, rect.bottom)
         ..close();
     }
-    final fill = switch (p.dir) {
-      NetlistPortDir.input => palette.portFill,
-      NetlistPortDir.output => palette.portFillOut,
-      NetlistPortDir.inout => palette.portFillInout,
-    };
+    final hotPort = highlightSignal != null &&
+        (p.port == highlightSignal ||
+            p.nets.any((n) => n.name == highlightSignal));
+    final fill = hotPort
+        ? nlJumpHighlightColor
+        : switch (p.dir) {
+            NetlistPortDir.input => palette.portFill,
+            NetlistPortDir.output => palette.portFillOut,
+            NetlistPortDir.inout => palette.portFillInout,
+          };
     canvas.drawPath(
       path,
       Paint()
@@ -6919,7 +7520,7 @@ class NetlistWirePainter extends CustomPainter {
     canvas.drawPath(
       path,
       Paint()
-        ..color = palette.portBorder
+        ..color = hotPort ? nlJumpHighlightColor : palette.portBorder
         ..style = PaintingStyle.stroke
         ..strokeWidth = _kBoxBorder,
     );
@@ -7252,6 +7853,7 @@ void paintNetlistStraightPreview(
   Map<NlWire, List<(Offset, Offset)>>? autoRoutes,
   Map<NlWire, List<Offset>>? autoJunctions,
   bool dashed = false,
+  Set<NlWire> highlight = const {},
 }) {
   if (body) {
     final line = Paint()
@@ -7261,11 +7863,14 @@ void paintNetlistStraightPreview(
       final segments = autoRoutes?[w] ?? nlStraightWireSegments(w, topology);
       if (segments.isEmpty) continue;
       final hit = active.contains(w);
+      final hot = highlight.contains(w);
       line
-        ..color = hit
+        ..color = hot
+            ? nlJumpHighlightColor
+            : hit
             ? palette.hover
             : (w.isBus ? palette.wireBus : palette.wire)
-        ..strokeWidth = nlWireStrokeWidth(w.isBus, active: hit);
+        ..strokeWidth = nlWireStrokeWidth(w.isBus, active: hit || hot);
       for (final (a, b) in segments) {
         if (dashed && autoRoutes == null) {
           _nlDrawDashedLine(canvas, a, b, line);
@@ -7306,12 +7911,14 @@ void paintNetlistStraightPreview(
   if (!labels) return;
   for (final w in wires) {
     if (!active.contains(w) || w.label.isEmpty) continue;
+    final hot = highlight.contains(w);
     final tp = TextPainter(
       text: TextSpan(
         text: w.label,
         style: TextStyle(
           fontSize: 9.5,
-          color: palette.netLabel,
+          color: hot ? nlJumpHighlightColor : palette.netLabel,
+          fontWeight: hot ? FontWeight.w700 : FontWeight.normal,
           fontFamily: palette.fontFamily,
         ),
       ),

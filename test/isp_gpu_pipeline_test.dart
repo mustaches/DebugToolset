@@ -33,11 +33,11 @@ Future<Uint16List> runShader(
   final samplers = <ui.Image>[];
   for (var i = 0; i < inputs.length; i++) {
     samplers.add(
-        await GpuPipeline.uploadPacked(inputs[i], w, h, inputChannels[i]));
+      await GpuPipeline.uploadPacked(inputs[i], w, h, inputChannels[i]),
+    );
   }
   final outTexW = w * outChannels ~/ 2;
-  final out =
-      GpuPipeline.runPass(prog, uniforms, samplers, outTexW, h);
+  final out = GpuPipeline.runPass(prog, uniforms, samplers, outTexW, h);
   final bytes = await GpuPipeline.readbackBytes(out);
   for (final s in samplers) {
     s.dispose();
@@ -84,12 +84,23 @@ void main() {
     final src = randFrame(w * h, 1);
     // mosaic：与 applyBlackLevel 的相位偏移解析一致（RGGB: 0=R,1=Gr,2=Gb,3=B）
     final cpu = Uint16List.fromList(src);
-    applyBlackLevel(cpu,
-        width: w, height: h, pattern: pattern, r: 64, gr: 62, gb: 63, b: 61);
+    applyBlackLevel(
+      cpu,
+      width: w,
+      height: h,
+      pattern: pattern,
+      r: 64,
+      gr: 62,
+      gb: 63,
+      b: 61,
+    );
     final gpuOut = await runShader(
-        prog('black_level'),
-        [w / 2, h.toDouble(), w.toDouble(), 0, 64, 62, 63, 61],
-        [src], [1], 1);
+      prog('black_level'),
+      [w / 2, h.toDouble(), w.toDouble(), 0, 64, 62, 63, 61],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuOut, cpu, 0, 'black_level mosaic');
     // mono：统一偏移
     final cpuMono = Uint16List.fromList(src);
@@ -98,9 +109,12 @@ void main() {
       cpuMono[i] = v <= 0 ? 0 : v.round();
     }
     final gpuMono = await runShader(
-        prog('black_level'),
-        [w / 2, h.toDouble(), w.toDouble(), 1, 100, 100, 100, 100],
-        [src], [1], 1);
+      prog('black_level'),
+      [w / 2, h.toDouble(), w.toDouble(), 1, 100, 100, 100, 100],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuMono, cpuMono, 0, 'black_level mono');
   });
 
@@ -126,9 +140,12 @@ void main() {
     final target = (meanGr + meanGb) / 2;
     final gainGr = target / meanGr, gainGb = target / meanGb;
     final gpuOut = await runShader(
-        prog('grgb_balance'),
-        [w / 2, h.toDouble(), w.toDouble(), gainGr, gainGb, ...pcD],
-        [src], [1], 1);
+      prog('grgb_balance'),
+      [w / 2, h.toDouble(), w.toDouble(), gainGr, gainGb, ...pcD],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuOut, cpu, 1, 'grgb_balance');
   });
 
@@ -136,9 +153,12 @@ void main() {
     final src = randFrame(w * h, 3);
     final cpu = demosaicBilinear(src, width: w, height: h, pattern: pattern);
     final gpuOut = await runShader(
-        prog('demosaic'),
-        [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), w * 3 / 2, ...pcD],
-        [src], [1], 3);
+      prog('demosaic'),
+      [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), w * 3 / 2, ...pcD],
+      [src],
+      [1],
+      3,
+    );
     expectClose(gpuOut, cpu, 0, 'demosaic');
   });
 
@@ -147,19 +167,44 @@ void main() {
     final cpu = Uint16List.fromList(src);
     applyWhiteBalance(cpu, rGain: 1.37, bGain: 0.82, maxValue: maxValue);
     final gpuOut = await runShader(
-        prog('apply_gains'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         1.37, 1.0, 0.82],
-        [src], [3], 3);
+      prog('apply_gains'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        1.37,
+        1.0,
+        0.82,
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 1, 'apply_gains（白平衡 R/B）');
     // RGB 调节器：三通道独立增益。
-    final cpu3 = adjustRgb(src,
-        maxValue: maxValue, rGain: 1.2, gGain: 0.7, bGain: 1.5);
+    final cpu3 = adjustRgb(
+      src,
+      maxValue: maxValue,
+      rGain: 1.2,
+      gGain: 0.7,
+      bGain: 1.5,
+    );
     final gpu3 = await runShader(
-        prog('apply_gains'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         1.2, 0.7, 1.5],
-        [src], [3], 3);
+      prog('apply_gains'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        1.2,
+        0.7,
+        1.5,
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpu3, cpu3, 1, 'apply_gains（RGB 调节器三通道）');
   });
 
@@ -167,36 +212,72 @@ void main() {
     final src = randFrame(w * h * 3, 5);
     final cpu = rgbToHsl(src, maxValue: maxValue);
     final gpuOut = await runShader(
-        prog('rgb2hsl'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble()],
-        [src], [3], 3);
+      prog('rgb2hsl'),
+      [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble()],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 2, 'rgb2hsl');
   });
 
   test('hsl_adjust', () async {
     final src = randFrame(w * h * 3, 6);
-    final cpu = adjustHsl(src,
-        maxValue: maxValue, hShiftDeg: 37.0, sGain: 1.2, lGain: 5.0);
+    final cpu = adjustHsl(
+      src,
+      maxValue: maxValue,
+      hShiftDeg: 37.0,
+      sGain: 1.2,
+      lGain: 5.0,
+    );
     final shift = (37.0 / 360 * maxValue).roundToDouble();
     final gpuOut = await runShader(
-        prog('hsl_adjust'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         shift, 1.2, 5.0],
-        [src], [3], 3);
+      prog('hsl_adjust'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        shift,
+        1.2,
+        5.0,
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 1, 'hsl_adjust');
   });
 
   test('hsl_band（色彩控制器）', () async {
     final src = randFrame(w * h * 3, 8);
-    final cpu = adjustHslBand(src,
-        maxValue: maxValue, hCenterDeg: 37.5, q: 7.3,
-        hShiftDeg: -42.5, sGain: 1.8, lGain: 0.6);
+    final cpu = adjustHslBand(
+      src,
+      maxValue: maxValue,
+      hCenterDeg: 37.5,
+      q: 7.3,
+      hShiftDeg: -42.5,
+      sGain: 1.8,
+      lGain: 0.6,
+    );
     // GPU 直求 exp（CPU 为 0.05° LUT 插值），容差 ±2 LSB。
     final gpuOut = await runShader(
-        prog('hsl_band'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         37.5, 45.0 / 7.3, -42.5, 1.8, 0.6],
-        [src], [3], 3);
+      prog('hsl_band'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        37.5,
+        45.0 / 7.3,
+        -42.5,
+        1.8,
+        0.6,
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 2, 'hsl_band');
   });
 
@@ -205,11 +286,16 @@ void main() {
     // uniforms：texW/texH/width/maxValue/count/mode + 8 段 × 5 参数
     //（h°、σ°=45°/q、dh°、s、l；空槽补 σ=1 的恒等段，循环按 count 截断）。
     List<double> bandsUniforms(
-        List<({double h, double q, double dh, double s, double l})> bands,
-        double mode) {
+      List<({double h, double q, double dh, double s, double l})> bands,
+      double mode,
+    ) {
       final u = <double>[
-        w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-        bands.length.toDouble(), mode,
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        bands.length.toDouble(),
+        mode,
       ];
       for (var i = 0; i < 8; i++) {
         if (i < bands.length) {
@@ -224,15 +310,31 @@ void main() {
 
     // CPU 参考：multiBandLuts 合成 LUT + 查表（与 runner 同路径）。
     Future<void> check(
-        List<({double h, double q, double dh, double s, double l})> bands,
-        bool serial, String tag) async {
-      final (shift, sMul, lMul) =
-          multiBandLuts(bands, serial: serial, maxValue: maxValue);
-      final cpu = applyHslBandLuts(src, 0, src.length ~/ 3,
-          maxValue: maxValue,
-          shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
-      final gpuOut = await runShader(prog('hsl_bands'),
-          bandsUniforms(bands, serial ? 1.0 : 0.0), [src], [3], 3);
+      List<({double h, double q, double dh, double s, double l})> bands,
+      bool serial,
+      String tag,
+    ) async {
+      final (shift, sMul, lMul) = multiBandLuts(
+        bands,
+        serial: serial,
+        maxValue: maxValue,
+      );
+      final cpu = applyHslBandLuts(
+        src,
+        0,
+        src.length ~/ 3,
+        maxValue: maxValue,
+        shiftLut: shift,
+        sMulLut: sMul,
+        lMulLut: lMul,
+      );
+      final gpuOut = await runShader(
+        prog('hsl_bands'),
+        bandsUniforms(bands, serial ? 1.0 : 0.0),
+        [src],
+        [3],
+        3,
+      );
       expectClose(gpuOut, cpu, 2, tag);
     }
 
@@ -249,25 +351,38 @@ void main() {
     // 串联两段（顺序依赖 + 乘性增益）。
     await check(two, true, 'hsl_bands 串联两段');
     // 串联色环环绕 + 恒等段参与循环（不跳过）。
-    await check([
-      (h: 350.0, q: 2.0, dh: -60.0, s: 1.0, l: 1.0),
-      (h: 100.0, q: 2.0, dh: 0.0, s: 1.0, l: 1.0),
-    ], true, 'hsl_bands 串联环绕+恒等段');
+    await check(
+      [
+        (h: 350.0, q: 2.0, dh: -60.0, s: 1.0, l: 1.0),
+        (h: 100.0, q: 2.0, dh: 0.0, s: 1.0, l: 1.0),
+      ],
+      true,
+      'hsl_bands 串联环绕+恒等段',
+    );
     // 并联 clamp：两段同中心 dh 180+180 → 钳位 180°；s 5+5 → 钳位 ×5。
-    await check([
-      (h: 0.0, q: 2.0, dh: 180.0, s: 5.0, l: 5.0),
-      (h: 0.0, q: 2.0, dh: 180.0, s: 5.0, l: 5.0),
-    ], false, 'hsl_bands 并联 clamp');
+    await check(
+      [
+        (h: 0.0, q: 2.0, dh: 180.0, s: 5.0, l: 5.0),
+        (h: 0.0, q: 2.0, dh: 180.0, s: 5.0, l: 5.0),
+      ],
+      false,
+      'hsl_bands 并联 clamp',
+    );
   });
 
   test('rgba8_to_rgb16（流式源重排）', () async {
-    final rgba = Uint8List.fromList(
-        [for (final v in randFrame(w * h * 4, 9)) v % 256]);
+    final rgba = Uint8List.fromList([
+      for (final v in randFrame(w * h * 4, 9)) v % 256,
+    ]);
     final cpu = rgba8ToRgb16(rgba, w, h, maxValue).$1;
     final srcTex = await GpuPipeline.uploadRgba8(rgba, w, h);
-    final out = GpuPipeline.runPass(prog('rgba8_to_rgb16'),
-        [w.toDouble(), h.toDouble(), w * 3 / 2, maxValue.toDouble()],
-        [srcTex], w * 3 ~/ 2, h);
+    final out = GpuPipeline.runPass(
+      prog('rgba8_to_rgb16'),
+      [w.toDouble(), h.toDouble(), w * 3 / 2, maxValue.toDouble()],
+      [srcTex],
+      w * 3 ~/ 2,
+      h,
+    );
     final bytes = await GpuPipeline.readbackBytes(out);
     srcTex.dispose();
     out.dispose();
@@ -275,8 +390,9 @@ void main() {
   });
 
   test('yuv420p_to_hsl16（420 直传融合 CSC）', () async {
-    final yuv = Uint8List.fromList(
-        [for (final v in randFrame(w * h * 3 ~/ 2, 10)) v % 256]);
+    final yuv = Uint8List.fromList([
+      for (final v in randFrame(w * h * 3 ~/ 2, 10)) v % 256,
+    ]);
     // CPU 参照：BT.601 limited→full 钳位取整到 0..maxValue 后 rgbToHsl
     final rgb16 = Uint16List(w * h * 3);
     for (var px = 0; px < w * h; px++) {
@@ -297,10 +413,21 @@ void main() {
     }
     final cpu = rgbToHsl(rgb16, maxValue: maxValue);
     final srcTex = await GpuPipeline.uploadRgba8(yuv, w ~/ 4, h * 3 ~/ 2);
-    final out = GpuPipeline.runPass(prog('yuv420p_to_hsl16'),
-        [w / 4, h * 3 / 2, w * 3 / 2, w.toDouble(), h.toDouble(),
-         maxValue.toDouble(), 1.0],
-        [srcTex], w * 3 ~/ 2, h);
+    final out = GpuPipeline.runPass(
+      prog('yuv420p_to_hsl16'),
+      [
+        w / 4,
+        h * 3 / 2,
+        w * 3 / 2,
+        w.toDouble(),
+        h.toDouble(),
+        maxValue.toDouble(),
+        1.0,
+      ],
+      [srcTex],
+      w * 3 ~/ 2,
+      h,
+    );
     final bytes = await GpuPipeline.readbackBytes(out);
     srcTex.dispose();
     out.dispose();
@@ -309,8 +436,9 @@ void main() {
 
   test('yuv420p_to_rgb16（420 直传 CSC）', () async {
     // 构造 yuv420p 平面帧：Y 全尺寸 + U/V 四分之一尺寸
-    final yuv = Uint8List.fromList(
-        [for (final v in randFrame(w * h * 3 ~/ 2, 10)) v % 256]);
+    final yuv = Uint8List.fromList([
+      for (final v in randFrame(w * h * 3 ~/ 2, 10)) v % 256,
+    ]);
     // CPU 参照（与 shader 同一 BT.601 公式；limited 范围扩展）
     final cpu = Uint16List(w * h * 3);
     for (var px = 0; px < w * h; px++) {
@@ -329,10 +457,21 @@ void main() {
       }
     }
     final srcTex = await GpuPipeline.uploadRgba8(yuv, w ~/ 4, h * 3 ~/ 2);
-    final out = GpuPipeline.runPass(prog('yuv420p_to_rgb16'),
-        [w / 4, h * 3 / 2, w * 3 / 2, w.toDouble(), h.toDouble(),
-         maxValue.toDouble(), 1.0],
-        [srcTex], w * 3 ~/ 2, h);
+    final out = GpuPipeline.runPass(
+      prog('yuv420p_to_rgb16'),
+      [
+        w / 4,
+        h * 3 / 2,
+        w * 3 / 2,
+        w.toDouble(),
+        h.toDouble(),
+        maxValue.toDouble(),
+        1.0,
+      ],
+      [srcTex],
+      w * 3 ~/ 2,
+      h,
+    );
     final bytes = await GpuPipeline.readbackBytes(out);
     srcTex.dispose();
     out.dispose();
@@ -343,10 +482,18 @@ void main() {
     final src = randFrame(w * h * 3, 7);
     final cpu = hslToYuv(src, maxValue: maxValue);
     final gpuOut = await runShader(
-        prog('hsl2yuv'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         (maxValue >> 1).toDouble()],
-        [src], [3], 3);
+      prog('hsl2yuv'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        (maxValue >> 1).toDouble(),
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 2, 'hsl2yuv');
   });
 
@@ -357,18 +504,27 @@ void main() {
       cpu[i] = src[i * 3];
     }
     final gpuOut = await runShader(
-        prog('extract_channel'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), 0, w / 2],
-        [src], [3], 1);
+      prog('extract_channel'),
+      [w * 3 / 2, h.toDouble(), w.toDouble(), 0, w / 2],
+      [src],
+      [3],
+      1,
+    );
     expectClose(gpuOut, cpu, 0, 'extract_channel');
   });
 
   test('clahe_apply（mono）', () async {
     final src = randFrame(w * h, 9);
     final cpu = Uint16List.fromList(src);
-    applyClaheMono(cpu,
-        width: w, height: h,
-        blockSize: 4, clipLimit: 2.0, strength: 1.0, maxValue: maxValue);
+    applyClaheMono(
+      cpu,
+      width: w,
+      height: h,
+      blockSize: 4,
+      clipLimit: 2.0,
+      strength: 1.0,
+      maxValue: maxValue,
+    );
     // 与 runner 相同的 LUT 量化路径。
     final luts = claheTileLuts(src, w, h, 4, 2.0, maxValue);
     final lut16 = Uint16List(4 * 3 * 256); // tilesX=4, tilesY=3
@@ -382,13 +538,31 @@ void main() {
     final lutPadded = Uint16List(lutTexH * lutTexW * 2);
     lutPadded.setRange(0, lut16.length, lut16);
     final monoTex = await GpuPipeline.uploadPacked(src, w, h, 1);
-    final lutTex =
-        await GpuPipeline.uploadPacked(lutPadded, lutTexW * 2, lutTexH, 1);
-    final out = GpuPipeline.runPass(prog('clahe_apply'), [
-      w / 2, h.toDouble(), w.toDouble(), h.toDouble(),
-      4, 4, 3, 1.0, maxValue.toDouble(),
-      lutTexW.toDouble(), lutTexH.toDouble(),
-    ], [monoTex, lutTex], w ~/ 2, h);
+    final lutTex = await GpuPipeline.uploadPacked(
+      lutPadded,
+      lutTexW * 2,
+      lutTexH,
+      1,
+    );
+    final out = GpuPipeline.runPass(
+      prog('clahe_apply'),
+      [
+        w / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        4,
+        4,
+        3,
+        1.0,
+        maxValue.toDouble(),
+        lutTexW.toDouble(),
+        lutTexH.toDouble(),
+      ],
+      [monoTex, lutTex],
+      w ~/ 2,
+      h,
+    );
     final bytes = await GpuPipeline.readbackBytes(out);
     monoTex.dispose();
     lutTex.dispose();
@@ -408,26 +582,47 @@ void main() {
       cpu[i * 3 + 2] = v[i];
     }
     final gpuOut = await runShader(
-        prog('combine_3ch'),
-        [w / 2, h.toDouble(), 1, 1, 1, 0, 0, 0, w * 3 / 2],
-        [y, u, v], [1, 1, 1], 3);
+      prog('combine_3ch'),
+      [w / 2, h.toDouble(), 1, 1, 1, 0, 0, 0, w * 3 / 2],
+      [y, u, v],
+      [1, 1, 1],
+      3,
+    );
     expectClose(gpuOut, cpu, 0, 'combine_3ch yuv 三路');
   });
 
   test('csc_yuv2rgb', () async {
     final src = randFrame(w * h * 3, 12);
     final cpu = yuvToRgb(src, maxValue: maxValue);
+    // 着色器系数为可配置标准（uCrV/uCgU/uCgV/uCbU，Q16/65536）：CPU 参考
+    // 默认 BT.601，这里必须显式传同一组系数，否则 uniform 恒 0、输出全错。
+    final yc = yuvToRgbCoefficients('bt601');
     final gpuOut = await runShader(
-        prog('yuv2rgb'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         (maxValue >> 1).toDouble()],
-        [src], [3], 3);
+      prog('yuv2rgb'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        (maxValue >> 1).toDouble(),
+        yc.crV / 65536.0,
+        yc.cgU / 65536.0,
+        yc.cgV / 65536.0,
+        yc.cbU / 65536.0,
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 2, 'yuv2rgb');
   });
 
   test('tonemap（rgb / mono / yuv / hsl）', () async {
-    Future<Uint8List> tonemap(List<double> uniforms, Uint16List src,
-        int channels) async {
+    Future<Uint8List> tonemap(
+      List<double> uniforms,
+      Uint16List src,
+      int channels,
+    ) async {
       final tex = await GpuPipeline.uploadPacked(src, w, h, channels);
       final out = GpuPipeline.runPass(prog('tonemap'), uniforms, [tex], w, h);
       final bytes = await GpuPipeline.readbackBytes(out);
@@ -453,49 +648,110 @@ void main() {
     // rgb
     final rgb = randFrame(w * h * 3, 13);
     expectRgbaClose(
-        await tonemap(
-            [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             0, inv, 0, 1, half, step], rgb, 3),
-        tonemapToRgba(rgb, maxValue: maxValue, gamma: 2.2),
-        'tonemap rgb');
+      await tonemap(
+        [
+          w * 3 / 2,
+          h.toDouble(),
+          w.toDouble(),
+          maxValue.toDouble(),
+          0,
+          inv,
+          0,
+          1,
+          half,
+          step,
+        ],
+        rgb,
+        3,
+      ),
+      tonemapToRgba(rgb, maxValue: maxValue, gamma: 2.2),
+      'tonemap rgb',
+    );
     // mono
     final mono = randFrame(w * h, 14);
     expectRgbaClose(
-        await tonemap(
-            [w / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             1, inv, 0, 1, half, step], mono, 1),
-        monoToRgba(mono, maxValue: maxValue, gamma: 2.2),
-        'tonemap mono');
+      await tonemap(
+        [
+          w / 2,
+          h.toDouble(),
+          w.toDouble(),
+          maxValue.toDouble(),
+          1,
+          inv,
+          0,
+          1,
+          half,
+          step,
+        ],
+        mono,
+        1,
+      ),
+      monoToRgba(mono, maxValue: maxValue, gamma: 2.2),
+      'tonemap mono',
+    );
     // yuv
     final yuv = randFrame(w * h * 3, 15);
     expectRgbaClose(
-        await tonemap(
-            [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             2, inv, 0, 1, half, step], yuv, 3),
-        yuvToRgba(yuv, maxValue: maxValue, gamma: 2.2),
-        'tonemap yuv');
+      await tonemap(
+        [
+          w * 3 / 2,
+          h.toDouble(),
+          w.toDouble(),
+          maxValue.toDouble(),
+          2,
+          inv,
+          0,
+          1,
+          half,
+          step,
+        ],
+        yuv,
+        3,
+      ),
+      yuvToRgba(yuv, maxValue: maxValue, gamma: 2.2),
+      'tonemap yuv',
+    );
     // hsl
     final hsl = randFrame(w * h * 3, 16);
     expectRgbaClose(
-        await tonemap(
-            [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             3, inv, 0, 1, half, step], hsl, 3),
-        tonemapToRgba(hslToRgb(hsl, maxValue: maxValue),
-            maxValue: maxValue, gamma: 2.2),
-        'tonemap hsl');
+      await tonemap(
+        [
+          w * 3 / 2,
+          h.toDouble(),
+          w.toDouble(),
+          maxValue.toDouble(),
+          3,
+          inv,
+          0,
+          1,
+          half,
+          step,
+        ],
+        hsl,
+        3,
+      ),
+      tonemapToRgba(
+        hslToRgb(hsl, maxValue: maxValue),
+        maxValue: maxValue,
+        gamma: 2.2,
+      ),
+      'tonemap hsl',
+    );
   });
 
   test('isSupportedChain 判定', () {
     Map<String, Object?> src() => {
-          'typeId': 'cis_bayer_rggb',
-          'nodeId': 'n1',
-          'params': {'width': 4096, 'height': 3072},
-          'inputs': <String, Object?>{},
-        };
-    Map<String, Object?> op(String id, String type,
-            [Map<String, Object?> inputs = const {},
-            Map<String, Object?> params = const {}]) =>
-        {'nodeId': id, 'typeId': type, 'params': params, 'inputs': inputs};
+      'typeId': 'cis_bayer_rggb',
+      'nodeId': 'n1',
+      'params': {'width': 4096, 'height': 3072},
+      'inputs': <String, Object?>{},
+    };
+    Map<String, Object?> op(
+      String id,
+      String type, [
+      Map<String, Object?> inputs = const {},
+      Map<String, Object?> params = const {},
+    ]) => {'nodeId': id, 'typeId': type, 'params': params, 'inputs': inputs};
     final ok = [
       src(),
       op('n2', 'demosaic', {}, {'algorithm': 'bilinear'}),
@@ -510,7 +766,7 @@ void main() {
       op('n3', 'preview'),
     ];
     expect(GpuPipeline.isSupportedChain(colorTemp), isTrue);
-    // 色彩控制器（HSL 高斯带）支持：视频源 → rgb2hsl → color_controller → 预览
+    // 多段色彩均衡器（HSL 高斯带）支持：视频源 → rgb2hsl → multi_band_eq → 预览
     final colorCtrl = [
       {
         'typeId': 'video_source',
@@ -519,8 +775,11 @@ void main() {
         'inputs': <String, Object?>{},
       },
       op('n2', 'csc_rgb2hsl'),
-      op('n4', 'color_controller', {},
-          {'h_center': 27.0, 'q': 9.4, 'h_shift': -30.0}),
+      op('n4', 'multi_band_eq', {}, {
+        'b0_h': 27.0,
+        'b0_q': 9.4,
+        'b0_dh': -30.0,
+      }),
       op('n3', 'preview'),
     ];
     expect(GpuPipeline.isSupportedChain(colorCtrl), isTrue);
@@ -534,7 +793,8 @@ void main() {
     // 奇数宽不支持
     final oddW = [
       {
-        'typeId': 'cis_bayer_rggb', 'nodeId': 'n1',
+        'typeId': 'cis_bayer_rggb',
+        'nodeId': 'n1',
         'params': {'width': 4095, 'height': 3072},
         'inputs': <String, Object?>{},
       },

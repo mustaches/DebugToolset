@@ -59,6 +59,11 @@ class NlLayeredLayoutResult {
 /// - [sequential]：可选，标记时序单元（DFF 等）。当前实现按回边统一处理，
 ///   该参数保留给后续“寄存器边界优先”策略。
 /// - [maxColumns]：列数上限（≥1）。
+/// - [maxRowsPerColumn]：每列行数上限（0 = 不拆分）。超长列按行序拆分为
+///   多个相邻列（层数 ≤ maxColumns 时压列 DP 不运行，宽层原样超高——
+///   func_fixed 段单元流水核心 74 单元单层的教训）；拆分保持相对行序，
+///   不破坏“前向边至少跨一列”的分层不变量。默认 11：一列至多 11 个
+///   元件，竖向可读性优先。
 /// - [sift]：排序后是否执行 Sifting（单节点挪到列内最优位置）；大图默认
 ///   受预算上限保护，超限自动跳过。
 /// - [balance]：最长路径分层后做“层平衡”坐标下降（只在前向边上移动节点，
@@ -68,6 +73,7 @@ NlLayeredLayoutResult layoutLayeredNetlist({
   required List<(int, int)> edges,
   List<bool>? sequential,
   int maxColumns = 12,
+  int maxRowsPerColumn = 11,
   bool sift = true,
   bool balance = true,
 }) {
@@ -159,6 +165,16 @@ NlLayeredLayoutResult layoutLayeredNetlist({
   // ---- 层内排序 ----
   _orderColumns(order, column, succList, predList);
   if (sift) _siftColumns(order, succList);
+
+  // ---- 拆列：超行数上限的列按行序拆为多个相邻列 ----
+  if (maxRowsPerColumn > 0) {
+    columnCount = _splitTallColumns(order, maxRowsPerColumn);
+    for (var c = 0; c < columnCount; c++) {
+      for (final n in order[c]!) {
+        column[n] = c;
+      }
+    }
+  }
   final crossing = _totalCrossings(order, succList);
 
   // 诊断：跨列边数。
@@ -306,6 +322,37 @@ void _balanceLayers(
     }
   }
   return (group: group, count: boundaries.length);
+}
+
+/// 拆列：行数超 [cap] 的列按当前行序拆为多个相邻列（保持相对行序；
+/// 前向边在拆分后仍全部跨列——分层布局无同层边，拆分只把部分边的
+/// 起点右移一列以上）。返回新的列数。
+int _splitTallColumns(Map<int, List<int>> order, int cap) {
+  final cols = order.keys.toList()..sort();
+  var needsSplit = false;
+  for (final c in cols) {
+    if (order[c]!.length > cap) {
+      needsSplit = true;
+      break;
+    }
+  }
+  if (!needsSplit) return cols.length;
+  final next = <int, List<int>>{};
+  var nc = 0;
+  for (final c in cols) {
+    final nodes = order[c]!;
+    if (nodes.length <= cap) {
+      next[nc++] = nodes;
+      continue;
+    }
+    for (var i = 0; i < nodes.length; i += cap) {
+      next[nc++] = nodes.sublist(i, math.min(i + cap, nodes.length));
+    }
+  }
+  order
+    ..clear()
+    ..addAll(next);
+  return nc;
 }
 
 /// 中位数启发式 + 相邻交换；全程保留交叉数最优的列顺序快照。

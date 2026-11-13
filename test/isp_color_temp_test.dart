@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:debug_tool_set/modules/isp_studio/models/isp_node.dart';
 import 'package:debug_tool_set/modules/isp_studio/pipeline/color_temp.dart';
+import 'package:debug_tool_set/modules/isp_studio/pipeline/isp_kernels.dart';
+import 'package:debug_tool_set/modules/isp_studio/widgets/node_property_panel.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_widget.dart';
 import 'package:debug_tool_set/providers/isp_studio_state.dart';
 import 'package:flutter/material.dart';
@@ -55,8 +57,11 @@ void main() {
       }
 
       final neutral = measureCctFromRgba(frame(128, 128, 128), 16, 16)!;
-      expect(neutral, inInclusiveRange(4000, 7000),
-          reason: '中性灰的 McCamy 估计应落在常见日光范围');
+      expect(
+        neutral,
+        inInclusiveRange(4000, 7000),
+        reason: '中性灰的 McCamy 估计应落在常见日光范围',
+      );
       final warm = measureCctFromRgba(frame(200, 140, 60), 16, 16)!;
       final cool = measureCctFromRgba(frame(60, 140, 200), 16, 16)!;
       expect(warm, lessThan(neutral));
@@ -68,6 +73,35 @@ void main() {
   });
 
   group('color_temp_adjuster 节点', () {
+    test('代码生成方式提供四档，Q14 与 FP64 偏差不超过 1 LSB', () {
+      final type = IspNodeRegistry.byId('color_temp_adjuster')!;
+      final mode = type.params.singleWhere((p) => p.key == 'codegenMode');
+      expect(mode.options, ['func', 'func_fixed', 'lut', 'lut_fixed']);
+
+      final gains = colorTempGains(4200, 6500);
+      final input = Uint16List.fromList(
+        List<int>.generate(256 * 3, (i) => (i * 37) & 255),
+      );
+      final fp64 = adjustRgb(
+        input,
+        maxValue: 255,
+        rGain: gains[0],
+        gGain: gains[1],
+        bGain: gains[2],
+      );
+      final fixed = applyAdjustQ14Gain3(input, gains, maxValue: 255);
+      for (var i = 0; i < input.length; i++) {
+        expect((fixed[i] - fp64[i]).abs(), lessThanOrEqualTo(1));
+      }
+      final viaLut = applyAdjustLut3(
+        input,
+        adjustQ14GainLut(gains[0], 255),
+        adjustQ14GainLut(gains[1], 255),
+        adjustQ14GainLut(gains[2], 255),
+      );
+      expect(viaLut, equals(fixed));
+    });
+
     test('流水线集成：测量显示为按钮，点击后滑块设为测量值', () async {
       final state = IspStudioState();
       addTearDown(state.dispose);
@@ -80,11 +114,15 @@ void main() {
 
       Future<int> blueSum() async {
         await state.runPreview();
-        expect(state.statusMessage, contains('预览就绪'),
-            reason: '预览应成功: ${state.statusMessage}');
+        expect(
+          state.statusMessage,
+          contains('预览就绪'),
+          reason: '预览应成功: ${state.statusMessage}',
+        );
         final img = state.previewImages[pvId]!;
-        final byteData =
-            await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+        final byteData = await img.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
         final px = byteData!.buffer.asUint8List();
         var sum = 0;
         for (var i = 0; i < px.length; i += 4) {
@@ -98,8 +136,11 @@ void main() {
       final measured = state.measuredColorTemps[ctId];
       expect(measured, isNotNull, reason: '应自动测量输入色温');
       final node = state.graph.nodes[ctId]!;
-      expect((node.paramValues['temperature'] as num).round(), 6500,
-          reason: '测量只更新显示，不应改动滑块');
+      expect(
+        (node.paramValues['temperature'] as num).round(),
+        6500,
+        reason: '测量只更新显示，不应改动滑块',
+      );
       // 调整前/调整后预览图与调整后 RGB 直方图都应生成。
       expect(state.previewImages[ctId], isNotNull);
       expect(state.previewInputImages[ctId], isNotNull);
@@ -109,18 +150,26 @@ void main() {
 
       // 点击测量值按钮：滑块设为测量值，参考基准同步（增益恒等）。
       await state.applyMeasuredColorTemp(ctId);
-      expect((node.paramValues['temperature'] as num).round(), measured,
-          reason: '点击测量值后滑块应设为测量值');
-      expect(node.paramValues['measured_cct'], measured,
-          reason: '参考色温应一并设为测量值');
+      expect(
+        (node.paramValues['temperature'] as num).round(),
+        measured,
+        reason: '点击测量值后滑块应设为测量值',
+      );
+      expect(
+        node.paramValues['measured_cct'],
+        measured,
+        reason: '参考色温应一并设为测量值',
+      );
 
       // 手动调高目标色温（偏冷）：B 通道总和应上升，且滑块不被测量覆盖。
       final target = (measured! + 3000).clamp(1800, 12000).toDouble();
       state.setParam(ctId, 'temperature', target);
       final shifted = await blueSum();
-      expect((node.paramValues['temperature'] as num).round(),
-          target.round(),
-          reason: '手动设定后滑块不应被测量覆盖');
+      expect(
+        (node.paramValues['temperature'] as num).round(),
+        target.round(),
+        reason: '手动设定后滑块不应被测量覆盖',
+      );
       expect(shifted, greaterThan(base), reason: '调高目标色温应偏冷（B 增）');
     });
 
@@ -130,24 +179,26 @@ void main() {
       final id = state.graph.addNode('color_temp_adjuster', 0, 0);
       final node = state.graph.nodes[id]!;
       final type = IspNodeRegistry.byId('color_temp_adjuster')!;
-      await tester.pumpWidget(MaterialApp(
-        home: ChangeNotifierProvider.value(
-          value: state,
-          child: Scaffold(
-            body: Center(
-              child: IspNodeWidget(
-                node: node,
-                type: type,
-                selected: false,
-                globalToCanvas: (o) => o,
-                onConnectionDragEnd: () {},
-                onToggleMaximize: () {},
-                inputPortKeyFor: (p) => GlobalKey(),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChangeNotifierProvider.value(
+            value: state,
+            child: Scaffold(
+              body: Center(
+                child: IspNodeWidget(
+                  node: node,
+                  type: type,
+                  selected: false,
+                  globalToCanvas: (o) => o,
+                  onConnectionDragEnd: () {},
+                  onToggleMaximize: () {},
+                  inputPortKeyFor: (p) => GlobalKey(),
+                ),
               ),
             ),
           ),
         ),
-      ));
+      );
 
       expect(find.text('1800K'), findsOneWidget);
       expect(find.text('12000K'), findsOneWidget);
@@ -157,14 +208,18 @@ void main() {
       expect(find.text('调整前'), findsOneWidget);
       expect(find.text('调整后'), findsOneWidget);
       expect(find.byType(Slider), findsOneWidget);
+      // 播放控制条（视频预览）：播放按钮常显；未播放且无总帧数时不出进度滑条，
+      // 所以上面 Slider 仍只有一个（色温滑杆）。
+      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
       // 恒等（未测量按 6500 参考，目标 6500）：CCM 对角 3 个 1.000，
       // 非对角 6 个 0.000（9 个长方框）。
       expect(find.text('1.000'), findsNWidgets(3));
       expect(find.text('0.000'), findsNWidgets(6));
 
-      // 默认尺寸：宽度加倍、附加区与显示类调节器一致（280）。
+      // 默认尺寸：宽度加倍；附加区 306 = 温度行 24 + 滑杆 24 + 底行 64 +
+      // 播放控制条 26 + 顶部留白 4 + 手柄 10 + 双联预览 154。
       expect(node.width, kNodeWidth * 2);
-      expect(node.extraHeight, 280);
+      expect(node.extraHeight, 306);
     });
 
     testWidgets('点击测量值按钮：滑块设为测量值', (tester) async {
@@ -175,32 +230,36 @@ void main() {
       final type = IspNodeRegistry.byId('color_temp_adjuster')!;
       // 模拟一次运行后的测量结果。
       state.measuredColorTemps[id] = 4320;
-      await tester.pumpWidget(MaterialApp(
-        home: ChangeNotifierProvider.value(
-          value: state,
-          child: Scaffold(
-            body: Center(
-              child: IspNodeWidget(
-                node: node,
-                type: type,
-                selected: false,
-                globalToCanvas: (o) => o,
-                onConnectionDragEnd: () {},
-                onToggleMaximize: () {},
-                inputPortKeyFor: (p) => GlobalKey(),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChangeNotifierProvider.value(
+            value: state,
+            child: Scaffold(
+              body: Center(
+                child: IspNodeWidget(
+                  node: node,
+                  type: type,
+                  selected: false,
+                  globalToCanvas: (o) => o,
+                  onConnectionDragEnd: () {},
+                  onToggleMaximize: () {},
+                  inputPortKeyFor: (p) => GlobalKey(),
+                ),
               ),
             ),
           ),
         ),
-      ));
+      );
 
       expect(find.text('测量: 4320 K'), findsOneWidget);
       await tester.tap(find.text('测量: 4320 K'));
       await tester.pump();
-      expect((node.paramValues['temperature'] as num).round(), 4320,
-          reason: '点击测量值后滑块应设为测量值');
-      expect(node.paramValues['measured_cct'], 4320,
-          reason: '参考色温应一并设为测量值');
+      expect(
+        (node.paramValues['temperature'] as num).round(),
+        4320,
+        reason: '点击测量值后滑块应设为测量值',
+      );
+      expect(node.paramValues['measured_cct'], 4320, reason: '参考色温应一并设为测量值');
     });
 
     testWidgets('右下角直方图区有数据时尺寸非零', (tester) async {
@@ -212,31 +271,71 @@ void main() {
       // 模拟一次运行后的直方图数据。
       final hist = Uint32List(256)..[128] = 100;
       state.colorTempHistograms[id] = (hist, hist, hist);
-      await tester.pumpWidget(MaterialApp(
-        home: ChangeNotifierProvider.value(
-          value: state,
-          child: Scaffold(
-            body: Center(
-              child: IspNodeWidget(
-                node: node,
-                type: type,
-                selected: false,
-                globalToCanvas: (o) => o,
-                onConnectionDragEnd: () {},
-                onToggleMaximize: () {},
-                inputPortKeyFor: (p) => GlobalKey(),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChangeNotifierProvider.value(
+            value: state,
+            child: Scaffold(
+              body: Center(
+                child: IspNodeWidget(
+                  node: node,
+                  type: type,
+                  selected: false,
+                  globalToCanvas: (o) => o,
+                  onConnectionDragEnd: () {},
+                  onToggleMaximize: () {},
+                  inputPortKeyFor: (p) => GlobalKey(),
+                ),
               ),
             ),
           ),
         ),
-      ));
+      );
 
       final histArea = find.byKey(const ValueKey('colorTempHist'));
       expect(histArea, findsOneWidget);
       final size = tester.getSize(histArea);
       expect(size.width, greaterThan(0));
-      expect(size.height, greaterThan(0),
-          reason: '有数据时直方图区不应塌缩为 0');
+      expect(size.height, greaterThan(0), reason: '有数据时直方图区不应塌缩为 0');
+    });
+  });
+
+  group('color_temp 整数化与参数面板输出', () {
+    test('载入流程：目标/参考色温归一化为整数开尔文', () async {
+      final state = IspStudioState();
+      addTearDown(state.dispose);
+      await state.importGraphFromFile('IspFlow/IP_Gen_flow/ClrTempAdj.ispflow');
+      final node = state.graph.nodes.values
+          .firstWhere((n) => n.typeId == 'color_temp_adjuster');
+      expect(node.paramValues['temperature'], isA<int>(),
+          reason: '目标色温应为整数');
+      expect(node.paramValues['measured_cct'], isA<int>(),
+          reason: '参考色温应为整数');
+    });
+
+    testWidgets('右侧参数面板显示色温测试输出（测量/参考/增益/CCM）', (tester) async {
+      final state = IspStudioState();
+      addTearDown(state.dispose);
+      final id = state.graph.addNode('color_temp_adjuster', 0, 0);
+      state.setParam(id, 'temperature', 5000);
+      state.setParam(id, 'measured_cct', 6500);
+      state.measuredColorTemps[id] = 4620;
+      state.selectNode(id);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChangeNotifierProvider.value(
+            value: state,
+            child: const Scaffold(body: NodePropertyPanel()),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('运行输出（只读）'), findsOneWidget);
+      expect(find.text('4620 K'), findsOneWidget, reason: '测量色温应显示');
+      expect(find.text('5000 K'), findsOneWidget, reason: '目标色温应显示');
+      expect(find.text('6500 K'), findsOneWidget, reason: '参考色温应显示');
+      expect(find.text('CCM 3×3'), findsOneWidget);
+      expect(find.text('目标 = 测量值'), findsOneWidget);
     });
   });
 }

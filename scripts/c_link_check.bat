@@ -5,8 +5,8 @@ rem on this machine), additionally setting LIB for linking.
 rem usage: c_link_check.bat <out.exe> <file1.c> [file2.c ...]
 rem   (paths Windows-style; .obj intermediates go to %TEMP%\isp_bb_objs_<exename>)
 setlocal
-rem MSVC 探测：vswhere（版本无关，VS2026 的 "18" 目录也可定位）→
-rem 目录枚举兜底（任意年份/SKU）→ 历史硬编码根。
+rem MSVC discovery: vswhere (version-agnostic; also covers the VS2026 "18" dir)
+rem -> directory scan fallback (any year/SKU) -> historic hardcoded roots.
 set "VSROOT="
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if exist "%VSWHERE%" (
@@ -47,7 +47,12 @@ if not defined SDKVER (
 set "PATH=%MSVC%\bin\Hostx64\x64;%PATH%"
 set "INCLUDE=%MSVC%\include;%SDKINC%\%SDKVER%\ucrt;%SDKINC%\%SDKVER%\um;%SDKINC%\%SDKVER%\shared"
 set "LIB=%MSVC%\lib\x64;%SDKLIB%\%SDKVER%\ucrt\x64;%SDKLIB%\%SDKVER%\um\x64"
-set "OBJDIR=%TEMP%\isp_bb_objs_%~n1"
+rem Unique object dir per output path: parallel test files otherwise share one
+rem dir and link each other's (stale) .obj files -> flaky numeric A/B results.
+set "OBJTAG=%~p1"
+set "OBJTAG=%OBJTAG::=_%"
+set "OBJTAG=%OBJTAG:\=_%"
+set "OBJDIR=%TEMP%\isp_bb_objs_%~n1%OBJTAG%"
 if not exist "%OBJDIR%" mkdir "%OBJDIR%"
 set "OUT=%~1"
 set "FILES="

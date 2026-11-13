@@ -29,8 +29,9 @@ Future<Uint16List> runShader(
 ) async {
   final samplers = <ui.Image>[];
   for (var i = 0; i < inputs.length; i++) {
-    samplers
-        .add(await GpuPipeline.uploadPacked(inputs[i], w, h, inputChannels[i]));
+    samplers.add(
+      await GpuPipeline.uploadPacked(inputs[i], w, h, inputChannels[i]),
+    );
   }
   final outTexW = w * outChannels ~/ 2;
   final out = GpuPipeline.runPass(prog, uniforms, samplers, outTexW, h);
@@ -74,22 +75,19 @@ void main() {
   // csc_rgb2yuv 的浮点系数（与 runner._rgb2yuvCscUniforms 同源）。
   List<double> cscUniforms(String standard, String range) {
     const q = 1.0 / 65536;
-    var cyR = 19595 * q, cyG = 38470 * q, cyB = 7471 * q;
-    var cuR = -11058 * q, cuG = -21710 * q, cvG = -27439 * q, cvB = -5329 * q;
-    if (standard == 'bt709') {
-      cyR = 13933 * q;
-      cyG = 46871 * q;
-      cyB = 4732 * q;
-      cuR = -7509 * q;
-      cuG = -25260 * q;
-      cvG = -29759 * q;
-      cvB = -3009 * q;
-    }
+    final c = rgbToYuvCoefficients(standard);
     final offY = ((maxValue * 16 + 127) ~/ 255).toDouble();
     return [
       (maxValue >> 1).toDouble(),
-      cyR, cyG, cyB, cuR, cuG, cvG, cvB,
-      offY, range == 'limited' ? 1.0 : 0.0,
+      c.cyR * q,
+      c.cyG * q,
+      c.cyB * q,
+      c.cuR * q,
+      c.cuG * q,
+      c.cvG * q,
+      c.cvB * q,
+      offY,
+      range == 'limited' ? 1.0 : 0.0,
     ];
   }
 
@@ -108,14 +106,29 @@ void main() {
       }
     }
     final cpu = Uint16List.fromList(src);
-    applyDpc(cpu,
-        width: w, height: h,
-        pattern: pattern, threshold: 5.0, mode: 'median', maxValue: maxValue);
+    applyDpc(
+      cpu,
+      width: w,
+      height: h,
+      pattern: pattern,
+      threshold: 5.0,
+      mode: 'median',
+      maxValue: maxValue,
+    );
     final gpuOut = await runShader(
-        prog('dpc'),
-        [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), 2,
-         5.0 / 100 * maxValue],
-        [src], [1], 1);
+      prog('dpc'),
+      [
+        w / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        2,
+        5.0 / 100 * maxValue,
+      ],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuOut, cpu, 0, 'dpc');
   });
 
@@ -123,8 +136,13 @@ void main() {
     // applyFpn 的中位数已改桶计数；这里用「排序取中位」的直白参考实现
     //（逐字对齐 CPU 语义：截断盒式均值 + 膨胀梯度掩膜 + 行/列中位数
     // 限幅扣除）在合成帧上验证最终结果逐点一致。
-    Uint16List fpnSortRef(Uint16List src, int w, int h,
-        {double maxCorr = 64, int radius = 8}) {
+    Uint16List fpnSortRef(
+      Uint16List src,
+      int w,
+      int h, {
+      double maxCorr = 64,
+      int radius = 8,
+    }) {
       final buf = Uint16List.fromList(src);
       double clampCorr(num c) =>
           c < -maxCorr ? -maxCorr : (c > maxCorr ? maxCorr : c).toDouble();
@@ -180,18 +198,25 @@ void main() {
     final src = Uint16List(w * h);
     for (var y = 0; y < h; y++) {
       for (var x = 0; x < w; x++) {
-        src[y * w + x] = (3000 +
-                (x * 3 + y * 5) % 50 +
-                (y.isOdd ? 30 : 0) +
-                (x % 5 == 0 ? 20 : 0) +
-                (x >= w ~/ 2 ? 500 : 0))
-            .clamp(0, maxValue);
+        src[y * w + x] =
+            (3000 +
+                    (x * 3 + y * 5) % 50 +
+                    (y.isOdd ? 30 : 0) +
+                    (x % 5 == 0 ? 20 : 0) +
+                    (x >= w ~/ 2 ? 500 : 0))
+                .clamp(0, maxValue);
       }
     }
     final cpu = Uint16List.fromList(src);
-    applyFpn(cpu,
-        width: w, height: h, pattern: pattern, row: true, col: true,
-        maxCorr: 64);
+    applyFpn(
+      cpu,
+      width: w,
+      height: h,
+      pattern: pattern,
+      row: true,
+      col: true,
+      maxCorr: 64,
+    );
     final ref = fpnSortRef(src, w, h);
     expectClose(cpu, ref, 0, 'fpn 桶计数中位数等价性');
   });
@@ -199,55 +224,115 @@ void main() {
   test('lsc', () async {
     final src = randFrame(w * h, 21);
     final cpu = Uint16List.fromList(src);
-    applyLsc(cpu,
-        width: w, height: h,
-        pattern: pattern, strength: 0.5, centerX: 0.5, centerY: 0.5,
-        maxValue: maxValue);
+    applyLsc(
+      cpu,
+      width: w,
+      height: h,
+      pattern: pattern,
+      strength: 0.5,
+      centerX: 0.5,
+      centerY: 0.5,
+      maxValue: maxValue,
+    );
     const cx = 0.5 * (w - 1), cy = 0.5 * (h - 1);
     final ex = cx > w - 1 - cx ? cx : w - 1 - cx;
     final ey = cy > h - 1 - cy ? cy : h - 1 - cy;
     final gpuOut = await runShader(
-        prog('lsc'),
-        [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), cx, cy,
-         ex * ex + ey * ey, 0.5, maxValue.toDouble()],
-        [src], [1], 1);
+      prog('lsc'),
+      [
+        w / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        cx,
+        cy,
+        ex * ex + ey * ey,
+        0.5,
+        maxValue.toDouble(),
+      ],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuOut, cpu, 1, 'lsc');
   });
 
   test('bayer_dnr', () async {
     final src = randFrame(w * h, 22);
     final cpu = Uint16List.fromList(src);
-    applyBayerDenoise(cpu,
-        width: w, height: h, pattern: pattern, strength: 1.0);
+    applyBayerDenoise(
+      cpu,
+      width: w,
+      height: h,
+      pattern: pattern,
+      strength: 1.0,
+    );
     final gpuOut = await runShader(
-        prog('bayer_dnr'),
-        [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), 2, 1.0],
-        [src], [1], 1);
+      prog('bayer_dnr'),
+      [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), 2, 1.0],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuOut, cpu, 1, 'bayer_dnr');
   });
 
   test('highlight（recover + clip）', () async {
     final src = randFrame(w * h, 23);
     final cpu = Uint16List.fromList(src);
-    applyHighlightRecovery(cpu,
-        width: w, height: h,
-        pattern: pattern, maxValue: maxValue, mode: 'recover', knee: 0.9);
+    applyHighlightRecovery(
+      cpu,
+      width: w,
+      height: h,
+      pattern: pattern,
+      maxValue: maxValue,
+      mode: 'recover',
+      knee: 0.9,
+    );
     final gpuOut = await runShader(
-        prog('highlight'),
-        [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), 2, 0,
-         0.9 * maxValue, maxValue.toDouble()],
-        [src], [1], 1);
+      prog('highlight'),
+      [
+        w / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        2,
+        0,
+        0.9 * maxValue,
+        maxValue.toDouble(),
+      ],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuOut, cpu, 0, 'highlight recover');
 
     final cpuClip = Uint16List.fromList(src);
-    applyHighlightRecovery(cpuClip,
-        width: w, height: h,
-        pattern: pattern, maxValue: maxValue, mode: 'clip', knee: 0.9);
+    applyHighlightRecovery(
+      cpuClip,
+      width: w,
+      height: h,
+      pattern: pattern,
+      maxValue: maxValue,
+      mode: 'clip',
+      knee: 0.9,
+    );
     final gpuClip = await runShader(
-        prog('highlight'),
-        [w / 2, h.toDouble(), w.toDouble(), h.toDouble(), 2, 1,
-         0.9 * maxValue, maxValue.toDouble()],
-        [src], [1], 1);
+      prog('highlight'),
+      [
+        w / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        2,
+        1,
+        0.9 * maxValue,
+        maxValue.toDouble(),
+      ],
+      [src],
+      [1],
+      1,
+    );
     expectClose(gpuClip, cpuClip, 1, 'highlight clip');
   });
 
@@ -257,56 +342,125 @@ void main() {
     final cpu = Uint16List.fromList(src);
     applyCcm(cpu, matrix: m, maxValue: maxValue);
     final gpuOut = await runShader(
-        prog('ccm'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(), ...m],
-        [src], [3], 3);
+      prog('ccm'),
+      [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(), ...m],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 1, 'ccm');
   });
 
   test('rgb_dnr（luma 1.0 + chroma 0.5，四段联跑）', () async {
     final src = randFrame(w * h * 3, 25);
     final cpu = Uint16List.fromList(src);
-    applyRgbDenoise(cpu,
-        width: w, height: h, luma: 1.0, chroma: 0.5, maxValue: maxValue);
+    applyRgbDenoise(
+      cpu,
+      width: w,
+      height: h,
+      luma: 1.0,
+      chroma: 0.5,
+      maxValue: maxValue,
+    );
     // rgb→yuv → luma → chroma → yuv→rgb。
     var yuv = await runShader(
-        prog('rgb2yuv'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         ...cscUniforms('bt601', 'full')],
-        [src], [3], 3);
+      prog('rgb2yuv'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        ...cscUniforms('bt601', 'full'),
+      ],
+      [src],
+      [3],
+      3,
+    );
     yuv = await runShader(
-        prog('rgb_dnr_luma'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), h.toDouble(), 1.0,
-         maxValue.toDouble()],
-        [yuv], [3], 3);
+      prog('rgb_dnr_luma'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        1.0,
+        maxValue.toDouble(),
+      ],
+      [yuv],
+      [3],
+      3,
+    );
     yuv = await runShader(
-        prog('rgb_dnr_chroma'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), h.toDouble(), 0.5,
-         maxValue.toDouble()],
-        [yuv], [3], 3);
+      prog('rgb_dnr_chroma'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        0.5,
+        maxValue.toDouble(),
+      ],
+      [yuv],
+      [3],
+      3,
+    );
     final gpuOut = await runShader(
-        prog('yuv2rgb'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         (maxValue >> 1).toDouble()],
-        [yuv], [3], 3);
+      prog('yuv2rgb'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        (maxValue >> 1).toDouble(),
+        yuvToRgbCoefficients('bt601').crV / 65536.0,
+        yuvToRgbCoefficients('bt601').cgU / 65536.0,
+        yuvToRgbCoefficients('bt601').cgV / 65536.0,
+        yuvToRgbCoefficients('bt601').cbU / 65536.0,
+      ],
+      [yuv],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 3, 'rgb_dnr');
   });
 
   test('sharpen（luma_extract + sharpen_apply）', () async {
     final src = randFrame(w * h * 3, 26);
     final cpu = Uint16List.fromList(src);
-    applySharpen(cpu,
-        width: w, height: h, amount: 0.5, threshold: 4.0, maxValue: maxValue);
+    applySharpen(
+      cpu,
+      width: w,
+      height: h,
+      amount: 0.5,
+      threshold: 4.0,
+      maxValue: maxValue,
+    );
     final yPlane = await runShader(
-        prog('luma_extract'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), w / 2],
-        [src], [3], 1);
+      prog('luma_extract'),
+      [w * 3 / 2, h.toDouble(), w.toDouble(), w / 2],
+      [src],
+      [3],
+      1,
+    );
     final rgbTex = await GpuPipeline.uploadPacked(src, w, h, 3);
     final yTex = await GpuPipeline.uploadPacked(yPlane, w, h, 1);
-    final out = GpuPipeline.runPass(prog('sharpen_apply'), [
-      w * 3 / 2, h.toDouble(), w / 2, h.toDouble(),
-      w.toDouble(), h.toDouble(), 0.5, 4.0, maxValue.toDouble(),
-    ], [rgbTex, yTex], w * 3 ~/ 2, h);
+    final out = GpuPipeline.runPass(
+      prog('sharpen_apply'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w / 2,
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        0.5,
+        4.0,
+        maxValue.toDouble(),
+      ],
+      [rgbTex, yTex],
+      w * 3 ~/ 2,
+      h,
+    );
     final bytes = await GpuPipeline.readbackBytes(out);
     rgbTex.dispose();
     yTex.dispose();
@@ -317,22 +471,42 @@ void main() {
   test('morphology（水平+垂直两趟，RGB/Mono × 腐蚀/膨胀）', () async {
     // 可分离两趟：同一 shader 先 uDir=0（水平）后 uDir=1（垂直）。
     // 极小/极大滤波为纯整数选择，GPU 必须与 CPU 精确一致（容差 0）。
-    Future<Uint16List> morphGpu(Uint16List src, int channels, bool erode,
-        int radius) async {
+    Future<Uint16List> morphGpu(
+      Uint16List src,
+      int channels,
+      bool erode,
+      int radius,
+    ) async {
       final hPass = await runShader(
-          prog('morphology'),
-          [
-            w * channels / 2, h.toDouble(), w.toDouble(), channels.toDouble(),
-            0.0, erode ? 1.0 : 0.0, radius.toDouble(),
-          ],
-          [src], [channels], channels);
+        prog('morphology'),
+        [
+          w * channels / 2,
+          h.toDouble(),
+          w.toDouble(),
+          channels.toDouble(),
+          0.0,
+          erode ? 1.0 : 0.0,
+          radius.toDouble(),
+        ],
+        [src],
+        [channels],
+        channels,
+      );
       return runShader(
-          prog('morphology'),
-          [
-            w * channels / 2, h.toDouble(), w.toDouble(), channels.toDouble(),
-            1.0, erode ? 1.0 : 0.0, radius.toDouble(),
-          ],
-          [hPass], [channels], channels);
+        prog('morphology'),
+        [
+          w * channels / 2,
+          h.toDouble(),
+          w.toDouble(),
+          channels.toDouble(),
+          1.0,
+          erode ? 1.0 : 0.0,
+          radius.toDouble(),
+        ],
+        [hPass],
+        [channels],
+        channels,
+      );
     }
 
     for (final (channels, erode, radius, seed) in [
@@ -343,26 +517,49 @@ void main() {
     ]) {
       final src = randFrame(w * h * channels, seed);
       final cpu = Uint16List.fromList(src);
-      applyMorphology(cpu,
-          width: w, height: h, channels: channels, erode: erode, radius: radius);
+      applyMorphology(
+        cpu,
+        width: w,
+        height: h,
+        channels: channels,
+        erode: erode,
+        radius: radius,
+      );
       final gpuOut = await morphGpu(src, channels, erode, radius);
-      expectClose(gpuOut, cpu, 0,
-          'morphology ch=$channels ${erode ? "erode" : "dilate"} r=$radius');
+      expectClose(
+        gpuOut,
+        cpu,
+        0,
+        'morphology ch=$channels ${erode ? "erode" : "dilate"} r=$radius',
+      );
     }
   });
 
-  test('csc_rgb2yuv（bt601/bt709 × full/limited）', () async {
+  test('csc_rgb2yuv（bt601/bt709/bt2020 × full/limited）', () async {
     final src = randFrame(w * h * 3, 27);
-    for (final standard in ['bt601', 'bt709']) {
+    for (final standard in ['bt601', 'bt709', 'bt2020']) {
       for (final range in ['full', 'limited']) {
-        final cpu = convertRgbToYuvCsc(src,
-            width: w, height: h,
-            standard: standard, range: range, maxValue: maxValue);
+        final cpu = convertRgbToYuvCsc(
+          src,
+          width: w,
+          height: h,
+          standard: standard,
+          range: range,
+          maxValue: maxValue,
+        );
         final gpuOut = await runShader(
-            prog('rgb2yuv'),
-            [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-             ...cscUniforms(standard, range)],
-            [src], [3], 3);
+          prog('rgb2yuv'),
+          [
+            w * 3 / 2,
+            h.toDouble(),
+            w.toDouble(),
+            maxValue.toDouble(),
+            ...cscUniforms(standard, range),
+          ],
+          [src],
+          [3],
+          3,
+        );
         expectClose(gpuOut, cpu, 2, 'rgb2yuv $standard/$range');
       }
     }
@@ -372,10 +569,18 @@ void main() {
     final src = randFrame(w * h * 3, 28);
     final cpu = yuvToHsl(src, maxValue: maxValue);
     final gpuOut = await runShader(
-        prog('yuv2hsl'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         (maxValue >> 1).toDouble()],
-        [src], [3], 3);
+      prog('yuv2hsl'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        (maxValue >> 1).toDouble(),
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 2, 'yuv2hsl');
   });
 
@@ -383,21 +588,40 @@ void main() {
     final src = randFrame(w * h * 3, 29);
     final cpu = hslToRgb(src, maxValue: maxValue);
     final gpuOut = await runShader(
-        prog('hsl2rgb'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble()],
-        [src], [3], 3);
+      prog('hsl2rgb'),
+      [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble()],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 2, 'hsl2rgb');
   });
 
   test('yuv_gains（YUV 调节器：Y 增益 + U/V 中点缩放）', () async {
     final src = randFrame(w * h * 3, 30);
-    final cpu = adjustYuv(src,
-        maxValue: maxValue, yGain: 1.3, uGain: 0.6, vGain: 1.8);
+    final cpu = adjustYuv(
+      src,
+      maxValue: maxValue,
+      yGain: 1.3,
+      uGain: 0.6,
+      vGain: 1.8,
+    );
     final gpuOut = await runShader(
-        prog('yuv_gains'),
-        [w * 3 / 2, h.toDouble(), w.toDouble(), maxValue.toDouble(),
-         (maxValue >> 1).toDouble(), 1.3, 0.6, 1.8],
-        [src], [3], 3);
+      prog('yuv_gains'),
+      [
+        w * 3 / 2,
+        h.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        (maxValue >> 1).toDouble(),
+        1.3,
+        0.6,
+        1.8,
+      ],
+      [src],
+      [3],
+      3,
+    );
     expectClose(gpuOut, cpu, 1, 'yuv_gains');
   });
 }

@@ -21,8 +21,13 @@ import 'ffmpeg_pipe_win.dart';
 
 /// 视频文件的元信息。
 class VideoInfo {
+  /// 交付帧尺寸（已按 Display Matrix 的 90/270° 旋转交换宽高，
+  /// 与 ffmpeg 默认 autorotate 的输出一致）。
   final int width;
   final int height;
+
+  /// Display Matrix 旋转角（归一化到 0/90/180/270；无标记为 0）。
+  final int rotation;
 
   /// 帧率（解析失败时回退 25）。
   final double fps;
@@ -77,6 +82,7 @@ class VideoInfo {
     required this.fps,
     required this.frameCount,
     required this.hasAudio,
+    this.rotation = 0,
     this.fullRange = false,
     this.colorMatrix = 0,
     this.colorTransfer = 0,
@@ -101,19 +107,26 @@ Future<VideoInfo> videoFileInfo(String path, {String ffmpegPath = ''}) async {
   final result = await Process.run(ffmpeg, ['-hide_banner', '-i', path]);
   final text = result.stderr.toString();
 
-  final sizeM =
-      RegExp(r'Video:.*?[,\s](\d{1,5})x(\d{1,5})[\s,\[]').firstMatch(text);
+  final sizeM = RegExp(
+    r'Video:.*?[,\s](\d{1,5})x(\d{1,5})[\s,\[]',
+  ).firstMatch(text);
   if (sizeM == null) throw StateError('无法解析视频分辨率: $path');
-  final width = int.parse(sizeM.group(1)!);
-  final height = int.parse(sizeM.group(2)!);
+  final rawWidth = int.parse(sizeM.group(1)!);
+  final rawHeight = int.parse(sizeM.group(2)!);
+  final rotation = parseDisplayRotation(text);
+  final swapDimensions = rotation == 90 || rotation == 270;
+  final width = swapDimensions ? rawHeight : rawWidth;
+  final height = swapDimensions ? rawWidth : rawHeight;
 
   final fpsM = RegExp(r'(\d+(?:\.\d+)?)\s*fps').firstMatch(text);
   final fps = fpsM != null ? double.parse(fpsM.group(1)!) : 25.0;
 
-  final durM = RegExp(r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)')
-      .firstMatch(text);
+  final durM = RegExp(
+    r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)',
+  ).firstMatch(text);
   if (durM == null) throw StateError('无法解析视频时长: $path');
-  final duration = int.parse(durM.group(1)!) * 3600 +
+  final duration =
+      int.parse(durM.group(1)!) * 3600 +
       int.parse(durM.group(2)!) * 60 +
       double.parse(durM.group(3)!);
   final frameCount = (duration * fps).floor();
@@ -123,19 +136,24 @@ Future<VideoInfo> videoFileInfo(String path, {String ffmpegPath = ''}) async {
   // 交付帧口径：HDR 片源解码时统一 tonemap 为 BT.709 SDR 8bit tv
   // 交付，故 colorMatrix 报 709、fullRange 报 false（无论容器元数据）；
   // SDR 片源按容器元数据。
-  final (matrix, fullRange) = deliveredColorFormat(transfer,
-      parseColorMatrix(text), RegExp(r'Color Range:\s*pc').hasMatch(text));
+  final (matrix, fullRange) = deliveredColorFormat(
+    transfer,
+    parseColorMatrix(text),
+    RegExp(r'Color Range:\s*pc').hasMatch(text),
+  );
   final info = VideoInfo(
-      width: width,
-      height: height,
-      fps: fps,
-      frameCount: frameCount,
-      hasAudio: RegExp(r'Stream.*Audio:').hasMatch(text),
-      fullRange: fullRange,
-      colorMatrix: matrix,
-      colorTransfer: transfer,
-      tbr: parseTbr(text),
-      pixFmt: parsePixFmt(text));
+    width: width,
+    height: height,
+    fps: fps,
+    frameCount: frameCount,
+    hasAudio: RegExp(r'Stream.*Audio:').hasMatch(text),
+    rotation: rotation,
+    fullRange: fullRange,
+    colorMatrix: matrix,
+    colorTransfer: transfer,
+    tbr: parseTbr(text),
+    pixFmt: parsePixFmt(text),
+  );
   _infoCache[key] = info;
   return info;
 }
@@ -145,6 +163,18 @@ Future<VideoInfo> videoFileInfo(String path, {String ffmpegPath = ''}) async {
 double parseTbr(String text) {
   final m = RegExp(r'(\d+(?:\.\d+)?)\s*tbr').firstMatch(text);
   return m != null ? double.parse(m.group(1)!) : 0;
+}
+
+/// 从 Display Matrix 侧数据解析显示旋转角并归一化到 0/90/180/270。
+/// ffmpeg 默认 autorotate 已把该旋转应用到交付帧，故 VideoInfo 的宽高
+/// 在 90/270° 时必须与原始容器宽高交换。
+int parseDisplayRotation(String text) {
+  final m = RegExp(
+    r'Display Matrix:\s*rotation of\s*(-?\d+(?:\.\d+)?)\s*degrees',
+  ).firstMatch(text);
+  if (m == null) return 0;
+  final degrees = double.parse(m.group(1)!).round();
+  return ((degrees % 360) + 360) % 360;
 }
 
 /// 从 `ffmpeg -i` 横幅 Video: 行解析源像素格式（第一个 `, pixfmt(`
@@ -160,16 +190,15 @@ String parsePixFmt(String text) {
 /// ——硬解失败不是致命错误，解码 worker 的重试/上报不会触发，软解
 /// 病灶须按像素格式预判。空串（未知）不误报。
 bool hwDecodablePixFmt(String pixFmt) => switch (pixFmt) {
-      '' => true,
-      'yuv420p' ||
-      'nv12' ||
-      'yuvj420p' ||
-      'p010le' ||
-      'yuv420p10le' ||
-      'yuv420p12le' =>
-        true,
-      _ => false,
-    };
+  '' => true,
+  'yuv420p' ||
+  'nv12' ||
+  'yuvj420p' ||
+  'p010le' ||
+  'yuv420p10le' ||
+  'yuv420p12le' => true,
+  _ => false,
+};
 
 /// 播放片源病灶检测（纯函数，便于单测）：返回（标题, 详细说明）列表，
 /// 播放启动时弹窗告知用户「视频的问题在哪里 + 应用已如何绕开」。
@@ -177,8 +206,10 @@ bool hwDecodablePixFmt(String pixFmt) => switch (pixFmt) {
 /// 源像素格式超出 NVDEC 能力（[hwDecodablePixFmt]，如 4:2:2/Rext——
 /// ffmpeg 对非致命硬解失败静默回退软解，worker 不会上报，须按格式
 /// 预判）。
-List<(String, String)> videoPlaybackIssues(VideoInfo info,
-    {required bool softwareDecode}) {
+List<(String, String)> videoPlaybackIssues(
+  VideoInfo info, {
+  required bool softwareDecode,
+}) {
   final issues = <(String, String)>[];
   // VUI 虚标：tbr 与 avg fps 偏差 >3%（如 30fps 实片 VUI 标 60——
   // record-2024-09-26 手术录像）。
@@ -228,15 +259,18 @@ int parseColorTransfer(String text) {
 /// tv 交付，故 colorMatrix 恒报 1（BT.709）、fullRange 恒报 false；
 /// SDR 片源按容器元数据原样返回。
 (int colorMatrix, bool fullRange) deliveredColorFormat(
-        int transfer, int matrix, bool fullRange) =>
-    transfer != 0 ? (1, false) : (matrix, fullRange);
+  int transfer,
+  int matrix,
+  bool fullRange,
+) => transfer != 0 ? (1, false) : (matrix, fullRange);
 
 /// HDR→SDR 色调映射滤镜链：zscale 线性化（npl=100 标称峰值亮度）→
 /// hable tonemap（desat=0）→ 重标定为 BT.709 SDR tv → yuv420p 8bit。
 /// PQ（smpte2084）与 HLG（arib-std-b67）走同一链（zscale 按帧元数据
 /// 识别输入 transfer）。内置 ffmpeg（gyan full build）含 zscale/
 /// tonemap；实测 4K60 片源 ~55fps（8 线程，0.9x 实时）。
-const String kHdrTonemapFilter = 'zscale=transfer=linear:npl=100,'
+const String kHdrTonemapFilter =
+    'zscale=transfer=linear:npl=100,'
     'tonemap=hable:desat=0,'
     'zscale=transfer=bt709:primaries=bt709:matrix=bt709:range=tv,'
     'format=yuv420p';
@@ -261,9 +295,10 @@ String? buildDecodeVf({
   final tm = isHdr && toneMapHdr;
   final hdr = tm ? '$kHdrTonemapFilter,' : '';
   return switch (pixelFormat) {
-    'yuv444p' => downsampleFactor > 1
-        ? '${hdr}scale=$outWidth:$outHeight:out_range=pc'
-        : '${hdr}scale=out_range=pc',
+    'yuv444p' =>
+      downsampleFactor > 1
+          ? '${hdr}scale=$outWidth:$outHeight:out_range=pc'
+          : '${hdr}scale=out_range=pc',
     // yuv420p 平面直出：无降采样时 SDR 零滤镜（解码器原生输出）。
     // 降采样（平面直连的显示自适应降档）时插 scale；HDR 降档必须把
     // scale 放在 tonemap 链之前——4K 全尺寸跑 zscale+tonemap 实测
@@ -272,14 +307,16 @@ String? buildDecodeVf({
     // 代价：在 PQ/BT.2020 非线性域缩放（播放器惯例），与线性光
     // 缩放有细微差异，仅影响降档预览；factor=1（大预览/导出）仍
     // 走原全尺寸精确链。
-    'yuv420p' => downsampleFactor > 1
-        ? (tm
-            ? 'scale=$outWidth:$outHeight,$kHdrTonemapFilter'
-            : 'scale=$outWidth:$outHeight')
-        : (tm ? kHdrTonemapFilter : null),
-    _ => downsampleFactor > 1
-        ? '${hdr}scale=$outWidth:$outHeight'
-        : (tm ? kHdrTonemapFilter : null),
+    'yuv420p' =>
+      downsampleFactor > 1
+          ? (tm
+                ? 'scale=$outWidth:$outHeight,$kHdrTonemapFilter'
+                : 'scale=$outWidth:$outHeight')
+          : (tm ? kHdrTonemapFilter : null),
+    _ =>
+      downsampleFactor > 1
+          ? '${hdr}scale=$outWidth:$outHeight'
+          : (tm ? kHdrTonemapFilter : null),
   };
 }
 
@@ -326,8 +363,11 @@ Future<(Uint16List, int, int)> decodeVideoFrameToRgb16(
   if (bytes.length < pixels * 4) {
     throw StateError('帧 $frameIndex 解码失败（可能超出视频末尾）: $path');
   }
-  return (rgba8ToRgb16(bytes, info.width, info.height, maxValue).$1,
-      info.width, info.height);
+  return (
+    rgba8ToRgb16(bytes, info.width, info.height, maxValue).$1,
+    info.width,
+    info.height,
+  );
 }
 
 /// 流式解码命令参数（纯函数，便于单测）。
@@ -341,12 +381,19 @@ List<String> videoDecodeArgs({
   bool isHdr = false,
 }) {
   return [
-    '-hide_banner', '-loglevel', 'error',
+    '-hide_banner',
+    '-loglevel',
+    'error',
     if (hwaccel.isNotEmpty) ...['-hwaccel', hwaccel],
     if (startSec > 0) ...['-ss', startSec.toStringAsFixed(6)],
-    '-i', '__PATH__',
+    '-i',
+    '__PATH__',
     if (isHdr) ...['-vf', kHdrTonemapFilter],
-    '-f', 'rawvideo', '-pix_fmt', pixelFormat, 'pipe:1',
+    '-f',
+    'rawvideo',
+    '-pix_fmt',
+    pixelFormat,
+    'pipe:1',
   ];
 }
 
@@ -387,10 +434,11 @@ Stream<Uint8List> decodeVideoStreamRgba(
   // HDR 片源统一 tonemap（videoFileInfo 有缓存，几乎零开销）。
   final isHdr = (await videoFileInfo(path, ffmpegPath: ffmpegPath)).isHdr;
   final args = videoDecodeArgs(
-      pixelFormat: pixelFormat,
-      hwaccel: hwaccel,
-      startSec: startSec,
-      isHdr: isHdr);
+    pixelFormat: pixelFormat,
+    hwaccel: hwaccel,
+    startSec: startSec,
+    isHdr: isHdr,
+  );
   args[args.indexOf('__PATH__')] = path;
   if (passthrough) {
     args.insert(args.indexOf('-f'), '-fps_mode');
@@ -436,14 +484,16 @@ Future<String> probeHwDecode(
   Process? proc;
   try {
     var got = 0;
-    await for (final _ in decodeVideoStreamRgba(videoPath,
-        width: width,
-        height: height,
-        ffmpegPath: ffmpegPath,
-        startSec: startSec,
-        pixelFormat: pixelFormat,
-        hwaccel: hwaccel,
-        onProcess: (p) => proc = p)) {
+    await for (final _ in decodeVideoStreamRgba(
+      videoPath,
+      width: width,
+      height: height,
+      ffmpegPath: ffmpegPath,
+      startSec: startSec,
+      pixelFormat: pixelFormat,
+      hwaccel: hwaccel,
+      onProcess: (p) => proc = p,
+    )) {
       if (++got >= 2) break;
     }
     return got >= 1 ? hwaccel : '';
@@ -458,7 +508,11 @@ Future<String> probeHwDecode(
 /// RGBA8888 → 16 位量级交织 RGB（丢弃 alpha），返回 (数据, 宽, 高)。
 /// 8 位样本按比例放大到 [maxValue]。
 (Uint16List, int, int) rgba8ToRgb16(
-    Uint8List rgba, int width, int height, int maxValue) {
+  Uint8List rgba,
+  int width,
+  int height,
+  int maxValue,
+) {
   final pixels = width * height;
   final out = Uint16List(pixels * 3);
   final scale = maxValue / 255;
@@ -494,8 +548,13 @@ Future<String> probeHwDecode(
 /// UI 不消费，worker 就没有缓冲可用，ffmpeg 管道自然阻塞。
 /// 随机跳帧时 [dispose] 后重新 [start]。
 class VideoFrameStream {
-  VideoFrameStream._(this.info, this.nextIndex, this.pixelFormat,
-      this.outWidth, this.outHeight);
+  VideoFrameStream._(
+    this.info,
+    this.nextIndex,
+    this.pixelFormat,
+    this.outWidth,
+    this.outHeight,
+  );
 
   /// 视频元信息（尺寸/帧率/帧数）。
   final VideoInfo info;
@@ -555,19 +614,22 @@ class VideoFrameStream {
   /// 分段导出要求各段解码序列与包一一对应）。[concatListPath] 非空
   /// 时输入改用 concat demuxer 列表文件（`-f concat -safe 0`；
   /// [path] 仍用于探测尺寸/帧率，startFrame 须为 0）。
-  static Future<VideoFrameStream> start(String path, int startFrame,
-      {String ffmpegPath = '',
-      String pixelFormat = 'rgba',
-      int maxWorkingHeight = 0,
-      String hwaccel = 'cuda',
-      int maxFrames = 0,
-      int skipFrames = 0,
-      bool passthrough = false,
-      String concatListPath = '',
+  static Future<VideoFrameStream> start(
+    String path,
+    int startFrame, {
+    String ffmpegPath = '',
+    String pixelFormat = 'rgba',
+    int maxWorkingHeight = 0,
+    String hwaccel = 'cuda',
+    int maxFrames = 0,
+    int skipFrames = 0,
+    bool passthrough = false,
+    String concatListPath = '',
 
-      /// 预览 HDR/SDR 切换（false = HDR 片源 SDR 直解对比）；缺省 true
-      /// （映射）。导出路径不传，恒映射。
-      bool toneMapHdr = true}) async {
+    /// 预览 HDR/SDR 切换（false = HDR 片源 SDR 直解对比）；缺省 true
+    /// （映射）。导出路径不传，恒映射。
+    bool toneMapHdr = true,
+  }) async {
     final info = await videoFileInfo(path, ffmpegPath: ffmpegPath);
     if (startFrame < 0 || startFrame >= info.frameCount) {
       throw StateError('帧 $startFrame 超出视频范围（共 ${info.frameCount} 帧）');
@@ -580,8 +642,13 @@ class VideoFrameStream {
         factor *= 2;
       }
     }
-    final stream = VideoFrameStream._(info, startFrame, pixelFormat,
-        info.width ~/ factor, info.height ~/ factor);
+    final stream = VideoFrameStream._(
+      info,
+      startFrame,
+      pixelFormat,
+      info.width ~/ factor,
+      info.height ~/ factor,
+    );
     final port = ReceivePort();
     final ready = Completer<void>();
     stream._sub = port.listen((msg) {
@@ -593,11 +660,26 @@ class VideoFrameStream {
       stream._onMessage(msg);
     });
     stream._isolate = await Isolate.spawn(
-        _streamWorker,
-        _StreamWorkerConfig(port.sendPort, ffmpeg, path, startFrame,
-            info.width, info.height, info.fps, pixelFormat, factor, hwaccel,
-            maxFrames, skipFrames, passthrough, concatListPath, info.isHdr,
-            toneMapHdr));
+      _streamWorker,
+      _StreamWorkerConfig(
+        port.sendPort,
+        ffmpeg,
+        path,
+        startFrame,
+        info.width,
+        info.height,
+        info.fps,
+        pixelFormat,
+        factor,
+        hwaccel,
+        maxFrames,
+        skipFrames,
+        passthrough,
+        concatListPath,
+        info.isHdr,
+        toneMapHdr,
+      ),
+    );
     await ready.future;
     return stream;
   }
@@ -610,8 +692,9 @@ class VideoFrameStream {
   void _onMessage(Object? msg) {
     if (msg is int) {
       // Windows 原生缓冲路径：指针 → 原生内存视图（零拷贝）
-      final view =
-          ffi.Pointer<ffi.Uint8>.fromAddress(msg).asTypedList(_frameBytes);
+      final view = ffi.Pointer<ffi.Uint8>.fromAddress(
+        msg,
+      ).asTypedList(_frameBytes);
       _nativeAddr[view] = msg;
       _frames.add(view);
     } else if (msg is TransferableTypedData) {
@@ -679,8 +762,7 @@ class VideoFrameStream {
     if (!_eof) {
       final done = Completer<void>();
       _notEmpty = done;
-      await done.future
-          .timeout(const Duration(seconds: 2), onTimeout: () {});
+      await done.future.timeout(const Duration(seconds: 2), onTimeout: () {});
     }
     await _sub?.cancel();
     _sub = null;
@@ -730,10 +812,24 @@ class _StreamWorkerConfig {
   /// 预览 HDR/SDR 切换：false 时 HDR 片源按 SDR 直解（不插 tonemap）。
   final bool toneMapHdr;
 
-  const _StreamWorkerConfig(this.uiPort, this.ffmpeg, this.path,
-      this.startFrame, this.width, this.height, this.fps, this.pixelFormat,
-      this.downsampleFactor, this.hwaccel, this.maxFrames, this.skipFrames,
-      this.passthrough, this.concatListPath, this.isHdr, this.toneMapHdr);
+  const _StreamWorkerConfig(
+    this.uiPort,
+    this.ffmpeg,
+    this.path,
+    this.startFrame,
+    this.width,
+    this.height,
+    this.fps,
+    this.pixelFormat,
+    this.downsampleFactor,
+    this.hwaccel,
+    this.maxFrames,
+    this.skipFrames,
+    this.passthrough,
+    this.concatListPath,
+    this.isHdr,
+    this.toneMapHdr,
+  );
 }
 
 /// worker 同时最多持有的帧缓冲数（信用额度；1080p ≈ 130MB）。
@@ -787,12 +883,13 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   // 馈源完成；HDR 片源（PQ/HLG）则必须前置 zscale+tonemap 链
   // （映射为 BT.709 SDR 8bit 交付，否则下游按 SDR 上色发灰发暗）。
   final vf = buildDecodeVf(
-      pixelFormat: cfg.pixelFormat,
-      downsampleFactor: factor,
-      outWidth: outW,
-      outHeight: outH,
-      isHdr: cfg.isHdr,
-      toneMapHdr: cfg.toneMapHdr);
+    pixelFormat: cfg.pixelFormat,
+    downsampleFactor: factor,
+    outWidth: outW,
+    outHeight: outH,
+    isHdr: cfg.isHdr,
+    toneMapHdr: cfg.toneMapHdr,
+  );
 
   /// 单趟解码：返回 (送出的帧数, 错误消息)。进程出问题但已送出过帧时
   /// 按 EOF 处理（错误为 null），避免后半段已播的帧被误判为失败。
@@ -811,14 +908,21 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
         '-threads', '8', '-filter_threads', '8',
         // GPU 硬解：ffmpeg 自动选取可用设备并在输出系统内存帧时
         // 自动插入 hwdownload + 格式转换。
-        if (useHwaccel && cfg.hwaccel.isNotEmpty)
-          ...['-hwaccel', cfg.hwaccel],
-        if (cfg.concatListPath.isNotEmpty)
-          ...['-f', 'concat', '-safe', '0', '-i', cfg.concatListPath]
-        else ...[
-          if (cfg.startFrame > 0)
-            ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
-          '-i', cfg.path,
+        if (useHwaccel && cfg.hwaccel.isNotEmpty) ...['-hwaccel', cfg.hwaccel],
+        if (cfg.concatListPath.isNotEmpty) ...[
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-i',
+          cfg.concatListPath,
+        ] else ...[
+          if (cfg.startFrame > 0) ...[
+            '-ss',
+            (cfg.startFrame / cfg.fps).toStringAsFixed(6),
+          ],
+          '-i',
+          cfg.path,
         ],
         // 分段导出：每包一帧，禁掉默认 CFR 补/丢帧（VFR 精确分段前提）。
         if (cfg.passthrough) ...['-fps_mode', 'passthrough'],
@@ -890,8 +994,10 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
       final proc = process;
       if (proc != null) {
         proc.kill();
-        await proc.exitCode
-            .timeout(const Duration(seconds: 2), onTimeout: () => -1);
+        await proc.exitCode.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => -1,
+        );
       }
     }
   }
@@ -907,14 +1013,21 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
         '-hide_banner', '-loglevel', 'error', '-nostdin',
         // 解码/滤镜线程封顶（与上行 Process 路径同口径）。
         '-threads', '8', '-filter_threads', '8',
-        if (useHwaccel && cfg.hwaccel.isNotEmpty)
-          ...['-hwaccel', cfg.hwaccel],
-        if (cfg.concatListPath.isNotEmpty)
-          ...['-f', 'concat', '-safe', '0', '-i', cfg.concatListPath]
-        else ...[
-          if (cfg.startFrame > 0)
-            ...['-ss', (cfg.startFrame / cfg.fps).toStringAsFixed(6)],
-          '-i', cfg.path,
+        if (useHwaccel && cfg.hwaccel.isNotEmpty) ...['-hwaccel', cfg.hwaccel],
+        if (cfg.concatListPath.isNotEmpty) ...[
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-i',
+          cfg.concatListPath,
+        ] else ...[
+          if (cfg.startFrame > 0) ...[
+            '-ss',
+            (cfg.startFrame / cfg.fps).toStringAsFixed(6),
+          ],
+          '-i',
+          cfg.path,
         ],
         if (cfg.passthrough) ...['-fps_mode', 'passthrough'],
         if (vf != null) ...['-vf', vf],
@@ -979,7 +1092,7 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
   // 对照开关：--dart-define=NATIVE_PIPE=false 时强制走 dart:io 路径（排障用）。
   final useNativePipe =
       bool.fromEnvironment('NATIVE_PIPE', defaultValue: true) &&
-          FfmpegRawPipeWin.supported;
+      FfmpegRawPipeWin.supported;
   // 首趟解码模式由调用方经 cfg.hwaccel 决定（非空 = 硬解优先，空串 =
   // 直接软解）：HDR tonemap 等 CPU 滤镜链场景软硬解哪个快因机型而
   // 异，由播放侧起步启发式 + 产能自适应切换选择（isp_studio_state
@@ -992,8 +1105,9 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
     // 硬解初始化失败（无可用 GPU/驱动、4:2:2/Rext 等 NVDEC 不支持的
     // 格式）：回退软件解码重试，并上报 UI（播放病灶提示用）。
     cfg.uiPort.send(['swdec']);
-    (sent, error) =
-        useNativePipe ? await runPassWin(false) : await runPass(false);
+    (sent, error) = useNativePipe
+        ? await runPassWin(false)
+        : await runPass(false);
   }
   if (error != null && !stopped) {
     cfg.uiPort.send(['error', error]);
@@ -1008,8 +1122,10 @@ Future<void> _streamWorker(_StreamWorkerConfig cfg) async {
         !stopped &&
         DateTime.now().isBefore(deadline)) {
       bufferReturned = Completer<void>();
-      await bufferReturned!.future
-          .timeout(const Duration(milliseconds: 200), onTimeout: () {});
+      await bufferReturned!.future.timeout(
+        const Duration(milliseconds: 200),
+        onTimeout: () {},
+      );
     }
     // 等待期间归还进池的原生缓冲在此释放（runPassWin 的 finally 只
     // 覆盖到它返回时点）。

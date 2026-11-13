@@ -165,6 +165,44 @@ int op_highlight(CaseIO *io) {
 
 /** 高光 clip LUT 查表（LUT 模式）：in0=帧（w*h u16），in1=clip 表
  *（max_value+1 个 u16，Dart 建表经输入文件传入）。 */
+int op_highlight_q14(CaseIO *io) {
+  const int w = case_param_int(io, "width", 0);
+  const int h = case_param_int(io, "height", 0);
+  const char *mode = case_param_str(io, "mode", "recover");
+  const double knee = case_param_double(io, "knee", 0.9);
+  const int max_value = case_param_int(io, "maxValue", 1023);
+  const size_t len = (size_t)w * (size_t)h;
+  IspHighlightMode m;
+  const IspBayerPattern *ppat;
+  uint16_t *frame, *scratch;
+  int rc;
+  if (w <= 0 || h <= 0) return ISP_ERR_SIZE;
+  if (strcmp(mode, "recover") == 0) {
+    m = ISP_HIGHLIGHT_RECOVER;
+  } else if (strcmp(mode, "clip") == 0) {
+    m = ISP_HIGHLIGHT_CLIP;
+  } else {
+    return ISP_ERR_ARG;
+  }
+  ppat = parse_pattern_ptr(io, case_param_str(io, "pattern", "rggb"));
+  if (ppat == NULL && strcmp(case_param_str(io, "pattern", "rggb"), "mono") != 0) {
+    return ISP_ERR_ARG;
+  }
+  frame = case_load_in(io, 0, len);
+  scratch = (uint16_t *)malloc(len * sizeof(uint16_t));
+  if (frame == NULL || scratch == NULL) {
+    free(frame);
+    free(scratch);
+    return ISP_ERR_ARG;
+  }
+  rc = isp_highlight_q14_apply(frame, w, h, ppat, max_value, m,
+                               (int32_t)llround(knee * 16384.0), scratch);
+  if (rc == ISP_OK) rc = case_write_out(io, 0, frame, len);
+  free(frame);
+  free(scratch);
+  return rc;
+}
+
 int op_highlight_clip_lut(CaseIO *io) {
   const int w = case_param_int(io, "width", 0);
   const int h = case_param_int(io, "height", 0);

@@ -35,6 +35,7 @@ int op_grgb_balance(CaseIO *io);
 int op_fpn(CaseIO *io);
 int op_bayer_dnr(CaseIO *io);
 int op_highlight(CaseIO *io);
+int op_highlight_q14(CaseIO *io);
 int op_highlight_clip_lut(CaseIO *io);
 /* harness_demosaic.c */
 int op_demosaic_bilinear(CaseIO *io);
@@ -50,6 +51,7 @@ int op_demosaic_lmmse(CaseIO *io);
 int op_demosaic_igv(CaseIO *io);
 /* harness_color1.c */
 int op_white_balance_apply(CaseIO *io);
+int op_white_balance_q14(CaseIO *io);
 int op_white_balance_lut_apply(CaseIO *io);
 int op_white_balance_auto(CaseIO *io);
 int op_ccm(CaseIO *io);
@@ -78,9 +80,11 @@ int op_adjust_lut3_apply(CaseIO *io);
 int op_adjust_bc_lut_apply(CaseIO *io);
 int op_color_controller_lut_apply(CaseIO *io);
 int op_multi_band_eq(CaseIO *io);
+int op_multi_band_eq_fx(CaseIO *io);
 int op_adjust_yuv(CaseIO *io);
 int op_adjust_satbright(CaseIO *io);
 int op_adjust_brightcontrast(CaseIO *io);
+int op_adjust_brightcontrast_q14(CaseIO *io);
 int op_adjust_colorbalance(CaseIO *io);
 int op_color_controller(CaseIO *io);
 /* harness_levels_temp.c */
@@ -96,6 +100,7 @@ int op_fluoro_background(CaseIO *io);
 int op_fluoro_normalize(CaseIO *io);
 int op_fluoro_temporal(CaseIO *io);
 int op_pseudo_color(CaseIO *io);
+int op_pseudo_color_q14(CaseIO *io);
 int op_pseudo_color_lut_apply(CaseIO *io);
 int op_fluoro_fusion(CaseIO *io);
 /* harness_blend_split.c */
@@ -128,6 +133,7 @@ static const OpEntry kOpTable[] = {
     {"fpn", op_fpn},
     {"bayer_dnr", op_bayer_dnr},
     {"highlight", op_highlight},
+    {"highlight_q14", op_highlight_q14},
     {"highlight_clip_lut", op_highlight_clip_lut},
     {"demosaic_bilinear", op_demosaic_bilinear},
     {"demosaic_rccb", op_demosaic_rccb},
@@ -140,6 +146,7 @@ static const OpEntry kOpTable[] = {
     {"demosaic_lmmse", op_demosaic_lmmse},
     {"demosaic_igv", op_demosaic_igv},
     {"white_balance_apply", op_white_balance_apply},
+    {"white_balance_q14", op_white_balance_q14},
     {"white_balance_lut_apply", op_white_balance_lut_apply},
     {"white_balance_auto", op_white_balance_auto},
     {"ccm", op_ccm},
@@ -164,9 +171,11 @@ static const OpEntry kOpTable[] = {
     {"adjust_bc_lut_apply", op_adjust_bc_lut_apply},
     {"color_controller_lut_apply", op_color_controller_lut_apply},
     {"multi_band_eq", op_multi_band_eq},
+    {"multi_band_eq_fx", op_multi_band_eq_fx},
     {"adjust_yuv", op_adjust_yuv},
     {"adjust_satbright", op_adjust_satbright},
     {"adjust_brightcontrast", op_adjust_brightcontrast},
+    {"adjust_brightcontrast_q14", op_adjust_brightcontrast_q14},
     {"adjust_colorbalance", op_adjust_colorbalance},
     {"color_controller", op_color_controller},
     {"levels_lut", op_levels_lut},
@@ -180,6 +189,7 @@ static const OpEntry kOpTable[] = {
     {"fluoro_normalize", op_fluoro_normalize},
     {"fluoro_temporal", op_fluoro_temporal},
     {"pseudo_color", op_pseudo_color},
+    {"pseudo_color_q14", op_pseudo_color_q14},
     {"pseudo_color_lut_apply", op_pseudo_color_lut_apply},
     {"fluoro_fusion", op_fluoro_fusion},
     {"multiply", op_multiply},

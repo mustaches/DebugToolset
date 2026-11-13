@@ -21,6 +21,12 @@ void main() {
     vectorscopeImage.dispose();
   });
 
+  /// 仪器图 RawImage：节点内还有 image==null 的小图标 `RawImage`（端口/
+  /// 角标占位），按渲染的图像对象过滤，断言才指向仪器附加区本身。
+  Finder instrumentRaw(ui.Image image) => find.byWidgetPredicate(
+        (w) => w is RawImage && w.image == image,
+      );
+
   Widget wrapNode(IspStudioState state, Widget child) =>
       ChangeNotifierProvider.value(
         value: state,
@@ -53,7 +59,7 @@ void main() {
     ));
     await tester.pump();
 
-    expect(find.byType(RawImage), findsOneWidget);
+    expect(instrumentRaw(waveformImage), findsOneWidget);
   });
 
   testWidgets('矢量示波器节点在 instrumentImages 设置后显示 RawImage',
@@ -79,7 +85,7 @@ void main() {
     ));
     await tester.pump();
 
-    expect(find.byType(RawImage), findsOneWidget);
+    expect(instrumentRaw(vectorscopeImage), findsOneWidget);
   });
 
   testWidgets('instrumentTick 触发后示波器节点从无图切换到 RawImage',
@@ -108,14 +114,14 @@ void main() {
     await tester.pump();
 
     expect(find.text('未运行'), findsOneWidget);
-    expect(find.byType(RawImage), findsNothing);
+    expect(instrumentRaw(waveformImage), findsNothing);
 
     state.instrumentImages[node.id] = waveformImage;
     state.instrumentTick.value++;
     await tester.pump();
 
     expect(find.text('未运行'), findsNothing);
-    expect(find.byType(RawImage), findsOneWidget);
+    expect(instrumentRaw(waveformImage), findsOneWidget);
   });
 
   testWidgets('notifyListeners 与 instrumentTick 同时触发仍显示 RawImage',
@@ -151,7 +157,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('未运行'), findsNothing);
-    expect(find.byType(RawImage), findsOneWidget);
+    expect(instrumentRaw(waveformImage), findsOneWidget);
   });
 
   // 回归守卫：单次运行/暂停路径只调 notifyListeners（不递增
@@ -187,6 +193,6 @@ void main() {
 
     expect(find.text('未运行'), findsNothing,
         reason: 'notifyListeners 重建后仪器区应显示图像');
-    expect(find.byType(RawImage), findsOneWidget);
+    expect(instrumentRaw(vectorscopeImage), findsOneWidget);
   });
 }

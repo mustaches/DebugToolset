@@ -1531,8 +1531,12 @@ void main() {
       // 实例的输出端口必须按被引用模块判定（out_data/out_valid…）。
       expect(inst.outs.map((p) => p.port), contains('out_data'));
 
-      // 核心模块：32 个可绘制单元（768 个 $meminit 已跳过）。
-      final core = nl.resolveInstance(inst.type)!;
+      // 数据通路在 core 内拆成 <top>_lut_core / <top>_fx_core 子模块（core 自身
+      // 只剩端口胶水：1 个位运算 + 1 个数据通路实例），下钻一层才是带 RTL 单元
+      // 的网表；$meminit 单元由解析层跳过。
+      final glue = nl.resolveInstance(inst.type)!;
+      final core =
+          nl.resolveInstance(glue.cells.firstWhere((c) => c.isInstance).type)!;
       expect(
         core.cells.where((c) => c.kind != NetlistCellKind.other).length,
         greaterThan(20),

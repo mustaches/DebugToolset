@@ -37,14 +37,11 @@ export 'group_c_plan.dart'
 
 /// 校验编组能否导出 C 代码；可导出返回 null，否则返回中文错误说明。
 String? validateGroupCExport(IspGraph graph, IspNodeGroup group) {
-  final members = [
-    for (final id in group.nodeIds) ?graph.nodes[id],
-  ];
-  // 例外：多段色彩均衡器（等效多个色彩控制器混叠）与有整行行核的类型
-  // 允许单节点编组（见 group_c_target.dart kSingleNodeGroupTypeIds）。
+  final members = [for (final id in group.nodeIds) ?graph.nodes[id]];
+  // Process（含 ColorTrans/Fluorescence）与 Datapath 允许单节点编组。
   if (members.length < 2 &&
       !(members.length == 1 &&
-          kSingleNodeGroupTypeIds.contains(members.first.typeId))) {
+          IspNodeRegistry.supportsSingleNodeGroup(members.first.typeId))) {
     return '编组成员不足 2 个节点';
   }
   final unsupported = <String>[];
@@ -75,9 +72,11 @@ String? validateGroupCExport(IspGraph graph, IspNodeGroup group) {
     if (n.typeId != 'mux4') continue;
     final sel = ((n.paramValues['select'] as num?)?.toInt() ?? 1).clamp(1, 4);
     final type = IspNodeRegistry.byId('mux4')!;
-    final connected = type.inputs.any((p) =>
-        p.name.startsWith('in$sel') &&
-        graph.connectionAt(n.id, p.name) != null);
+    final connected = type.inputs.any(
+      (p) =>
+          p.name.startsWith('in$sel') &&
+          graph.connectionAt(n.id, p.name) != null,
+    );
     if (!connected) {
       return '节点 ${n.name} 选中的第 $sel 路输入未连接，无法导出。';
     }
@@ -141,7 +140,8 @@ Future<Map<String, String>> buildGroupCFiles(
   ];
   final macro = cMacroPrefix(topName);
   final topGuard = '${macro}_H';
-  final topH = '''
+  final topH =
+      '''
 #ifndef $topGuard
 #define $topGuard
 
@@ -212,8 +212,7 @@ int ${topName}_run(${runParams.join(', ')});
       } else if (ext != null) {
         args.add(ext.name);
       } else {
-        throw StateError(
-            '节点 ${members[id]!.name} 的输出 ${cp.name} 既不是组内边也不是组输出');
+        throw StateError('节点 ${members[id]!.name} 的输出 ${cp.name} 既不是组内边也不是组输出');
       }
     }
     if (w.hasScratch) args.add('node_scratch');
@@ -222,7 +221,8 @@ int ${topName}_run(${runParams.join(', ')});
     calls.addAll(deferredCopies);
   }
 
-  final topC = '''
+  final topC =
+      '''
 #include "$topName.h"
 
 #include <string.h>
@@ -246,8 +246,10 @@ ${calls.join('\n')}
   final files = <String, String>{};
   for (final id in topo) {
     final w = wrappers[id]!;
-    files['${w.fileName}.h'] = _fileDoc(group, members[id]!, genTime) + w.header;
-    files['${w.fileName}.c'] = _fileDoc(group, members[id]!, genTime) + w.source;
+    files['${w.fileName}.h'] =
+        _fileDoc(group, members[id]!, genTime) + w.header;
+    files['${w.fileName}.c'] =
+        _fileDoc(group, members[id]!, genTime) + w.source;
   }
   files['$topName.h'] = _topDoc(group, genTime, target) + topH;
   files['$topName.c'] = _topDoc(group, genTime, target) + topC;
@@ -286,8 +288,13 @@ Future<GroupCExportResult> exportGroupCCode(
   DateTime? genTime,
   GroupCTarget target = GroupCTarget.cortexA53_55,
 }) async {
-  final files = await buildGroupCFiles(graph, group,
-      readFile: readFile, genTime: genTime, target: target);
+  final files = await buildGroupCFiles(
+    graph,
+    group,
+    readFile: readFile,
+    genTime: genTime,
+    target: target,
+  );
   final written = <String>[];
   for (final e in files.entries) {
     await File('$dir/${e.key}').writeAsString(e.value);
@@ -303,14 +310,16 @@ String _fmtGenTime(DateTime t) {
       '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
 }
 
-String _fileDoc(IspNodeGroup group, IspNode node, DateTime genTime) => '''
+String _fileDoc(IspNodeGroup group, IspNode node, DateTime genTime) =>
+    '''
 /* 本文件由 DebugToolSet ISP Studio 自动生成：编组「${group.name}」
  * 成员节点 ${node.name}（${node.typeId}）的 C 封装。
  * 生成时间：${_fmtGenTime(genTime)}
  */
 ''';
 
-String _topDoc(IspNodeGroup group, DateTime genTime, GroupCTarget target) => '''
+String _topDoc(IspNodeGroup group, DateTime genTime, GroupCTarget target) =>
+    '''
 /* 本文件由 DebugToolSet ISP Studio 自动生成：编组「${group.name}」的
  * top 层 ISP pipeline。语义说明：
  * - gamma 节点的组内下游直接使用 gamma 的输入帧（gamma 不改输入）；

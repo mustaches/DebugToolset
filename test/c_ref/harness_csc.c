@@ -21,6 +21,8 @@
 #include "isp_csc_hsl2yuv.h"
 /* RGB↔HSL 双像素 SSE2 快路径（csc_sse_selfcheck 对拍对象）。 */
 #include "isp_csc_sse.h"
+/* ISP_CSC_VARIANT_* / isp_csc_apply_modes（YUV↔HSL 透传 YUV 标准）。 */
+#include "isp_csc_modes.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -116,8 +118,44 @@ int op_csc_yuv2rgb(CaseIO *io) {
   return csc_simple_op(io, isp_csc_yuv_to_rgb);
 }
 
+/** 解析 standard 参数（bt601 / bt709 / bt2020），非法返回 -1。 */
+static int csc_parse_standard(CaseIO *io, const char *op) {
+  const char *standard = case_param_str(io, "standard", "bt601");
+  if (strcmp(standard, "bt601") == 0) return ISP_CSC_BT601;
+  if (strcmp(standard, "bt709") == 0) return ISP_CSC_BT709;
+  if (strcmp(standard, "bt2020") == 0) return ISP_CSC_BT2020;
+  snprintf(io->err, CASE_ERR_LEN, "%s: bad standard %s", op, standard);
+  return -1;
+}
+
+/** YUV→HSL / HSL→YUV：经 isp_csc_apply_modes 以透传 YUV 标准。 */
+static int csc_modes_op(CaseIO *io, int variant, const char *name) {
+  int w, h, max_value, std_id, rc;
+  uint16_t *in = csc_load_frame(io, &w, &h, &max_value);
+  uint16_t *out;
+  size_t len;
+  if (in == NULL) return ISP_ERR_ARG;
+  std_id = csc_parse_standard(io, name);
+  if (std_id < 0) {
+    free(in);
+    return ISP_ERR_ARG;
+  }
+  len = (size_t)w * (size_t)h * 3;
+  out = (uint16_t *)case_scratch(io, len * 2);
+  if (out == NULL) {
+    free(in);
+    return ISP_ERR_ARG;
+  }
+  rc = isp_csc_apply_modes(in, w, h, max_value, variant, ISP_CSC_CODEGEN_FUNC,
+                           std_id, ISP_CSC_RANGE_FULL, NULL, NULL, out);
+  rc = csc_run(io, out, len, rc);
+  free(in);
+  free(out);
+  return rc;
+}
+
 int op_csc_yuv2hsl(CaseIO *io) {
-  return csc_simple_op(io, isp_csc_yuv_to_hsl);
+  return csc_modes_op(io, ISP_CSC_VARIANT_YUV2HSL, "csc_yuv2hsl");
 }
 
 int op_csc_hsl2rgb(CaseIO *io) {
@@ -125,7 +163,7 @@ int op_csc_hsl2rgb(CaseIO *io) {
 }
 
 int op_csc_hsl2yuv(CaseIO *io) {
-  return csc_simple_op(io, isp_csc_hsl_to_yuv);
+  return csc_modes_op(io, ISP_CSC_VARIANT_HSL2YUV, "csc_hsl2yuv");
 }
 
 /* ---------------------------------------------------------------------------

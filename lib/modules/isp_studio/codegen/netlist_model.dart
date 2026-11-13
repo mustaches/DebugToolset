@@ -1,4 +1,4 @@
-﻿/// yosys `write_json` 网表模型（**纯 Dart，无 Flutter 依赖**）：把 yosys 的
+/// yosys `write_json` 网表模型（**纯 Dart，无 Flutter 依赖**）：把 yosys 的
 /// RTL 级网表 JSON 解析成可绘制的模块/单元/引脚/总线结构，供自研电路图
 /// 布局与绘制（`widgets/netlist_diagram.dart`）使用。
 ///
@@ -14,7 +14,7 @@
 ///   `A_WIDTH="000…10001"`=17；`MEMID` 是存储器名）；
 /// - `netnames.<名>.bits`：该名字覆盖的比特（据此把同名比特归组为总线并
 ///   给线标注真实信号名；范围后缀按比特在该网内的实际下标算，非简单长度）；
-/// - 单元名含源位置，如 `$add$isp_ip_multi_band_eq_core.v:257$3108`；
+/// - 单元名含源位置，如 `$add$ISP_IP_MBC_EQ_core.v:257$3108`；
 ///   子模块实例名形如 `$paramod$<hash>\<模块名>`；
 /// - 子模块实例的端口方向按**被引用模块**的端口定义（第二趟解析）。
 library;

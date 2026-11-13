@@ -11,6 +11,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
@@ -142,6 +143,32 @@ String? spansLineText(List<TextSpan> spans, int line) {
   return (m.start, m.end);
 }
 
+List<List<TextSpan>> _splitCodeSpansByLine(List<TextSpan> spans) {
+  final lines = <List<TextSpan>>[<TextSpan>[]];
+  void writeSpan(TextSpan span) {
+    final text = span.text ?? '';
+    var start = 0;
+    for (var i = 0; i <= text.length; i++) {
+      if (i != text.length && text.codeUnitAt(i) != 0x0A) continue;
+      if (i > start) {
+        lines.last.add(
+          TextSpan(text: text.substring(start, i), style: span.style),
+        );
+      }
+      if (i < text.length) lines.add(<TextSpan>[]);
+      start = i + 1;
+    }
+    for (final child in span.children ?? const <InlineSpan>[]) {
+      if (child is TextSpan) writeSpan(child);
+    }
+  }
+
+  for (final span in spans) {
+    writeSpan(span);
+  }
+  return lines;
+}
+
 /// 文件分组：小标题 + 组内文件（按列表顺序显示）。
 class CodeFileGroup {
   final String label;
@@ -223,6 +250,7 @@ class _CodeAreaState extends State<CodeArea> {
 
   /// 当前 build 的行号 gutter 宽度（悬停命中换算 dx 用）。
   double _gutterWidth = 0;
+  bool _virtualized = false;
 
   /// 右栏定义预览：null 表示未打开；非 null 时代码区分左右两栏。
   ({String func, CDefLocation loc})? _peek;
@@ -356,7 +384,10 @@ class _CodeAreaState extends State<CodeArea> {
     // 视觉瞄点高约半行；+半行偏移让框选式瞄准即可命中。代价是用光标
     // 尖沿精确指向某行字符的下半截时会落到下一行（该行无标识符则不
     // 响应，不影响框选手感）。
-    final lineIdx = ((local.dy + _lineHeight / 2) / _lineHeight).floor();
+    final dy =
+        local.dy +
+        (_virtualized && _vController.hasClients ? _vController.offset : 0.0);
+    final lineIdx = ((dy + _lineHeight / 2) / _lineHeight).floor();
     // 去抖：同一 (行, dx/4 桶) 不重复计算。
     final key = (lineIdx, dx ~/ 4);
     if (key == _lastHover) return;
@@ -441,6 +472,7 @@ class _CodeAreaState extends State<CodeArea> {
         1;
     final gutterWidth = lineCount.toString().length * 7.5 + 14;
     _gutterWidth = gutterWidth;
+    _virtualized = lineCount > 400;
     // 高亮渲染：定义处目标（右栏预览传入，行号 1 起始）与左栏悬停命中
     // 标识符，均拆出独立段叠加黄底黑字（拆分不改 '\n' 计数）。
     var spans = widget.spans;
@@ -509,18 +541,23 @@ class _CodeAreaState extends State<CodeArea> {
         child: content,
       );
     }
-    final leftPane = Scrollbar(
-      controller: _vController,
-      thumbVisibility: true,
-      child: SingleChildScrollView(
-        controller: _vController,
-        padding: const EdgeInsets.all(12),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: content,
-        ),
-      ),
-    );
+    Widget leftPane = lineCount > 400
+        ? _buildVirtualizedPane(spans, gutterWidth)
+        : Scrollbar(
+            controller: _vController,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _vController,
+              padding: const EdgeInsets.all(12),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: content,
+              ),
+            ),
+          );
+    if (_hoverEnabled && lineCount > 400) {
+      leftPane = MouseRegion(onHover: _onHover, child: leftPane);
+    }
     // 未打开预览时布局与纯展示形态完全一致。
     if (_peek == null) return leftPane;
     // 打开预览：左栏现有代码区 + 分隔线 + 右栏定义预览，两栏等宽。
@@ -531,6 +568,72 @@ class _CodeAreaState extends State<CodeArea> {
         Container(width: 1, color: const Color(0xFF3A3A3A)),
         Expanded(child: _buildPeek()),
       ],
+    );
+  }
+
+  Widget _buildVirtualizedPane(List<TextSpan> spans, double gutterWidth) {
+    final lines = _splitCodeSpansByLine(spans);
+    var maxUnits = 1;
+    for (final line in lines) {
+      var units = 0;
+      for (final span in line) {
+        for (final rune in (span.text ?? '').runes) {
+          units += rune > 0xFF ? 2 : 1;
+        }
+      }
+      if (units > maxUnits) maxUnits = units;
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 0.0;
+        final contentWidth = math.max(
+          viewportWidth,
+          maxUnits * 12.0 + gutterWidth + 34,
+        );
+        return Scrollbar(
+          controller: _vController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: contentWidth,
+              child: SelectionArea(
+                child: ListView.builder(
+                  controller: _vController,
+                  padding: const EdgeInsets.all(12),
+                  itemExtent: _lineHeight,
+                  itemCount: lines.length,
+                  itemBuilder: (context, index) => Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: gutterWidth,
+                        child: Text(
+                          '${index + 1}',
+                          style: kCodeBrowserStyle.copyWith(
+                            color: const Color(0xFF858585),
+                          ),
+                          strutStyle: kCodeBrowserStrut,
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text.rich(
+                        TextSpan(children: lines[index]),
+                        style: kCodeBrowserStyle,
+                        strutStyle: kCodeBrowserStrut,
+                        softWrap: false,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -644,7 +747,9 @@ class _CodeAreaState extends State<CodeArea> {
 /// 默认「导出代码」行为：选择目标文件夹后导出列表中的全部文件（节点
 /// 代码页工具栏导出按钮用；编组代码页有自定义导出逻辑，走自己的回调）。
 Future<void> exportCRefFilesInteractive(
-    BuildContext context, List<String> files) async {
+  BuildContext context,
+  List<String> files,
+) async {
   final dir = await getDirectoryPath();
   if (dir == null || !context.mounted) return;
   final (ok, failed) = await exportCRefFiles(files, dir);
@@ -989,14 +1094,18 @@ class _CodeCompileAreaState extends State<CodeCompileArea> {
           ispTabIconButton(
             tooltip: '运行验证（原尺寸）',
             onTap: _compiling ? null : () => _startWinVerify(scaleDown: false),
-            icon: ispTabAssetIcon('icons/play.png',
-                color: _compiling ? Colors.white38 : Colors.white),
+            icon: ispTabAssetIcon(
+              'icons/play.png',
+              color: _compiling ? Colors.white38 : Colors.white,
+            ),
           ),
           ispTabIconButton(
             tooltip: '运行验证（scale）',
             onTap: _compiling ? null : () => _startWinVerify(scaleDown: true),
-            icon: ispTabAssetIcon('icons/debug-coverage.png',
-                color: _compiling ? Colors.white38 : Colors.white),
+            icon: ispTabAssetIcon(
+              'icons/debug-coverage.png',
+              color: _compiling ? Colors.white38 : Colors.white,
+            ),
           ),
         ],
         // 「导出代码」：原文件清单底部按钮上移至此（codicon git-stash-pop）。

@@ -6,17 +6,24 @@ library;
 /// FPGA 厂商目标。v1 实现 Vivado / 通用 Verilog；Quartus / Libero /
 /// Lattice / Efinix 列出但禁用并标注「待完成」（对话框下拉项灰显不可选）。
 enum IpVendor {
-  vivado('AMD/Xilinx Vivado', 'Vivado', true,
-      '用 package_ip.tcl 在 Vivado 打包导入；双击 IP 可用 Customize IP 界面改参数。'),
+  vivado(
+    'AMD/Xilinx Vivado',
+    'Vivado',
+    true,
+    '用 package_ip.tcl 在 Vivado 打包导入；双击 IP 可用 Customize IP 界面改参数。',
+  ),
   quartus('Intel Quartus', 'Quartus', false, '待完成'),
   libero('Microchip Libero', 'Libero', false, '待完成'),
   lattice('Lattice Radiant/Diamond', 'Lattice', false, '待完成'),
   efinix('Efinix Efinity', 'Efinix', false, '待完成'),
-  generic('通用 Verilog', '通用', true,
-      '核心模块直接即顶层（像素流 in/out）；可直接级联或接入自定义测试环境。');
+  generic('通用 Verilog', '通用', true, '核心模块直接即顶层（像素流 in/out）；可直接级联或接入自定义测试环境。');
 
   const IpVendor(
-      this.displayName, this.shortName, this.enabled, this.importNote);
+    this.displayName,
+    this.shortName,
+    this.enabled,
+    this.importNote,
+  );
 
   final String displayName;
   final String shortName;
@@ -41,7 +48,7 @@ enum VivadoSeries {
   zynq7000('Zynq7000_SOC', 'xc7z020-clg484-1', 'zynq'),
   zynqUltrascalePlus(
     'Zynq UltraScale+ MPSoC',
-    'xczu3eg-sbva484-1-e',
+    'xczu15eg-ffvb1156-2-i',
     'zynquplus',
   ),
   versalAiCore('Versal AI Core Series', 'xcvc1902-vsva2197-2MP-e-S', 'versal');
@@ -57,6 +64,31 @@ enum VivadoSeries {
   final String supportedFamilies;
 }
 
+/// MAX_WIDTH 的可选值，两个导出对话框与 Vivado 参数校验共用。
+const kIpMaxWidthOptions = [
+  320,
+  400,
+  600,
+  640,
+  1000,
+  1280,
+  1920,
+  2048,
+  3840,
+  4096,
+  7680,
+  8192,
+];
+
+String effectiveYuvStandard(String option, String nodeValue) =>
+    option == 'auto' || option.isEmpty ? nodeValue : option;
+
+int yuvStandardCode(String standard) => switch (standard) {
+  'bt709' => 1,
+  'bt2020' || 'bt2100' => 2,
+  _ => 0,
+};
+
 /// IP 生成选项（应用内对话框采集的「出厂默认」——写入生成的 `parameter`
 /// 默认值；用户在 Vivado Customize IP 界面可再次修改）。顶层参数与
 /// 视频输入物理层选择由此驱动。
@@ -65,6 +97,19 @@ class IpGenOptions {
 
   /// Vivado 器件系列（仅 vendor == vivado 时有意义）。
   final VivadoSeries series;
+
+  /// Vivado 具体器件型号；空字符串表示使用器件系列的代表型号。
+  final String targetPart;
+
+  /// 具体器件的 Vivado family；空字符串表示使用系列默认值。
+  final String targetFamily;
+
+  /// 用户选择的 Vivado 可执行文件；空字符串表示自动使用最新版本。
+  final String vivadoExecutable;
+
+  String get vivadoPart => targetPart.isEmpty ? series.part : targetPart;
+  String get vivadoFamily =>
+      targetFamily.isEmpty ? series.supportedFamilies : targetFamily;
 
   /// 视频输入接口：`none`（直通）/ `dvp` / `lvds` / `mipi`（v1 仅 none）。
   final String vinType;
@@ -82,14 +127,38 @@ class IpGenOptions {
   /// 窗口算子折叠因子（面积档生效；v1 保留备用）。
   final int fold;
 
+  /// func_fixed 流水模式：0 纯组合 / 1 前段插一拍 / 2 前段+中段各插一拍 /
+  /// 3 DSP 内部全流水（最高 Fmax）。写入顶层 `parameter DSP_PIPE` 默认值，
+  /// Vivado Customize IP 界面可再改（选通结构经综合折叠，改值即生效）。
+  final int dspPipe;
+
+  /// YUV→RGB 系数标准：auto（跟随 ispflow 节点）/ bt601 / bt709 / bt2020。
+  final String yuvStandard;
+
+  /// 色温 IP 的表存储方式（生成期选项）：true = Block RAM（省 CLB LUT，
+  /// 默认），false = 组合 ROM（上一版实现，LUT 用量大但对时序无读延迟）。
+  /// 两者表数据与插值写法相同，结果逐位一致；生成后不可再切换（要另一种
+  /// 实现需重新导出）。
+  final bool useBram;
+
+  /// Vivado 演示工程名，同时作为工程目录与 .xpr 文件名。
+  final String projectName;
+
   const IpGenOptions({
     required this.vendor,
     this.series = VivadoSeries.zynqUltrascalePlus,
+    this.targetPart = '',
+    this.targetFamily = '',
+    this.vivadoExecutable = '',
     this.vinType = 'none',
     this.pixBits = 0,
-    this.maxWidth = 4096,
+    this.maxWidth = 3840,
     this.gstrategy = 2,
     this.fold = 2,
+    this.dspPipe = 3,
+    this.yuvStandard = 'auto',
+    this.useBram = true,
+    this.projectName = 'demo_prj',
   });
 }
 

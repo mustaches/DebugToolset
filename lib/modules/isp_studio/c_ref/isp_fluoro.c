@@ -258,6 +258,50 @@ int isp_fluoro_pseudo_color_apply(const uint16_t *mono, uint16_t *out_rgb,
   return ISP_OK;
 }
 
+static uint16_t isp_fluoro_scale_q14(int64_t v, int max_value) {
+  if (v <= 0) return 0;
+  if (v >= 16384) return (uint16_t)max_value;
+  return (uint16_t)((v * max_value + 8192) >> 14);
+}
+
+int isp_fluoro_pseudo_color_q14_apply(const uint16_t *mono, uint16_t *out_rgb,
+                                      int width, int height,
+                                      IspFluoroColormap colormap,
+                                      int32_t gain_q14, int max_value) {
+  int n, i, j;
+  if (mono == NULL || out_rgb == NULL || max_value <= 0) return ISP_ERR_ARG;
+  if (colormap != ISP_FLUORO_CMAP_GREEN && colormap != ISP_FLUORO_CMAP_MAGENTA &&
+      colormap != ISP_FLUORO_CMAP_HOT) {
+    return ISP_ERR_ARG;
+  }
+  if (width <= 0 || height <= 0) return ISP_ERR_SIZE;
+  n = width * height;
+  for (i = 0, j = 0; i < n; i++, j += 3) {
+    int64_t t = ((int64_t)mono[i] * gain_q14 + (max_value >> 1)) / max_value;
+    int64_t r = 0, g = 0, b = 0;
+    if (t < 0) t = 0;
+    if (t > 16384) t = 16384;
+    switch (colormap) {
+      case ISP_FLUORO_CMAP_MAGENTA:
+        r = t;
+        b = t;
+        break;
+      case ISP_FLUORO_CMAP_HOT:
+        r = ISP_MIN(3 * t, 16384);
+        g = ISP_MIN(ISP_MAX(3 * t - 16384, 0), 16384);
+        b = ISP_MIN(ISP_MAX(3 * t - 32768, 0), 16384);
+        break;
+      default:
+        g = t;
+        break;
+    }
+    out_rgb[j] = isp_fluoro_scale_q14(r, max_value);
+    out_rgb[j + 1] = isp_fluoro_scale_q14(g, max_value);
+    out_rgb[j + 2] = isp_fluoro_scale_q14(b, max_value);
+  }
+  return ISP_OK;
+}
+
 int isp_fluoro_fuse_apply(const uint16_t *rgb_wl, const uint16_t *mono_fl,
                           uint16_t *out_rgb, int width, int height,
                           IspFluoroFusionMode mode, double threshold,

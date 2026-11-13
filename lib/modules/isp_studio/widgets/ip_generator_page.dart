@@ -8,6 +8,7 @@
 library;
 
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -21,12 +22,97 @@ import '../codegen/ip_stimulus.dart';
 import '../codegen/ip_target.dart';
 import '../codegen/iverilog_sim.dart';
 import '../codegen/sim_wave_store.dart';
+import '../codegen/vivado_runner.dart';
+import '../models/demo_prj_session.dart';
 import '../models/isp_graph.dart';
 import 'code_browser.dart';
+import 'demo_prj_dialog.dart';
 import 'ip_gen_dialog.dart';
 import 'ip_stimulus_dialog.dart';
 import 'markdown_view.dart';
 import 'tab_toolbar.dart';
+import 'verilog_print_preview.dart';
+
+enum _IpConsoleTask { simulation, demoProject }
+
+Map<String, String> _buildIpFilesInIsolate(Map<String, Object?> request) {
+  final graph = IspGraph.fromJson(
+    (request['graph'] as Map).cast<String, Object?>(),
+  );
+  final group = graph.groups.firstWhere((g) => g.id == request['groupId']);
+  final send = request['sendPort'] as SendPort;
+  return buildGroupIpFiles(
+    graph,
+    group,
+    request['options'] as IpGenOptions,
+    stimulus: request['stimulus'] as IpSimStimulus,
+    onProgress: (stage, progress) =>
+        send.send({'stage': stage, 'progress': progress}),
+  );
+}
+
+void _ipIsolateEntry(Map<String, Object?> request) {
+  final send = request['sendPort'] as SendPort;
+  try {
+    send.send({'files': _buildIpFilesInIsolate(request)});
+  } catch (error) {
+    send.send('$error');
+  }
+}
+
+Future<Map<String, String>> _generateIpFilesOffstage(
+  Map<String, Object?> request, {
+  IpBuildProgress? onProgress,
+}) async {
+  final port = ReceivePort();
+  request['sendPort'] = port.sendPort;
+  await Isolate.spawn(_ipIsolateEntry, request);
+  try {
+    await for (final response in port) {
+      if (response is String) throw StateError(response);
+      final message = response as Map;
+      final files = message['files'];
+      if (files is Map) return files.cast<String, String>();
+      onProgress?.call(
+        message['stage'] as String,
+        (message['progress'] as num).toDouble(),
+      );
+    }
+    throw StateError('后台生成意外中断');
+  } finally {
+    port.close();
+  }
+}
+
+void _ipHighlightEntry(Map<String, Object?> request) {
+  final send = request['sendPort'] as SendPort;
+  try {
+    send.send(
+      SyntaxHighlighter.highlightText(
+        request['text'] as String,
+        'v',
+        baseStyle: kCodeBrowserStyle,
+      ),
+    );
+  } catch (error) {
+    send.send('$error');
+  }
+}
+
+Future<List<TextSpan>> _highlightIpCodeOffstage(String text) async {
+  final port = ReceivePort();
+  await Isolate.spawn(_ipHighlightEntry, {
+    'sendPort': port.sendPort,
+    'text': text,
+  });
+  try {
+    final response = await port.first;
+    if (response is String) throw StateError(response);
+    return (response as List).cast<TextSpan>();
+  } finally {
+    port.close();
+  }
+}
 
 /// word 在 text 中是否按 Verilog 标识符词边界出现（自动选文件用）。
 bool containsVerilogWord(String text, String word) {
@@ -65,8 +151,7 @@ TextSpan _highlightInSpan(TextSpan span, String word) {
     return TextSpan(
       style: span.style,
       children: [
-        for (final c in children)
-          c is TextSpan ? _highlightInSpan(c, word) : c,
+        for (final c in children) c is TextSpan ? _highlightInSpan(c, word) : c,
       ],
     );
   }
@@ -133,16 +218,26 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   String _selectedFile = '';
   Map<String, String>? _files;
   String? _error;
+  int _loadGeneration = 0;
+  String _progressStage = '准备生成 Verilog IP';
+  List<TextSpan>? _codeSpans;
+  int _codeGeneration = 0;
 
-  /// 一键仿真终端输出（流式追加）。
+  /// 仿真与 demo 生成共用终端输出（流式追加）。
   final StringBuffer _simLog = StringBuffer();
   bool _simRunning = false;
+  bool _demoRunning = false;
   IpSimResult? _simResult;
+  VivadoDemoResult? _demoResult;
+  DemoPrjSession? _demoSession;
+  _IpConsoleTask _consoleTask = _IpConsoleTask.simulation;
 
-  /// 仿真终端面板是否可见（点「一键仿真」时打开，标题栏 × 关闭）。
+  bool get _taskRunning => _simRunning || _demoRunning;
+
+  /// 任务终端面板是否可见（点「一键仿真」或「导出demo_prj」时打开）。
   bool _simPanelVisible = false;
 
-  /// 仿真终端输出区的滚动控制器（流式追加时自动滚底）。
+  /// 任务终端输出区的滚动控制器（流式追加时自动滚底）。
   final _simScroll = ScrollController();
 
   /// 左栏文件清单宽度（分隔条可拖动调整，钳位 120~600px）。
@@ -152,8 +247,7 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   void initState() {
     super.initState();
     _options = widget.options;
-    _stimulus =
-        sessionIpSimStimulus[widget.groupId] ?? const IpSimStimulus();
+    _stimulus = sessionIpSimStimulus[widget.groupId] ?? const IpSimStimulus();
     _reload();
   }
 
@@ -163,27 +257,49 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     super.dispose();
   }
 
-  Future<Map<String, String>> _buildFiles() async {
+  Future<Map<String, String>> _buildFiles() {
     final state = context.read<IspStudioState>();
-    final group = state.graph.groups.firstWhere((g) => g.id == widget.groupId);
-    return buildGroupIpFiles(state.graph, group, _options,
-        stimulus: _stimulus);
+    if (!state.graph.groups.any((g) => g.id == widget.groupId)) {
+      throw StateError('编组不存在：${widget.groupId}');
+    }
+    final graph = state.graph.toJson();
+    final options = _options;
+    final stimulus = _stimulus;
+    final groupId = widget.groupId;
+    return _generateIpFilesOffstage(
+      {
+        'graph': graph,
+        'groupId': groupId,
+        'options': options,
+        'stimulus': stimulus,
+      },
+      onProgress: (stage, _) {
+        if (!mounted) return;
+        setState(() => _progressStage = stage);
+      },
+    );
   }
 
   Future<void> _reload() async {
+    final generation = ++_loadGeneration;
+    _progressStage = '准备生成 Verilog IP';
+    if (mounted) setState(() {});
     try {
       final files = await (widget.filesBuilder ?? _buildFiles)();
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _files = files;
         _error = null;
+        _codeSpans = null;
+        _codeGeneration++;
         if (!files.containsKey(_selectedFile)) {
           _selectedFile = files.keys.isNotEmpty ? files.keys.first : '';
         }
       });
+      unawaited(_prepareCode());
     } catch (e) {
       // 生成失败（如编组校验不通过）必须落到错误页，否则界面无限转圈
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _files = null;
         _error = '生成 IP 包失败：$e';
@@ -191,11 +307,27 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     }
   }
 
+  void _appendConsole(String chunk) {
+    if (_consoleTask == _IpConsoleTask.demoProject) {
+      _demoSession?.append(chunk);
+    }
+    if (!mounted) return;
+    setState(() => _simLog.write(chunk));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_simScroll.hasClients) {
+        _simScroll.jumpTo(_simScroll.position.maxScrollExtent);
+      }
+    });
+  }
+
   Future<void> _runSim() async {
     // 一键仿真先弹激励参数对话框（确认按钮「开始仿真」）：用户指定/确认
     // 激励参数后再跑；取消则整个中止（不打开终端面板）。
-    final s =
-        await showIpStimulusDialog(context, initial: _stimulus, confirmText: '开始仿真');
+    final s = await showIpStimulusDialog(
+      context,
+      initial: _stimulus,
+      confirmText: '开始仿真',
+    );
     if (s == null || !mounted) return;
     if (s != _stimulus) {
       sessionIpSimStimulus[widget.groupId] = s;
@@ -211,23 +343,11 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
       _simPanelVisible = true;
       _simLog.clear();
       _simResult = null;
+      _consoleTask = _IpConsoleTask.simulation;
     });
     try {
       // 波形由内嵌「仿真波形」标签页展示（vcdData 登记 SimWaveStore）。
-      final r = await runIpSimulation(
-        _files!,
-        onOutput: (c) {
-          if (mounted) {
-            setState(() => _simLog.write(c));
-            // 流式输出自动滚底（同编译终端）。
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (_simScroll.hasClients) {
-                _simScroll.jumpTo(_simScroll.position.maxScrollExtent);
-              }
-            });
-          }
-        },
-      );
+      final r = await runIpSimulation(_files!, onOutput: _appendConsole);
       if (!mounted) return;
       setState(() => _simResult = r);
       // 登记波形（附来源编组/厂商，Signal 右键「跳转到Verilog」用）
@@ -250,13 +370,24 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     }
   }
 
+  Future<void> _printSelectedCode() async {
+    final fileName = _selectedFile;
+    final content = _files?[fileName];
+    if (fileName.isEmpty || content == null) return;
+    await showVerilogPrintPreview(context, fileName, content);
+  }
+
   Future<void> _exportPackage() async {
     if (_files == null) await _reload();
     if (_files == null) return;
     final dir = await getDirectoryPath(confirmButtonText: '导出');
     if (dir == null) return;
     try {
-      await exportGroupIpPackage(_files!, dir);
+      await exportGroupIpPackage(
+        _files!,
+        dir,
+        vivadoExecutable: _options.vivadoExecutable,
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -268,6 +399,85 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('IP 包已导出到 $dir')));
+  }
+
+  Future<void> _exportDemoPrj() async {
+    final state = context.read<IspStudioState>();
+    final group = state.graph.groups.firstWhere((g) => g.id == widget.groupId);
+    final options = await showDemoPrjDialog(
+      context,
+      initial: _options,
+      hasYuvMatrix: groupHasYuvMatrix(state.graph, group),
+      defaultProjectName: defaultGroupDemoProjectName(
+        state.graph,
+        group,
+        flowName: state.graphName,
+      ),
+    );
+    if (options == null || !mounted) return;
+    final dir = await getDirectoryPath(
+      confirmButtonText: '生成 ${options.projectName}',
+    );
+    if (dir == null || !mounted) return;
+    final exportDir = demoPrjExportDirectory(dir, options.projectName);
+    sessionIpGenOptions[widget.groupId] = options;
+    _demoSession = state.openDemoPrjLogTab(widget.groupId, options.projectName);
+    setState(() {
+      _options = options;
+      _demoRunning = true;
+      _simPanelVisible = false;
+      _simLog.clear();
+      _demoResult = null;
+      _consoleTask = _IpConsoleTask.demoProject;
+    });
+    _appendConsole('正在生成 IP 文件与工程 ${options.projectName}…\n');
+    try {
+      final files = await _generateIpFilesOffstage({
+        'graph': state.graph.toJson(),
+        'groupId': widget.groupId,
+        'options': options,
+        'stimulus': _stimulus,
+      });
+      _appendConsole('正在导出 IP 包到 $exportDir …\n');
+      await exportGroupIpPackage(
+        files,
+        exportDir,
+        vivadoExecutable: options.vivadoExecutable,
+      );
+      final result = await runVivadoDemoProject(
+        exportDir,
+        onOutput: _appendConsole,
+        vivado: options.vivadoExecutable.isEmpty
+            ? null
+            : VivadoToolchain(options.vivadoExecutable),
+        projectName: options.projectName,
+      );
+      _demoSession?.complete(result);
+      if (!mounted) return;
+      setState(() => _demoResult = result);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.success
+                ? '${options.projectName} 已生成：${result.projectPath}'
+                : '${options.projectName} 生成失败，请查看终端日志',
+          ),
+        ),
+      );
+    } catch (e) {
+      _appendConsole('${options.projectName} 生成异常：$e\n');
+      _demoSession?.fail(e);
+    } finally {
+      try {
+        await saveDemoPrjExportLog(
+          exportDir,
+          _demoSession?.log.toString() ?? '',
+        );
+      } catch (e) {
+        _appendConsole('导出日志保存失败：$e\n');
+      }
+      if (mounted) setState(() => _demoRunning = false);
+    }
   }
 
   @override
@@ -306,21 +516,23 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
                       SizedBox(
                         width: _leftWidth,
                         child: _files == null
-                            ? const Center(child: CircularProgressIndicator())
+                            ? const Center(child: Text('正在生成 IP 文件…'))
                             : CFileList(
                                 files: _files!.keys.toList(),
                                 selected: _selectedFile,
-                                onSelect: (f) =>
-                                    setState(() => _selectedFile = f),
+                                onSelect: _selectCodeFile,
                                 groups: _groupsOf(_files!),
                                 highlightGroupTitles: true,
                               ),
                       ),
                       // 1px 分隔线（含隐形热区），左右拖动调整左栏宽度。
                       IspVerticalDragDivider(
-                        onDelta: (dx) => setState(() =>
-                            _leftWidth =
-                                (_leftWidth + dx).clamp(120.0, 600.0)),
+                        onDelta: (dx) => setState(
+                          () => _leftWidth = (_leftWidth + dx).clamp(
+                            120.0,
+                            600.0,
+                          ),
+                        ),
                       ),
                       // 右侧：代码区 3/4 + 仿真终端面板 1/4（终端关闭时
                       // 代码区占满，同编译终端口径）。
@@ -348,43 +560,68 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   }
 
   /// 工具栏：与 C 代码页同一风格——左侧白色 codicon 图标按钮
-  ///（生成选项 settings-gear / 导出IP包 git-stash-pop / 一键仿真 play
-  ///（先弹激励参数对话框）/ 电路图浏览 circuit-board，悬停 tooltip
-  /// 显示功能名），右侧为信息区（编组名 + 组 id + 编组·IP +
+  ///（生成选项 / 导出IP包 / 导出demo_prj / 一键仿真 / 电路图浏览 / 打印，
+  /// 悬停 tooltip 显示功能名），右侧为信息区（编组名 + 组 id + 编组·IP +
   /// 厂商徽标 + 资源估算 + 激励摘要 + 只读标识）。
   Widget _buildToolbar(IspNodeGroup group, IspStudioState state) {
     // 资源估算摘要（纯规划计算，随生成选项联动；估算口径见
     // ip_gen_plan.dart IpResourceEstimate）。
     var estSummary = '';
     try {
-      estSummary =
-          planGroupIp(state.graph, group, _options).resources.summary();
+      estSummary = planGroupIp(
+        state.graph,
+        group,
+        _options,
+      ).resources.summary();
     } catch (_) {}
     return ispTabToolbarRow(
       children: [
         ispTabIconButton(
           tooltip: '生成选项',
-          onTap: () => _pickOptions(state),
+          onTap: _taskRunning ? null : () => _pickOptions(state),
           icon: ispTabAssetIcon('icons/settings-gear.png'),
         ),
         ispTabIconButton(
           tooltip: '导出IP包',
-          onTap: _exportPackage,
+          onTap: _taskRunning ? null : _exportPackage,
           icon: ispTabAssetIcon('icons/git-stash-pop.png'),
         ),
         ispTabIconButton(
+          tooltip: _options.vendor.isVivado
+              ? '导出demo_prj（配置目标芯片与 IP 参数）'
+              : '导出demo_prj（仅 Vivado 目标可用）',
+          onTap: _taskRunning || !_options.vendor.isVivado
+              ? null
+              : _exportDemoPrj,
+          icon: ispTabAssetIcon(
+            'icons/build.png',
+            color: _taskRunning || !_options.vendor.isVivado
+                ? Colors.white38
+                : Colors.white,
+          ),
+        ),
+        ispTabIconButton(
           tooltip: '一键仿真（先配置激励参数）',
-          onTap: _simRunning ? null : _runSim,
-          icon: ispTabAssetIcon('icons/play.png',
-              color: _simRunning ? Colors.white38 : Colors.white),
+          onTap: _taskRunning ? null : _runSim,
+          icon: ispTabAssetIcon(
+            'icons/play.png',
+            color: _taskRunning ? Colors.white38 : Colors.white,
+          ),
         ),
         // 电路图浏览：yosys 出网表 JSON + 应用自研布局渲染 RTL 电路图（新标签页）。
         ispTabIconButton(
           tooltip: '电路图浏览',
-          onTap: () => context
-              .read<IspStudioState>()
-              .openSchematicTab(widget.groupId, _options.vendor),
+          onTap: () => context.read<IspStudioState>().openSchematicTab(
+            widget.groupId,
+            _options.vendor,
+          ),
           icon: ispTabAssetIcon('icons/circuit-board.png'),
+        ),
+        ispTabIconButton(
+          key: const ValueKey('print-verilog-code'),
+          tooltip: '打印当前 Verilog 文件',
+          onTap: _files == null ? null : _printSelectedCode,
+          icon: const Icon(Icons.print_outlined, size: 20, color: Colors.white),
         ),
         // SimWave「跳转到Verilog」的信号名高亮指示（× 清除）。
         if (state.ipCodeHighlight != null) ...[
@@ -403,15 +640,19 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
                 Text(
                   '高亮 ${state.ipCodeHighlight}',
                   style: const TextStyle(
-                      fontSize: 11, color: Color(0xFFFFCC80)),
+                    fontSize: 11,
+                    color: Color(0xFFFFCC80),
+                  ),
                 ),
                 InkWell(
                   onTap: () => state.setIpCodeHighlight(null),
                   child: const Padding(
-                    padding:
-                        EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    child: Icon(Icons.close,
-                        size: 12, color: Color(0xFFFFCC80)),
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Icon(
+                      Icons.close,
+                      size: 12,
+                      color: Color(0xFFFFCC80),
+                    ),
                   ),
                 ),
               ],
@@ -425,10 +666,7 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
           overflow: TextOverflow.ellipsis,
         ),
         const SizedBox(width: 8),
-        const Text(
-          '编组·IP',
-          style: TextStyle(fontSize: 11, color: Colors.grey),
-        ),
+        const Text('编组·IP', style: TextStyle(fontSize: 11, color: Colors.grey)),
         const SizedBox(width: 6),
         // 厂商徽标（生成物随其分叉，与 C 代码页目标 CPU 徽标同位）。
         Text(
@@ -466,7 +704,18 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
   }
 
   Future<void> _pickOptions(IspStudioState state) async {
-    final o = await showIpGenDialog(context, initial: _options);
+    final group = state.graph.groups.firstWhere(
+      (g) => g.id == widget.groupId,
+      orElse: () => IspNodeGroup(widget.groupId, <String>{}),
+    );
+    final o = await showIpGenDialog(
+      context,
+      initial: _options,
+      hasYuvMatrix: groupHasYuvMatrix(state.graph, group),
+      hasColorTemp: group.nodeIds.any(
+        (id) => state.graph.nodes[id]?.typeId == 'color_temp_adjuster',
+      ),
+    );
     if (o == null || !mounted) return;
     if (o.vendor == _options.vendor) {
       // 厂商不变：原地更新参数（位宽/行宽）并刷新；会话缓存同步。
@@ -482,6 +731,59 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     }
   }
 
+  void _selectCodeFile(String file) {
+    setState(() {
+      _selectedFile = file;
+      _codeSpans = null;
+    });
+    _prepareCode();
+  }
+
+  Future<void> _prepareCode() async {
+    final files = _files;
+    final file = _selectedFile;
+    if (files == null || file.isEmpty) return;
+    final generation = ++_codeGeneration;
+    final text = files[file]!.trim();
+    if (file.endsWith('.md')) {
+      setState(() => _codeSpans = const []);
+      return;
+    }
+    setState(() => _progressStage = '准备代码高亮与排版');
+    try {
+      final spans = widget.filesBuilder != null
+          ? SyntaxHighlighter.highlightText(
+              text,
+              'v',
+              baseStyle: kCodeBrowserStyle,
+            )
+          : await _highlightIpCodeOffstage(text);
+      if (!mounted || generation != _codeGeneration || file != _selectedFile) {
+        return;
+      }
+      setState(() => _codeSpans = spans);
+    } catch (error) {
+      if (!mounted || generation != _codeGeneration) return;
+      setState(() => _error = '代码显示准备失败：$error');
+    }
+  }
+
+  Widget _buildGenerationProgress() {
+    return Center(
+      child: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_progressStage, style: const TextStyle(fontSize: 14)),
+            const SizedBox(height: 16),
+            const LinearProgressIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCodeArea() {
     if (_error != null) {
       return Center(
@@ -492,7 +794,7 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
       );
     }
     if (_files == null || _selectedFile.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return _buildGenerationProgress();
     }
     // SimWave「跳转到Verilog」高亮词：当前文件不含该信号时自动切到
     // 首个含它的 .v 文件（所有 .v 文件中的出现都高亮）。
@@ -504,7 +806,7 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
           if (f.endsWith('.v') && containsVerilogWord(_files![f]!, hl)) {
             if (f != _selectedFile) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) setState(() => _selectedFile = f);
+                if (mounted) _selectCodeFile(f);
               });
             }
             break;
@@ -517,26 +819,28 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
     if (_selectedFile.endsWith('.md')) {
       return MarkdownView(text: text);
     }
-    var spans = SyntaxHighlighter.highlightText(
-      text,
-      'v',
-      baseStyle: kCodeBrowserStyle,
-    );
+    if (_codeSpans == null) return _buildGenerationProgress();
+    var spans = _codeSpans!;
     if (hl != null) spans = highlightWordOccurrences(spans, hl);
     return CodeArea(spans: spans);
   }
 
-  /// 仿真终端面板（与编译终端同一风格）：标题栏（终端图标 +
-  /// 「仿真 — iverilog」+ 状态 + 关闭按钮）+ 可选中等宽输出区，
-  /// 流式追加并自动滚底。仿真中禁用关闭（同编译终端口径）。
+  /// 仿真与 demo 生成共用终端面板：标题、状态随当前任务切换，流式追加并
+  /// 自动滚底；任务运行中禁用关闭。
   Widget _buildSimPanel() {
-    final statusColor = _simRunning
+    final demo = _consoleTask == _IpConsoleTask.demoProject;
+    final succeeded = demo
+        ? (_demoResult?.success ?? false)
+        : (_simResult?.passed ?? false);
+    final statusColor = _taskRunning
         ? const Color(0xFFD7BA7D)
-        : (_simResult?.passed ?? false)
+        : succeeded
         ? const Color(0xFF4CAF50)
         : const Color(0xFFCF6679);
-    final statusText = _simRunning
-        ? '仿真中…'
+    final statusText = _taskRunning
+        ? (demo ? '生成中…' : '仿真中…')
+        : demo
+        ? (_demoResult?.success ?? false ? '生成成功 ✓' : '生成失败 ✗')
         : _simResult == null
         ? '失败'
         : (_simResult!.passed ? 'PASS ✓' : 'FAIL ✗');
@@ -553,9 +857,9 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
               children: [
                 const Icon(Icons.terminal, size: 12, color: Colors.grey),
                 const SizedBox(width: 6),
-                const Text(
-                  '仿真 — iverilog',
-                  style: TextStyle(fontSize: 11, color: Colors.white70),
+                Text(
+                  demo ? 'demo_prj — Vivado' : '仿真 — iverilog',
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -564,7 +868,7 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
                 ),
                 const Spacer(),
                 InkWell(
-                  onTap: _simRunning
+                  onTap: _taskRunning
                       ? null
                       : () => setState(() => _simPanelVisible = false),
                   borderRadius: BorderRadius.circular(8),
@@ -573,7 +877,7 @@ class _IpGeneratorPageState extends State<IpGeneratorPage> {
                     child: Icon(
                       Icons.close,
                       size: 12,
-                      color: _simRunning ? Colors.white24 : Colors.grey,
+                      color: _taskRunning ? Colors.white24 : Colors.grey,
                     ),
                   ),
                 ),

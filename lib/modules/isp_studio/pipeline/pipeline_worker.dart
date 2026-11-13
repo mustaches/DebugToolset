@@ -239,6 +239,9 @@ class PipelineWorkerPool {
       // 多段色彩均衡器非恒等时输出恒为新帧、恒等时直通引用，不就地
       // 改写输入帧（播放中「调整前」输入链的前缀覆盖捕获依赖此性质）。
       'multi_band_eq',
+      // 色温调节器同理：adjustRgb 恒等时返回输入引用、否则新建输出缓冲，
+      // 从不就地改写（色温节点附加区「调整前/调整后」捕获依赖此性质）。
+      'color_temp_adjuster',
     };
     for (var k = a.length; k < b.length; k++) {
       if (!passthroughOk.contains(b[k]['typeId'])) return false;

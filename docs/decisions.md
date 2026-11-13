@@ -864,6 +864,9 @@ Multi_band_EQ 全流程结果：
   关联的网；
 - 校验 `nlRouteIsClean`、元件矩形是否相交；只有真实覆盖才整块/端口回退并
   提示，成功则写入撤销栈与编辑日志；端口重排不再因相邻端口拒绝，而是交换槽位；
+- 新增**手动左右镜像**：编辑模式下**左键单击元件**（不拖动）切换
+  `flipH`，输入/输出换边、符号水平翻转、顶/底针脚 x 镜像；随后重摆引脚并
+  重布；拖动阈值 1 Grid，拖动仍用于移动。
 - 新增**手动引脚排序**：编辑模式下按住元件引脚上下拖动，松手按目标 y
   重排该侧（左/右/上/下）引脚槽位（写 `inPinOrder`/`outPinOrder`/
   `topPinOrder`/`bottomPinOrder`），`nlLayoutBlockPins` 重摆后整图重布；
@@ -989,3 +992,1143 @@ A/B（单趟与完整优化）：
    或列间通道主干，单靠 A* 代价改不了；
 3. **局部 staircase**：折弯 P95 7、max 9，属可接受；若要再压需提高转弯代价
    并接受长度增加，需你圈出具体位置再调。
+---
+
+## 2026-10-24 multi_band_eq func_fixed：无表定点直算的算法口径
+
+### 背景
+
+多段色彩均衡器新增第四种代码生成方式 `func_fixed`（函数·运行期直算·定点
+优化·嵌入式）：lut_fixed 烘焙 3 张 `max_value+1` 大表（12 位域 4096 项 ×3，
+A55 D-Cache 32KB 下 footprint/带宽敏感）且域失配回退 FP64；func_fixed 面向
+「表也不想要、FP64 也没有」的嵌入式场景——不建表、任意运行时 max_value 恒
+走全整数定点直算。
+
+### 决策：定点格式与 2^(−u) 多项式
+
+- 色相/偏移 Q16 度（一圈 `360<<16`），权重 Q14（与 lut_fixed 施加点的
+  `bb_clamp_q14` 对齐，S/L 乘子同域复用），x = d·q/45 换算系数 Q20。
+- 高斯权重 w = exp(−0.5x²) 改写为 2^(−u)（u = 0.5x²·log2e，合并系数
+  `round(0.5·log2e·2^20) = 756405`）：整数部移位 + 小数部 f∈[0,1) 五次
+  多项式，Q16 系数 Horner（每级四舍五入）。系数经 dense grid 加权最小二乘
+  拟合（权重 2^x 即相对误差口径），脚本 `scratch/fit_exp2_neg_poly.dart`。
+- 实测精度：double 系数最大相对误差 ~2e-7；Q16 量化 + Horner 后最大误差
+  2 ulp(Q16)；端到端 w_q14 与 FP64 exp 偏差 ≤1 ulp(Q14)；max_value ≤ 4095
+  全 H 域扫描输出偏差 ≤1 LSB（同 lut_fixed 验收口径）。
+- 每像素唯一除法是 h_q16 = (hv·360<<16 + max/2)/max 的 int64 除法（任意
+  max_value 的运行时直算不可避免；func 的 FP64 除法同样逐像素）。
+- 替代方案评估：小 exp 表 + 插值被否决——「函数（运行期直算）」的定位就是
+  零表 footprint；多项式 5 次已足精度，无需表。
+
+### 口径管理
+
+Dart 定点参考（isp_kernels.dart `multiBandFxBandConst`/`multiBandFxWeightQ14`/
+`multiBandComposeFx`/`applyMultiBandEqFx`）、c_ref `isp_multi_band_eq_fx_apply`
+（mb_compose_fx）、黑盒生成码 `<id>_compose_fx` 三处逐行镜像，C↔Dart 逐位
+对拍（tol=0）+ 黑盒 MSVC 构建 dump-hash 逐位 + FP64 偏差 ≤1 LSB 三层验收。
+整帧导出同样走 fx_apply（段 double 数组烘焙不变，帧入口换算定点常量）。
+单节点编组独占阶段走 `_fxRowFn` 标量整行函数 + omp 行域并行（逐像素高斯
+为标量重运算，不做 NEON/SSE2 变体）。Verilog IP 导出仍仅放行 lut_fixed。
+
+---
+
+## 2026-10-24 func_fixed 进 Verilog IP：无 ROM 段运算单元流水
+
+### 背景
+
+func_fixed（运行期直算定点）最初只覆盖 C 导出；用户要求 Verilog IP 也支持：
+每个取色器段一个独立 DSP 运算单元，并联并行展开、串联按段序流水展开。
+难点是 RTL 不能用除法器，而 func_fixed 口径里有两处逐像素除法
+（h_q16 的 /max_value、shift 的 /(360·2^30|2^16)），且必须与被拍对象
+（Dart `multiBandComposeFx`）逐位一致。
+
+### 决策：两条精确恒等式替代除法
+
+1. **h_q16 用 Mersenne 折叠**：IP 侧 max_value = 2^PIX_BITS−1（梅森数）。
+   floor(t/(2^k−1)) 经「q>>k 累加 + (q&k) 回折」四次迭代 + 末位修正精确
+   得到（t ≤ 2^41 全域逐值验证，scratch/verify_fx_verilog_identities.dart）。
+2. **shift 用「右移 + 倒数乘」**：round(v/(360·2^s)) = floor(A/360)，
+   A = (|v| + 180·2^s) >> s（数学恒等：(A mod 360)·2^s + r < 360·2^s 恒成立，
+   不产生进位）；再 A/360 = (A·ceil(2^33/360))>>33（A ≤ 2^24 误差界内精确，
+   密集+边界验证）。符号按 |v| 处理后回贴（D 为偶数，trunc 对称）。
+3. **段单元 = 组合逻辑模块**（`isp_ip_<组>_band_par`/`_band_ser`），流水
+   寄存器在 core 内：并联 LAT=5（输入→h_q16 折叠→段单元并行+求和→钳位
+   /换算→施加），串联 LAT=段数+4（每段一级，中间色相与 S/L 64 位累加器
+   逐级传递）。S/L 累加器保持 64 位带符号全程传递，与 Dart int64 同宽同
+   回绕（极端 24 段 ×5 增益卷绕也一致）。
+   **后改为运行期端口**（用户决定）：段参数不做 module parameter 烘焙，
+   而是 core/top/AXI/Libero 各层透出的输入端口 `par_b{i}_*`——func_fixed
+   的存在意义即 FPGA 运行中动态调参，与 LUT 烘焙形态本质区别；ispflow
+   参数只烘焙进 tb 的段参数激励 reg 初值（注释含原始 double 值与换算
+   公式）。
+4. 使能链尾→首反传（en_i = ~v_i | en_{i+1}），II=1；tb 排空余量按 LAT+4
+   烘焙（lut_fixed 保持 repeat(4) 逐字节不变）。
+
+### 验收
+
+- 恒等式用例 + golden 逐位（Dart 帧级参考 vs 生成 golden_hash.txt）+
+  iverilog 实仿（并联两段 / 串联三段 + 握手压力）EXACT PASS，见
+  `test/isp_group_ip_export_test.dart` 的 func_fixed 组。
+- 既有 lut_fixed 路径逐字节未变（生成物结构测试原样通过）。
+
+---
+
+## 2026-10-24 电路图大网表卡死：时间预算 + 规模护栏
+
+### 背景
+
+func_fixed IP 的 core 模块（段运算单元流水，2 段即 161 个可画单元、64 位
+乘加数据通路）在「电路图浏览」打开/展开时卡死。定位（分阶段计时探针
+`scratch/dbg_fx_sch_scale_test.dart`）：yosys 提取 0.5s、布局构建 0.1s 均
+正常；`optimizeNetlistLayout` 在大网表上候选评估随单元数平方增长且长时间
+不收敛（>2.5min 实测未结束），`routeNetlistWires` 单次 10.5s（182 网 A*），
+`optimizeNetlistRouting` 每候选一次全量重布——打开时自动优化/布线、展开时
+`_optimizeExpandedChild`/`_routeExpandedLevels` 全部撞上。
+
+### 决策
+
+1. **优化器加时间预算兜底**（`optimizeNetlistLayout`/`optimizeNetlistRouting`
+   新增 `timeBudget`，默认 null 不启用）：布局经 `evaluate/evaluateBatch`
+   抛私有 `_NlLayoutAborted` 从任意嵌套候选循环安全展开（复用全部既有
+   取消检查点语义），布线在外层 phase/候选块边界检查；超预算返回当前最优
+   且 `budgetExceeded=true`（routing 的 `converged` 同时置 false——不得冒充
+   自然收敛）。既有小网表收敛行为不变（均秒级自然收敛，预算不触发）。
+2. **UI 规模护栏**：`kSchLargeModuleCells=96`（`schModuleIsLarge`）——超过则
+   打开不自动布局优化/布线、展开不优化不 A* 布线（保持直线星形预览）+
+   蓝色提示条（可关闭）；手动工具栏运行仍可用，带 90s 预算 + SnackBar 告知。
+3. 预算粒度说明：布线的单次全量重布不可中断（并行批 ~10s/块级），5s 预算
+   实测 38s 返回——有界但可超预算数倍，v1 接受（自动路径已被护栏拦截，
+   手动路径 90s 预算最坏 ~2min 内必返回）。
+
+### 验收
+
+`test/isp_schematic_test.dart` 新增「func_fixed 大网表：时间预算兜底」用例
+（无 yosys 自动 skip）：顶层小图不触发护栏、core 触发护栏、两个优化器在 3s
+预算下分别 <60s/<90s 返回且 budgetExceeded=true。既有 128 项布局/布线/电路图
+关联测试全过（小网表行为不变）。
+
+---
+
+## 2026-10-24 补：预算版优化器的「假死」观感修复
+
+### 背景
+
+时间预算落地后，大网表上手动「开始优化布局」仍看似「没有任何动作」：
+布局优化器的 `onProgress` 只在**采纳更优候选**时回调，而 161 单元的
+func_fixed 核心在 90s 预算内可能零采纳——浮层全程静止（用时不走、轮数
+不变），预算耗尽后弹的还是「手工布局已更优」误导文案。
+
+### 决策
+
+- `optimizeNetlistLayout` 加心跳：`evaluate/evaluateBatch` 按 ~300ms 节奏
+  无条件 `emit()`（与采纳回调同一通道），浮层显示「评估 N 次 · 第 M 轮」
+  并持续刷新用时——不改动任何择优语义。
+- 预算耗尽且零改善时的 SnackBar 文案区分为「已达时间预算且未找到更优解，
+  保留当前布局」（原「手工布局已更优」仅用于确有手工编辑基线的场景）。
+
+---
+
+## 2026-10-24 原理图竖向过高：分层布局默认化 + 列行数拆列
+
+### 背景
+
+用户报告 func_fixed IP 电路图「竖向元件太多、没法看」。量化探针
+（`scratch/dbg_fx_sch_columns_test.dart`）发现三根支柱：
+1. 页面「分层布局」开关注释写「默认」但实际初始值是 false（漂移）——
+   用户实际看到的是 BFS 压缩布局；
+2. 分层布局此前只在顶层启用（`_path.length <= 1`），下钻视图回退 BFS
+   压缩——fx 核心在压缩口径下是 3405×16305 的细高条（单层 74 单元不拆）；
+3. 分层布局自身在「层数 ≤ 列上限」时压列 DP 不运行，宽层原样保留
+   （无拆列机制）。
+
+### 决策
+
+1. `_layeredLayout` 默认 true（与注释/AGENTS 口径一致），下钻视图同样走
+   分层（去掉 `_path.length <= 1` 限制）。
+2. `layoutLayeredNetlist` 新增 `maxRowsPerColumn`（默认 11，0=关闭）：
+   层内排序后，超行数上限的列按当前行序拆为多个相邻列（`_splitTallColumns`
+   ——分层无同层前向边，拆分只把部分边起点右移，不变量保持）；交叉/跨列
+   诊断在拆分后重算。一列至多 11 个元件（用户可读性要求）：fx 核心展开
+   进一步从 3675×5535 降到 6240×2790（≈2.2:1 横向），lut 基线不变。
+3. 效果（fx 4 段核心，分层）：7485×1905（≈4:1），端口轨随逻辑高度收窄到
+   ~1800；压缩口径同图为 3405×16305。顶层视图（端口轨 + 单实例）930×900。
+
+---
+
+## 2026-10-24 更正与补全：展开视图细高条的真根因是子模型硬编码 compact
+
+### 背景
+
+「原理图竖向过高」记录中的三条修复（分层默认 true / 下钻同口径 / 拆列
+兜底）改善了顶层与下钻视图，但用户截图的混乱形态（巨大近空画布 +
+跨区域长线）来自**顶层原位展开（层级图）**——探针渲染证实
+（`scratch/dbg_fx_sch_render_test.dart`）：
+
+- 展开子模型此前在 `_buildNetlistDiagramModelOnce` 里**硬编码 compact**
+  （与父级布局算法无关）：func_fixed 核心展开 4530×18225、lut_fixed 对照
+  3810×1890；
+- 直接改成与父级同算法会让 lut 展开回退为 1950×5265（竖向反而变长）——
+  小核心用紧凑、大核心用分层才是最优。
+
+### 决策
+
+`_buildChildModel`：父级分层时子模型先按紧凑布局（既有口径、lut 基线
+不变），**竖向细高（h > 2×w 且单元数 > 8）才回退分层重排**；父级紧凑时
+子模型恒紧凑。fx 核心展开 3675×5535（内容填满容器，lut 逐字节不变）。
+注：SVG/PNG 导出当前不渲染容器内部（`buildNetlistSvg` 无 `sub` 处理）——
+为既有缺口，不在本次范围。
+
+---
+
+## 2026-10-24 补：大层布线移入后台 isolate（展开/下钻大电路的毛线团与冻结）
+
+### 背景
+
+大电路护栏把 >96 块的大层留成直线预览后，展开 func_fixed 核心 = 182 网的
+星形直线毛线团（用户报「坐标全乱」）；而同步 A* 单层 ~10s 又会冻结 UI
+（此前「卡死」的另一半原因）。展开子层在容器内的几何更紧凑，布线
+fallback 率高于独立视图（122/182 vs 0/182）——容器边缘针脚对齐约束所致，
+可接受。
+
+### 决策
+
+- `routeNlLevelsInIsolate`（netlist_diagram.dart）：逐层 `Isolate.run` 并行
+  A*，对象图按值拷入、结果按层内 wires 索引回映射；`_runAutoRoute`（手动
+  「自动布线」）与展开/下钻大层统一走它。
+- 展开/下钻大模块：直线预览先上屏（可交互），后台布线完成自动并回 +
+  SnackBar；`_bgRouting` 左上胶囊提示；会话号 `_routingOptSession` 丢弃
+  过期结果。
+- 另修复展开子模型的行序查表 bug：rank 表按未加前缀单元名查询（块 id 带
+  idPrefix 时此前退化为名称排序，几何与独立布局不一致）。
+
+---
+
+## 2026-10-24 波形跳原理图不再丢布线
+
+### 背景
+
+SimWave Signal 右键「跳转到原理图」每次都会展开顶层实例并重建模型 +
+重新分层布线——已完成（含后台 isolate 布好的大电路）的走线被丢弃，
+大电路上表现就是「跳一下就退回直线毛线团」。
+
+### 决策
+
+跳转处理器改为：目标展开集（全部可下钻实例）与当前一致且模型在 → 只切
+高亮信号，不重建不重布（`identical` 保持布线对象）；展开集变化才重建，
+重建后大层走 `_kickBackgroundRouting` 后台并回。回归用例：
+`test/isp_schematic_test.dart`「波形跳转原理图：已展开布线完成时二次跳转
+不重建/不丢布线」（`identical(d2.autoRoutes, d1.autoRoutes)`）。
+
+---
+
+## 2026-10-24 展开视图走线越出容器框：按层画布布线
+
+### 背景
+
+后台 isolate 布线落地后，展开视图的子层走线会越出容器框（用户截图的高
+亮黄线伸出容器下边界）：`_routeExpandedLevels`/`routeNlLevelsInIsolate`
+给子层传的是**父级画布尺寸**，A* 允许绕线到子层内容之外；子层坐标是层
+内局部坐标，超出部分绘制时平移后即越出容器框。
+
+### 决策
+
+- `NlLevel` 新增 `canvasSize`（`flattened()` 携带该层模型的画布尺寸）；
+  布线边界取 `lv.canvasSize ?? nlLevelCanvasSize(lv)`（内容包围盒 + 4
+  Grid 余量），不再用父级画布。
+- 验收：`test/isp_schematic_test.dart`「func_fixed 展开视图：子层走线不
+  越出容器框」——真实 yosys 提取 + 展开 + isolate 布线，子层全部走线
+  端点（绝对坐标）落在容器块包围盒内（修复前实测 8 个越框端点）。
+
+---
+
+## 2026-10-24 补：布线诊断分层化 + 后台布线指示计数制
+
+### 背景
+
+后台布线并回后：1）走线诊断把展开容器内部的子层走线全部误报为
+「走线穿入元件 u_core」（1552 项——子层走线在父层容器框内合法，跨层
+比对所致）；2）「后台布线中」胶囊卡住不消——`_bgRouting` 布尔 +
+会话号早退，旧任务被新会话顶替时标志永真。
+
+### 决策
+
+- `_checkLegality` 穿块检查改为**同层比对**（`_NlWireGeometry.levelIdx`）：
+  每层走线只与该层块比对；父层走线穿容器仍是真违规（保留）。
+- `_bgRouting` 改在途任务计数（`_bgRoutingCount`），try/finally 保证
+  归零；会话过期丢弃结果的逻辑不变。
+- 用户看到的「从元件下方走过」主要是 fallback 网的直线段（展开容器内
+  更拥挤，fallback 率高于独立视图）——布线器走廊预留增强留待后续。
+
+---
+
+## 2026-10-25 Vivado 演示工程（demo/）与批处理建链的坑
+
+### 背景
+
+用户要求在 Vivado 里一键验证导出的 IP：IP 包新增 `demo/`（demo_top.v 演示
+顶层 + tb_demo.v golden 对拍 + create_demo_project.tcl 一键建 .xpr）。
+
+### 坑与决策（全部经真机 Vivado 2020.2 批处理验证）
+
+1. **Tcl 位置无关**：`package_ip.tcl` 原全相对路径——Run Tcl Script 的 cwd
+   是工程目录，源文件找不到、ip_repo 落空。修：开头 `cd [file dirname
+   [file normalize [info script]]]`；`create_demo_project.tcl` 同口径，
+   且 `create_project` 会再把 cwd 切到 ./demo_prj——其后的 `add_files`
+   一律绝对路径（`$demoDir`/`$pkgDir` 前缀）。
+2. **source 的 cwd 泄漏**：demo 脚本 source package_ip.tcl 后 cwd 停在包
+   目录——保存/恢复 cwd，否则工程建到错误位置。
+3. **IP 仿真网表不入 .prj**：launch_simulation 收集的 xvlog prj 只有 tb，
+   elaborate 报 Module not found。改法：sim_1 直接编包内原始 RTL（与打包
+   内容同源；同名模块不在 sources_1，无冲突），综合路径才走打包 IP。
+4. **axis DUT 端口映射**：tb 的 dutName 参数化 + axis 端口映射
+   （s_axis_tuser=sof/tlast=eol；aresetn 同低有效）。
+5. **默认仿真时长 1000ns 不够**：工程内 `set_property
+   xsim.simulate.runtime {100us}`（tb 自带 $finish）。
+6. **后台批处理 spawn 限制**：无控制台环境下 launch_simulation 的
+   compile.bat spawn 会 Broken pipe；verify 走 `-scripts_only` + 手动
+   compile/elaborate/xsim -R（GUI 里正常）。xsim 的 compile.bat 以 exit
+   结尾会截断 `&&` 链，三个 bat 须分开跑；且需先补 PATH（Vivado bin）。
+7. 端到端实测：打包 → 建工程 → xsim 行为仿真 **PASS**（fnv=4d402029 与
+   golden 逐位一致，Vivado 2020.2）。
+
+---
+
+## 2026-10-25 func_fixed IP 优化参数：GSTRATEGY 落地与 DSP_PIPE 插拍
+
+### 背景
+
+func_fixed（运行期直算、定点优化）Verilog IP 在 Vivado 验证通过后，用户
+要求把「优化选项」做成 **Vivado Customize IP 界面可改的参数**——GUI 改值
+即生效，无需重新导出。
+
+### 决策
+
+1. **GSTRATEGY 三分支 generate**：0=绑 LUT（`use_dsp=no`）、1=综合器自选
+   （不带属性）、2=绑 DSP（`use_dsp=yes`）。`use_dsp` 属性只能挂
+   **wire/reg 声明**，挂 `assign` 上 iverilog 报 `Invalid module item`
+   ——故每个乘法结果声明为带属性的 wire、再单独 assign（`dspTriple()`
+   一处生成三种形态）。
+2. **段运算单元按权重链拆三段**：`band_pre`（角距→x²→u）/ `band_mid`
+   （多项式→Q14 权重）/ `band_par_post`、`band_ser_post`（贡献/级联输
+   出）。拆段位置即 DSP_PIPE 的可插拍边界。
+3. **DSP_PIPE（0/1/2）参数多路选择插拍**：core 内每个可插拍边界恒发射
+   寄存器级 + `(DSP_PIPE >= k) ? 寄存 : 组合` 选通；旁路级寄存器不被使
+   用、综合剪除。valid/sof/eol 与进位数据走同一选通口径，使能链
+   （尾→首 en 链）按选通后的级信号推导——三档共用一份 RTL，数据口径
+   完全不变、只加拍。
+4. **iverilog 声明先于引用**：S0 输入级的数据位声明前置到 C01 折叠逻辑
+   之前；串联 S1 初始态与段 C 级输出态的下标命名单调错开（S1=后缀 0，
+   段 i 的 C 输出=后缀 i+1），否则重复声明/歧义引用。
+5. **延迟公式**：并联（含单段）LAT = 5+DSP_PIPE；串联 LAT = 段数×
+   (1+DSP_PIPE)+4。README 参数表与资源估算同步。
+6. **验证**：iverilog 实仿新增 DSP_PIPE=1/2 × 并联/串联 4 个用例，
+   golden（FNV-1a）与 DSP_PIPE=0 逐位一致；lut_fixed 路径不受影响
+   （参数透传为 null、不实例化）。
+
+---
+
+## 2026-11-10 RGB2HSL 全流水 DSP 数据通路（DSP 全流水 + 零 DPIP/DPOP）
+
+### 背景
+
+HSL 转换的定点实现原来是组合函数（`f_div_round` 牛顿迭代倒数 + 精确余数
+修正嵌套在 `f_rgb2hsl_*` 里），三级乘法串在同一条组合链上，Vivado 推断出
+DSP 后无法把流水寄存器插进去，于是报出 150 条 DPIP/DPOP「DSP 未流水」建议。
+两条补救都不满意：整模块 `use_dsp="no"`（0 DSP、13565 LUT、零建议）或交给
+综合器自选（48 DSP、3836 LUT、150 条建议）。用户要求「同时拿到 DSP 全流水
++ 零建议」，并允许改 golden/延迟口径。
+
+### 决策
+
+含 `csc_rgb2hsl`（func_fixed）且 `GSTRATEGY != 0`、`DSP_PIPE == 3` 的编组，
+改用 `codegen/hsl_pipe_verilog.dart` 的**全流水分级数据通路**（单节点 23 拍）：
+
+1. Q14 归一化（`(v*16384 + MAXV/2)/MAXV`，常数除由 Vivado 折叠为乘加）
+   + max/min + den/差分。
+2. 定点除法换成「无除法器」流水版：规格化 `dn = den<<k`（优先编码器给出
+   k）→ 8 位索引 ROM `f_hsl_seed` 给 `A0 ≈ 2^33/dn` → 一次牛顿迭代
+   （两级乘法）→ `q0 = (nv*R) >> (19-k)` → `q0*den` 求余数 → ±1 修正 +
+   四舍五入。与 `_divRound` **逐位一致**（Dart 侧 256³ 全组合 + PIX_BITS
+   10/12/16 抽样对拍 0 失配，`scratch/hsl_pipe_math.dart`）。
+3. 每级乘法用**显式 `DSP48E2` 原语**（core 内的 `${top}_hsl_mul`，
+   AREG/BREG/MREG/PREG 全 1，`OPMODEREG=0`），三个内部寄存器级各由所在
+   流水级的 ready 驱动（`en_a=[k]/en_m=[k+1]/en_p=[k+2]`，k 为操作数级拍号），
+   侧数据走同级框架寄存器——**逐级弹性**得以保留：
+
+   - 单一 `en` 的原语写法（第一版）在 gap/stall 下会错拍（实测
+     gap 30% / stall 40% 时 FAIL），因为多拍跨度内各 stage_ready 不同；
+   - 纯 RTL 乘法 + 两级乘积寄存（第二版）虽然弹性正确，但 Vivado 只吸收
+     PREG、MREG 仍留在 fabric（11 条 DPOP-4），乘后寄存器带异步复位时更差；
+   - 最终版：显式原语 + 分级 CE，gap/stall 组合 0/0、0/80、80/0、70/40
+     全部 PASS 且哈希一致。
+4. 面积档（GSTRATEGY=0）保持组合函数 + 模块级 `use_dsp="no"`。
+
+### 实测（xczu15eg-ffvb1156-2-i，Vivado 2020.2 全流程，demo_top 实现）
+
+| 方案 | CLB LUT | CLB FF | DSP48E2 | WNS | DPIP/DPOP |
+|---|---:|---:|---:|---:|---:|
+| 组合 + 绑 LUT（面积档） | 13565 | 152 | 0 | +0.182 ns | 0 |
+| 组合 + 综合器自选 | 3836 | 134 | 48 | +1.922 ns | 150 |
+| **全流水 DSP 通路（本条）** | **1525** | **2039** | **11** | **+18.201 ns** | **0** |
+
+DRC 只剩 demo 级的 `NSTD-1`/`UCIO-1`（未约束 I/O，所有 demo 都有）；golden
+哈希与组合版完全一致（`0xff6ee8a7`），即数值口径未变、只是延迟从 3 拍变
+23 拍。
+
+### 层级拆分（消除 [Netlist 29-101]/[Netlist 29-43]）
+
+OOC 综合后核心模块被摊成 4339 个原语、0 层级，Vivado 报「not ideal for
+floorplanning」（`29-101` 核心、`29-43` demo_top）。实测把 IP 综合设成
+`STEPS.SYNTH_DESIGN.ARGS.FLATTEN_HIERARCHY none` **无效**（警告针对的正是
+核心这个 cellview 本身），因此改为把三段组合逻辑拆成独立子模块并加
+`(* keep_hierarchy = "yes" *)`：
+
+| 子模块 | 内容 |
+|---|---|
+| `${top}_hsl_m` | Q14 归一化 + max/min + den/差分（输入像素，输出 REC_M 记录） |
+| `${top}_hsl_q` | 规格化移位 + 种子 ROM（`f_hsl_seed`/`f_hsl_normk`）+ REC_Q 记录 |
+| `${top}_hsl_corr` | 余数修正 + 色相基点 + 除 6（输入 REC_Q + 两个乘积，输出 h/s/l） |
+
+核心模块只留流水寄存器、DSP 原语（`${top}_hsl_mul`）与前述三个子模块实例。
+结果：两条 floorplanning 警告消失；代价是跨模块不再联合优化，LUT 1525→1589
+（+4%），DSP 仍 11、WNS +18.7ns、DRC 仍只有 demo 级 NSTD-1/UCIO-1，golden
+哈希不变。
+
+### 教训
+
+- 多拍元件不能靠「一个 `en` 的 DSP 黑盒 + 逐级弹性流水」：跨度内各
+  stage_ready 不同就会错拍。要么展开成逐拍 RTL 让综合器吸收（推断版），
+  要么原语化但把每个内部寄存器级的 CE 对齐到对应流水级的 ready（本条）。
+- 推断版为何吸收不全：乘积寄存器塞进宽记录寄存器时只能吸一个（PREG），
+  乘后寄存器带异步复位也吸收不了（复位去掉后 11→7 条）。原语化可绕开这
+  两个坑，代价是绑死 Xilinx 器件（非 Xilinx 走 `!SYNTHESIS` 的三级寄存
+  回退，语义一致）。
+- 定点除法的中间量位宽受 Q14 域约束（den ≤ 16385、R ≤ 131071、乘积 ≤ 2^33），
+  所以 11 个乘法器每个只占 1 个 DSP48E2（不必 3 片拼 32×32）。
+
+---
+
+## 2026-11-11 HSL→RGB 全流水 DSP 数据通路 + demo 零警告
+
+### 背景
+
+`HSL2RGB.ispflow` 的编组是单个 `csc_hsl2rgb`（func_fixed），仍走组合函数
+`f_hsl2rgb_q14`：`l*s` 与三条 `(q-p)*t`、三条 `×MAXV` 共 7 个乘法串在一条
+组合链上，Vivado 推断 DSP 后无法插流水寄存器 → DPIP/DPOP 建议。用户要求
+与 RGB→HSL 一样「整工程 0 警告」。
+
+### 决策
+
+1. HSL→RGB 与 RGB→HSL 走同一套机制（`hsl_pipe_verilog.dart` 的
+   `buildHsl2RgbPipeStages`，条件同为 `GSTRATEGY != 0 && DSP_PIPE == 3`）：
+   Q14 归一化 + `h%16384` + `h3` 与三条色相支路 → `l×s` → `q/p/qm` 与
+   每通道乘法操作数/支路选择 → 三条 `(q-p)×op` → 还原 r/g/b →
+   三条 `×MAXV` → 舍入钳位。**14 拍**、II=1、全程乘法+移位（无除法器）。
+2. 每级乘法同样是显式 `DSP48E2`（AREG/BREG/MREG/PREG=1）且三级 CE 对齐所在
+   流水级 ready，逐级弹性（气泡/背压均实测通过）。
+3. 三段组合逻辑拆成保留层级的子模块 `_hsl2rgb_n` / `_hsl2rgb_q` /
+   `_hsl2rgb_c`：即使只有 ~800 LUT，扁平网表仍会触发
+   `[Netlist 29-101]/[29-43]`，拆出层级后消失。
+4. 面积档（`GSTRATEGY=0`）仍为组合函数 + 模块级 `use_dsp="no"`（3 拍）；
+   `hslModuleAttr` 的判定补上 `csc_hsl2rgb`（此前只覆盖 rgb2hsl/yuv2hsl，
+   导致 HSL→RGB 面积档不绑 LUT）。
+5. demo 的**未约束 I/O 两条 DRC**（`NSTD-1`/`UCIO-1`）在无 `pins.xdc` 时声明
+   为 `Advisory`：XDC 不支持 `if`（`[Designutils 20-1307]` 实测），因此写在
+   `demo/clock_route.tcl`（pre-opt_design 钩子，与时钟路由放宽同一条件）。
+   `Advisory` 是 Vivado 2020.2 允许的最低severity（`Info` 被拒：
+   `[Vivado 12-2485] Invalid severity Info`），`report_drc` 里仍能看到这两项，
+   只是不再计入警告。
+
+### 实测（xczu15eg-ffvb1156-2-i，Vivado 2020.2 全流程，demo_top 实现）
+
+| 项 | HSL→RGB（本 IP） |
+|---|---:|
+| DSP48E2 | 7 |
+| CLB LUT | 716 |
+| CLB 寄存器 | 726 |
+| WNS | +19.2 ns |
+| 输出延迟 | 14 拍（II=1） |
+| 综合/实现 WARNING | **0** |
+| DPIP/DPOP | **0** |
+| `[Netlist 29-101]/[29-43]` | **0** |
+| DRC | 仅 NSTD-1/UCIO-1（Advisory，无 pins.xdc） |
+
+数值与 Dart 定点参考逐位一致（`scratch/hsl2rgb_pipe_math.dart`：256³ 全组合 +
+PIX_BITS 10/12/16 抽样 0 失配），golden 哈希与组合版相同。
+
+### 教训
+
+- 组合逻辑「少」不等于不触发 floorplanning 警告：772 LUT/727 FF 的扁平核心
+  照样报 29-101，判定与层级存在性相关，与规模无关。
+- XDC 只接受约束子集命令，`if`/`foreach` 会报 `[Designutils 20-1307]`，
+  需要在 run 的 TCL.PRE hook（普通 Tcl）里做条件逻辑。
+
+---
+
+## 2026-11-11 HSL→YUV 全流水 DSP 数据通路（HSL→RGB + BT.601 矩阵）
+
+### 背景
+
+`HSL2YUV.ispflow` 的编组是单个 `csc_hsl2yuv`（func_fixed），走组合函数：
+`f_hsl2rgb_q14` 后再接 `rgbToYuv()` 的 9 个乘加，共 16 个乘法串在一条组合
+链上 → DPIP/DPOP 建议 + 扁平网表 floorplanning 提示。
+
+### 决策
+
+1. `buildHsl2YuvPipeStages` 复用 `buildHsl2RgbPipeStages`（新增 `rgbCodes`
+   开关：末级输出 0..MAXV 的 R/G/B 三通道码记录，而不是 3×PIX_BITS 像素），
+   再接 BT.601 定点矩阵（Y/U/V 各 3 个乘加）+ 舍入钳位，单节点 **18 拍**。
+2. 矩阵系数是**生成期常量**（19595/38470/7471、-11058/-21710/32768、
+   32768/-27439/-5329，与 `rgbToYuv()` 一致），含负值 → `hsl_mul` 增加
+   `SIGNED_A/SIGNED_B` 参数（回退模型改用带符号寄存器 + 符号扩展，无符号
+   用法不变）。
+3. YUV 矩阵固定 BT.601，因此不暴露 `YUV_STANDARD`（`groupHasYuvMatrix`
+   仍只看 `csc_yuv2rgb`/`csc_rgb2yuv`），与 `cscFixedPixel('csc_hsl2yuv')`
+   的参考口径一致。
+4. 面积档（`GSTRATEGY=0`）仍为组合函数 + 模块级 `use_dsp="no"`，单级 1 拍；
+   `hslNodes` 判定补上 `csc_hsl2yuv`。
+
+### 实测（xczu15eg-ffvb1156-2-i，Vivado 2020.2 全流程，demo_top 实现）
+
+| 项 | HSL→YUV |
+|---|---:|
+| DSP48E2 | 16（7 HSL→RGB + 9 矩阵） |
+| CLB LUT | 1035 |
+| CLB 寄存器 | 762 |
+| WNS | +19.5 ns |
+| 输出延迟 | 18 拍（II=1） |
+| 综合/实现 WARNING | **0** |
+| DPIP / DPOP | **0** |
+| `[Netlist 29-101]/[29-43]` | **0** |
+| DRC | 仅 NSTD-1/UCIO-1（Advisory） |
+
+数值与 Dart 参考逐位一致（`scratch/hsl2yuv_pipe_math.dart`：256³ 全组合 +
+PIX_BITS 10/12/16 抽样 0 失配）；iverilog 实仿在 gap/stall 0/0、70/40、
+0/80、80/0 与 PIX_BITS 8/10/12/16 下全部 PASS 且哈希一致。
+
+### 教训
+
+- Verilog 里 `{{0{1'b0}}, x}`（0 次复制）在 iverilog 静默、Vivado 报
+  `[Synth 8-693] zero replication count`：`PIX_BITS=16` 或 DSP 端口满宽时
+  必然出现，故零扩展改由 Dart 侧 `zeroPad16()` 决定是否发射复制，矩阵 DSP 的
+  B 端口位宽也从 18 降到 17（17 位有符号可容纳 ±65535，避开 `18-BW=0`）。
+
+---
+
+## 2026-11-11 IP core 文件头位置与子模块按需发射
+
+### 问题
+
+`ISP_IP_HSL_to_YUV_core.v` 生成出来有两处结构缺陷（用户指出行 1 与行 576）：
+
+1. **第 1～378 行是 RGB→HSL 专用的三个子模块**（`_hsl_m`/`_hsl_q`/`_hsl_corr`），
+   HSL→YUV 根本不实例化它们——死代码把真正的核心挤到第 576 行；
+2. **文件头（`// Generated by …` 与 `` `timescale 1ns/1ps ``）排在所有模块之后**。
+   `` `timescale `` 是编译指令、只对其后的模块生效，于是前面 5 个子模块没有
+   时间单位（后仿真/时序解读受影响）。
+
+### 修复
+
+- `needsRgb2HslBlocks` / `needsHsl2RgbBlocks` 分开判定：RGB→HSL 只发射
+  `_hsl_m/_hsl_q/_hsl_corr`，HSL→RGB 与 HSL→YUV 只发射 `_hsl2rgb_n/_q/_c`，
+  `_hsl_mul` 两者共用；
+- 文件头改为模板最前面的 `$fileHeader`，子模块接在其后、核心模块之前。
+
+### 验证
+
+- 三个 IP 的 core 文件均以 `// Generated by DebugToolSet ISP Studio …` 开头，
+  `` `timescale `` 在第一个 `module` 之前；HSL→YUV 文件从 5 个模块降到 4 个
+  （3 个子模块 + `_hsl_mul` + 核心）；
+- 回归用例「IP core 文件头在最前，且只发射本 IP 用到的子模块」覆盖三种 IP；
+- HSL→YUV 重跑完整 Vivado 流程：仍 1035 LUT / 762 寄存器 / 16 DSP /
+  WNS +19.46ns、**0 条 WARNING**、零 DPIP-DPOP、零 floorplanning 警告。
+
+---
+
+## 2026-11-11 YUV→HSL 全流水 DSP 数据通路（BT.601 矩阵 + RGB→HSL）
+
+### 决策
+
+`buildYuv2HslPipeStages` 在 RGB→HSL 全流水通路**之前**加一段 BT.601 矩阵：
+4 个 DSP（`crV×V'`、`cgU×U'`、`cgV×V'`、`cbU×U'`，`U'/V'` 是减去中点的有符号
+差值 → `SIGNED_A=1`；系数上限 116130 需 18 位有符号 B → `SIGNED_B=1`）→ 三个
+乘积各自累加 + 32768 后 `>>> 16`、再加 Y 码、钳位得到 R/G/B 码 →
+直接复用 `buildHslPipeStages`（它的入口是 `_hsl_m` 子模块，正好吃「R/G/B 码」
+像素，省掉重复的归一化）。单节点 **28 拍**（矩阵 5 拍 + RGB→HSL 23 拍）、
+15 个 DSP48E2。矩阵固定 BT.601，不暴露 `YUV_STANDARD`；面积档仍为组合函数
+（三段式 3 拍）+ `use_dsp="no"`。
+
+顺带把 `hsl_mul` 原语端口的填充从 `{N{...}}` 复制改为算术扩展
+`$signed(a) / $signed({1'b0, a})`：`N` 可能为 0（AW=30 / BW=18），0 次复制会
+被 Vivado 报 `[Synth 8-693]`；这样 18 位有符号 B 端口也能直接用。
+
+### 实测（xczu15eg-ffvb1156-2-i，Vivado 2020.2 全流程）
+
+| 项 | YUV→HSL |
+|---|---:|
+| DSP48E2 | 15（4 矩阵 + 11 RGB→HSL） |
+| CLB LUT | 1704 |
+| CLB 寄存器 | 2136 |
+| WNS | +17.7 ns |
+| 输出延迟 | 28 拍（II=1） |
+| 综合/实现 WARNING | **0** |
+| DPIP / DPOP | **0** |
+| `[Netlist 29-101]/[29-43]` | **0** |
+| DRC | 仅 NSTD-1/UCIO-1（Advisory） |
+
+数值与 Dart 参考逐位一致（`scratch/yuv2hsl_pipe_math.dart`：256³ 全组合 +
+PIX_BITS 10/12/16 抽样 0 失配）；iverilog 实仿在 gap/stall 0/0、70/40、
+0/80、80/0 与 PIX_BITS 8/10/12/16 下全部 PASS 且哈希一致。
+
+### 教训
+
+- 跨模块复用时**端口打包方向**必须对齐：HSL→YUV 的内部记录是 `{b,g,r}`，
+  而 `_hsl_m` 子模块吃的是「像素」`{R,G,B}`（R 在最高位）——直接拿记录喂过去
+  会把 R/B 对调，表现为 S/L 正确、H 完全错（调试时这个特征很好认）。
+- 规划层延迟要按「非流水形态」逐类型核对：`csc_yuv2hsl` 组合版是三段式
+  （normalize/pre/post，3 拍），`csc_hsl2rgb`/`csc_hsl2yuv` 才是单级 1 拍。
+
+---
+
+## 2026-11-11 HSL↔YUV 暴露「YUV 标准」并全链路贯通
+
+### 背景
+
+`csc_yuv2hsl` / `csc_hsl2yuv` 此前把 YUV 矩阵写死 BT.601（Dart 双精度核
+`yuvToHsl`/`hslToYuv`、定点参考、C 参考、Verilog 都是 601 常量）。用户要求
+这两个与 YUV 相关的节点也提供 BT.601/709/2020 选项。
+
+### 决策
+
+1. 节点参数：`csc_yuv2hsl` / `csc_hsl2yuv` 复用 `_yuv2RgbStandardParam`
+   （label「YUV 标准」，三档，**默认 bt2020**，与 rgb2yuv/yuv2rgb 一致）。
+2. Dart：`yuvToHsl` / `hslToYuv` 增加 `standard` 参数（默认 'bt601' 保旧调用）；
+   `cscFixedPixel` 的 `csc_hsl2yuv` 分支改走 `convertRgbToYuvCsc(standard:)`；
+   `pipeline_runner` 传节点值（空则 bt2020）。
+3. C 参考：`isp_csc_common.h` 补 BT.2020 正向与 BT.709/2020 反向系数、
+   `IspCscStandard`/`IspCscRange` 枚举下移到这里（各变体头共用），
+   `isp_csc_yuv_to_rgb_px_s`/`isp_csc_rgb_to_yuv_px_s` 按 standard 选系数；
+   `isp_csc_modes.h` 的 4 个 YUV 变体全部透传 standard；`node_c_gen` 对变体
+   0/2/3/5 都烘焙 `_STANDARD`；harness 的 yuv2hsl/hsl2yuv op 改走
+   `isp_csc_apply_modes` 以透传标准。
+4. Verilog：组合路径的系数选择统一为 `YUV_STANDARD` 三分支（含 LUT 烘焙改用
+   `effectiveStandard`）；两条全流水矩阵级（HSL→YUV 9 个、YUV→HSL 4 个 DSP）的
+   B 端口改为参数三目常量；`hasYuvMatrix` / `_hasYuvMatrix` /
+   `groupHasYuvMatrix` / `_effectiveYuvStandard` / `emitFixedIpNode` 的默认值
+   判定全部纳入这两类节点 —— 否则 top 包装的 `YUV_STANDARD` 会固定成 2，
+   节点选了 601/709 也不生效（本次踩到的坑）。
+
+### 验证
+
+- Dart：`scratch/hsl2yuv_pipe_math.dart`、`scratch/yuv2hsl_pipe_math.dart`
+  给出 256³ 与多档位深抽样（标准按 bt601 验证）；三档标准分别跑 iverilog 实仿
+  全部 PASS 且哈希互不相同、与 Dart 参考一致；
+- C：`test/isp_c_ref_compare_csc_test.dart` 新增「YUV 标准三档」6 个用例
+  （yuv2hsl/hsl2yuv × bt601/709/2020），41 项全通过（注意 harness 按 tag 缓存
+  可执行文件，改了 C 源必须删 `scratch/c_ref_check/c_ref_harness_<tag>.exe`）；
+- IP：两个 demo_prj 重跑完整 Vivado 流程均 **0 条 WARNING**、零 DPIP/DPOP、
+  零 floorplanning 警告，DRC 仅 NSTD-1/UCIO-1（Advisory）；
+  HSL→YUV 1035 LUT / 762 寄存器 / 16 DSP / WNS +19.5ns，
+  YUV→HSL 1704 LUT / 2136 寄存器 / 15 DSP / WNS +18.0ns。
+
+---
+
+## 2026-11-11 YUV_MBC_EQ：三 IP 组合 vs 合并单 IP 的取舍
+
+### 流程
+
+`YUV_MBC_EQ.ispflow` 的编组是 3 个节点串联：
+`csc_yuv2hsl`（YUV→HSL，28 拍/15 DSP）→ `multi_band_eq`（func_fixed，
+16 段固定结构/DSP_PIPE=3，127 DSP）→ `csc_hsl2yuv`（HSL→YUV，18 拍/16 DSP）。
+
+### 对比（实测 xczu15eg-ffvb1156-2-i，Vivado 2020.2）
+
+| 维度 | 三个独立 IP + 互连 demo（采用） | 合并成一个图级 IP（否决） |
+|---|---|---|
+| 资源 | 父工程实现 5622 LUT / 9229 FF / **158 DSP**（三包 OOC 之和为 6642/10757/158，顶层综合裁掉约 15% 边界开销） | 同一套阶段 RTL，DSP 仍 158，LUT 至多再省几个百分点（跨阶段常量传播） |
+| 延迟 | 28+89+18 拍，链式不变 | 相同 |
+| 可配置性 | 每包独立 XGUI：YUV→HSL / HSL→YUV 各有 `YUV_STANDARD`，MBC_EQ 有 IMPL_MODE / WORK_MODE / NUM_BANDS / 16×5 段参数端口 | 单页 XGUI 塞 ~90 个参数；`YUV_STANDARD` 退化为一个全局量 |
+| 复用 | 三个 IP 各自可单独复用到别的管线（MBC_EQ 用于 RGB 域、YUV→HSL 用于其它流程） | 只能整链复用 |
+| 验证 | 每包已有独立 golden/时序/0 警告结论；组合 tb（三 IP 串联）golden 也 PASS（fnv=c54d0a44） | 需对合并核心重新做 golden/DRC/时序验证 |
+| 工程规则 | 符合「多节点编组逐节点独立 IP」的既定约束 | 违反该约束（图级合并 IP 已被禁止） |
+| floorplanning | 每个 IP 是独立 cellview，无 `[Netlist 29-101]` 风险 | 单一扁平核（44+ DSP、5k+ LUT）会重新触发 29-101，需再拆子模块 |
+
+结论：**采用三 IP 组合**。合并方案在资源/延迟上没有实质收益，却牺牲可配置性、
+复用性与既有验证结论，并且违反既定规则。
+
+### 顺带修复
+
+多节点 demo 的 `create_demo_project.tcl` 原本把 impl 策略设为
+`Vivado Implementation Defaults`，该流程在单 SLR 器件上会请求
+`place_design -ultrathreads`，产生 `[Vivado_Tcl 4-1400]` 警告；改为与单 IP demo
+一致的 `Performance_Explore` 后，整条流程 0 条 WARNING。
+
+---
+
+## 2026-11-11 HSL 管线：`hsl_corr` 乘积端口宽度（VRFC 10-3091）
+
+### 现象
+
+YUV_MBC_EQ 的 demo 工程在 Vivado 里跑行为仿真时报：
+
+```
+[VRFC 10-3091] actual bit length 32 differs from formal bit length 34
+    for port 'p4s' [ISP_IP_YUV_to_HSL_core.v:1087]   （p4t 同）
+```
+
+### 根因
+
+`hsl_pipe_verilog.dart` 的 `hslBlockDefs` 生成的 `_hsl_corr` 子模块把两个乘积输入
+声明成 `[33:0]`，而所有调用点馈入的是 m4 乘法级输出 `<id>_m4_ps/_m4_pt`，宽度为
+`_p5W = 32`（缩放乘积 ≤ 2^31）。模块体内实际只用到 `p4s[30:0]`（31 位幅值），
+声明宽度属于早期版本的残留。
+
+### 修复
+
+端口收窄为 `input wire [31:0] p4s, p4t`——模块体语义逐位不变（生成核 iverilog
+哈希 `917c625d` 前后一致）。`hslBlockDefs` 只有一个调用点
+（`fixed_ip_verilog.dart`），因此 RGB→HSL、HSL→RGB、YUV→HSL、HSL→YUV
+四个 IP 一并修好。
+
+### 验证（xczu15eg-ffvb1156-2-i，Vivado 2020.2 批处理）
+
+三 IP 组合 demo 从零重跑 `create_demo_project.tcl` → 3×OOC 综合 → 父工程综合 →
+行为仿真 → 实现：
+
+- 整条流程 `WARNING:`/`CRITICAL WARNING` **0 条**（含 `4-1400` 与 `VRFC 10-3091`）；
+- 行为仿真 `PASS frame=64x8x1 fnv=c54d0a44`（三 IP 串联 golden 不变）；
+- 实现 `route_design Complete!`，WNS +15.576 ns；5622 LUT / 9229 FF / 158 DSP；
+- DRC 仅 `NSTD-1`/`UCIO-1`（Advisory，demo 顶层未加引脚约束），
+  methodology DRC 0 条。
+
+教训：子模块端口宽度必须等于实际馈入信号的宽度；iverilog 默认不对端口连接做
+位宽检查，这类问题只有 Vivado（`xvlog`）才会报，所以 IP 生成后的回归要有一趟
+Vivado 仿真编译。
+
+---
+
+## 2026-11-11 布线后时序仿真：XSim 加载卡死与仿真模式取舍
+
+### 现象
+
+demo 工程（YUV_MBC_EQ，3 个 IP 串联）跑 **Run Post-Implementation Timing
+Simulation** 时，Vivado 的 Run Simulation 对话进度条长时间不动；Tcl 控制台停在
+
+```
+INFO: [USF-XSim-8] Loading simulator feature
+Vivado Simulator v2020.2.2
+```
+
+之后没有任何输出，点 Cancel 也不退出（`[Common 17-41] Interrupt caught` 后仍卡住）。
+
+### 排查（全部本机实测，xczu15eg-ffvb1156-2-i / Vivado 2020.2 / XSim）
+
+| 步骤 | 结果 |
+|---|---|
+| xvlog 编译 timesim 网表（19 MB，312 个模块含 `DSP48E2_HD*`/`IBUF_HD*` 变体） | 约 1 min，0 警告 |
+| xelab 精化 | **约 22 min**（`--mt 2` 逐模块编译，snapshot 987 MB） |
+| SDF 反标注（57 MB，146 个 obj） | 精化阶段即完成，成功 |
+| 启动内核后 | 4.1 GB RSS、单核持续 100% CPU，>45 min 无任何输出、无 `wave.vcd` |
+| 移除 `.sdf` 后再跑（功能等效，但仍是 timing 精化参数） | 同样卡住 → **不是 SDF 的锅** |
+| 同一 snapshot 里 `xsim` 手动 `run -all`（无 add_wave） | 同样卡住 → 不是波形录制 |
+| Post-Synthesis **Functional** | **152 s 跑完，PASS `fnv=c54d0a44`** |
+| Post-Implementation **Functional** | **152 s 跑完，PASS `fnv=c54d0a44`** |
+| Behavioral | 约 15 s，PASS |
+
+结论：网表本身没有问题（布线后网表在 functional 模式逐位对拍通过），卡死出现在
+XSim 的 **timing 模式**（延迟/脉冲参数：`-transport_int_delays -pulse_r 0
+-pulse_int_e 0`）驱动这份约 1.5 万单元、158 个 DSP48E2 原语的网表时——纯工具侧
+病理，产品侧无参数可调（这些 flag 由 Vivado 对 timing 模式固定注入）。
+Cancel 无响应，只能结束 `xsimk.exe` 进程。
+
+### 处置
+
+- 生成的 demo README 增加「仿真」章节：给出四档模式的实测耗时，明确
+  Post-Implementation Timing 在本设计上不可用，功能/连接性验证用 Functional
+  三档，时序收敛由 `report_timing_summary` 保证（WNS +15.6 ns）。
+- testbench 的 `wave.vcd` 转储改为 `+NOVCD` 可关（`$test$plusargs`），demo 工程
+  经 `XSIM.SIMULATE.XSIM.MORE_OPTIONS = {-testplusarg NOVCD}` 传入：Vivado 自带
+  波形窗口按需加信号即可，避免为整张 flatten 网表（数万网线）写 VCD；
+  应用内「一键仿真」走 iverilog 不传该参数，VCD 与波形标签页行为不变。
+- tb 增加 `SIM start` 横幅，长网表仿真时控制台能立刻看到仿真已开始（否则只有
+  结尾的 PASS/FAIL 一行，容易误判为卡死）。
+
+---
+
+## 2026-11-11 色温调节器附加区：视频预览（播放）
+
+### 需求
+
+`IspFlow/色温调节器测试.ispflow` 的色温调节器节点接入视频源时，附加区只能显示
+单次预览的一帧，无法连续播放；多段色彩均衡器附加区早已有播放控制条 + 前后双联
+逐帧预览，色温节点缺同一能力。
+
+### 实现（复用均衡器那条通路，不新写播放引擎）
+
+- 播放汇点：`togglePlayback` 的汇点集从「预览 + 多段色彩均衡器」扩为
+  「预览 + 多段色彩均衡器 + 色温调节器」——既让只有色温节点的图也能播放，也
+  让其自身链成为「调整后」馈源链（下游有预览链时经前缀覆盖去重，零额外计算）。
+- 附加区馈源捕获：原 `eqNodes/eqUpstream/eqExtraChains/eqFeedImageKeys` 一组
+  统一改名为 `feedNodes/...`，节点类型判定加入 `color_temp_adjuster`。CPU 路径
+  靠 `runParallel` 前缀覆盖捕获（`images[id]` / `images['id#in']`），GPU 链路径
+  靠 `displayCaptures` 顺带出图；两者最后都经既有路由写进
+  `previewImages[id]` / `previewInputImages[id]`，与单次预览同键，附加区 UI 不改。
+- `_captureSafe` 白名单加入 `color_temp_adjuster`：`adjustRgb` 恒等时返回输入
+  引用、否则新建缓冲，从不就地改写（与 `multi_band_eq` 同一性质），可作为被覆盖
+  链的末尾节点。
+- 停播刷新：均衡器矢量示波器那套「播放中冻结、停播补齐」的口径同样用于色温——
+  新增 `_refreshColorTempStatsFromPreviews`，以最后一帧前后预览图重算测量色温
+  （McCamy）与调整后 RGB 直方图。
+- UI：`_buildPlaybackBar` 从 `_MultiBandEqExtra` 提到 `IspNodeWidget` 共用
+  （预览节点/均衡器/色温三处同一份实现，含 HDR/SDR 切换与时间码）；色温附加区
+  在底行与手柄之间加该控制条，`_displayChrome` 126→152，默认 extraHeight
+  280→306（新节点内容区高度不变）。
+
+### 取舍
+
+播放汇点无条件加入这两类节点（不做「已被预览链覆盖就跳过」的优化）：直出路径
+（videoDirect / 平面直出）根本不执行算子链，拿不到中间帧，跳过会让附加区前后图
+静默停更；代价是含此类节点的流程停用直出路径、改走 GPU 链/CPU 池。这与均衡器
+既有行为一致。
+
+### 验证
+
+`test/isp_color_temp_playback_test.dart` 新增用例（真实 4K 视频、真实播放循环）：
+播放中色温节点「调整前/调整后」预览图逐帧变化（哈希不同）、停播后
+`measuredColorTemps` 刷新；同文件既有用例（预览节点逐帧）仍通过。整套约 100s。
+
+---
+
+## 2026-11-11 色温调节器：测试输出进右侧参数栏 + 目标/测量值整数化
+
+### 需求
+
+`IspFlow/IP_Gen_flow/ClrTempAdj.ispflow`：色温调节器的测试输出（测量色温、
+CCM 等）只在节点卡片里可见，右侧属性面板看不到；目标色温还留着拖动滑杆留下
+的分数（`8960.895645692835`），测量/目标都应是整数开尔文。
+
+### 实现
+
+- `temperature` 参数类型 doubleNumber → **intNumber**（`isp_node.dart`，默认
+  6500/1800~12000 不变）：面板数值框按整数解析与回显，`_NumberField` 提交时
+  `toInt()`。
+- 节点卡片滑杆 `onChanged` 写 `v.round()`（松手才重跑，行为不变）。
+- `applyMeasuredColorTemp`（点节点上的测量值按钮）写整数目标值（原来
+  `m.toDouble()`）。
+- 旧档归一化：`IspGraph.fromJson` 对 `color_temp_adjuster` 的 `temperature` /
+  `measured_cct` 取整——**所有**载入路径（状态导入、IP 页读流程）都经过它，
+  打开 `ClrTempAdj.ispflow` 即变 `8961`；仓库里的该文件也已就地修正。
+- 右侧面板新增「运行输出（只读）」区（`node_property_panel.dart` 的
+  `_colorTempReadout`）：测量色温（未运行为灰色提示）、参考色温（未设定时提示
+  按 6500K）、目标色温、RGB 相对增益（×1.0523 形态）与 CCM 3×3，另加
+  「目标 = 测量值」按钮（等价于点节点卡片上的测量值）。数值行用
+  `Flexible + FittedBox` 防窄栏溢出；面板随 `notifyListeners` 重建，测量值在
+  运行预览/停播补齐后刷新。
+- 文档：`pipeline/node_code.dart` 的 PC 侧源码变量说明同步为 `int`。
+
+### 验证
+
+`test/isp_color_temp_test.dart` 新增两例并通过（11 项全通过）：载入
+`ClrTempAdj.ispflow` 后温度/参考色温为 `int`；面板渲染出「运行输出（只读）」、
+`4620 K`/`5000 K`/`6500 K`、`CCM 3×3` 与「目标 = 测量值」按钮。
+
+---
+
+## 2026-11-12 色温调节器 IP：14 位运行期控制/测量端口 + 内部 CCM
+
+### 需求
+
+导出色温调节器节点 IP 时：色温的**测量输出**与**控制输入**固定 14 位，图像接口
+RGB，CCM 由内部自动生成、**不把 3×3 系数暴露成参数**。
+
+### 接口
+
+| 端口 | 方向 | 说明 |
+|---|---|---|
+| `cct_in[13:0]` | in | 目标色温 K（1800~12000，超范围在核内钳位） |
+| `cct_out[13:0]` | out | 实测输入色温 K，每帧更新（复位值 6500） |
+| `in_data`/`out_data` | RGB | 每通道 `PIX_BITS` 位打包像素流，ready/valid + sof/eol |
+
+只有「单节点色温 IP」才带这对端口：编组内含多个节点时，逐节点 IP **关闭**
+运行期端口（互连顶层没有唯一的 14 位控制/测量口），沿用生成期烘焙增益
+（`buildGroupIpFiles(ctRuntimeEnabled: false)`）。
+
+### 实现（新增 `pipeline/color_temp_hw.dart` + `codegen/color_temp_ctrl_verilog.dart`）
+
+- **CCM 内部生成**：`white(cct_in)/white(cct_out)` 的 von Kries 对角增益（Q14）。
+  白点用 **512 段 Q16 表**（段宽 32K、网格偏移 8K，索引 `(K-8)>>5`）+ 段内线性
+  插值；除法改成 **Q30 倒数表**（步长 512，插值）——无硬件除法器。表由生成期
+  用 FP64 Tanner Helland 公式烘焙；公式在 t=66（6600K）处三段全部换分支
+  （r 通道台阶 ~1.9%、b ~1.4%），故按 6600K 选**两套表**（下支 log / 上支 pow），
+  否则跨断点的 32K 段会把台阶插平（实测 8 LSB）。目标==参考时短路成恒等
+  （避免低色温白点很小时倒数插值残差）。
+- **测量**：核心侧逐帧累加输入 R/G/B（48 位够 8K 帧），帧起始把上一帧的和投入
+  控件 FSM：sRGB→XYZ（Q16 系数）→ `A=0.332S−X`、`B=Y−0.1858S` → 48 拍逐位长除法
+  求 `n = A/B`（Q14）→ 三次多项式 `449n³+3525n²+6823.3n+5520.33`（Q16 定点）→
+  钳位 1800~12000 输出。全整数、与 Dart 参考逐位一致；FSM 约 56 拍，故一帧
+  像素数需 ≥64（默认激励 64×8 满足）。
+- **时序口径**：帧起始同时切换增益与投入测量，片上无帧缓存 → **第 k 帧的增益
+  用第 k−2 帧的测量**，两帧后收敛；tb/golden 用同一口径（golden 逐帧模拟
+  累加和→测量→增益的传递）。帧起始那拍用「新增益」（`sof ? 新值 : 寄存器`），
+  保证整帧像素与增益严格对齐。
+- **像素通路**：`(v*gain + 8192) >> 14` 钳位，与 `applyAdjustQ14Gain3` 同口径；
+  1 拍延迟不变（LAT 不变）。
+
+### 精度（与 FP64 预览口径对比）
+
+| 项 | 偏差 |
+|---|---|
+| 增益（目标/参考 ∈ 2000~12000，增益 0.25~3.5） | ≤2.1 LSB（99.7% <1 LSB）；6600K 断点邻域仍受台阶影响 |
+| 测量（8 位均值口径 vs `measureCctFromRgba`） | ≤1 K |
+| 低色温 b 通道（≤1900K，白点为 0） | FP64 为 NaN/Inf，硬件按 0 或 4.0 饱和，不做一致性承诺 |
+
+### 验证
+
+- `test/isp_color_temp_hw_test.dart`（5 项）：表规模/取值范围、目标==参考恒等、
+  冷暖方向与 ≤2.5 LSB 偏差、灰阶 6500K 邻域与冷热方向、与 FP64 McCamy ≤5 K。
+- `test/isp_group_ip_export_test.dart` 新增两项：单节点色温 IP 带 14 位端口 +
+  内部控制块 + iverilog 4 帧实仿 PASS；多节点编组不暴露运行期端口。
+- 手工实仿：8 位/16 位像素、4 帧、`cct_in=7000` 恒定，iverilog 0 warning、PASS。
+
+### 追加：DRC 清零（121 条 → 0）
+
+首版实现（控制块全部 LUT 乘法 + 像素增益 LUT 乘法）在 Vivado 2020.2 上出现
+121 条 DRC：DPIP-2 输入未流水 28、DPOP-3 PREG 11、DPOP-4 MREG 15、DPOR-2
+（DSP 输出接异步复位寄存器）67，全部落在 `n1_ct_ctrl` 与像素增益 `n1_rr0/n1_bb0`；
+把乘法强制成 LUT（`use_dsp="no"`）后又冒出 `[Netlist 29-101]`（`ct_ctrl` 的
+cellview 原语过多）——32×32 LUT 乘法把模块撑成几千个 LUT。
+
+最终方案（实测 **0 条 DRC 警告**、无 29-101/29-43）：
+
+| 部位 | 做法 | 结果 |
+|---|---|---|
+| `nq²`、`nq³`（32 位内） | `${top}_dsp_mul` 原语，AREG/BREG/MREG/PREG 全开、`en=1`，FSM 里等 3 拍取结果 | 零 DPIP/DPOP；DSP 自带同步复位寄存器 → 零 DPOR |
+| 三次多项式常数乘法（449、3525、6987059） | 常数只有少数 1 位 → 强制 LUT 移位加（`use_dsp="no"`） | 规模小，不再顶到 29-101 |
+| FSM 全部寄存器 | 取消异步复位，改**同步复位**（`always @(posedge clk) if (!rst_n)`） | DPOR-2 清零 |
+| 像素增益乘法（8×16 / 16×16） | `use_dsp="no"`（小型乘法，1 拍延迟不变） | 无 DSP 实例 → 无建议 |
+
+代价：测量 FSM 从 56 拍增到约 65 拍（要求一帧 ≥96 像素，默认激励 64×8 满足）。
+
+### 最终形态（Vivado 2020.2 实测：DRC 仅 2 条 Advisory、methodology DRC 0 条、
+综合/实现日志 0 条 WARNING）
+
+迭代中又踩了两个坑，记录如下：
+
+| 现象 | 根因 | 处置 |
+|---|---|---|
+| `[Netlist 29-101/29-43]` cellview 原语过多 | 整个 `ct_ctrl` 一块塞了 ~4900 LUT（表 ROM 多路器 + 多项式 + 除法） | 拆成 `_ct_romw`（白点表）/`_ct_romq`（倒数表）/`_ct_gain`/`_ct_meas` 四个 `keep_hierarchy` 子模块，各自 cellview 都在阈值内 |
+| 拆模块后 DSP 建议从 8 条回到 68 条 | `use_dsp="no"` 挂在 wire/assign 上 Vivado **不认**，只有**模块级**生效；拆分后新模块没带属性，插值乘法（19×5、24×9）全被推断成 DSP | 四个子模块 + `_ct_scale` 全部加 `(* use_dsp = "no" *)`（显式 DSP48E2 原语不受影响） |
+| methodology DRC 28 × `TIMING-18 Missing input or output delay` | 新增的 `cct_in[13:0]` / `cct_out[13:0]` 共 28 位没有 I/O 延迟约束 | `demo/timing.xdc` 的 `set_input_delay/set_output_delay` 端口列表加入 `cct_in` / `cct_out` |
+
+同时把多项式常数换成同量级、置位数少的系数（6823.0 / 5520.0，差 0.3+0.33 K，远小于
+对 FP64 的 ≤5 K 口径），累加和从 64 位收窄到 48 位（8K@16bit 帧上限 2^42 足够）。
+
+### 追加：CLB LUT 优化（9924 → 5786，-42%）
+
+| 措施 | 效果 |
+|---|---|
+| 白点表/倒数表改**块 RAM**（`ram_style="block"`，双端口读、插值两端点一拍取出，增益链路改成 7 级流水） | 4×513×19 + 1024×24 组合 ROM 多路器（≈7.6k LUT）→ **6 块 BRAM、0 LUT** |
+| McCamy 的 `n=A/B` 预热成对累加和的 **6 项合并系数**（`kCtCoefA/B`，把 `X/Y/Z/S` 12 次宽常数乘减到 6 次） | `_ct_meas` 4158 → 2430 LUT |
+| 多项式常数改置位数少的 6823/5520、累加和 64→48 位 | 同上 |
+
+实测（xczu15eg，Vivado 2020.2，25 MHz）：**5786 LUT / 1120 FF / 6 BRAM / 2 DSP**，
+WNS **+20.3 ns**，DRC 仍只有 2 条 Advisory、methodology DRC 0 条、日志 0 条 WARNING；
+iverilog golden 不变（`d7e1cdf0`，8 位 4 帧），即优化没有改变数值口径。
+剩余开销分布：`_ct_gain` 3515（增益流水里的 4 次白点插值 + 2 次倒数插值 + 2 次
+19×24 白点比乘法，全部 LUT）、`_ct_meas` 2430（6 次宽常数乘 + 三次多项式 + 48 拍
+长除法 + 2 个 DSP）。
+
+### 追加：表存储做成 IP 参数 `USE_BRAM`（默认块 RAM，可切回上一版）
+
+需求：块 RAM 版已验证（5786 LUT），但上一版组合 ROM 版也跑过实测，要保留可切；
+且要在 Vivado **Customize IP 的 Optimization 页**能看到这个选项。
+
+做法：核里同时发射两套增益实现——`_ct_gain`（块 RAM + 7 级流水）与
+`_ct_gain_lut`（独立组合 ROM 子模块 `_ct_lnr/_ct_lnb/_ct_lq` + 帧起始锁存），
+`_ct_ctrl #(.USE_BRAM(1))` 用 `generate` 选择；表数据与插值写法共用同一份 Dart
+常量，因此**两版结果逐位一致**（golden 同为 `d7e1cdf0`）。参数贯通
+`IpGenOptions.useBram`（导出对话框复选框，默认勾选）→ core/top/AXI/Libero 的
+`parameter integer USE_BRAM` 默认值 → demo `create_ip` 的 `CONFIG.USE_BRAM` →
+XGUI Optimization 页下拉；`.ipcfg` 一并存取。
+
+**关键坑（此前失败两次）**：组合 ROM 版的查表最初写成 `function` 里读 module 级
+unpacked array——Vivado **XSim 在 function 内读内存返回 X**，综合也会把 ROM 折叠
+（模块被砍到 34 LUT / 2 FF），而 iverilog 同一份 RTL 却是 PASS，极易误判为「工具
+问题」。改成 `always @*` 组合块（输出端口声明为 `reg`）后，`USE_BRAM=0` 在 Vivado
+综合得到 9152（synth）/8180（impl）LUT、行为仿真 PASS。
+
+实测（Vivado 2020.2 xczu15eg，25 MHz，同一份 IP 包内两套实现）：
+
+| 变体 | LUT | BRAM | DSP | WNS | 行为仿真 |
+|---|---|---|---|---|---|
+| 块 RAM（默认） | 5786 | 6 | 2 | +20.3 ns | PASS（`d7e1cdf0`） |
+| 组合 ROM（上一版） | 8180 | 0 | 2 | +16.2 ns | PASS（同一 golden） |
+
+两者 DRC 均只有 2 条 Advisory、methodology DRC 0 条、日志 0 条 WARNING。
+
+### 追加：Customize IP 选项改了不生效的根因（fixed IP 缺 model 参数同步 proc）
+
+现象：在 Customize IP 的 Optimization 页把 `USE_BRAM` 从 1 改成 0，重新综合/实现后
+资源完全一样（仍是块 RAM 版）。
+
+根因：**fixed-point（非均衡器）IP 的 XGUI 脚本里一个
+`update_MODELPARAM_VALUE.<X>` proc 都没有**。Vivado 的用户参数（`CONFIG.X`）到模型
+参数（`MODELPARAM_VALUE.X`，决定生成的 wrapper 里 `.X(...)` 的实参）之间，正是靠
+这些 proc 同步——GUI 和脚本 `set_property CONFIG.X` 两条路径都依赖它。缺了它，wrapper
+永远用打包时的默认值。这也解释了为什么此前 PIX_BITS / DSP_PIPE / YUV_STANDARD 的
+「Customize IP 可切换」其实从未生效（demo 脚本里的 CONFIG 值恰好都等于打包默认值，
+所以一直没暴露）。
+
+修复：fixed-IP 的 XGUI 补齐 `update_MODELPARAM_VALUE.PIX_BITS / MAX_WIDTH /
+GSTRATEGY / FOLD / DSP_PIPE`，含 YUV 标准时加 `YUV_STANDARD`、色温 IP 加 `USE_BRAM`。
+
+验证（打包默认 USE_BRAM=1，仅脚本 `CONFIG.USE_BRAM {0}` + `generate_target`）：
+生成的 wrapper 里变成 `.USE_BRAM(0)`、`.DSP_PIPE(1)`（同步设置）✓；整链 demo 综合
+9152 / 实现 8180 LUT、0 BRAM、行为仿真 PASS（同一 golden `d7e1cdf0`）、WNS +16.2 ns、
+DRC 2 条 Advisory、0 条日志 WARNING。
+
+## 2026-11-13 HSL_MBC_EQ：按 NUM_BANDS 裁剪未用段单元（LUT/DSP 大降）
+
+### 现象与根因
+
+`HSL_MBC_EQ.ispflow` 只有 **2 段**，但生成的 IP 里 **16 个段单元全部实例化**
+（`ISP_IP_MBC_EQ_synth_1` 里 127 个 DSP、3649 LUT、6677 FF）：`NUM_BANDS` 只参与
+权重掩码 `wsel = (i >= NUM_BANDS || !ch_enable) ? 0 : wc`，段单元的 pre/mid/post
+（每段 18 个 DSP）照建不误 —— 掩码是"把结果乘 0"，综合删不掉实例化的 DSP 原语。
+另外每个段还各自复制了一份像素直通延迟线（`hv_d/s_d/l_d` 各 74·PIX_BITS 位，内容
+完全相同）。
+
+### 改动（`codegen/node_v_full_stream.dart` 的 `_fullParallel`）
+
+- 每个段单元的 pre/mid/post 与段内参数延迟线包进
+  `if (NUM_BANDS > i) begin : g_b<i> ... end else begin : g_b<i>_off ... end`
+  （elaboration 期按**参数**裁剪；未启用段的三项输出直接接 0，求和表达式不变）。
+  `NUM_BANDS` 是 XGUI 参数，改值后 IP 重新生成/综合即生效。
+- 像素直通延迟线从"每段一份"提成**共享一份**（16 段省 15×74×PIX_BITS 个 FF）。
+- 串联路径（`_fullSerial`）仍是固定 16 级链，未裁剪（该形态的段间是链式进位，
+  裁剪需额外 mux；当前流程与 demo 都用并联）。
+
+### 实测（xczu15eg，Vivado 2020.2，25 MHz，2 段并联 func_fixed）
+
+| 指标 | 改前 | 改后 |
+|---|---|---|
+| CLB LUTs（impl） | 2883 | **1893**（−34%） |
+| CLB Registers | 6331 | **3601**（−43%） |
+| DSP（IP 综合） | 127 | **43**（−66%；2 段 ×18 + 胶水 7） |
+| 行为仿真 | PASS | PASS（同一 golden `d60b7971`） |
+| WNS | — | +19.4 ns |
+| DRC / 日志 | 0 WARNING | 2 条 Advisory / 0 WARNING |
+
+16 段配置的资源与改前一致（gating 全部为真），`iverilog NUM_BANDS=16` 恒等用例仍通过。
+
+### 续：串联全流水与 legacy 档也按 NUM_BANDS 裁剪（2026-11-13 晚）
+
+上一轮只裁了并联全流水（`_fullParallel`）。另两条路径同样背着 16 份硬件：
+
+- **串联全流水**（`_fullSerial`，WORK_MODE=1 + DSP_PIPE=3）：每段无条件实例化
+  `band_pre_serial_full`/`band_mid_serial_full`/`band_ser_post_full`。
+- **legacy 档**（`emitMultiBandEqFxPipeline`，DSP_PIPE=0/1/2 或 GSTRATEGY=0）：
+  `wsel = (i >= NUM_BANDS || !ch_enable) ? 15'd0 : ...` 只是**权重掩码**，没有
+  省掉实例。实测（xczu15eg，DSP_PIPE=2 并联，IP OOC synth）`NUM_BANDS=2` 仍
+  要 **175 DSP / 2703 LUT / 428 FF**，`NUM_BANDS=16` 为 679 / 9405 / 972 ——
+  2 段配置实际上背了约 4 段算力，半裁半留。
+
+#### 改动
+
+- `_fullSerial`：段体包 `if (NUM_BANDS > i) begin : g_b<i> ... end else begin :
+  g_b<i>_off ... end`。未启用段不实例化 pre/mid/post，但必须补齐
+  `band_ser_post_full` **自身的 11 拍延迟**（h0..h0_d5 → h_temp → 3 级，s/l
+  同构；w=0 时该模块是恒等，却仍有这 11 拍），用 `hof/sof/lof` 11 级直通寄存器
+  补上，第 11 级接链寄存器。段内延迟线（`h_d/dh_d/s1_d/l1_d/hqd_d/sa_d/la_d/
+  hv_d/s_d/l_d`）移出条件块**无条件发射**——它们定义该级流水深度。
+  漏补这 11 拍时 3 段串联 golden 由 `90cf73c4` 错成 `133d96a5`。
+- legacy 档（并联与串联两支）：pre/mid/post 三段实例各包
+  `if (NUM_BANDS > i)`（标签 `g_pre<i>`/`g_mid<i>`/`g_post<i>`），关断支把
+  `uc<i>`/`wc<i>` 接 0、`b<i>_dh/s/l` 接 0。legacy 的 `band_ser_post` 是纯组合
+  （无 clk），串联关断支直接把 `csel_*` 透传给 `bw<i>_h/s/l`，C 级寄存器照旧
+  ——延迟口径不变，无需补偿。
+
+#### 验证与实测（xczu15eg，Vivado 2020.2，IP OOC synth）
+
+| 形态 | NUM_BANDS=2 裁剪前 | 裁剪后 |
+|---|---|---|
+| 并联全流水（上轮） | 2883 LUT / 6331 FF / 127 DSP | 1893 / 3601 / 43 |
+| legacy DSP_PIPE=2 并联 | 2703 LUT / 428 FF / 175 DSP | **1729 / 428 / 91** |
+| 串联全流水 | ≈21981 LUT / 20742 FF / 614 DSP（见下） | **7297 LUT**（其中 5235 为 LUT-as-Memory/SRL）/ **3740 FF** / **82 DSP** |
+
+串联这一行没有留存裁剪前的 RTL，故用**同一份 RTL 的 `NUM_BANDS=16`**（gate 全
+为真＝裁剪前的硬件）作对照：21981 LUT / 20742 FF / 614 DSP（IP OOC synth，
+13 分钟；2 段 7.3k 只要 ~6 分钟）。
+
+串联形态的资源大头是**每段一份的段内延迟线**（综合成 SRL），裁剪只去掉算术，
+所以 2 段仍有 7.3k LUT；段数越多延迟线越多，这是串联结构的固有代价
+（并联把像素直通延迟线共成一份，选并联就等于省掉这部分）。
+
+iverilog 对拍全部通过且 golden 逐位不变：并联 2 段 `d60b7971`、串联 3 段
+`90cf73c4`；DSP_PIPE=0/1/2 × 并联/串联 六种组合语法与实仿全 PASS，
+`NUM_BANDS=16` 恒等用例仍通过。
+
+## 2026-11-13 全量回归清零：几处真 bug 与失效期望
+
+把全量 `flutter test` 从 27 项失败收敛到 0，过程中定位到几个**真 bug**（不是
+测试本身过期）：
+
+### 1. 黑盒 CSC 忽略 YUV 标准（数值与整帧版对不上）
+
+`_kCscOne` 里 `yuvStandard` 只在 `yuv2rgb` 读节点参数 `standard`，`yuv2hsl` /
+`hsl2yuv` 一律按 `bt601` 展开；而整帧版（`node_c_gen.dart` 的
+`#define …_STANDARD` 宏）四个变体都透传同一参数。参数缺省已是 `bt2020`，
+于是 `色温/CSC 长链` 的 A/B 对拍在 `yuv2hsl` 处开始分叉（16×16 mv=1023 实测
+`out0[1] full=176 bb=181`）。修法：`_kCscOne` 统一按参数取标准（缺省 bt2020），
+`_emitCscPx` 的 `yuv2hsl`/`hsl2yuv` 分支按标准选系数（新增
+`bb_rgb_to_yuv_std_px` helper，`bb_yuv_to_rgb_std_px` 已有）。
+
+### 2. LUT/定点档把 BT.2020 映射成 BT.601
+
+`_kCscModePx` 里 `final standard = strParam('standard') == 'bt709' ? 1 : 0;`
+把 bt2020 也归 0（=ISP_CSC_BT601），而整帧版传的是 `ISP_CSC_BT2020 = 2`。
+修成 `bt709→1 / bt2020→2 / 其他→0`。
+
+### 3. 生成节点 .c 缺 `<math.h>`（ARM/WSL 交叉编译告警）
+
+`assembleCNode` 的 .c 模板只含 `<string.h>`，用 `llround` 的白平衡自动档在
+`-Wall` 下报隐式声明（Linux 交叉用例断言「零告警」直接失败）。模板统一加
+`#include <math.h>`。
+
+### 4. ARM 交叉工具链无 `nosys.specs` 时链接失败
+
+Cypress EZ-USB FX3 SDK 自带 `arm-none-eabi-gcc` 没有 `nosys.specs`，硬编码
+`-specs=nosys.specs` 报 `No such file or directory`。改为先
+`gcc -print-file-name=nosys.specs` 探测：有则照旧传 specs，没有则改
+`-Wl,-e,main` 指定入口（裸机 syscall 桩仍由 `main.c` 提供），并断言输出里
+不出现 `No such file or directory` / `cannot find entry symbol`。
+
+### 5. 黑盒 A/B 对拍的 obj 目录全测试共用（并行跑必错）
+
+`scripts/c_link_check.bat` 的 `OBJDIR=%TEMP%\isp_bb_objs_<exename>`：所有 A/B
+用例的 exe 都叫 `bb_ab.exe`，全量套件并行跑多个测试文件时互相污染 .obj，
+出现随机数值错位。改为按输出路径（`%~p1` 把 `:`/`\` 换成 `_`）唯一命名。
+顺带把该 .bat 里残留的中文注释改成英文（.bat 必须纯 ASCII 的既定规则）。
+
+### 6. 视频控制行窄节点溢出 + 测试断言口径
+
+预览附加区控制行（打开/前帧/播放/倍速/后帧）在 242dp 宽节点里
+`RenderFlex overflowed by 25 pixels` → 包 `FittedBox(scaleDown)` +
+`mainAxisSize.min`。相关 UI 断言改按语义定位（最大化按钮是
+`icons/screen-full.png`，改用 `find.byTooltip('最大化'/'还原')`；仪器区
+`RawImage` 断言按渲染图像对象过滤——节点内还有 `image==null` 的 26×26 图标
+占位 RawImage）。
+
+### 7. 失效的测试期望（随功能演进同步）
+
+- 网表/电路图：数据通路拆成 `<top>_lut_core` / `<top>_fx_core` 后，`core`
+  只剩胶水（2 单元），下钻一层再断言；`func_fixed 大网表` 的布线预算断言改用
+  中等规模子模块 + 极小预算（大网表单趟同步 A* ~70s，页面本就改走后台 isolate）。
+- CSC 行核/SIMD 用例：整行行核只在 `codegenMode='func'`（模式 0）且 BT.601
+  全范围时登记，补上这两个参数。
+- GPU `csc_yuv2rgb`：着色器系数已改成 `uCrV/uCgU/uCgV/uCbU` uniform，测试没传
+  → 恒 0。补传 `yuvToRgbCoefficients('bt601')/65536`。
+- 色温播放用例：依赖的 `IspFlow/色温调节器测试.ispflow` 已删除，改为内置
+  ffmpeg 现场生成 64×64 4fps 测试视频 + 程序化建图（视频源 → 色温调节器）。
+- `code_variables`：`format_converter` / `video_health_check` 两个工具节点补
+  Input/Output 描述；`pipelineSourceFiles` 补 `color_temp_hw.dart`。

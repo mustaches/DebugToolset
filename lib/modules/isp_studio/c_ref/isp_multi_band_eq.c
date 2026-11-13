@@ -233,3 +233,223 @@ int isp_multi_band_eq_apply(const uint16_t *src, uint16_t *dst,
   }
   return ISP_OK;
 }
+
+/* ------------------------------------------------------------------------- */
+/* func_fixed 定点口径（codegenMode=func_fixed）：逐像素全整数定点直算，    */
+/* 无 FP64/libm；与 Dart 参考 multiBandComposeFx / applyMultiBandEqFx        */
+/* （isp_kernels.dart）逐行镜像、逐位一致；与 FP64 口径偏差 ≤1 LSB。         */
+/* ------------------------------------------------------------------------- */
+
+#define MB_FX_CIRCLE_Q16 23592960LL /* 360 << 16：色环一圈（Q16 度） */
+#define MB_FX_HALF_Q16 11796480LL   /* 180 << 16：最短角距上界 */
+#define MB_FX_C2_Q20 756405LL       /* round(0.5·log2(e)·2^20) */
+
+/* 2^(−f)（f ∈ [0,1)）五次多项式系数的 Q16 值（dense grid 加权最小二乘拟
+ * 合，相对误差口径；double 系数最大相对误差 ~2e-7，Q16 量化 + Horner 每
+ * 级四舍五入后最大误差 2 ulp(Q16)；拟合脚本 scratch/fit_exp2_neg_poly.dart，
+ * 与 Dart mbFxExp2NegCoefQ16 同值）。 */
+static const int32_t MB_FX_EXP2_NEG_COEF[6] = {65536,  -45426, 15740,
+                                               -3623,  603,    -62};
+
+/** 定点段常量（帧入口由 double 段参数一次性换算，与 Dart MbFxBand 同口径）。 */
+typedef struct {
+  int32_t hc_q16; /**< 带中心色相（Q16 度，0..360<<16） */
+  int32_t k_q20;  /**< q/45 的 Q20（x = d·q/45 的换算系数） */
+  int32_t dh_q16; /**< 色相偏移（Q16 度） */
+  int32_t s1_q14; /**< s−1 的 Q14 */
+  int32_t l1_q14; /**< l−1 的 Q14 */
+} MbFxBand;
+
+/** 半值远离零的整数除法（v/d，d 为正偶数；与 Dart _mbFxRoundDiv 一致）。 */
+static int64_t mb_fx_round_div(int64_t v, int64_t d) {
+  return (v >= 0 ? v + (d >> 1) : v - (d >> 1)) / d;
+}
+
+/**
+ * @brief 高斯权重 w = exp(−0.5·(d·q/45)²) 的 Q14 值（与 Dart
+ * multiBandFxWeightQ14 逐行一致）：角距条件回绕（无 fmod）→ x² 整数乘 →
+ * 2^(−u) 整数部移位 + 小数部五次多项式（Q16 Horner）。与 FP64 exp 口径
+ * 偏差 ≤1 ulp(Q14)（全角距扫描实证）。
+ */
+static int32_t mb_fx_weight(int32_t h_q16, int32_t hc_q16, int32_t k_q20) {
+  int64_t d = (int64_t)h_q16 - hc_q16;
+  int64_t x_q20, x2_q20, u_q16, f, p;
+  int n, k;
+  if (d < 0) d = -d;
+  if (d >= MB_FX_CIRCLE_Q16) d -= MB_FX_CIRCLE_Q16;
+  if (d > MB_FX_HALF_Q16) d = MB_FX_CIRCLE_Q16 - d;
+  x_q20 = (d * k_q20) >> 16;
+  x2_q20 = (x_q20 * x_q20 + (1 << 19)) >> 20;
+  u_q16 = (x2_q20 * MB_FX_C2_Q20 + (1 << 23)) >> 24;
+  n = (int)(u_q16 >> 16);
+  if (n >= 16) return 0; /* w·2^14 < 0.5，归 0 */
+  f = u_q16 & 0xFFFF;
+  p = MB_FX_EXP2_NEG_COEF[5];
+  for (k = 4; k >= 0; k--) {
+    p = MB_FX_EXP2_NEG_COEF[k] + ((f * p + 32768) >> 16);
+  }
+  return (int32_t)((p + ((int64_t)1 << (n + 1))) >> (n + 2));
+}
+
+/**
+ * @brief 单个量化 H 值上的定点合成（shift/s_mul_q14/l_mul_q14）：与
+ * Dart multiBandComposeFx 逐行一致；并联钳位、串联级联、单段无钳位
+ * 捷径同 mb_compose 语义。
+ */
+static void mb_compose_fx(int hv, int max_value, int serial, int band_count,
+                          const MbFxBand *fx, int32_t *shift,
+                          int32_t *s_mul_q14, int32_t *l_mul_q14) {
+  /* Dart: (hv * circleQ16 + maxValue/2) ~/ maxValue（Q16 度，四舍五入） */
+  const int32_t h_q16 = (int32_t)(((int64_t)hv * MB_FX_CIRCLE_Q16 +
+                                   (max_value >> 1)) /
+                                  max_value);
+  int i;
+
+  /* 单段捷径：串联与并联语义相同，无钳位路径（同 hslBandLuts 口径）。 */
+  if (band_count == 1) {
+    const int32_t wgt = mb_fx_weight(h_q16, fx[0].hc_q16, fx[0].k_q20);
+    *shift = (int32_t)mb_fx_round_div(
+        (int64_t)wgt * fx[0].dh_q16 * max_value, 360LL << 30);
+    *s_mul_q14 = 16384 + (int32_t)(((int64_t)wgt * fx[0].s1_q14 + 8192) >> 14);
+    *l_mul_q14 = 16384 + (int32_t)(((int64_t)wgt * fx[0].l1_q14 + 8192) >> 14);
+    return;
+  }
+
+  if (!serial) {
+    /* 并联：dh_sum Q30、s/l_sum Q28，加权求和后钳位。 */
+    int64_t dh_sum = 0, s_sum = 0, l_sum = 0;
+    int64_t sm, lm;
+    for (i = 0; i < band_count; i++) {
+      const int32_t wgt = mb_fx_weight(h_q16, fx[i].hc_q16, fx[i].k_q20);
+      dh_sum += (int64_t)wgt * fx[i].dh_q16;
+      s_sum += (int64_t)wgt * fx[i].s1_q14;
+      l_sum += (int64_t)wgt * fx[i].l1_q14;
+    }
+    if (dh_sum < -(180LL << 30)) {
+      dh_sum = -(180LL << 30);
+    } else if (dh_sum > (180LL << 30)) {
+      dh_sum = 180LL << 30;
+    }
+    *shift = (int32_t)mb_fx_round_div(dh_sum * max_value, 360LL << 30);
+    sm = 16384 + ((s_sum + 8192) >> 14);
+    lm = 16384 + ((l_sum + 8192) >> 14);
+    if (sm < 0) {
+      sm = 0;
+    } else if (sm > (5 << 14)) {
+      sm = 5 << 14;
+    }
+    if (lm < 0) {
+      lm = 0;
+    } else if (lm > (5 << 14)) {
+      lm = 5 << 14;
+    }
+    *s_mul_q14 = (int32_t)sm;
+    *l_mul_q14 = (int32_t)lm;
+  } else {
+    /* 串联：h_cur Q16 逐段累加并条件回绕；S/L Q14 乘性合成。 */
+    int64_t h_cur = h_q16, s_acc = 16384, l_acc = 16384, dd;
+    for (i = 0; i < band_count; i++) {
+      const int32_t wgt =
+          mb_fx_weight((int32_t)h_cur, fx[i].hc_q16, fx[i].k_q20);
+      s_acc = (s_acc * (16384 + (((int64_t)wgt * fx[i].s1_q14 + 8192) >> 14)) +
+               8192) >>
+              14;
+      l_acc = (l_acc * (16384 + (((int64_t)wgt * fx[i].l1_q14 + 8192) >> 14)) +
+               8192) >>
+              14;
+      h_cur += ((int64_t)wgt * fx[i].dh_q16 + 8192) >> 14;
+      /* C 截断取模后负值加一圈，等价 Dart 欧几里得 %。 */
+      h_cur %= MB_FX_CIRCLE_Q16;
+      if (h_cur < 0) h_cur += MB_FX_CIRCLE_Q16;
+    }
+    /* 首尾色环最短路径偏移（欧几里得取模到 [0,360) 再归一 (−180,180]）。 */
+    dd = (h_cur - h_q16) % MB_FX_CIRCLE_Q16;
+    if (dd < 0) dd += MB_FX_CIRCLE_Q16;
+    if (dd > MB_FX_HALF_Q16) dd -= MB_FX_CIRCLE_Q16;
+    *shift = (int32_t)mb_fx_round_div(dd * max_value, 360LL << 16);
+    if (s_acc < 0) {
+      s_acc = 0;
+    } else if (s_acc > (5 << 14)) {
+      s_acc = 5 << 14;
+    }
+    if (l_acc < 0) {
+      l_acc = 0;
+    } else if (l_acc > (5 << 14)) {
+      l_acc = 5 << 14;
+    }
+    *s_mul_q14 = (int32_t)s_acc;
+    *l_mul_q14 = (int32_t)l_acc;
+  }
+}
+
+/** Q14 定点乘 + 钳位（同 bb_clamp_q14 口径）：clamp((v·q + 2^13) >> 14)。 */
+static uint16_t mb_fx_clamp_q14(int32_t v, int32_t q, int max_value) {
+  const int64_t r = ((int64_t)v * q + 8192) >> 14;
+  if (r < 0) return 0;
+  if (r > (int64_t)max_value) return (uint16_t)max_value;
+  return (uint16_t)r;
+}
+
+int isp_multi_band_eq_fx_apply(const uint16_t *src, uint16_t *dst,
+                               int w, int h, int max_value, int serial,
+                               int band_count,
+                               const IspMultiBandEqBand *bands) {
+  const size_t px_count = (size_t)w * (size_t)h;
+  const int m = max_value + 1;
+  MbFxBand fx[ISP_MULTI_BAND_EQ_MAX_BANDS];
+  int identity = 1;
+  int i;
+  size_t px;
+  if (src == NULL || dst == NULL) return ISP_ERR_ARG;
+  if (w <= 0 || h <= 0 || max_value <= 0) return ISP_ERR_SIZE;
+  if (band_count < 0 || band_count > ISP_MULTI_BAND_EQ_MAX_BANDS) {
+    return ISP_ERR_ARG;
+  }
+  if (band_count > 0 && bands == NULL) return ISP_ERR_ARG;
+  for (i = 0; i < band_count; i++) {
+    if (!(bands[i].q > 0.0)) return ISP_ERR_ARG;
+    if (bands[i].dh != 0.0 || bands[i].s != 1.0 || bands[i].l != 1.0) {
+      identity = 0;
+    }
+  }
+  /* 恒等直通（Dart runner 的全段恒等判定，与 apply 同口径）。 */
+  if (identity) {
+    if (dst != src) {
+      memmove(dst, src, (size_t)w * (size_t)h * 3u * sizeof(uint16_t));
+    }
+    return ISP_OK;
+  }
+  /* 帧入口一次性换算定点段常量（与 Dart multiBandFxBandConst 逐位一致：
+   * llround 同 Dart round() 半值远离零；hc 截断取模后负值加一圈等价
+   * Dart 欧几里得 %）。 */
+  for (i = 0; i < band_count; i++) {
+    int64_t hc = llround(bands[i].h * 65536.0) % MB_FX_CIRCLE_Q16;
+    if (hc < 0) hc += MB_FX_CIRCLE_Q16;
+    fx[i].hc_q16 = (int32_t)hc;
+    fx[i].k_q20 = (int32_t)llround(bands[i].q / 45.0 * 1048576.0);
+    fx[i].dh_q16 = (int32_t)llround(bands[i].dh * 65536.0);
+    fx[i].s1_q14 = (int32_t)llround((bands[i].s - 1.0) * 16384.0);
+    fx[i].l1_q14 = (int32_t)llround((bands[i].l - 1.0) * 16384.0);
+  }
+  for (px = 0; px < px_count; px++) {
+    const size_t base = px * 3u;
+    int hv = (int)src[base];
+    int32_t shift, s_mul_q14, l_mul_q14;
+    int h_new;
+    if (hv > max_value) hv = max_value;
+    mb_compose_fx(hv, max_value, serial, band_count, fx, &shift, &s_mul_q14,
+                  &l_mul_q14);
+    /* 色环回绕：|shift| ≤ max_value/2（见 lut_apply 注），单次条件加减
+     * 与取模逐位一致。 */
+    h_new = hv + (int)shift;
+    if (h_new > max_value) {
+      h_new -= m;
+    } else if (h_new < 0) {
+      h_new += m;
+    }
+    dst[base] = (uint16_t)h_new;
+    dst[base + 1] = mb_fx_clamp_q14((int32_t)src[base + 1], s_mul_q14, max_value);
+    dst[base + 2] = mb_fx_clamp_q14((int32_t)src[base + 2], l_mul_q14, max_value);
+  }
+  return ISP_OK;
+}

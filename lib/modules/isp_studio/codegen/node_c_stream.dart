@@ -43,7 +43,10 @@ import 'node_c_gen.dart';
 /// 行核发射结果：[lines] 为 for-x 循环体内的语句（不含缩进，发射层统一
 /// 加 6 空格）；[outputs] 为 wrapper 输出端口名 → 通道 C 表达式（局部
 /// 变量 / 常量 / 零开销别名）。
-typedef StreamKernelResult = (List<String> lines, Map<String, List<String>> outputs);
+typedef StreamKernelResult = (
+  List<String> lines,
+  Map<String, List<String>> outputs,
+);
 
 /// 行核发射上下文：变量分配 + 共享 helper / 文件级声明 / 前奏登记。
 class StreamKernelCtx {
@@ -81,6 +84,9 @@ class StreamKernelCtx {
   /// x86 FP64 HSL 行核已登记（top .c 需附带 isp_csc_sse.h 及其依赖头）。
   bool cscSseUsed = false;
 
+  /// ColorTrans 四档共享模式层已使用（top .c 需附带 isp_csc_modes.h）。
+  bool cscModesUsed = false;
+
   /// 分配 for-x 循环体内唯一的局部变量名。
   String freshVar() => 'v${_seq++}';
 
@@ -105,16 +111,20 @@ class StreamKernelCtx {
 
   /// 已登记 helper 的 C 定义文本（依赖闭包，按 [_kHelperDefs] 定义序）。
   String helperDefs() => [
-        for (final e in _kHelperDefs.entries)
-          if (helpers.contains(e.key)) e.value,
-      ].join('\n\n');
+    for (final e in _kHelperDefs.entries)
+      if (helpers.contains(e.key)) e.value,
+  ].join('\n\n');
 }
 
 /// 重建节点生成上下文（与 GroupCPlan 规划时同一口径：活动输入端口格式
 /// 由 wrapper 端口列表 + 类型端口类型推导，lutDomainMax 沿图重算）。
 /// [target] 贯通导出目标 CPU（lut_fixed 行核 SIMD 变体选择）。
-CNodeGenCtx streamNodeCtx(IspGraph graph, GroupCPlan plan, String nodeId,
-    {GroupCTarget target = GroupCTarget.cortexA53_55}) {
+CNodeGenCtx streamNodeCtx(
+  IspGraph graph,
+  GroupCPlan plan,
+  String nodeId, {
+  GroupCTarget target = GroupCTarget.cortexA53_55,
+}) {
   final n = plan.members[nodeId]!;
   final type = IspNodeRegistry.byId(n.typeId)!;
   return CNodeGenCtx(
@@ -123,8 +133,9 @@ CNodeGenCtx streamNodeCtx(IspGraph graph, GroupCPlan plan, String nodeId,
     ident: plan.idents[nodeId]!,
     inputFormats: {
       for (final cp in plan.wrappers[nodeId]!.inputs)
-        cp.name:
-            cFrameFormatOfPort(type.inputPort(cp.name)?.type ?? IspPortType.mono),
+        cp.name: cFrameFormatOfPort(
+          type.inputPort(cp.name)?.type ?? IspPortType.mono,
+        ),
     },
     lutDomainMax: lutDomainMaxOf(graph, n),
     target: target,
@@ -138,11 +149,14 @@ CNodeGenCtx streamNodeCtx(IspGraph graph, GroupCPlan plan, String nodeId,
 
 const Map<String, List<String>> _kHelperDeps = {
   'bb_bc_map': ['bb_clamp_to'],
+  'bb_bc_map_q14': [],
+  'bb_scale_q14': [],
   'bb_levels_apply': [],
   'bb_rgb_to_hsl_px': ['bb_csc_coeffs', 'bb_euclid_mod', 'bb_clamp_to'],
   'bb_hsl_to_rgb_px': ['bb_euclid_mod', 'bb_hue_to_rgb', 'bb_clamp_to'],
   'bb_rgb_to_yuv_px': ['bb_csc_coeffs'],
   'bb_yuv_to_rgb_px': ['bb_csc_coeffs'],
+  'bb_yuv_to_rgb_std_px': [],
 };
 
 const Map<String, String> _kHelperDefs = {
@@ -198,11 +212,66 @@ static uint16_t bb_clamp_q14(int in_v, int32_t q, int max_value) {
   if (r > (int64_t)max_value) return (uint16_t)max_value;
   return (uint16_t)r;
 }''',
+  'bb_fx_round_div': '''
+/* 半值远离零的整数除法（v/d，d 为正偶数；与 Dart _mbFxRoundDiv 一致）。
+ * 出处：isp_multi_band_eq.c mb_fx_round_div（codegenMode=func_fixed）。 */
+static int64_t bb_fx_round_div(int64_t v, int64_t d) {
+  return (v >= 0 ? v + (d >> 1) : v - (d >> 1)) / d;
+}''',
+  'bb_mb_fx_weight': '''
+/* multi_band_eq func_fixed 高斯权重 w = exp(−0.5·(d·q/45)²) 的 Q14 值
+ * （h_q16/hc_q16 为 Q16 度色相，k_q20 = round(q/45·2^20)）：角距条件回
+ * 绕（无 fmod）→ x² 整数乘 → 2^(−u) 整数部移位 + 小数部五次多项式
+ * （Q16 系数 Horner，系数为 [0,1) 上加权最小二乘拟合，脚本
+ * scratch/fit_exp2_neg_poly.dart）。全整数（无 FP64/libm），与 FP64
+ * exp 口径偏差 ≤1 ulp(Q14)。出处：isp_multi_band_eq.c mb_fx_weight
+ * （与 Dart multiBandFxWeightQ14 逐行一致）。 */
+static int32_t bb_mb_fx_weight(int32_t h_q16, int32_t hc_q16,
+                               int32_t k_q20) {
+  static const int32_t coef[6] = {65536, -45426, 15740, -3623, 603, -62};
+  int64_t d = (int64_t)h_q16 - hc_q16;
+  int64_t x_q20, x2_q20, u_q16, f, p;
+  int n, k;
+  if (d < 0) d = -d;
+  if (d >= 23592960LL) d -= 23592960LL;      /* 360 << 16 */
+  if (d > 11796480LL) d = 23592960LL - d;    /* 180 << 16 */
+  x_q20 = (d * k_q20) >> 16;
+  x2_q20 = (x_q20 * x_q20 + (1 << 19)) >> 20;
+  u_q16 = (x2_q20 * 756405LL + (1 << 23)) >> 24; /* 0.5·log2(e) Q20 */
+  n = (int)(u_q16 >> 16);
+  if (n >= 16) return 0; /* w·2^14 < 0.5，归 0 */
+  f = u_q16 & 0xFFFF;
+  p = coef[5];
+  for (k = 4; k >= 0; k--) {
+    p = coef[k] + ((f * p + 32768) >> 16);
+  }
+  return (int32_t)((p + ((int64_t)1 << (n + 1))) >> (n + 2));
+}''',
   'bb_bc_map': '''
 /* 亮度/对比度单点映射 adjust(y)。出处：isp_adjust.c isp_adjust_bc_map
  * （Dart adjustBrightContrast 内 adjust 闭包）。 */
 static int bb_bc_map(int y, double bs, double base, double gs, int max_value) {
   return (int)bb_clamp_to(((y * bs) - base) * gs + base, max_value);
+}''',
+  'bb_bc_map_q14': '''
+static int64_t bb_bc_map_q14_raw(int y, int32_t bs, int32_t base, int32_t gs,
+                                  int max_value) {
+  int64_t v = ((int64_t)y * bs - (int64_t)base * max_value) << 16;
+  v = (v * gs + (v >= 0 ? (1LL << 29) : -(1LL << 29))) >> 14;
+  return v + ((int64_t)base * max_value << 16);
+}
+static int bb_bc_map_q14(int y, int32_t bs, int32_t base, int32_t gs,
+                         int max_value) {
+  const int64_t v = bb_bc_map_q14_raw(y, bs, base, gs, max_value);
+  if (v <= 0) return 0;
+  if (v >= ((int64_t)max_value << 30)) return max_value;
+  return (int)((v + (1LL << 29)) >> 30);
+}''',
+  'bb_scale_q14': '''
+static uint16_t bb_scale_q14(int64_t v, int max_value) {
+  if (v <= 0) return 0;
+  if (v >= 16384) return (uint16_t)max_value;
+  return (uint16_t)((v * max_value + 8192) >> 14);
 }''',
   'bb_levels_apply': '''
 /* levels_curves 传递函数查表（max_value != 4095 时按「加半除数再整除」
@@ -342,6 +411,39 @@ static void bb_yuv_to_rgb_px(int y, int u_in, int v_in, int half,
   *gi = isp_clamp_int(g, 0, max_value);
   *bi = isp_clamp_int(b, 0, max_value);
 }''',
+  'bb_yuv_to_rgb_std_px': '''
+/* 可配置标准（BT.601/709/2020）的 YUV→RGB 单像素定点 helper。 */
+static void bb_yuv_to_rgb_std_px(int y, int u_in, int v_in, int half,
+                                 int max_value, int cr_v, int cg_u,
+                                 int cg_v, int cb_u, int *ri, int *gi,
+                                 int *bi) {
+  const int u = u_in - half;
+  const int v = v_in - half;
+  const int r = y + (int)(((int64_t)cr_v * v + 32768) >> 16);
+  const int g = y + (int)(((int64_t)cg_u * u +
+                           (int64_t)cg_v * v + 32768) >> 16);
+  const int b = y + (int)(((int64_t)cb_u * u + 32768) >> 16);
+  *ri = isp_clamp_int(r, 0, max_value);
+  *gi = isp_clamp_int(g, 0, max_value);
+  *bi = isp_clamp_int(b, 0, max_value);
+}''',
+  'bb_rgb_to_yuv_std_px': '''
+/* 可配置标准（BT.601/709/2020）的 RGB→YUV 单像素定点 helper
+ * （cuB/cvR 恒 32768，与 Dart rgbToYuvCoefficients 同口径）。 */
+static void bb_rgb_to_yuv_std_px(int r, int g, int b, int half, int max_value,
+                                 int cy_r, int cy_g, int cy_b, int cu_r,
+                                 int cu_g, int cv_g, int cv_b,
+                                 uint16_t *out) {
+  const int y = (int)(((int64_t)cy_r * r + (int64_t)cy_g * g +
+                       (int64_t)cy_b * b + 32768) >> 16);
+  const int u = (int)(((int64_t)cu_r * r + (int64_t)cu_g * g +
+                       (int64_t)32768 * b + 32768) >> 16) + half;
+  const int v = (int)(((int64_t)32768 * r + (int64_t)cv_g * g +
+                       (int64_t)cv_b * b + 32768) >> 16) + half;
+  out[0] = isp_clamp_u16(y, max_value);
+  out[1] = isp_clamp_u16(u, max_value);
+  out[2] = isp_clamp_u16(v, max_value);
+}''',
 };
 
 // ---------------------------------------------------------------------------
@@ -353,7 +455,10 @@ static void bb_yuv_to_rgb_px(int y, int u_in, int v_in, int half,
 /// [inputs]：wrapper 输入端口名 → 通道 C 表达式；null 表示未连接的次要
 /// 输入（仅 combiner，行核发射缺省常量）。
 StreamKernelResult emitStreamRowKernel(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   switch (ctx.node.typeId) {
     case 'black_level':
       return _kBlackLevel(s, ctx, inputs);
@@ -364,13 +469,19 @@ StreamKernelResult emitStreamRowKernel(
       // radius <= 0（c_ref 空操作早退）或 Bypass：直通；radius >= 1 的
       // 窗口形态由 emitStreamWindowKernel 处理。
       return _alias(
-          _in(inputs, _isMonoPath(ctx) ? 'in_mono' : 'in'),
-          _isMonoPath(ctx) ? 'out_mono' : 'out');
+        _in(inputs, _isMonoPath(ctx) ? 'in_mono' : 'in'),
+        _isMonoPath(ctx) ? 'out_mono' : 'out',
+      );
     case 'gaussian_blur':
       // strength <= 0 或 sigma <= 0（c_ref 空操作早退）：直通；正常形态
       // 由 emitStreamWindowKernel 处理（gaussian_blur 非 Process 类，无
       // Bypass）。
-      final inPort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl', 'in_mono']);
+      final inPort = _activePort(ctx, const [
+        'in',
+        'in_yuv',
+        'in_hsl',
+        'in_mono',
+      ]);
       final fmt = ctx.inputFormats[inPort] ?? 'rgb';
       final outPort = switch (fmt) {
         'yuv' => 'out_yuv',
@@ -480,7 +591,8 @@ bool highlightClipRowOk(Map<String, dynamic> params) {
 /// （max_value == n）走 SIMD gather 查 clip 表；域失配标量回退（膝点
 /// 压缩直算），与融合行核逐位一致。
 String _highlightClipRowFn(String id, int n, double knee, GroupCTarget target) {
-  final scalarTail = '''
+  final scalarTail =
+      '''
   const double kp_ = ${cNum(knee)} * (double)max_value;
   const double range_ = (double)max_value - kp_;
   for (; x < w; x++) {
@@ -547,13 +659,34 @@ $scalarTail''';
 }
 
 StreamKernelResult _kHighlightClip(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final mono = _isMonoPath(ctx);
   final inPort = mono ? 'in_mono' : 'in';
   final outPort = mono ? 'out_mono' : 'out';
   final ie = _in(inputs, inPort);
   if (ctx.boolParam('bypass')) return _alias(ie, outPort);
   final knee = ctx.doubleParam('knee').clamp(0.0, 1.0);
+  if (ctx.strParam('codegenMode') == 'func_fixed') {
+    final kneeQ = (knee * 16384).round();
+    final kp = s.freshVar();
+    final range = s.freshVar();
+    final d = s.freshVar();
+    final o = s.freshVar();
+    return (
+      [
+        'const int $kp = (int)(((int64_t)$kneeQ * max_value + 8192) >> 14);',
+        'const int $range = max_value - $kp;',
+        'const int $d = ${ie[0]} - $kp;',
+        'const uint16_t $o = ($range <= 0 || $d <= 0) ? ${ie[0]} : (uint16_t)($kp + ((int64_t)$d * $range + (($range + $d) >> 1)) / ($range + $d));',
+      ],
+      {
+        outPort: [o],
+      },
+    );
+  }
   final lutMode = ctx.strParam('codegenMode') == 'lut';
   if (lutMode) {
     final n = ctx.lutDomainMax;
@@ -567,8 +700,10 @@ ${cU16Table(lut)}
     // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉）：仅 1 通道输入
     // （RAW 'in' 或 'in_mono'）登记；仅单节点独占阶段被调用。
     if (ie.length == 1) {
-      s.addFileDecl('${ctx.ident}_row',
-          _highlightClipRowFn(ctx.ident, n, knee, ctx.target));
+      s.addFileDecl(
+        '${ctx.ident}_row',
+        _highlightClipRowFn(ctx.ident, n, knee, ctx.target),
+      );
     }
   }
   final kp = s.freshVar();
@@ -584,7 +719,9 @@ ${cU16Table(lut)}
           ? 'const uint16_t $o = (max_value == ${ctx.lutDomainMax}) ? ${ctx.ident}_clip_lut[${ie[0]}] : $direct;'
           : 'const uint16_t $o = $direct;',
     ],
-    {outPort: [o]},
+    {
+      outPort: [o],
+    },
   );
 }
 
@@ -617,7 +754,8 @@ String _activePort(CNodeGenCtx ctx, List<String> candidates) {
 /// ARM 目标不登记（NEON 无 FP64 SIMD）。
 String _blackLevelRowFn(String id, GroupCTarget target) {
   assert(target.isX86);
-  final scalarTail = '''
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     const double v_ =
         (double)in[x] - ${id}_off[((y & 1) << 1) | (x & 1)];
@@ -661,7 +799,10 @@ $scalarTail''';
 }
 
 StreamKernelResult _kBlackLevel(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final mono = _isMonoPath(ctx);
   final inPort = mono ? 'in_mono' : 'in';
   final outPort = mono ? 'out_mono' : 'out';
@@ -692,8 +833,8 @@ StreamKernelResult _kBlackLevel(
         off[phase] = color == 0
             ? r
             : color == 2
-                ? b
-                : (pattern.colorAt(px ^ 1, py) == 0 ? gr : gb);
+            ? b
+            : (pattern.colorAt(px ^ 1, py) == 0 ? gr : gb);
       }
     }
     s.addFileDecl('${ctx.ident}_off', '''
@@ -706,7 +847,10 @@ static const double ${ctx.ident}_off[4] = {
     // 相位偏移随行奇偶交替；仅单节点独占阶段被调用，见 group_c_export_bb
     // 阶段发射特判）。
     if (ctx.target.isX86) {
-      s.addFileDecl('${ctx.ident}_row', _blackLevelRowFn(ctx.ident, ctx.target));
+      s.addFileDecl(
+        '${ctx.ident}_row',
+        _blackLevelRowFn(ctx.ident, ctx.target),
+      );
     }
     offExpr = '${ctx.ident}_off[((${s.rowVar} & 1) << 1) | (x & 1)]';
   }
@@ -717,7 +861,9 @@ static const double ${ctx.ident}_off[4] = {
       'const double $v = (double)${ie[0]} - $offExpr;',
       'const uint16_t $o = ($v <= 0.0) ? (uint16_t)0 : (uint16_t)(long)round($v);',
     ],
-    {outPort: [o]},
+    {
+      outPort: [o],
+    },
   );
 }
 
@@ -725,7 +871,10 @@ static const double ${ctx.ident}_off[4] = {
 /// 出处：isp_lsc.c isp_lsc_apply。r_max2 <= 0（仅 1x1 帧）时 c_ref 整体
 /// 早退不动数据；行核以增益 1 兜底（round(v)=v，逐位一致）。
 StreamKernelResult _kLsc(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final mono = _isMonoPath(ctx);
   final inPort = mono ? 'in_mono' : 'in';
   final outPort = mono ? 'out_mono' : 'out';
@@ -753,7 +902,9 @@ StreamKernelResult _kLsc(
       'const double $gain = ${id}_rm2 > 0.0 ? 1.0 + ${cNum(strength)} * ($dx * $dx + $dy * $dy) / ${id}_rm2 : 1.0;',
       'const uint16_t $o = bb_clamp_to((double)${ie[0]} * $gain, max_value);',
     ],
-    {outPort: [o]},
+    {
+      outPort: [o],
+    },
   );
 }
 
@@ -764,7 +915,10 @@ StreamKernelResult _kLsc(
 /// whiteBalanceGainLut，域 0..lutDomainMax），max_value 一致走查表、
 /// 不一致回退直算（行内三元，同公式）。
 StreamKernelResult _kWhiteBalance(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   var rGain = ctx.doubleParam('rGain');
@@ -775,6 +929,8 @@ StreamKernelResult _kWhiteBalance(
     return _alias(ie, 'out'); // c_ref 恒等早退（double 精确比较）
   }
   s.useHelper('bb_clamp_i64');
+  final fixedMode = ctx.strParam('codegenMode') == 'func_fixed';
+  if (fixedMode) s.useHelper('bb_clamp_q14');
   final lutMode = ctx.strParam('codegenMode') == 'lut';
   if (lutMode) {
     final n = ctx.lutDomainMax;
@@ -792,15 +948,21 @@ ${cU16Table(lut)}
     }
     // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单节点独占阶段
     // 被调用，见 group_c_export_bb 阶段发射特判）。
-    s.addFileDecl('${ctx.ident}_row',
-        _whiteBalanceLutRowFn(ctx.ident, n, rGain, bGain, ctx.target));
+    s.addFileDecl(
+      '${ctx.ident}_row',
+      _whiteBalanceLutRowFn(ctx.ident, n, rGain, bGain, ctx.target),
+    );
   }
   final lines = <String>[];
   String mapCh(String expr, String lutName, double gain) {
     final o = s.freshVar();
-    lines.add(lutMode
-        ? 'const uint16_t $o = (max_value == ${ctx.lutDomainMax}) ? ${ctx.ident}_$lutName[$expr] : bb_clamp_i64(llround((double)$expr * ${cNum(gain)}), max_value);'
-        : 'const uint16_t $o = bb_clamp_i64(llround((double)$expr * ${cNum(gain)}), max_value);');
+    lines.add(
+      fixedMode
+          ? 'const uint16_t $o = bb_clamp_q14($expr, ${(gain * 16384).round()}, max_value);'
+          : lutMode
+          ? 'const uint16_t $o = (max_value == ${ctx.lutDomainMax}) ? ${ctx.ident}_$lutName[$expr] : bb_clamp_i64(llround((double)$expr * ${cNum(gain)}), max_value);'
+          : 'const uint16_t $o = bb_clamp_i64(llround((double)$expr * ${cNum(gain)}), max_value);',
+    );
     return o;
   }
 
@@ -808,7 +970,11 @@ ${cU16Table(lut)}
   return (
     lines,
     {
-      'out': [mapCh(ie[0], 'lut_r', rGain), ie[1], mapCh(ie[2], 'lut_b', bGain)],
+      'out': [
+        mapCh(ie[0], 'lut_r', rGain),
+        ie[1],
+        mapCh(ie[2], 'lut_b', bGain),
+      ],
     },
   );
 }
@@ -832,8 +998,14 @@ ${cU16Table(lut)}
 /// 走 SIMD gather（lut_r/lut_b 查表 + G 恒等）；域失配标量回退
 /// bb_clamp_i64(llround(v×gain))，与融合行核逐位一致。
 String _whiteBalanceLutRowFn(
-    String id, int n, double rGain, double bGain, GroupCTarget target) {
-  final scalarTail = '''
+  String id,
+  int n,
+  double rGain,
+  double bGain,
+  GroupCTarget target,
+) {
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     out[(size_t)x * 3u + 0u] = (max_value == $n)
         ? ${id}_lut_r[in[(size_t)x * 3u + 0u]]
@@ -845,7 +1017,8 @@ String _whiteBalanceLutRowFn(
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -853,10 +1026,22 @@ String _whiteBalanceLutRowFn(
         '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
         '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
-    final deint =
-        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
-    final reint =
-        _sse2Reinterleave3('lrv', 'gv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    final deint = _sse2Deinterleave3(
+      'i0',
+      'i1',
+      'i2',
+      'rv',
+      'gv',
+      'bv',
+    ).join('\n');
+    final reint = _sse2Reinterleave3(
+      'lrv',
+      'gv',
+      'lbv',
+      'o0',
+      'o1',
+      'o2',
+    ).join('\n');
     return '''
 /* white_balance LUT 模式整行函数（SSE2/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
@@ -956,7 +1141,8 @@ $scalarTail''';
 /// int64（与融合行核同口径）。SSE2 无 64 位算术右移，用 +2^63 偏置 →
 /// 逻辑右移 → 减偏置还原（|Σ+524288| < 2^48，偏置不环绕）。
 String _ccmRowFn(String id, List<int> m, GroupCTarget target) {
-  final scalarTail = '''
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     const int r = in[(size_t)x * 3u + 0u];
     const int g = in[(size_t)x * 3u + 1u];
@@ -967,7 +1153,8 @@ String _ccmRowFn(String id, List<int> m, GroupCTarget target) {
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -975,16 +1162,30 @@ String _ccmRowFn(String id, List<int> m, GroupCTarget target) {
         '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
         '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
-    final deint =
-        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
-    final reint =
-        _sse2Reinterleave3('o0v', 'o1v', 'o2v', 'o0', 'o1', 'o2').join('\n');
+    final deint = _sse2Deinterleave3(
+      'i0',
+      'i1',
+      'i2',
+      'rv',
+      'gv',
+      'bv',
+    ).join('\n');
+    final reint = _sse2Reinterleave3(
+      'o0v',
+      'o1v',
+      'o2v',
+      'o0',
+      'o1',
+      'o2',
+    ).join('\n');
     final StringBuffer body = StringBuffer();
-    body.writeln('      /* 每通道：mul_epu32 int64 积（负系数取 |m| 乘再 sub 取负——'
-        'mul_epu32 的 64 位积对负系数多出 r×2^32 项，非有符号积；仅低 32'
-        '位相乘语义下可忽略，64 位累加必须显式取负）→ add_epi64 累加 →'
-        '+524288 → 2^63 偏置还原算术 >>20 → 提取低 32 位组回 4 lane →'
-        'int32 钳位 → lo/hi 打包为 8×int16。 */');
+    body.writeln(
+      '      /* 每通道：mul_epu32 int64 积（负系数取 |m| 乘再 sub 取负——'
+      'mul_epu32 的 64 位积对负系数多出 r×2^32 项，非有符号积；仅低 32'
+      '位相乘语义下可忽略，64 位累加必须显式取负）→ add_epi64 累加 →'
+      '+524288 → 2^63 偏置还原算术 >>20 → 提取低 32 位组回 4 lane →'
+      'int32 钳位 → lo/hi 打包为 8×int16。 */',
+    );
     String term(String src, String splat, int mv) => mv >= 0
         ? '_mm_mul_epu32($src, $splat)'
         : '_mm_sub_epi64(vzero64, _mm_mul_epu32($src, $splat))';
@@ -997,18 +1198,24 @@ String _ccmRowFn(String id, List<int> m, GroupCTarget target) {
           final gSrc = sub == '0' ? 'g$side' : '_mm_srli_epi64(g$side, 32)';
           final bSrc = sub == '0' ? 'b$side' : '_mm_srli_epi64(b$side, 32)';
           body.writeln(
-              '        __m128i a$c$side$sub = ${term(rSrc, 'vc${c}r', coeffs[0])};');
+            '        __m128i a$c$side$sub = ${term(rSrc, 'vc${c}r', coeffs[0])};',
+          );
           body.writeln(
-              '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, ${term(gSrc, 'vc${c}g', coeffs[1])});');
+            '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, ${term(gSrc, 'vc${c}g', coeffs[1])});',
+          );
           body.writeln(
-              '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, ${term(bSrc, 'vc${c}b', coeffs[2])});');
+            '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, ${term(bSrc, 'vc${c}b', coeffs[2])});',
+          );
           body.writeln(
-              '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, vhalf64);');
+            '        a$c$side$sub = _mm_add_epi64(a$c$side$sub, vhalf64);',
+          );
           body.writeln(
-              '        a$c$side$sub = _mm_sub_epi64(_mm_srli_epi64(_mm_add_epi64(a$c$side$sub, vbias64), 20), vbias64s);');
+            '        a$c$side$sub = _mm_sub_epi64(_mm_srli_epi64(_mm_add_epi64(a$c$side$sub, vbias64), 20), vbias64s);',
+          );
         }
         body.writeln(
-            '        o$c$side = _mm_unpacklo_epi32(_mm_shuffle_epi32(a$c${side}0, _MM_SHUFFLE(2, 0, 2, 0)), _mm_shuffle_epi32(a$c${side}1, _MM_SHUFFLE(2, 0, 2, 0)));');
+          '        o$c$side = _mm_unpacklo_epi32(_mm_shuffle_epi32(a$c${side}0, _MM_SHUFFLE(2, 0, 2, 0)), _mm_shuffle_epi32(a$c${side}1, _MM_SHUFFLE(2, 0, 2, 0)));',
+        );
       }
       body.writeln('      }');
     }
@@ -1086,18 +1293,24 @@ $scalarTail''';
       for (final sub in ['0', '1']) {
         final get = sub == '0' ? 'vget_low_s32' : 'vget_high_s32';
         neonBody.writeln(
-            '        int64x2_t a$side$sub = vmull_n_s32($get(r$side), c${c}r);');
+          '        int64x2_t a$side$sub = vmull_n_s32($get(r$side), c${c}r);',
+        );
         neonBody.writeln(
-            '        a$side$sub = vmlal_n_s32(a$side$sub, $get(g$side), c${c}g);');
+          '        a$side$sub = vmlal_n_s32(a$side$sub, $get(g$side), c${c}g);',
+        );
         neonBody.writeln(
-            '        a$side$sub = vmlal_n_s32(a$side$sub, $get(b$side), c${c}b);');
+          '        a$side$sub = vmlal_n_s32(a$side$sub, $get(b$side), c${c}b);',
+        );
         neonBody.writeln(
-            '        a$side$sub = vshrq_n_s64(vaddq_s64(a$side$sub, vhalf64), 20);');
+          '        a$side$sub = vshrq_n_s64(vaddq_s64(a$side$sub, vhalf64), 20);',
+        );
       }
       neonBody.writeln(
-          '        o$c$side = vcombine_s32(vmovn_s64(a${side}0), vmovn_s64(a${side}1));');
+        '        o$c$side = vcombine_s32(vmovn_s64(a${side}0), vmovn_s64(a${side}1));',
+      );
       neonBody.writeln(
-          '        o$c$side = vmaxq_s32(vminq_s32(o$c$side, vmax32), vzero32);');
+        '        o$c$side = vmaxq_s32(vminq_s32(o$c$side, vmax32), vzero32);',
+      );
     }
     neonBody.writeln('      }');
   }
@@ -1152,7 +1365,10 @@ $scalarTail''';
 /// isp_ccm_apply。定点系数 m[i] = (matrix[i] * 2^20).round() 与单位矩阵
 /// 判定在生成期完成（同一表达式，逐位一致）；单位矩阵时 c_ref 早退直通。
 StreamKernelResult _kCcm(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   final (m, isIdentity) = ccmMatrixOf(ctx.node.paramValues);
@@ -1175,11 +1391,13 @@ static const int64_t ${ctx.ident}_m[9] = {
   final outs = <String>[];
   for (var row = 0; row < 3; row++) {
     final o = s.freshVar();
-    lines.add('const uint16_t $o = bb_clamp_i64('
-        '(${id}_m[${row * 3}] * (int64_t)${ie[0]} + '
-        '${id}_m[${row * 3 + 1}] * (int64_t)${ie[1]} + '
-        '${id}_m[${row * 3 + 2}] * (int64_t)${ie[2]} + 524288) >> 20, '
-        'max_value);');
+    lines.add(
+      'const uint16_t $o = bb_clamp_i64('
+      '(${id}_m[${row * 3}] * (int64_t)${ie[0]} + '
+      '${id}_m[${row * 3 + 1}] * (int64_t)${ie[1]} + '
+      '${id}_m[${row * 3 + 2}] * (int64_t)${ie[2]} + 524288) >> 20, '
+      'max_value);',
+    );
     outs.add(o);
   }
   return (lines, {'out': outs});
@@ -1203,7 +1421,8 @@ String _gammaRowFn(String id, GroupCTarget target) {
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -1211,8 +1430,14 @@ String _gammaRowFn(String id, GroupCTarget target) {
         '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
         '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
-    final deint =
-        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
+    final deint = _sse2Deinterleave3(
+      'i0',
+      'i1',
+      'i2',
+      'rv',
+      'gv',
+      'bv',
+    ).join('\n');
     return '''
 /* gamma 整行函数（SSE2/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
@@ -1311,7 +1536,10 @@ $scalarTail''';
 /// 输入只钳上界（Dart 同），alpha 恒 255。Bypass 退化为默认参数
 /// （gamma=2.2, brightness=0, contrast=1，与整帧版一致）。
 StreamKernelResult _kGamma(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   var g = ctx.doubleParam('gamma');
   if (g <= 0) g = 2.2;
@@ -1354,7 +1582,12 @@ StreamKernelResult _kGamma(
 /// [variant]：'rgb2yuv601'（BT.601 全范围）/ 'rgb2hsl' / 'yuv2rgb' /
 /// 'hsl2rgb' / 'yuv2hsl' / 'hsl2yuv'。返回 3 通道 C 表达式。
 List<String> _emitCscPx(
-    StreamKernelCtx s, String variant, List<String> ie, List<String> lines) {
+  StreamKernelCtx s,
+  String variant,
+  List<String> ie,
+  List<String> lines, {
+  String yuvStandard = 'bt601',
+}) {
   final a = s.freshVar();
   switch (variant) {
     case 'rgb2yuv601':
@@ -1370,11 +1603,20 @@ List<String> _emitCscPx(
         'bb_rgb_to_hsl_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value, 1.0 / max_value, $a);',
       ]);
     case 'yuv2rgb':
-      s.useHelper('bb_yuv_to_rgb_px');
-      lines.addAll([
-        'int $a[3];',
-        'bb_yuv_to_rgb_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value >> 1, max_value, $a, $a + 1, $a + 2);',
-      ]);
+      if (yuvStandard == 'bt601') {
+        s.useHelper('bb_yuv_to_rgb_px');
+        lines.addAll([
+          'int $a[3];',
+          'bb_yuv_to_rgb_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value >> 1, max_value, $a, $a + 1, $a + 2);',
+        ]);
+      } else {
+        s.useHelper('bb_yuv_to_rgb_std_px');
+        final c = yuvToRgbCoefficients(yuvStandard);
+        lines.addAll([
+          'int $a[3];',
+          'bb_yuv_to_rgb_std_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value >> 1, max_value, ${c.crV}, ${c.cgU}, ${c.cgV}, ${c.cbU}, $a, $a + 1, $a + 2);',
+        ]);
+      }
     case 'hsl2rgb':
       s.useHelper('bb_hsl_to_rgb_px');
       lines.addAll([
@@ -1382,25 +1624,35 @@ List<String> _emitCscPx(
         'bb_hsl_to_rgb_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value, 1.0 / max_value, $a, $a + 1, $a + 2);',
       ]);
     case 'yuv2hsl':
-      s.useHelper('bb_yuv_to_rgb_px');
       s.useHelper('bb_rgb_to_hsl_px');
+      final bc = yuvToRgbCoefficients(yuvStandard);
+      s.useHelper(
+        yuvStandard == 'bt601' ? 'bb_yuv_to_rgb_px' : 'bb_yuv_to_rgb_std_px',
+      );
       final b = s.freshVar();
       lines.addAll([
         'int $a[3];',
-        'bb_yuv_to_rgb_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value >> 1, max_value, $a, $a + 1, $a + 2);',
+        yuvStandard == 'bt601'
+            ? 'bb_yuv_to_rgb_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value >> 1, max_value, $a, $a + 1, $a + 2);'
+            : 'bb_yuv_to_rgb_std_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value >> 1, max_value, ${bc.crV}, ${bc.cgU}, ${bc.cgV}, ${bc.cbU}, $a, $a + 1, $a + 2);',
         'uint16_t $b[3];',
         'bb_rgb_to_hsl_px($a[0], $a[1], $a[2], max_value, 1.0 / max_value, $b);',
       ]);
       return ['$b[0]', '$b[1]', '$b[2]'];
     case 'hsl2yuv':
       s.useHelper('bb_hsl_to_rgb_px');
-      s.useHelper('bb_rgb_to_yuv_px');
+      final yc = rgbToYuvCoefficients(yuvStandard);
+      s.useHelper(
+        yuvStandard == 'bt601' ? 'bb_rgb_to_yuv_px' : 'bb_rgb_to_yuv_std_px',
+      );
       final b = s.freshVar();
       lines.addAll([
         'int $a[3];',
         'bb_hsl_to_rgb_px(${ie[0]}, ${ie[1]}, ${ie[2]}, max_value, 1.0 / max_value, $a, $a + 1, $a + 2);',
         'uint16_t $b[3];',
-        'bb_rgb_to_yuv_px($a[0], $a[1], $a[2], max_value >> 1, max_value, $b);',
+        yuvStandard == 'bt601'
+            ? 'bb_rgb_to_yuv_px($a[0], $a[1], $a[2], max_value >> 1, max_value, $b);'
+            : 'bb_rgb_to_yuv_std_px($a[0], $a[1], $a[2], max_value >> 1, max_value, ${yc.cyR}, ${yc.cyG}, ${yc.cyB}, ${yc.cuR}, ${yc.cuG}, ${yc.cvG}, ${yc.cvB}, $b);',
       ]);
       return ['$b[0]', '$b[1]', '$b[2]'];
     default:
@@ -1409,26 +1661,65 @@ List<String> _emitCscPx(
   return ['$a[0]', '$a[1]', '$a[2]'];
 }
 
+StreamKernelResult? _kCscModePx(
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+  int variant,
+) {
+  final mode = cscCodegenMode(ctx.strParam('codegenMode'));
+  if (mode == 0) return null;
+  final ie = _in(inputs, 'in');
+  if (ctx.boolParam('bypass')) return _alias(ie, 'out');
+  s.cscModesUsed = true;
+  final decl = cscLutDecl(ctx, variant, mode);
+  final normDecl = cscNormLutDecl(ctx, variant, mode);
+  if (decl != null) s.addFileDecl('${ctx.ident}_lut', decl);
+  if (normDecl != null) s.addFileDecl('${ctx.ident}_norm_lut', normDecl);
+  // 标准代码必须与整帧版的 ISP_C2Y_STANDARD 宏（ISP_CSC_BT601/709/2020
+  // = 0/1/2）一致——此前把 bt2020 也映射成 0，LUT/定点档与整帧版对不上。
+  final standard = switch (ctx.strParam('standard')) {
+    'bt709' => 1,
+    'bt2020' => 2,
+    _ => 0,
+  };
+  final limited = ctx.strParam('range') == 'limited' ? 1 : 0;
+  final a = s.freshVar();
+  final lines = <String>[
+    'uint16_t $a[3];',
+    'isp_csc_apply_px($variant, $mode, $standard, $limited, max_value, '
+        '(const uint16_t[]){${ie[0]}, ${ie[1]}, ${ie[2]}}, '
+        '${decl == null ? 'NULL' : '${ctx.ident}_lut'}, '
+        '${normDecl == null ? 'NULL' : '${ctx.ident}_norm_lut'}, $a);',
+  ];
+  return (
+    lines,
+    {
+      'out': ['$a[0]', '$a[1]', '$a[2]'],
+    },
+  );
+}
+
 /// csc_rgb2yuv：BT.601/709 + 全/有限范围定点转换（standard/range 烘焙）。
 /// 出处：isp_csc_rgb2yuv.c isp_csc_rgb_to_yuv 主循环（BT.601 全范围快
 /// 路径与 isp_csc_common.h isp_csc_rgb_to_yuv_px 逐位等价）。
 StreamKernelResult _kCscRgb2Yuv(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
-  // 系数默认 BT.601；仅 standard == 'bt709' 切换（cuB/cvR 沿用 601 的
-  // 32768，与 Dart 一致）。
-  final bt709 = ctx.strParam('standard') == 'bt709';
+  final modeResult = _kCscModePx(s, ctx, inputs, 0);
+  if (modeResult != null) return modeResult;
+  final standard = ctx.strParam('standard').isEmpty
+      ? 'bt2020'
+      : ctx.strParam('standard');
+  final c = rgbToYuvCoefficients(standard);
   final limited = ctx.strParam('range') == 'limited';
-  final cyR = bt709 ? 13933 : 19595;
-  final cyG = bt709 ? 46871 : 38470;
-  final cyB = bt709 ? 4732 : 7471;
-  final cuR = bt709 ? -7509 : -11058;
-  final cuG = bt709 ? -25260 : -21710;
-  final cuB = 32768;
-  final cvR = 32768;
-  final cvG = bt709 ? -29759 : -27439;
-  final cvB = bt709 ? -3009 : -5329;
+  final cyR = c.cyR, cyG = c.cyG, cyB = c.cyB;
+  final cuR = c.cuR, cuG = c.cuG, cuB = 32768;
+  final cvR = 32768, cvG = c.cvG, cvB = c.cvB;
   final id = ctx.ident;
   final y = s.freshVar();
   final u = s.freshVar();
@@ -1456,7 +1747,7 @@ StreamKernelResult _kCscRgb2Yuv(
   }
   // BT.601 全范围：登记整行行核（NEON/SSE2/标量双变体，随导出目标分叉；
   // 仅单节点独占阶段被调用，见 group_c_export_bb 阶段发射特判）。
-  if (!bt709 && !limited) {
+  if (standard == 'bt601' && !limited) {
     s.addFileDecl('${id}_row', _cscRgb2YuvRowFn(id, ctx.target));
   }
   return (lines, {'out': outs});
@@ -1471,7 +1762,13 @@ StreamKernelResult _kCscRgb2Yuv(
 /// loadu）；输出语句声明 [o0]/[o1]/[o2]（通道 0/1/2 各 8 lane，与
 /// 像素 0..7 一一对应）。复用固定掩码 `lm0..lm7`（调用方在循环外声明）。
 List<String> _sse2Deinterleave3(
-    String i0, String i1, String i2, String o0, String o1, String o2) {
+  String i0,
+  String i1,
+  String i2,
+  String o0,
+  String o1,
+  String o2,
+) {
   return [
     'const __m128i $o0 = _mm_or_si128(',
     '    _mm_or_si128(',
@@ -1512,7 +1809,13 @@ List<String> _sse2Deinterleave3(
 /// SSE2 三通道重交织语句（三个 16 位通道向量 → 48 字节连续写出的 3 个
 /// `__m128i`）。输出语句声明 [o0]/[o1]/[o2]；复用固定掩码 `lm0..lm7`。
 List<String> _sse2Reinterleave3(
-    String i0, String i1, String i2, String o0, String o1, String o2) {
+  String i0,
+  String i1,
+  String i2,
+  String o0,
+  String o1,
+  String o2,
+) {
   return [
     'const __m128i $o0 = _mm_or_si128(',
     '    _mm_or_si128(',
@@ -1599,7 +1902,8 @@ String _cscRgb2YuvRowFn(String id, GroupCTarget target) {
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -1609,58 +1913,97 @@ String _cscRgb2YuvRowFn(String id, GroupCTarget target) {
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
     // 三通道各一次 mullo + 累加 + 舍入移位 + 钳位（lo/hi 各 4 lane）。
     final StringBuffer body = StringBuffer();
-    for (final (label, half) in [
-      ('Y', false),
-      ('U', true),
-      ('V', true),
-    ]) {
-      body.writeln('      /* $label：mullo×系数三通道累加 + 32768 → >>16'
-          '${half ? ' → +half' : ''} → [0,max] 钳位。 */');
-      body.writeln('      __m128i ${label.toLowerCase()}l, ${label.toLowerCase()}h;');
+    for (final (label, half) in [('Y', false), ('U', true), ('V', true)]) {
+      body.writeln(
+        '      /* $label：mullo×系数三通道累加 + 32768 → >>16'
+        '${half ? ' → +half' : ''} → [0,max] 钳位。 */',
+      );
+      body.writeln(
+        '      __m128i ${label.toLowerCase()}l, ${label.toLowerCase()}h;',
+      );
       body.writeln('      {');
-      body.writeln('        const __m128i rl_ = _mm_unpacklo_epi16(rv, vzero16);');
-      body.writeln('        const __m128i rh_ = _mm_unpackhi_epi16(rv, vzero16);');
-      body.writeln('        const __m128i gl_ = _mm_unpacklo_epi16(gv, vzero16);');
-      body.writeln('        const __m128i gh_ = _mm_unpackhi_epi16(gv, vzero16);');
-      body.writeln('        const __m128i bl_ = _mm_unpacklo_epi16(bv, vzero16);');
-      body.writeln('        const __m128i bh_ = _mm_unpackhi_epi16(bv, vzero16);');
       body.writeln(
-          '        ${label.toLowerCase()}l = ${_sse2Mullo32('rl_', 'vc${label}r')};');
+        '        const __m128i rl_ = _mm_unpacklo_epi16(rv, vzero16);',
+      );
       body.writeln(
-          '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, ${_sse2Mullo32('gl_', 'vc${label}g')});');
+        '        const __m128i rh_ = _mm_unpackhi_epi16(rv, vzero16);',
+      );
       body.writeln(
-          '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, ${_sse2Mullo32('bl_', 'vc${label}b')});');
+        '        const __m128i gl_ = _mm_unpacklo_epi16(gv, vzero16);',
+      );
       body.writeln(
-          '        ${label.toLowerCase()}h = ${_sse2Mullo32('rh_', 'vc${label}r')};');
+        '        const __m128i gh_ = _mm_unpackhi_epi16(gv, vzero16);',
+      );
       body.writeln(
-          '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, ${_sse2Mullo32('gh_', 'vc${label}g')});');
+        '        const __m128i bl_ = _mm_unpacklo_epi16(bv, vzero16);',
+      );
       body.writeln(
-          '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, ${_sse2Mullo32('bh_', 'vc${label}b')});');
+        '        const __m128i bh_ = _mm_unpackhi_epi16(bv, vzero16);',
+      );
       body.writeln(
-          '        ${label.toLowerCase()}l = _mm_srai_epi32(_mm_add_epi32(${label.toLowerCase()}l, vhalf32), 16);');
+        '        ${label.toLowerCase()}l = ${_sse2Mullo32('rl_', 'vc${label}r')};',
+      );
       body.writeln(
-          '        ${label.toLowerCase()}h = _mm_srai_epi32(_mm_add_epi32(${label.toLowerCase()}h, vhalf32), 16);');
+        '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, ${_sse2Mullo32('gl_', 'vc${label}g')});',
+      );
+      body.writeln(
+        '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, ${_sse2Mullo32('bl_', 'vc${label}b')});',
+      );
+      body.writeln(
+        '        ${label.toLowerCase()}h = ${_sse2Mullo32('rh_', 'vc${label}r')};',
+      );
+      body.writeln(
+        '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, ${_sse2Mullo32('gh_', 'vc${label}g')});',
+      );
+      body.writeln(
+        '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, ${_sse2Mullo32('bh_', 'vc${label}b')});',
+      );
+      body.writeln(
+        '        ${label.toLowerCase()}l = _mm_srai_epi32(_mm_add_epi32(${label.toLowerCase()}l, vhalf32), 16);',
+      );
+      body.writeln(
+        '        ${label.toLowerCase()}h = _mm_srai_epi32(_mm_add_epi32(${label.toLowerCase()}h, vhalf32), 16);',
+      );
       if (half) {
         body.writeln(
-            '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, vh16v);');
+          '        ${label.toLowerCase()}l = _mm_add_epi32(${label.toLowerCase()}l, vh16v);',
+        );
         body.writeln(
-            '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, vh16v);');
+          '        ${label.toLowerCase()}h = _mm_add_epi32(${label.toLowerCase()}h, vh16v);',
+        );
       }
       for (final l in ['l', 'h']) {
-        for (final line in _sse2Clamp032('${label.toLowerCase()}$l', 'vmax32', 'vzero32')) {
+        for (final line in _sse2Clamp032(
+          '${label.toLowerCase()}$l',
+          'vmax32',
+          'vzero32',
+        )) {
           body.writeln('        ${line.replaceAll('\n', '\n        ')}');
         }
       }
       // lo/hi 两个 int32 半区打包为 8×int16 全通道（值 [0, max] ≤ 32767，
       // packs 有符号饱和不触发）。
       body.writeln(
-          '        ${label.toLowerCase()}l = _mm_packs_epi32(${label.toLowerCase()}l, ${label.toLowerCase()}h);');
+        '        ${label.toLowerCase()}l = _mm_packs_epi32(${label.toLowerCase()}l, ${label.toLowerCase()}h);',
+      );
       body.writeln('      }');
     }
-    final deint =
-        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
-    final reint =
-        _sse2Reinterleave3('yl', 'ul', 'vl', 'o0', 'o1', 'o2').join('\n');
+    final deint = _sse2Deinterleave3(
+      'i0',
+      'i1',
+      'i2',
+      'rv',
+      'gv',
+      'bv',
+    ).join('\n');
+    final reint = _sse2Reinterleave3(
+      'yl',
+      'ul',
+      'vl',
+      'o0',
+      'o1',
+      'o2',
+    ).join('\n');
     return '''
 /* csc_rgb2yuv 整行函数（BT.601 全范围；SSE2/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
@@ -1803,7 +2146,8 @@ String _cscYuv2RgbRowFn(String id, GroupCTarget target) {
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -1811,10 +2155,22 @@ String _cscYuv2RgbRowFn(String id, GroupCTarget target) {
         '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
         '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
-    final deint =
-        _sse2Deinterleave3('i0', 'i1', 'i2', 'yv', 'uv', 'vv').join('\n');
-    final reint =
-        _sse2Reinterleave3('rl', 'gl', 'bl', 'o0', 'o1', 'o2').join('\n');
+    final deint = _sse2Deinterleave3(
+      'i0',
+      'i1',
+      'i2',
+      'yv',
+      'uv',
+      'vv',
+    ).join('\n');
+    final reint = _sse2Reinterleave3(
+      'rl',
+      'gl',
+      'bl',
+      'o0',
+      'o1',
+      'o2',
+    ).join('\n');
     return '''
 /* csc_yuv2rgb 整行函数（SSE2/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
@@ -1873,9 +2229,8 @@ $deint      /* y/u/v → int32；u'/v' 减半程。 */
           _mm_add_epi32(${_sse2Mullo32('uh_', 'vcBu')}, vhalf32), 16);
       bh = _mm_add_epi32(yh_, bh);
 ${[
-  for (final v in ['rl', 'rh', 'gl', 'gh', 'bl', 'bh'])
-    ..._sse2Clamp032(v, 'vmax32', 'vzero32'),
-].map((l) => '      $l').join('\n')}
+      for (final v in ['rl', 'rh', 'gl', 'gh', 'bl', 'bh']) ..._sse2Clamp032(v, 'vmax32', 'vzero32'),
+    ].map((l) => '      $l').join('\n')}
       rl = _mm_packs_epi32(rl, rh);
       gl = _mm_packs_epi32(gl, gh);
       bl = _mm_packs_epi32(bl, bh);
@@ -2029,25 +2384,48 @@ $simdBody  }
 #endif
 $scalarTail''';
 }
-StreamKernelResult _kCscOne(StreamKernelCtx s, CNodeGenCtx ctx,
-    Map<String, List<String>?> inputs, String variant) {
+
+StreamKernelResult _kCscOne(
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+  String variant,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
-  // yuv2rgb：登记整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单
-  // 节点独占阶段被调用，见 group_c_export_bb 阶段发射特判）。
-  if (variant == 'yuv2rgb') {
+  final variantId = switch (variant) {
+    'rgb2hsl' => 1,
+    'yuv2rgb' => 2,
+    'yuv2hsl' => 3,
+    'hsl2rgb' => 4,
+    'hsl2yuv' => 5,
+    _ => -1,
+  };
+  final modeResult = _kCscModePx(s, ctx, inputs, variantId);
+  if (modeResult != null) return modeResult;
+  // 标准取节点参数（缺省 bt2020，与 param spec 的 defaultValue 一致）：
+  // yuv2rgb / yuv2hsl / hsl2yuv 都随它选系数，此前只有 yuv2rgb 读参数、
+  // 另两个硬编码 BT.601，与整帧版（宏取同一参数）对不上。
+  final yuvStandard = ctx.strParam('standard').isEmpty
+      ? 'bt2020'
+      : ctx.strParam('standard');
+  // yuv2rgb：BT.601 才登记整行行核（NEON/SSE2 变体为 601 专用）；其它标准走
+  // 可配置系数的标量 helper。
+  if (variant == 'yuv2rgb' && yuvStandard == 'bt601') {
     s.addFileDecl('${ctx.ident}_row', _cscYuv2RgbRowFn(ctx.ident, ctx.target));
   }
   // hsl2rgb/rgb2hsl：x86 专属整行行核（FP64 SSE2 双像素快路径，复用
   // isp_csc_sse.h 的逐位等价实现——与 bb_* 标量 helper 同一出处；ARM
   // 无 FP64 SIMD，保持融合行核标量）。
   if (ctx.target.isX86 && (variant == 'hsl2rgb' || variant == 'rgb2hsl')) {
-    s.addFileDecl('${ctx.ident}_row',
-        _cscHslRgbRowFn(ctx.ident, variant, ctx.target));
+    s.addFileDecl(
+      '${ctx.ident}_row',
+      _cscHslRgbRowFn(ctx.ident, variant, ctx.target),
+    );
     s.cscSseUsed = true;
   }
   final lines = <String>[];
-  final outs = _emitCscPx(s, variant, ie, lines);
+  final outs = _emitCscPx(s, variant, ie, lines, yuvStandard: yuvStandard);
   return (lines, {'out': outs});
 }
 
@@ -2059,7 +2437,10 @@ StreamKernelResult _kCscOne(StreamKernelCtx s, CNodeGenCtx ctx,
 /// isp_adjust_hsl。shift = round(h_shift/360 × max_value) 依赖运行期
 /// max_value，放前奏；恒等（全缺省）时 c_ref 直通不动数据。
 StreamKernelResult _kHslDebugger(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   final hs = ctx.doubleParam('h_shift');
@@ -2068,7 +2449,8 @@ StreamKernelResult _kHslDebugger(
   if (hs == 0.0 && sg == 1.0 && lg == 1.0) return _alias(ie, 'out');
   s.useHelper('bb_clamp_to');
   s.addPrelude(
-      'const int64_t ${ctx.ident}_shift = (int64_t)round(${cNum(hs)} / 360.0 * max_value);');
+    'const int64_t ${ctx.ident}_shift = (int64_t)round(${cNum(hs)} / 360.0 * max_value);',
+  );
   final hv = s.freshVar();
   final o0 = s.freshVar();
   final o1 = s.freshVar();
@@ -2085,13 +2467,18 @@ StreamKernelResult _kHslDebugger(
       'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * ${cNum(sg)}, max_value);',
       'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * ${cNum(lg)}, max_value);',
     ],
-    {'out': [o0, o1, o2]},
+    {
+      'out': [o0, o1, o2],
+    },
   );
 }
 
 /// rgb_debugger：R/G/B 三通道增益。出处：isp_adjust.c isp_adjust_rgb。
 StreamKernelResult _kRgbDebugger(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   final gains = [
@@ -2106,7 +2493,8 @@ StreamKernelResult _kRgbDebugger(
   for (var c = 0; c < 3; c++) {
     final o = s.freshVar();
     lines.add(
-        'const uint16_t $o = bb_clamp_to((double)${ie[c]} * ${cNum(gains[c])}, max_value);');
+      'const uint16_t $o = bb_clamp_to((double)${ie[c]} * ${cNum(gains[c])}, max_value);',
+    );
     outs.add(o);
   }
   return (lines, {'out': outs});
@@ -2115,7 +2503,10 @@ StreamKernelResult _kRgbDebugger(
 /// yuv_debugger：Y 增益 + U/V 绕中点缩放。出处：isp_adjust.c
 /// isp_adjust_yuv（half = max_value >> 1）。
 StreamKernelResult _kYuvDebugger(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   final gains = [
@@ -2135,7 +2526,9 @@ StreamKernelResult _kYuvDebugger(
       'const uint16_t $o1 = bb_clamp_to($half + ((int)${ie[1]} - $half) * ${cNum(gains[1])}, max_value);',
       'const uint16_t $o2 = bb_clamp_to($half + ((int)${ie[2]} - $half) * ${cNum(gains[2])}, max_value);',
     ],
-    {'out': [o0, o1, o2]},
+    {
+      'out': [o0, o1, o2],
+    },
   );
 }
 
@@ -2173,10 +2566,15 @@ bool blackLevelRowOk(Map<String, dynamic> params, bool isX86) {
 /// 双像素（亮度加权插值 + 双增益，运算结合序同融合行核；钳位复用
 /// isp_csc_sse.h 的 isp_csc_clamp2，与 bb_clamp_to 逐位一致）。标量尾与
 /// 融合行核逐位一致。ARM 目标不登记（NEON 无 FP64 SIMD）。
-String _satBrightRgbRowFn(String id, double sat, double bright,
-    GroupCTarget target) {
+String _satBrightRgbRowFn(
+  String id,
+  double sat,
+  double bright,
+  GroupCTarget target,
+) {
   assert(target.isX86);
-  final scalarTail = '''
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     const int r_ = in[(size_t)x * 3u + 0u];
     const int g_ = in[(size_t)x * 3u + 1u];
@@ -2243,7 +2641,10 @@ $scalarTail''';
 }
 
 StreamKernelResult _kSatBright(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final inPort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl']);
   final fmt = ctx.inputFormats[inPort] ?? 'rgb';
   final outPort = switch (fmt) {
@@ -2261,8 +2662,10 @@ StreamKernelResult _kSatBright(
   // 不可达——活动端口恒为首端口 'in'，与 bright_contrast 同理）。复用
   // isp_csc_sse.h 的 isp_csc_clamp2（与 bb_clamp_to 逐位一致）。
   if (ctx.target.isX86 && fmt == 'rgb') {
-    s.addFileDecl('${ctx.ident}_row',
-        _satBrightRgbRowFn(ctx.ident, sat, bright, ctx.target));
+    s.addFileDecl(
+      '${ctx.ident}_row',
+      _satBrightRgbRowFn(ctx.ident, sat, bright, ctx.target),
+    );
     s.cscSseUsed = true;
   }
   final lines = <String>[];
@@ -2301,7 +2704,9 @@ StreamKernelResult _kSatBright(
       ]);
       for (final (c, ch) in [(0, r), (1, g), (2, b)]) {
         final o = s.freshVar();
-        lines.add('const uint16_t $o = bb_clamp_to(($y + ($ch - $y) * ${cNum(sat)}) * ${cNum(bright)}, max_value);');
+        lines.add(
+          'const uint16_t $o = bb_clamp_to(($y + ($ch - $y) * ${cNum(sat)}) * ${cNum(bright)}, max_value);',
+        );
         outs.insert(c, o);
       }
   }
@@ -2314,7 +2719,10 @@ StreamKernelResult _kSatBright(
 /// 烘焙（Dart brightContrastAdjustLut），max_value 一致走查表（出处：
 /// isp_adjust.c isp_adjust_bc_lut_apply），不一致回退直算（行内三元）。
 StreamKernelResult _kBrightContrast(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final inPort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl', 'in_mono']);
   final fmt = ctx.inputFormats[inPort] ?? 'rgb';
   final outPort = switch (fmt) {
@@ -2332,6 +2740,11 @@ StreamKernelResult _kBrightContrast(
     return _alias(ie, outPort); // c_ref 恒等（与基线无关）
   }
   s.useHelper('bb_bc_map');
+  final fixedMode = ctx.strParam('codegenMode') == 'func_fixed';
+  if (fixedMode) s.useHelper('bb_bc_map_q14');
+  final brightQ = (brightPct / 100 * 16384).round();
+  final baselineQ = (baselinePct / 100 * 16384).round();
+  final gainQ = (gainPct / 100 * 16384).round();
   final lutMode = ctx.strParam('codegenMode') == 'lut';
   final bs = cNum(brightPct / 100.0);
   final gs = cNum(gainPct / 100.0);
@@ -2339,10 +2752,11 @@ StreamKernelResult _kBrightContrast(
   if (lutMode) {
     final n = ctx.lutDomainMax;
     final lut = brightContrastAdjustLut(
-        maxValue: n,
-        brightPct: brightPct,
-        baselinePct: baselinePct,
-        gainPct: gainPct);
+      maxValue: n,
+      brightPct: brightPct,
+      baselinePct: baselinePct,
+      gainPct: gainPct,
+    );
     s.addFileDecl('${ctx.ident}_adj_lut', '''
 /* bright_contrast LUT 模式：adjust 映射表生成期烘焙（Dart
  * brightContrastAdjustLut，域 0..$n）；max_value 一致走查表，不一致
@@ -2352,7 +2766,9 @@ ${cU16Table(lut)}
 };''');
   }
 
-  String mapExpr(String vExpr) => lutMode
+  String mapExpr(String vExpr) => fixedMode
+      ? 'bb_bc_map_q14($vExpr, $brightQ, $baselineQ, $gainQ, max_value)'
+      : lutMode
       ? '((max_value == ${ctx.lutDomainMax}) ? (int)${ctx.ident}_adj_lut[$vExpr] : bb_bc_map($vExpr, $bs, $base, $gs, max_value))'
       : 'bb_bc_map($vExpr, $bs, $base, $gs, max_value)';
 
@@ -2372,18 +2788,40 @@ ${cU16Table(lut)}
       lines.add('const uint16_t $o = (uint16_t)${mapExpr(ie[0])};');
       outs.add(o);
     default: // rgb：亮度比例路径（纯黑像素保持 0）
-      final y = s.freshVar();
-      final ratio = s.freshVar();
-      lines.addAll([
-        'const double $y = 0.299 * ${ie[0]} + 0.587 * ${ie[1]} + 0.114 * ${ie[2]};',
-        'const double $ratio = $y <= 0 ? 1.0 : (double)${mapExpr('(int)round($y)')} / $y;',
-      ]);
-      for (var c = 0; c < 3; c++) {
-        final o = s.freshVar();
-        lines.add('const uint16_t $o = $y <= 0 ? ${ie[c]} : bb_clamp_to((double)${ie[c]} * $ratio, max_value);');
-        outs.add(o);
+      if (fixedMode) {
+        final yq = s.freshVar();
+        final yr = s.freshVar();
+        final adj = s.freshVar();
+        lines.addAll([
+          'const int64_t $yq = (313524LL * ${ie[0]} + 615514LL * ${ie[1]} + 119538LL * ${ie[2]}) << 10;',
+          'const int $yr = (int)(($yq + (1LL << 29)) >> 30);',
+          'const int64_t $adj = ISP_MIN(ISP_MAX(bb_bc_map_q14_raw($yr, $brightQ, $baselineQ, $gainQ, max_value), 0), (int64_t)max_value << 30);',
+        ]);
+        for (var c = 0; c < 3; c++) {
+          final o = s.freshVar();
+          final num = s.freshVar();
+          lines.addAll([
+            'const int64_t $num = (int64_t)${ie[c]} * $adj;',
+            'const uint16_t $o = $yq == 0 ? ${ie[c]} : ($num <= 0 ? 0 : ($num >= (int64_t)max_value * $yq ? max_value : (uint16_t)(($num + ($yq >> 1)) / $yq)));',
+          ]);
+          outs.add(o);
+        }
+      } else {
+        final y = s.freshVar();
+        final ratio = s.freshVar();
+        lines.addAll([
+          'const double $y = 0.299 * ${ie[0]} + 0.587 * ${ie[1]} + 0.114 * ${ie[2]};',
+          'const double $ratio = $y <= 0 ? 1.0 : (double)${mapExpr('(int)round($y)')} / $y;',
+        ]);
+        for (var c = 0; c < 3; c++) {
+          final o = s.freshVar();
+          lines.add(
+            'const uint16_t $o = $y <= 0 ? ${ie[c]} : bb_clamp_to((double)${ie[c]} * $ratio, max_value);',
+          );
+          outs.add(o);
+        }
+        s.useHelper('bb_clamp_to');
       }
-      s.useHelper('bb_clamp_to');
   }
   return (lines, {outPort: outs});
 }
@@ -2406,7 +2844,8 @@ bool levelsRowOk(Map<String, dynamic> params) {
 /// 域匹配（max_value == 4095）走 SIMD gather（三通道同一 4096 级 LUT）；
 /// 域失配标量回退（线性缩放往返，与融合行核同口径）。
 String _levelsRowFn(String id, GroupCTarget target) {
-  final scalarTail = '''
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     out[(size_t)x * 3u + 0u] = bb_levels_apply(${id}_lut, in[(size_t)x * 3u + 0u], max_value);
     out[(size_t)x * 3u + 1u] = bb_levels_apply(${id}_lut, in[(size_t)x * 3u + 1u], max_value);
@@ -2414,7 +2853,8 @@ String _levelsRowFn(String id, GroupCTarget target) {
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -2422,10 +2862,22 @@ String _levelsRowFn(String id, GroupCTarget target) {
         '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
         '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
-    final deint =
-        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
-    final reint =
-        _sse2Reinterleave3('lrv', 'lgv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    final deint = _sse2Deinterleave3(
+      'i0',
+      'i1',
+      'i2',
+      'rv',
+      'gv',
+      'bv',
+    ).join('\n');
+    final reint = _sse2Reinterleave3(
+      'lrv',
+      'lgv',
+      'lbv',
+      'o0',
+      'o1',
+      'o2',
+    ).join('\n');
     return '''
 /* levels_curves 整行函数（SSE2/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
@@ -2505,7 +2957,10 @@ $scalarTail''';
 /// isp_levels_apply_rgb（单点版见 bb_levels_apply）。恒等曲线生成期判定
 /// （与 Dart 同口径），恒等时直通、不烘焙表。
 StreamKernelResult _kLevelsCurves(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   // 参数解析与整帧版（node_c_gen_adjust.dart _genLevelsCurves）同口径。
@@ -2532,7 +2987,9 @@ ${cU16Table(lut)}
   final outs = <String>[];
   for (var c = 0; c < 3; c++) {
     final o = s.freshVar();
-    lines.add('const uint16_t $o = bb_levels_apply(${ctx.ident}_lut, ${ie[c]}, max_value);');
+    lines.add(
+      'const uint16_t $o = bb_levels_apply(${ctx.ident}_lut, ${ie[c]}, max_value);',
+    );
     outs.add(o);
   }
   return (lines, {'out': outs});
@@ -2542,7 +2999,10 @@ ${cU16Table(lut)}
 /// Bypass）。出处：isp_adjust.c isp_adjust_color_balance（HSL 域为逐像素
 /// HSL→RGB→偏移→HSL 往返，中间 RGB 先量化为整数，与整帧往返逐位一致）。
 StreamKernelResult _kColorBalance(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final inPort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl']);
   final fmt = ctx.inputFormats[inPort] ?? 'rgb';
   final outPort = switch (fmt) {
@@ -2617,20 +3077,26 @@ StreamKernelResult _kColorBalance(
       ]);
       for (final (c, ch, d) in [(0, r, dr), (1, g, dg), (2, b, db)]) {
         final o = s.freshVar();
-        lines.add('const uint16_t $o = bb_clamp_to($ch + $d * $wt, max_value);');
+        lines.add(
+          'const uint16_t $o = bb_clamp_to($ch + $d * $wt, max_value);',
+        );
         outs.insert(c, o);
       }
   }
   return (lines, {outPort: outs});
 }
 
-/// color_temp 整行行核可用性（与 [_kColorTemp] 同口径）：LUT 模式且增益
-/// 非全 1（全 1 时 LUT 为恒等，无行核收益）。返回 gains 或 null。
+/// color_temp 整行行核可用性（与 [_kColorTemp] 同口径）：lut/lut_fixed/
+/// func_fixed 且增益非全 1（恒等无需行核）。返回 gains 或 null。
 List<double>? colorTempRowGains(Map<String, dynamic> params) {
-  if (params['codegenMode'] != 'lut') return null;
+  final mode = params['codegenMode'];
+  if (mode != 'lut' && mode != 'lut_fixed' && mode != 'func_fixed') {
+    return null;
+  }
   final gains = colorTempGains(
-      (params['temperature'] as num?)?.toDouble() ?? 0.0,
-      (params['measured_cct'] as num?)?.toInt() ?? 0);
+    (params['temperature'] as num?)?.toDouble() ?? 0.0,
+    (params['measured_cct'] as num?)?.toInt() ?? 0,
+  );
   if (gains.every((g) => g == 1.0)) return null;
   return gains;
 }
@@ -2640,8 +3106,13 @@ List<double>? colorTempRowGains(Map<String, dynamic> params) {
 /// 走 SIMD gather（三通道各自 lut_r/lut_g/lut_b 查表）；域失配标量回退
 /// bb_clamp_to(v×gain)，与融合行核逐位一致。
 String _colorTempLutRowFn(
-    String id, int n, List<double> gains, GroupCTarget target) {
-  final scalarTail = '''
+  String id,
+  int n,
+  List<double> gains,
+  GroupCTarget target,
+) {
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     out[(size_t)x * 3u + 0u] = (max_value == $n)
         ? ${id}_lut_r[in[(size_t)x * 3u + 0u]]
@@ -2655,7 +3126,8 @@ String _colorTempLutRowFn(
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -2663,10 +3135,22 @@ String _colorTempLutRowFn(
         '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
         '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
-    final deint =
-        _sse2Deinterleave3('i0', 'i1', 'i2', 'rv', 'gv', 'bv').join('\n');
-    final reint =
-        _sse2Reinterleave3('lrv', 'lgv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    final deint = _sse2Deinterleave3(
+      'i0',
+      'i1',
+      'i2',
+      'rv',
+      'gv',
+      'bv',
+    ).join('\n');
+    final reint = _sse2Reinterleave3(
+      'lrv',
+      'lgv',
+      'lbv',
+      'o0',
+      'o1',
+      'o2',
+    ).join('\n');
     return '''
 /* color_temp LUT 模式整行函数（SSE2/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
@@ -2741,49 +3225,101 @@ static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
 $scalarTail''';
 }
 
-/// color_temp_adjuster：von Kries 对角增益 + 三通道增益施加（非 Process
-/// 类，无 Bypass）。增益在生成期经 Dart colorTempGains 算出烘焙（与 C
-/// isp_color_temp_gains 有既有 tol=0 对拍，增益值一致；measured_cct 缺失
-/// 时 0 → 参考 6500K）。出处：isp_adjust.c isp_adjust_rgb 的逐像素施加。
-/// LUT 模式（codegenMode=lut）：三通道查找表生成期烘焙（Dart
-/// adjustGainLut），max_value 一致走查表（isp_adjust_lut3_apply 语义），
-/// 不一致回退直算。
+String _colorTempQ14RowFn(String id, int n, List<double> gains, bool useLut) {
+  final lines = <String>[];
+  for (var c = 0; c < 3; c++) {
+    final ch = 'rgb'[c];
+    final input = 'in[(size_t)x * 3u + ${c}u]';
+    final value = useLut
+        ? '(max_value == $n) ? bb_clamp_q14($input, ${id}_q14_$ch[$input], max_value) : bb_clamp_q14($input, ${id}_gain_${ch}_q14, max_value)'
+        : 'bb_clamp_q14($input, ${id}_gain_${ch}_q14, max_value)';
+    lines.add('  out[(size_t)x * 3u + ${c}u] = $value;');
+  }
+  return '''
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x = 0;
+  for (; x < w; x++) {
+${lines.join('\n')}
+  }
+}''';
+}
+
+/// color_temp_adjuster：四档代码生成。func 使用运行期 FP64 增益；
+/// func_fixed 使用标量 Q14 增益；lut 烘焙 FP64 结果表；lut_fixed 烘焙
+/// Q14 乘子表，域失配时回退标量 Q14 增益，任意位深均无浮点施加。
 StreamKernelResult _kColorTemp(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   final gains = colorTempGains(
-      ctx.doubleParam('temperature'), ctx.intParam('measured_cct'));
-  final lutMode = ctx.strParam('codegenMode') == 'lut';
-  if (!lutMode && gains.every((g) => g == 1.0)) {
-    return _alias(ie, 'out_rgb'); // isp_adjust_rgb 恒等早退
-  }
-  s.useHelper('bb_clamp_to');
-  if (lutMode) {
-    final n = ctx.lutDomainMax;
+    ctx.doubleParam('temperature'),
+    ctx.intParam('measured_cct'),
+  );
+  if (gains.every((g) => g == 1.0)) return _alias(ie, 'out_rgb');
+  final mode = ctx.strParam('codegenMode');
+  final n = ctx.lutDomainMax;
+  final q14 = [for (final g in gains) (g * 16384.0).round()];
+  if (mode == 'lut') s.useHelper('bb_clamp_to');
+  if (mode == 'lut') {
     for (var c = 0; c < 3; c++) {
       final name = 'lut_${'rgb'[c]}';
       s.addFileDecl('${ctx.ident}_$name', '''
-/* color_temp LUT 模式：三通道增益表生成期烘焙（Dart colorTempGains +
- * adjustGainLut，域 0..$n）；max_value 一致走查表，不一致回退直算。 */
 static const uint16_t ${ctx.ident}_$name[${n + 1}] = {
 ${cU16Table(adjustGainLut(gains[c], n))}
 };''');
     }
-    // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单节点独占阶段
-    // 被调用，见 group_c_export_bb 阶段发射特判）。登记在三表之后——
-    // 行核函数体引用这些表，须先声明。
-    if (!gains.every((g) => g == 1.0)) {
-      s.addFileDecl('${ctx.ident}_row',
-          _colorTempLutRowFn(ctx.ident, n, gains, ctx.target));
+    s.addFileDecl(
+      '${ctx.ident}_row',
+      _colorTempLutRowFn(ctx.ident, n, gains, ctx.target),
+    );
+  } else if (mode == 'lut_fixed') {
+    s.useHelper('bb_clamp_q14');
+    for (var c = 0; c < 3; c++) {
+      final name = 'q14_${'rgb'[c]}';
+      s.addFileDecl(
+        '${ctx.ident}_gain_${'rgb'[c]}_q14',
+        'static const int32_t ${ctx.ident}_gain_${'rgb'[c]}_q14 = ${q14[c]};',
+      );
+      s.addFileDecl('${ctx.ident}_$name', '''
+static const int32_t ${ctx.ident}_$name[${n + 1}] = {
+${cI32Table(Int32List(n + 1)..fillRange(0, n + 1, q14[c]))}
+};''');
     }
+    s.addFileDecl(
+      '${ctx.ident}_row',
+      _colorTempQ14RowFn(ctx.ident, n, gains, true),
+    );
+  } else if (mode == 'func_fixed') {
+    s.useHelper('bb_clamp_q14');
+    for (var c = 0; c < 3; c++) {
+      s.addFileDecl(
+        '${ctx.ident}_gain_${'rgb'[c]}_q14',
+        'static const int32_t ${ctx.ident}_gain_${'rgb'[c]}_q14 = ${q14[c]};',
+      );
+    }
+    s.addFileDecl(
+      '${ctx.ident}_row',
+      _colorTempQ14RowFn(ctx.ident, n, gains, false),
+    );
   }
   final lines = <String>[];
   final outs = <String>[];
   for (var c = 0; c < 3; c++) {
+    final ch = 'rgb'[c];
     final o = s.freshVar();
-    lines.add(lutMode
-        ? 'const uint16_t $o = (max_value == ${ctx.lutDomainMax}) ? ${ctx.ident}_lut_${'rgb'[c]}[${ie[c]}] : bb_clamp_to((double)${ie[c]} * ${cNum(gains[c])}, max_value);'
-        : 'const uint16_t $o = bb_clamp_to((double)${ie[c]} * ${cNum(gains[c])}, max_value);');
+    final value = switch (mode) {
+      'lut' =>
+        '(max_value == $n) ? ${ctx.ident}_lut_$ch[${ie[c]}] : bb_clamp_to((double)${ie[c]} * ${cNum(gains[c])}, max_value)',
+      'lut_fixed' =>
+        '(max_value == $n) ? bb_clamp_q14(${ie[c]}, ${ctx.ident}_q14_$ch[${ie[c]}], max_value) : bb_clamp_q14(${ie[c]}, ${ctx.ident}_gain_${ch}_q14, max_value)',
+      'func_fixed' =>
+        'bb_clamp_q14(${ie[c]}, ${ctx.ident}_gain_${ch}_q14, max_value)',
+      _ => 'bb_clamp_to((double)${ie[c]} * ${cNum(gains[c])}, max_value)',
+    };
+    lines.add('const uint16_t $o = $value;');
     outs.add(o);
   }
   return (lines, {'out_rgb': outs});
@@ -2824,11 +3360,20 @@ bool colorControllerRowOk(Map<String, dynamic> params, bool isX86) {
 /// else-if 逐位一致）；S/L 通道 FP64 gather 乘子 + isp_csc_clamp2（与
 /// bb_clamp_to 逐位一致）。域失配标量回退直算（含 exp 高斯权重），与
 /// 融合行核逐位一致。ARM 目标不登记（NEON 无 FP64 SIMD）。
-String _colorControllerRowFn(String id, int n, double hc, double q, double hs,
-    double sg, double lg, GroupCTarget target) {
+String _colorControllerRowFn(
+  String id,
+  int n,
+  double hc,
+  double q,
+  double hs,
+  double sg,
+  double lg,
+  GroupCTarget target,
+) {
   assert(target.isX86);
   final sigma = 45.0 / q;
-  final scalarTail = '''
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     int hv_ = (int)in[(size_t)x * 3u + 0u];
     if (hv_ > max_value) hv_ = max_value;
@@ -2919,7 +3464,10 @@ $scalarTail''';
 }
 
 StreamKernelResult _kColorController(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   final hc = ctx.doubleParam('h_center');
@@ -2934,12 +3482,13 @@ StreamKernelResult _kColorController(
   if (lutMode) {
     final n = ctx.lutDomainMax;
     final (shiftLut, sMulLut, lMulLut) = hslBandLuts(
-        maxValue: n,
-        hCenterDeg: hc,
-        q: q,
-        hShiftDeg: hs,
-        sGain: sg,
-        lGain: lg);
+      maxValue: n,
+      hCenterDeg: hc,
+      q: q,
+      hShiftDeg: hs,
+      sGain: sg,
+      lGain: lg,
+    );
     s.addFileDecl('${ctx.ident}_shift_lut', '''
 /* color_controller LUT 模式：H 域三表（H 偏移/S 乘子/L 乘子，含高斯
  * 权重）生成期烘焙（Dart hslBandLuts，域 0..$n）；max_value 一致走查
@@ -2960,8 +3509,9 @@ ${cF64Table(lMulLut)}
     // 三表之后——行核函数体引用这些表，须先声明。
     if (ctx.target.isX86) {
       s.addFileDecl(
-          '${ctx.ident}_row',
-          _colorControllerRowFn(ctx.ident, n, hc, q, hs, sg, lg, ctx.target));
+        '${ctx.ident}_row',
+        _colorControllerRowFn(ctx.ident, n, hc, q, hs, sg, lg, ctx.target),
+      );
       s.cscSseUsed = true;
     }
   }
@@ -3008,7 +3558,9 @@ ${cF64Table(lMulLut)}
       'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * $sMulExpr, max_value);',
       'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * $lMulExpr, max_value);',
     ],
-    {'out': [o0, o1, o2]},
+    {
+      'out': [o0, o1, o2],
+    },
   );
 }
 
@@ -3024,8 +3576,16 @@ ${cF64Table(lMulLut)}
 /// LUT 定点模式（codegenMode=lut_fixed）：H 表同 lut（int16），S/L 乘子
 /// 烘焙为 Q14 定点整数表（bb_clamp_q14 整数乘加，面向 A55 等无 FP64
 /// SIMD 的嵌入式核；与 FP64 口径偏差 ≤1 LSB），回退路径同 lut。
+/// 函数定点模式（codegenMode=func_fixed）：运行期直算的全整数定点变体
+/// ——不烘焙 H 域表、无 FP64/libm，任意运行时 max_value 恒走定点路径
+/// （段常量生成期烘焙为字面量，逐像素 `<id>_compose_fx` 合成 +
+/// bb_clamp_q14 施加；与 Dart applyMultiBandEqFx 逐位一致，与 FP64 口径
+/// 偏差 ≤1 LSB）。
 StreamKernelResult _kMultiBandEq(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out');
   var bandCount = ctx.intParam('band_count');
@@ -3066,15 +3626,19 @@ StreamKernelResult _kMultiBandEq(
   final compose = StringBuffer()
     ..writeln('''/* multi_band_eq 逐 hv 合成（与 isp_multi_band_eq.c mb_compose 同公式，
  * 段参数生成期烘焙为字面常量）。 */''')
-    ..writeln('static void ${id}_compose(int hv, int max_value, int32_t *shift,')
+    ..writeln(
+      'static void ${id}_compose(int hv, int max_value, int32_t *shift,',
+    )
     ..writeln('                          double *s_mul, double *l_mul) {')
     ..writeln('  const double h_deg = (double)hv * 360.0 / (double)max_value;');
   if (bandCount == 1) {
     // 单段捷径：串联与并联语义相同，走色彩控制器同公式（无钳位路径）。
     compose
       ..writeln(bandWeightLines(0, 'h_deg'))
-      ..writeln('    *shift ='
-          ' (int32_t)lround(${cNum(bands[0].dh)} * w0 / 360.0 * (double)max_value);')
+      ..writeln(
+        '    *shift ='
+        ' (int32_t)lround(${cNum(bands[0].dh)} * w0 / 360.0 * (double)max_value);',
+      )
       ..writeln('    *s_mul = 1.0 + (${cNum(bands[0].s)} - 1.0) * w0;')
       ..writeln('    *l_mul = 1.0 + (${cNum(bands[0].l)} - 1.0) * w0;')
       ..writeln('  }');
@@ -3107,7 +3671,9 @@ StreamKernelResult _kMultiBandEq(
         ..writeln(bandWeightLines(i, 'h_cur'))
         ..writeln('    s_acc *= 1.0 + w$i * (${cNum(bands[i].s)} - 1.0);')
         ..writeln('    l_acc *= 1.0 + w$i * (${cNum(bands[i].l)} - 1.0);')
-        ..writeln('    h_cur = fmod(h_cur + w$i * ${cNum(bands[i].dh)}, 360.0);')
+        ..writeln(
+          '    h_cur = fmod(h_cur + w$i * ${cNum(bands[i].dh)}, 360.0);',
+        )
         ..writeln('    if (h_cur < 0.0) h_cur += 360.0;')
         ..writeln('  }');
     }
@@ -3131,8 +3697,11 @@ StreamKernelResult _kMultiBandEq(
   // 式核；与 FP64 口径偏差 ≤1 LSB）。域失配时与 lut 同口径回退 compose。
   final fixedMode = ctx.strParam('codegenMode') == 'lut_fixed';
   if (lutMode || fixedMode) {
-    final (shiftLut, sMulLut, lMulLut) =
-        multiBandLuts(bands, serial: serial, maxValue: n);
+    final (shiftLut, sMulLut, lMulLut) = multiBandLuts(
+      bands,
+      serial: serial,
+      maxValue: n,
+    );
     s.addFileDecl('${id}_shift_lut', '''
 /* multi_band_eq LUT 模式：H 偏移表生成期烘焙（Dart multiBandLuts，域
  * 0..$n；|shift| ≤ 域半宽 ±180° 恒成立，int16 足够且表 footprint/带宽
@@ -3175,6 +3744,104 @@ ${cI32Table(Int32List.fromList([for (final v in lMulLut) (v * 16384.0).round()])
     }
   }
 
+  // 函数定点模式（func_fixed）：运行期直算的全整数定点变体——不烘焙 H
+  // 域表、无 FP64/libm，任意运行时 max_value 恒走定点路径；段常量生成期
+  // 烘焙为字面量（Dart multiBandFxBandConst 同口径），逐像素
+  // <id>_compose_fx 合成 + bb_clamp_q14 施加。
+  final funcFixedMode = ctx.strParam('codegenMode') == 'func_fixed';
+  if (funcFixedMode) {
+    s.useHelper('bb_fx_round_div');
+    s.useHelper('bb_mb_fx_weight');
+    s.useHelper('bb_clamp_q14');
+    final fx = [
+      for (final b in bands)
+        multiBandFxBandConst(h: b.h, q: b.q, dh: b.dh, s: b.s, l: b.l),
+    ];
+    final cfx = StringBuffer()
+      ..writeln('''/* multi_band_eq func_fixed 逐 hv 定点合成（与 isp_multi_band_eq.c
+ * mb_compose_fx 同公式，段定点常量生成期烘焙为字面量；全整数无
+ * FP64/libm，与 Dart multiBandComposeFx 逐位一致）。 */''')
+      ..writeln('static void ${id}_compose_fx(int hv, int max_value,')
+      ..writeln('    int32_t *shift, int32_t *s_mul_q14, int32_t *l_mul_q14) {')
+      ..writeln(
+        '  const int32_t h_q16 = (int32_t)(((int64_t)hv * 23592960LL +'
+        '\n                                   (max_value >> 1)) / max_value);',
+      );
+    if (bandCount == 1) {
+      // 单段捷径：串联与并联语义相同，无钳位路径（同 hslBandLuts 口径）。
+      cfx.writeln('''
+  {
+    const int32_t w0 = bb_mb_fx_weight(h_q16, ${fx[0].hcQ16}, ${fx[0].kQ20});
+    *shift = (int32_t)bb_fx_round_div((int64_t)w0 * ${fx[0].dhQ16} *
+                                      max_value, 386547056640LL);
+    *s_mul_q14 = 16384 + (int32_t)(((int64_t)w0 * ${fx[0].s1Q14} + 8192) >> 14);
+    *l_mul_q14 = 16384 + (int32_t)(((int64_t)w0 * ${fx[0].l1Q14} + 8192) >> 14);
+  }''');
+    } else if (!serial) {
+      // 并联：dh_sum Q30 / s·l_sum Q28 加权求和后钳位。
+      cfx.writeln('  int64_t dh_sum = 0, s_sum = 0, l_sum = 0;');
+      for (var i = 0; i < bandCount; i++) {
+        cfx.writeln('''
+  {
+    const int32_t w$i = bb_mb_fx_weight(h_q16, ${fx[i].hcQ16}, ${fx[i].kQ20});
+    dh_sum += (int64_t)w$i * ${fx[i].dhQ16};
+    s_sum += (int64_t)w$i * ${fx[i].s1Q14};
+    l_sum += (int64_t)w$i * ${fx[i].l1Q14};
+  }''');
+      }
+      cfx.writeln('''
+  if (dh_sum < -193273528320LL) dh_sum = -193273528320LL;
+  else if (dh_sum > 193273528320LL) dh_sum = 193273528320LL;
+  *shift = (int32_t)bb_fx_round_div(dh_sum * max_value, 386547056640LL);
+  {
+    const int64_t sm = 16384 + ((s_sum + 8192) >> 14);
+    const int64_t lm = 16384 + ((l_sum + 8192) >> 14);
+    *s_mul_q14 = (int32_t)(sm < 0 ? 0 : (sm > 81920 ? 81920 : sm));
+    *l_mul_q14 = (int32_t)(lm < 0 ? 0 : (lm > 81920 ? 81920 : lm));
+  }''');
+    } else {
+      // 串联：h_cur Q16 逐段累加并条件回绕；S/L Q14 乘性合成。
+      cfx.writeln('  int64_t h_cur = h_q16, s_acc = 16384, l_acc = 16384;');
+      for (var i = 0; i < bandCount; i++) {
+        cfx.writeln('''
+  {
+    const int32_t w$i = bb_mb_fx_weight((int32_t)h_cur, ${fx[i].hcQ16},
+                                        ${fx[i].kQ20});
+    s_acc = (s_acc * (16384 + (((int64_t)w$i * ${fx[i].s1Q14} + 8192) >> 14)) + 8192) >> 14;
+    l_acc = (l_acc * (16384 + (((int64_t)w$i * ${fx[i].l1Q14} + 8192) >> 14)) + 8192) >> 14;
+    h_cur += ((int64_t)w$i * ${fx[i].dhQ16} + 8192) >> 14;
+    h_cur %= 23592960LL;
+    if (h_cur < 0) h_cur += 23592960LL;
+  }''');
+      }
+      cfx.writeln('''
+  {
+    int64_t dd = (h_cur - h_q16) % 23592960LL;
+    if (dd < 0) dd += 23592960LL;
+    if (dd > 11796480LL) dd -= 23592960LL;
+    *shift = (int32_t)bb_fx_round_div(dd * max_value, 23592960LL);
+    if (s_acc < 0) {
+      s_acc = 0;
+    } else if (s_acc > 81920) {
+      s_acc = 81920;
+    }
+    if (l_acc < 0) {
+      l_acc = 0;
+    } else if (l_acc > 81920) {
+      l_acc = 81920;
+    }
+    *s_mul_q14 = (int32_t)s_acc;
+    *l_mul_q14 = (int32_t)l_acc;
+  }''');
+    }
+    cfx.writeln('}');
+    s.addFileDecl('${id}_compose_fx', cfx.toString());
+    // 整行函数（纯标量定点直算，无表无域判定）：仅当本节点独占一个零延
+    // 迟阶段时被 top .c 调用（见 group_c_export_bb 阶段发射特判，含 omp
+    // 行域并行）；其余形态走融合行核，两者逐位一致。
+    s.addFileDecl('${id}_row', _fxRowFn(ctx.ident));
+  }
+
   final hv = s.freshVar();
   final shift = s.freshVar();
   final sMul = s.freshVar();
@@ -3188,23 +3855,28 @@ ${cI32Table(Int32List.fromList([for (final v in lMulLut) (v * 16384.0).round()])
       'int $hv = ${ie[0]};',
       'if ($hv > max_value) $hv = max_value;',
       'int32_t $shift;',
-      'double $sMul = 1.0, $lMul = 1.0;',
-      if (lutMode) ...[
-        'if (max_value == $n) {',
-        '  $shift = ${id}_shift_lut[$hv];',
-        '  $sMul = ${id}_s_mul_lut[$hv];',
-        '  $lMul = ${id}_l_mul_lut[$hv];',
-        '} else {',
-        '  ${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
-        '}',
-      ] else if (fixedMode) ...[
-        'if (max_value == $n) {',
-        '  $shift = ${id}_shift_lut[$hv];',
-        '} else {',
-        '  ${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
-        '}',
-      ] else
-        '${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
+      if (funcFixedMode) ...[
+        'int32_t $sMul = 16384, $lMul = 16384;',
+        '${id}_compose_fx($hv, max_value, &$shift, &$sMul, &$lMul);',
+      ] else ...[
+        'double $sMul = 1.0, $lMul = 1.0;',
+        if (lutMode) ...[
+          'if (max_value == $n) {',
+          '  $shift = ${id}_shift_lut[$hv];',
+          '  $sMul = ${id}_s_mul_lut[$hv];',
+          '  $lMul = ${id}_l_mul_lut[$hv];',
+          '} else {',
+          '  ${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
+          '}',
+        ] else if (fixedMode) ...[
+          'if (max_value == $n) {',
+          '  $shift = ${id}_shift_lut[$hv];',
+          '} else {',
+          '  ${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
+          '}',
+        ] else
+          '${id}_compose($hv, max_value, &$shift, &$sMul, &$lMul);',
+      ],
       // 色环回绕：烘焙/合成 shift 恒满足 |shift| ≤ max/2（dh ≤ ±180°，
       // 并联/串联均钳位）、hv ∈ [0,max]，单次条件加减与 % (max+1) 逐位
       // 一致——max_value 为运行时参数，% 退化为逐像素整数除法（实测占
@@ -3214,17 +3886,22 @@ ${cI32Table(Int32List.fromList([for (final v in lMulLut) (v * 16384.0).round()])
       'else if ($hnew < 0) $hnew += (max_value + 1);',
       'const uint16_t $o0 = (uint16_t)$hnew;',
       // lut_fixed：Q14 整数乘加（域一致时），域失配与 lut 同口径回退
-      // compose 的 FP64 路径（$sMul/$lMul 恒被 compose 或默认 1.0 初始化，
-      // 三目未选中分支不读取）。
+      // compose 的 FP64 路径。func_fixed：compose_fx 直接产出 Q14 乘子，
+      // 恒走 bb_clamp_q14（无表无域判定、无回退）。
       if (fixedMode) ...[
         'const uint16_t $o1 = (max_value == $n) ? bb_clamp_q14(${ie[1]}, ${id}_s_mul_q14[$hv], max_value) : bb_clamp_to((double)${ie[1]} * $sMul, max_value);',
         'const uint16_t $o2 = (max_value == $n) ? bb_clamp_q14(${ie[2]}, ${id}_l_mul_q14[$hv], max_value) : bb_clamp_to((double)${ie[2]} * $lMul, max_value);',
+      ] else if (funcFixedMode) ...[
+        'const uint16_t $o1 = bb_clamp_q14(${ie[1]}, $sMul, max_value);',
+        'const uint16_t $o2 = bb_clamp_q14(${ie[2]}, $lMul, max_value);',
       ] else ...[
         'const uint16_t $o1 = bb_clamp_to((double)${ie[1]} * $sMul, max_value);',
         'const uint16_t $o2 = bb_clamp_to((double)${ie[2]} * $lMul, max_value);',
       ],
     ],
-    {'out': [o0, o1, o2]},
+    {
+      'out': [o0, o1, o2],
+    },
   );
 }
 
@@ -3240,7 +3917,8 @@ ${cI32Table(Int32List.fromList([for (final v in lMulLut) (v * 16384.0).round()])
 String _lutFixedRowFn(String id, int n, GroupCTarget target) {
   // 标量路径（含量化域失配的 compose 回退）：两目标共用，与融合行核逐位
   // 一致。
-  final scalarTail = '''
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     /* 标量路径（含量化域失配的 compose 回退），与融合行核逐位一致。 */
     int hv = in[(size_t)x * 3u + 0u];
@@ -3678,6 +4356,39 @@ static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
 }''';
 }
 
+/// func_fixed 整行函数源码（[id] 前缀）：纯标量定点直算（无表、无域判
+/// 定、无回退），与融合行核逐位一致；仅单节点独占阶段被调用（见 top .c
+/// 阶段发射，含 omp 行域并行——逐像素独立运算逐位一致）。逐像素高斯为
+/// 标量重运算，不做 SIMD 变体。
+String _fxRowFn(String id) {
+  return '''
+/* multi_band_eq func_fixed 整行函数（标量定点直算，与融合行核逐位一致；
+ * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
+static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
+                      int max_value) {
+  int x;
+  for (x = 0; x < w; x++) {
+    int hv = in[(size_t)x * 3u + 0u];
+    int32_t shift, s_mul_q14, l_mul_q14;
+    if (hv > max_value) hv = max_value;
+    ${id}_compose_fx(hv, max_value, &shift, &s_mul_q14, &l_mul_q14);
+    {
+      int hnew = hv + shift;
+      if (hnew > max_value) {
+        hnew -= (max_value + 1);
+      } else if (hnew < 0) {
+        hnew += (max_value + 1);
+      }
+      out[(size_t)x * 3u + 0u] = (uint16_t)hnew;
+    }
+    out[(size_t)x * 3u + 1u] =
+        bb_clamp_q14(in[(size_t)x * 3u + 1u], s_mul_q14, max_value);
+    out[(size_t)x * 3u + 2u] =
+        bb_clamp_q14(in[(size_t)x * 3u + 2u], l_mul_q14, max_value);
+  }
+}''';
+}
+
 // ---------------------------------------------------------------------------
 // 荧光 mono 域（逐像素子集）
 // ---------------------------------------------------------------------------
@@ -3686,7 +4397,10 @@ static void ${id}_row(const uint16_t *in, uint16_t *out, int w,
 /// 时 c_ref 直通——生成期判定同结果）。出处：isp_fluoro.c
 /// isp_fluoro_leak_apply（v <= 0 写 0，否则 round，无上限钳位）。
 StreamKernelResult _kFluoroLeak(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in_mono');
   if (ctx.boolParam('bypass')) return _alias(ie, 'out_mono');
   final level = ctx.doubleParam('level');
@@ -3701,7 +4415,9 @@ StreamKernelResult _kFluoroLeak(
       'const double $v = (double)${ie[0]} - ${cNum(sub)};',
       'const uint16_t $o = ($v <= 0.0) ? (uint16_t)0 : bb_round_pos($v);',
     ],
-    {'out_mono': [o]},
+    {
+      'out_mono': [o],
+    },
   );
 }
 
@@ -3723,17 +4439,23 @@ bool pseudoColorRowOk(Map<String, dynamic> params) {
 /// 通道输出；域匹配（max_value == n）走 SIMD gather（同一索引查三张色表）；
 /// 域失配标量回退（t 钳位后按色表直算），与融合行核逐位一致。
 String _pseudoColorRowFn(
-    String id, int n, double gain, String colormap, GroupCTarget target) {
+  String id,
+  int n,
+  double gain,
+  String colormap,
+  GroupCTarget target,
+) {
   final (re, ge, be) = switch (colormap) {
     'magenta' => ('t_', '0.0', 't_'),
     'hot' => (
-        'ISP_MIN(3.0 * t_, 1.0)',
-        'bb_clamp01(3.0 * t_ - 1.0)',
-        'bb_clamp01(3.0 * t_ - 2.0)',
-      ),
+      'ISP_MIN(3.0 * t_, 1.0)',
+      'bb_clamp01(3.0 * t_ - 1.0)',
+      'bb_clamp01(3.0 * t_ - 2.0)',
+    ),
     _ => ('0.0', 't_', '0.0'), // green（ICG 荧光惯例；未知值同兜底）
   };
-  final scalarTail = '''
+  final scalarTail =
+      '''
   for (; x < w; x++) {
     const double t_ = bb_clamp01((double)in[x] * ${cNum(gain)} * (1.0 / max_value));
     out[(size_t)x * 3u + 0u] = (max_value == $n)
@@ -3745,7 +4467,8 @@ String _pseudoColorRowFn(
   }
 }''';
   if (target.isX86) {
-    final masks = '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
+    final masks =
+        '    const __m128i lm0 = _mm_setr_epi16(-1, 0, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm1 = _mm_setr_epi16(0, -1, 0, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm2 = _mm_setr_epi16(0, 0, -1, 0, 0, 0, 0, 0);\n'
         '    const __m128i lm3 = _mm_setr_epi16(0, 0, 0, -1, 0, 0, 0, 0);\n'
@@ -3753,8 +4476,14 @@ String _pseudoColorRowFn(
         '    const __m128i lm5 = _mm_setr_epi16(0, 0, 0, 0, 0, -1, 0, 0);\n'
         '    const __m128i lm6 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, -1, 0);\n'
         '    const __m128i lm7 = _mm_setr_epi16(0, 0, 0, 0, 0, 0, 0, -1);\n';
-    final reint =
-        _sse2Reinterleave3('lrv', 'lgv', 'lbv', 'o0', 'o1', 'o2').join('\n');
+    final reint = _sse2Reinterleave3(
+      'lrv',
+      'lgv',
+      'lbv',
+      'o0',
+      'o1',
+      'o2',
+    ).join('\n');
     return '''
 /* pseudo_color LUT 模式整行函数（SSE2/标量双变体，逐位一致；
  * 仅单节点独占阶段被调用，见 top .c 阶段发射）。 */
@@ -3821,22 +4550,59 @@ $scalarTail''';
 }
 
 StreamKernelResult _kPseudoColor(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final ie = _in(inputs, 'in_mono');
   if (ctx.boolParam('bypass')) {
-    return (const [], {
-      'out': [ie[0], ie[0], ie[0]],
-    });
+    return (
+      const [],
+      {
+        'out': [ie[0], ie[0], ie[0]],
+      },
+    );
   }
   final gain = ctx.doubleParam('gain');
+  if (ctx.strParam('codegenMode') == 'func_fixed') {
+    final gainQ = (gain * 16384).round();
+    final t = s.freshVar();
+    final (re, ge, be) = switch (ctx.strParam('colormap')) {
+      'magenta' => (t, '0', t),
+      'hot' => (
+        'ISP_MIN(3 * $t, 16384)',
+        'ISP_MIN(ISP_MAX(3 * $t - 16384, 0), 16384)',
+        'ISP_MIN(ISP_MAX(3 * $t - 32768, 0), 16384)',
+      ),
+      _ => ('0', t, '0'),
+    };
+    s.useHelper('bb_scale_q14');
+    final lines = <String>[
+      'const int64_t $t = ISP_MIN(ISP_MAX(((int64_t)${ie[0]} * $gainQ + (max_value >> 1)) / max_value, 0), 16384);',
+    ];
+    final outs = <String>[];
+    for (final expr in [re, ge, be]) {
+      final o = s.freshVar();
+      lines.add('const uint16_t $o = bb_scale_q14($expr, max_value);');
+      outs.add(o);
+    }
+    return (lines, {'out': outs});
+  }
   final lutMode = ctx.strParam('codegenMode') == 'lut';
   s.useHelper('bb_clamp_to');
   final lines = <String>[];
   if (lutMode) {
     final n = ctx.lutDomainMax;
-    final (lutR, lutG, lutB) =
-        pseudoColorLuts(ctx.strParam('colormap'), gain, n);
-    for (final (name, lut) in [('lut_r', lutR), ('lut_g', lutG), ('lut_b', lutB)]) {
+    final (lutR, lutG, lutB) = pseudoColorLuts(
+      ctx.strParam('colormap'),
+      gain,
+      n,
+    );
+    for (final (name, lut) in [
+      ('lut_r', lutR),
+      ('lut_g', lutG),
+      ('lut_b', lutB),
+    ]) {
       s.addFileDecl('${ctx.ident}_$name', '''
 /* pseudo_color LUT 模式：三通道色表生成期烘焙（Dart pseudoColorLuts，
  * 域 0..$n）；max_value 一致走查表，不一致回退直算（同公式）。 */
@@ -3846,20 +4612,30 @@ ${cU16Table(lut)}
     }
     // 整行行核（NEON/SSE2/标量双变体，随导出目标分叉；仅单节点独占阶段
     // 被调用，见 group_c_export_bb 阶段发射特判）。登记在三表之后。
-    s.addFileDecl('${ctx.ident}_row', _pseudoColorRowFn(
-        ctx.ident, n, gain, ctx.strParam('colormap'), ctx.target));
+    s.addFileDecl(
+      '${ctx.ident}_row',
+      _pseudoColorRowFn(
+        ctx.ident,
+        n,
+        gain,
+        ctx.strParam('colormap'),
+        ctx.target,
+      ),
+    );
   }
   // 直算路径（LUT 回退分支同用）：t 钳位 [0,1] 后按烘焙色表映射。
   final t = s.freshVar();
-  lines.add('const double $t = bb_clamp01((double)${ie[0]} * ${cNum(gain)} * (1.0 / max_value));');
+  lines.add(
+    'const double $t = bb_clamp01((double)${ie[0]} * ${cNum(gain)} * (1.0 / max_value));',
+  );
   s.useHelper('bb_clamp01');
   final (re, ge, be) = switch (ctx.strParam('colormap')) {
     'magenta' => (t, '0.0', t),
     'hot' => (
-        'ISP_MIN(3.0 * $t, 1.0)',
-        'bb_clamp01(3.0 * $t - 1.0)',
-        'bb_clamp01(3.0 * $t - 2.0)',
-      ),
+      'ISP_MIN(3.0 * $t, 1.0)',
+      'bb_clamp01(3.0 * $t - 1.0)',
+      'bb_clamp01(3.0 * $t - 2.0)',
+    ),
     _ => ('0.0', t, '0.0'), // green（ICG 荧光惯例；未知值同兜底）
   };
   final outs = <String>[];
@@ -3867,9 +4643,11 @@ ${cU16Table(lut)}
     final o = s.freshVar();
     final lutExpr = '${ctx.ident}_lut_${'rgb'[c]}[${ie[0]}]';
     final directExpr = 'bb_clamp_to(${[re, ge, be][c]} * max_value, max_value)';
-    lines.add(lutMode
-        ? 'const uint16_t $o = (max_value == ${ctx.lutDomainMax}) ? $lutExpr : $directExpr;'
-        : 'const uint16_t $o = $directExpr;');
+    lines.add(
+      lutMode
+          ? 'const uint16_t $o = (max_value == ${ctx.lutDomainMax}) ? $lutExpr : $directExpr;'
+          : 'const uint16_t $o = $directExpr;',
+    );
     outs.add(o);
   }
   return (lines, {'out': outs});
@@ -3884,8 +4662,12 @@ ${cU16Table(lut)}
 /// isp_split.c isp_split3_impl + node_c_gen_datapath.dart 的转换分支）：
 /// rgb_splitter 收 yuv/hsl（yuv2rgb / hsl2rgb），yuv/hsl_splitter 收 rgb
 /// （rgb2yuv BT.601 全范围 / rgb2hsl）。
-StreamKernelResult _kSplitter(StreamKernelCtx s, CNodeGenCtx ctx,
-    Map<String, List<String>?> inputs, String domain) {
+StreamKernelResult _kSplitter(
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+  String domain,
+) {
   final fmt = ctx.inputFormats['in'] ?? domain;
   final ie = _in(inputs, 'in');
   final outNames = switch (domain) {
@@ -3903,14 +4685,18 @@ StreamKernelResult _kSplitter(StreamKernelCtx s, CNodeGenCtx ctx,
   if (variant == null) {
     return (
       const [],
-      {for (var c = 0; c < 3; c++) outNames[c]: [ie[c]]},
+      {
+        for (var c = 0; c < 3; c++) outNames[c]: [ie[c]],
+      },
     );
   }
   final lines = <String>[];
   final ch = _emitCscPx(s, variant, ie, lines);
   return (
     lines,
-    {for (var c = 0; c < 3; c++) outNames[c]: [ch[c]]},
+    {
+      for (var c = 0; c < 3; c++) outNames[c]: [ch[c]],
+    },
   );
 }
 
@@ -3918,23 +4704,29 @@ StreamKernelResult _kSplitter(StreamKernelCtx s, CNodeGenCtx ctx,
 /// 通道输入直接发射缺省常量（整帧版传 NULL 由 c_ref 填缺省值，出处：
 /// isp_split.c isp_combine3_impl / isp_combine_yuv 的 mid = max >> 1）：
 /// YUV 的 U/V 缺省 max_value>>1，其余缺省 0。
-StreamKernelResult _kCombiner(StreamKernelCtx s, CNodeGenCtx ctx,
-    Map<String, List<String>?> inputs, String domain) {
+StreamKernelResult _kCombiner(
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+  String domain,
+) {
   final inNames = switch (domain) {
     'yuv' => const ['in_y', 'in_u', 'in_v'],
     'hsl' => const ['in_h', 'in_s', 'in_l'],
     _ => const ['in_r', 'in_g', 'in_b'],
   };
   final defs = switch (domain) {
-    'yuv' => const ['0', '((uint16_t)(max_value >> 1))', '((uint16_t)(max_value >> 1))'],
+    'yuv' => const [
+      '0',
+      '((uint16_t)(max_value >> 1))',
+      '((uint16_t)(max_value >> 1))',
+    ],
     _ => const ['0', '0', '0'],
   };
   return (
     const [],
     {
-      'out': [
-        for (var c = 0; c < 3; c++) inputs[inNames[c]]?[0] ?? defs[c],
-      ],
+      'out': [for (var c = 0; c < 3; c++) inputs[inNames[c]]?[0] ?? defs[c]],
     },
   );
 }
@@ -3942,7 +4734,10 @@ StreamKernelResult _kCombiner(StreamKernelCtx s, CNodeGenCtx ctx,
 /// multiplier：双 mono 归一化相乘 out=(a+offset1)×(b+offset2)/maxValue。
 /// 出处：isp_blend.c isp_blend_multiply（全程双精度 + _clampTo 收尾）。
 StreamKernelResult _kMultiplier(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final a = _in(inputs, 'in_mono');
   final b = _in(inputs, 'in_mono2');
   s.useHelper('bb_clamp_to');
@@ -3951,14 +4746,19 @@ StreamKernelResult _kMultiplier(
     [
       'const uint16_t $o = bb_clamp_to(((double)${a[0]} + ${cNum(ctx.doubleParam('offset1'))}) * ((double)${b[0]} + ${cNum(ctx.doubleParam('offset2'))}) / (double)max_value, max_value);',
     ],
-    {'out_mono': [o]},
+    {
+      'out_mono': [o],
+    },
   );
 }
 
 /// adder：双 mono 平衡加权混合 out=a×balance+b×(1−balance)。
 /// 出处：isp_blend.c isp_blend_add（两路增益总和恒为 1）。
 StreamKernelResult _kAdder(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final a = _in(inputs, 'in_mono');
   final b = _in(inputs, 'in_mono2');
   s.useHelper('bb_clamp_to');
@@ -3967,7 +4767,9 @@ StreamKernelResult _kAdder(
     [
       'const uint16_t $o = bb_clamp_to((double)${a[0]} * ${cNum(ctx.doubleParam('balance'))} + (double)${b[0]} * ${cNum(1.0 - ctx.doubleParam('balance'))}, max_value);',
     ],
-    {'out_mono': [o]},
+    {
+      'out_mono': [o],
+    },
   );
 }
 
@@ -3976,17 +4778,31 @@ StreamKernelResult _kAdder(
 /// 一次；负 delta 不下压；int64 精确相乘再乘 double k）。strength == 0
 /// 时 c_ref 早退基图不动（生成期判定同结果）。
 StreamKernelResult _kBlender(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
-  final basePort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl', 'in_mono']);
-  final baseFmt = ctx.inputFormats[basePort] ??
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
+  final basePort = _activePort(ctx, const [
+    'in',
+    'in_yuv',
+    'in_hsl',
+    'in_mono',
+  ]);
+  final baseFmt =
+      ctx.inputFormats[basePort] ??
       (basePort == 'in_mono'
           ? 'mono'
           : basePort == 'in'
-              ? 'rgb'
-              : basePort.substring(4));
-  final blendPort =
-      _activePort(ctx, const ['in_blend', 'in_blend_yuv', 'in_blend_hsl', 'in_blend_mono']);
-  final blendFmt = ctx.inputFormats[blendPort] ??
+          ? 'rgb'
+          : basePort.substring(4));
+  final blendPort = _activePort(ctx, const [
+    'in_blend',
+    'in_blend_yuv',
+    'in_blend_hsl',
+    'in_blend_mono',
+  ]);
+  final blendFmt =
+      ctx.inputFormats[blendPort] ??
       (blendPort.endsWith('_mono') ? 'mono' : 'rgb');
   final blendChannels = blendFmt == 'mono' ? 1 : 3;
   final outPort = switch (baseFmt) {
@@ -4001,7 +4817,9 @@ StreamKernelResult _kBlender(
   final mask = _in(inputs, 'in_mask');
   final blend = _in(inputs, blendPort);
   s.useHelper('bb_clamp_to');
-  s.addPrelude('const double ${ctx.ident}_k = ${cNum(strength)} / (double)max_value;');
+  s.addPrelude(
+    'const double ${ctx.ident}_k = ${cNum(strength)} / (double)max_value;',
+  );
   final id = ctx.ident;
   final channels = baseFmt == 'mono' ? 1 : 3;
   final lines = <String>[];
@@ -4022,7 +4840,9 @@ StreamKernelResult _kBlender(
     // mono 混叠图：单一增量按基图格式选目标通道（RGB 三通道同加 /
     // YUV 只加 Y / HSL 只加 L / MONO 加通道 0）。
     final d = s.freshVar();
-    lines.add('const double $d = (double)((int64_t)${blend[0]} * (int64_t)${mask[0]}) * ${id}_k;');
+    lines.add(
+      'const double $d = (double)((int64_t)${blend[0]} * (int64_t)${mask[0]}) * ${id}_k;',
+    );
     final targets = switch (baseFmt) {
       'yuv' => const [0],
       'hsl' => const [2],
@@ -4035,7 +4855,9 @@ StreamKernelResult _kBlender(
         continue;
       }
       final o = s.freshVar();
-      lines.add('const uint16_t $o = $d <= 0 ? ${base[c]} : bb_clamp_to((double)${base[c]} + $d, max_value);');
+      lines.add(
+        'const uint16_t $o = $d <= 0 ? ${base[c]} : bb_clamp_to((double)${base[c]} + $d, max_value);',
+      );
       outs.add(o);
     }
   }
@@ -4045,10 +4867,15 @@ StreamKernelResult _kBlender(
 /// mux4：select 烘焙后纯透传（零语句别名；未选中支路已被规划层裁剪）。
 /// 出处：isp_blend.c isp_mux4_select + Dart 的透传零拷贝语义。
 StreamKernelResult _kMux4(
-    StreamKernelCtx s, CNodeGenCtx ctx, Map<String, List<String>?> inputs) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  Map<String, List<String>?> inputs,
+) {
   final inPort = ctx.type.inputs
-      .firstWhere((p) => ctx.inputFormats.containsKey(p.name),
-          orElse: () => ctx.type.inputs.first)
+      .firstWhere(
+        (p) => ctx.inputFormats.containsKey(p.name),
+        orElse: () => ctx.type.inputs.first,
+      )
       .name;
   final ie = _in(inputs, inPort);
   final outPort = switch (ctx.inputFormats[inPort] ?? 'rgb') {
@@ -4104,7 +4931,10 @@ class StreamWindowAccess {
 /// 发射一个窗口节点（输出第 yo 行）的行核。不支持的类型抛
 /// [ArgumentError]（highlight 仅 recover 模式；clip 走点对点行核）。
 StreamKernelResult emitStreamWindowKernel(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   switch (ctx.node.typeId) {
     case 'dpc':
       return _wDpc(s, ctx, access);
@@ -4132,8 +4962,9 @@ StreamKernelResult emitStreamWindowKernel(
 String _col(int dx) => dx == 0 ? 'x' : (dx > 0 ? '(x + $dx)' : '(x - ${-dx})');
 
 /// 行号表达式（dy 为编译期常量；rv = s.rowVar）。
-String _row(StreamKernelCtx s, int dy) =>
-    dy == 0 ? s.rowVar : (dy > 0 ? '${s.rowVar} + $dy' : '${s.rowVar} - ${-dy}');
+String _row(StreamKernelCtx s, int dy) => dy == 0
+    ? s.rowVar
+    : (dy > 0 ? '${s.rowVar} + $dy' : '${s.rowVar} - ${-dy}');
 
 /// 发射同相位/mono 3x3 邻域枚举（复刻 isp_phase_neighbors 的顺序与裁剪：
 /// dy 外层 dx 内层行优先、步进 step、去中心、越界丢弃——浮点累加次序与
@@ -4153,8 +4984,10 @@ void _emitPhaseLoop(
   for (var dy = -step; dy <= step; dy += step) {
     for (var dx = -step; dx <= step; dx += step) {
       if (dx == 0 && dy == 0) continue;
-      lines.add('if (${_col(dx)} >= 0 && ${_col(dx)} < w && '
-          '${_row(s, dy)} >= 0 && ${_row(s, dy)} < h) {');
+      lines.add(
+        'if (${_col(dx)} >= 0 && ${_col(dx)} < w && '
+        '${_row(s, dy)} >= 0 && ${_row(s, dy)} < h) {',
+      );
       final idx = stride == 1 ? _col(dx) : '${_col(dx)} * $stride + $chan';
       emitSample(lines, '${rowOf(dy)}[$idx]');
       lines.add('}');
@@ -4163,8 +4996,12 @@ void _emitPhaseLoop(
 }
 
 /// 窗口节点直通别名：输出 = 输入中心行。
-StreamKernelResult _wAlias(StreamWindowAccess access, String outPort) =>
-    (const [], {outPort: [access.sample(0, 'x')]});
+StreamKernelResult _wAlias(StreamWindowAccess access, String outPort) => (
+  const [],
+  {
+    outPort: [access.sample(0, 'x')],
+  },
+);
 
 /// RAW 域窗口节点双形态（端口/步进）：mono → (in_mono, out_mono, 1)，
 /// bayer → (in, out, 2)。
@@ -4180,7 +5017,10 @@ StreamKernelResult _wAlias(StreamWindowAccess access, String outPort) =>
 /// isp_common.c）；directional 四方向（水平/垂直/主对角/副对角）选
 /// |va−vb| 最小的一对写 (va+vb+1)>>1，全越界回退 med。
 StreamKernelResult _wDpc(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   final (_, outPort, step) = _rawWindowForm(ctx);
   final center = access.sample(0, 'x');
   if (ctx.boolParam('bypass')) return _wAlias(access, outPort);
@@ -4193,12 +5033,14 @@ StreamKernelResult _wDpc(
   final diff = s.freshVar();
   final o = s.freshVar();
   final thr = '(${cNum(ctx.doubleParam('threshold'))} / 100.0 * max_value)';
-  final lines = <String>[
-    'uint16_t $vals[8];',
-    'int $n = 0;',
-  ];
-  _emitPhaseLoop(s, lines, step, rowOf,
-      (lines, nb) => lines.add('$vals[$n++] = $nb;'));
+  final lines = <String>['uint16_t $vals[8];', 'int $n = 0;'];
+  _emitPhaseLoop(
+    s,
+    lines,
+    step,
+    rowOf,
+    (lines, nb) => lines.add('$vals[$n++] = $nb;'),
+  );
   lines.addAll([
     // 默认保持原值（n==0 / 未离群 / directional 四方向全越界回退 med）。
     'uint16_t $o = $center;',
@@ -4209,11 +5051,7 @@ StreamKernelResult _wDpc(
     '  if ((double)$diff > $thr) {',
   ]);
   if (ctx.strParam('mode') == 'directional') {
-    lines.addAll([
-      '{',
-      '  int best_ = -1;',
-      '  int best_diff_ = INT32_MAX;',
-    ]);
+    lines.addAll(['{', '  int best_ = -1;', '  int best_diff_ = INT32_MAX;']);
     // 四方向按水平/垂直/主对角/副对角顺序（平局保留先出现者）。
     for (final (dx, dy) in const [(1, 0), (0, 1), (1, 1), (1, -1)]) {
       final ax = _col(-dx * step);
@@ -4236,18 +5074,17 @@ StreamKernelResult _wDpc(
         '  }',
       ]);
     }
-    lines.addAll([
-      '  $o = (best_ >= 0) ? (uint16_t)best_ : $med;',
-      '}',
-    ]);
+    lines.addAll(['  $o = (best_ >= 0) ? (uint16_t)best_ : $med;', '}']);
   } else {
     lines.add('  $o = $med;');
   }
-  lines.addAll([
-    '  }',
-    '}',
-  ]);
-  return (lines, {outPort: [o]});
+  lines.addAll(['  }', '}']);
+  return (
+    lines,
+    {
+      outPort: [o],
+    },
+  );
 }
 
 /// bayer_dnr：同相位 3x3 保边加权降噪（σ = strength×√(v+64)，
@@ -4255,7 +5092,10 @@ StreamKernelResult _wDpc(
 ///（c_ref 先整帧快照再处理；行流水读输入环写输出，天然快照语义）。
 /// 加权平均为样本凸组合，结果必在样本范围内，与 c_ref 一样无钳位。
 StreamKernelResult _wBayerDnr(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   final (_, outPort, step) = _rawWindowForm(ctx);
   final center = access.sample(0, 'x');
   if (ctx.boolParam('bypass')) return _wAlias(access, outPort);
@@ -4272,8 +5112,10 @@ StreamKernelResult _wBayerDnr(
     'double $sum = (double)$v;',
     'double $wsum = 1.0;',
   ];
-  _emitPhaseLoop(s, lines, step, (dy) => access.rowPtrs[access.radius + dy],
-      (lines, nb) {
+  _emitPhaseLoop(s, lines, step, (dy) => access.rowPtrs[access.radius + dy], (
+    lines,
+    nb,
+  ) {
     lines.addAll([
       '{',
       '  const double d_ = (double)((int)$nb - $v);',
@@ -4285,17 +5127,23 @@ StreamKernelResult _wBayerDnr(
     ]);
   });
   lines.add('const uint16_t $o = (uint16_t)round($sum / $wsum);');
-  return (lines, {outPort: [o]});
+  return (
+    lines,
+    {
+      outPort: [o],
+    },
+  );
 }
 
 /// sharpen：亮度 unsharp mask（3x3 盒式含中心，裁剪；detail 为 double
 /// 除法；Y'/Y 等比缩放三通道）。出处：isp_sharpen.c isp_sharpen_apply
 ///（c_ref 第一步全帧亮度平面——逐像素派生，行流水为 ys 派生环）。
 StreamKernelResult _wSharpen(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
-  final ie = [
-    for (var c = 0; c < 3; c++) access.sample(0, '(x) * 3 + $c'),
-  ];
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
+  final ie = [for (var c = 0; c < 3; c++) access.sample(0, '(x) * 3 + $c')];
   if (ctx.boolParam('bypass')) return (const [], {'out': ie});
   final amount = ctx.doubleParam('amount');
   if (amount == 0.0) return (const [], {'out': ie}); // c_ref 早退
@@ -4336,7 +5184,8 @@ StreamKernelResult _wSharpen(
   for (var c = 0; c < 3; c++) {
     final o = s.freshVar();
     lines.add(
-        'const uint16_t $o = ($detail == 0.0 || $v <= 0) ? ${ie[c]} : bb_clamp_to((double)${ie[c]} * $scale, max_value);');
+      'const uint16_t $o = ($detail == 0.0 || $v <= 0) ? ${ie[c]} : bb_clamp_to((double)${ie[c]} * $scale, max_value);',
+    );
     outs.add(o);
   }
   return (lines, {'out': outs});
@@ -4349,7 +5198,10 @@ StreamKernelResult _wSharpen(
 /// out_mono 为边缘亮度图（与整帧版取通道语义一致：RGB/YUV 取 0、HSL 取
 /// L=2——即同一 v）。
 StreamKernelResult _wEdgeExtract(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   final inPort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl']);
   final fmt = ctx.inputFormats[inPort] ?? 'rgb';
   final outPort = switch (fmt) {
@@ -4370,10 +5222,7 @@ StreamKernelResult _wEdgeExtract(
   final mean = s.freshVar();
   final rel = s.freshVar();
   final o = s.freshVar();
-  final lines = <String>[
-    'int $sum = 0;',
-    'int $count = 0;',
-  ];
+  final lines = <String>['int $sum = 0;', 'int $count = 0;'];
   for (var dy = -1; dy <= 1; dy++) {
     for (var dx = -1; dx <= 1; dx++) {
       lines.addAll([
@@ -4413,10 +5262,11 @@ StreamKernelResult _wEdgeExtract(
 /// 首遍 U/V——派生环恒为首遍值）→ yuvToRgb（bb_yuv_to_rgb_px）。
 /// luma <= 0 / chroma <= 0 的分支跳过与 c_ref 一致（生成期判定）。
 StreamKernelResult _wRgbDnr(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
-  final ie = [
-    for (var c = 0; c < 3; c++) access.sample(0, '(x) * 3 + $c'),
-  ];
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
+  final ie = [for (var c = 0; c < 3; c++) access.sample(0, '(x) * 3 + $c')];
   if (ctx.boolParam('bypass')) return (const [], {'out': ie});
   final luma = ctx.doubleParam('luma');
   final chroma = ctx.doubleParam('chroma');
@@ -4469,10 +5319,7 @@ StreamKernelResult _wRgbDnr(
     final count = s.freshVar();
     final avg = s.freshVar();
     final o = s.freshVar();
-    lines.addAll([
-      'int $sum = 0;',
-      'int $count = 0;',
-    ]);
+    lines.addAll(['int $sum = 0;', 'int $count = 0;']);
     for (var dy = -1; dy <= 1; dy++) {
       for (var dx = -1; dx <= 1; dx++) {
         lines.addAll([
@@ -4495,9 +5342,12 @@ StreamKernelResult _wRgbDnr(
     'int $rgb[3];',
     'bb_yuv_to_rgb_px($newY, ${newCs[0]}, ${newCs[1]}, max_value >> 1, max_value, $rgb, $rgb + 1, $rgb + 2);',
   ]);
-  return (lines, {
-    'out': ['$rgb[0]', '$rgb[1]', '$rgb[2]'],
-  });
+  return (
+    lines,
+    {
+      'out': ['$rgb[0]', '$rgb[1]', '$rgb[2]'],
+    },
+  );
 }
 
 /// demosaic（algorithm=bilinear，Bayer CFA）：3x3 裁剪邻域 + 通道筛选。
@@ -4506,12 +5356,18 @@ StreamKernelResult _wRgbDnr(
 /// 邻域平均 (sum + count/2) / count 整数四舍五入；count==0 回退自身。
 /// Bypass 与整帧版一致：灰度直通（R=G=B=马赛克采样值）。
 StreamKernelResult _wDemosaicBilinear(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   final selfExpr = access.sample(0, 'x');
   if (ctx.boolParam('bypass')) {
-    return (const [], {
-      'out': [selfExpr, selfExpr, selfExpr],
-    });
+    return (
+      const [],
+      {
+        'out': [selfExpr, selfExpr, selfExpr],
+      },
+    );
   }
   var cfa = ctx.strParam('cfaPattern').trim();
   if (cfa.isEmpty) cfa = ctx.strParam('bayerPattern').trim();
@@ -4535,7 +5391,8 @@ StreamKernelResult _wDemosaicBilinear(
     lines.add('{');
     lines.add('  int sum_ = 0, count_ = 0;');
     for (final (dx, dy) in offsets) {
-      final cond = '${_col(dx)} >= 0 && ${_col(dx)} < w && '
+      final cond =
+          '${_col(dx)} >= 0 && ${_col(dx)} < w && '
           '${_row(s, dy)} >= 0 && ${_row(s, dy)} < h && '
           'isp_bayer_color_at($pat, ${_col(dx)}, ${_row(s, dy)}) == $color';
       lines.addAll([
@@ -4546,7 +5403,8 @@ StreamKernelResult _wDemosaicBilinear(
       ]);
     }
     lines.add(
-        '  $dst = count_ > 0 ? (uint16_t)((sum_ + count_ / 2) / count_) : (uint16_t)$self;');
+      '  $dst = count_ > 0 ? (uint16_t)((sum_ + count_ / 2) / count_) : (uint16_t)$self;',
+    );
     lines.add('}');
   }
 
@@ -4583,32 +5441,44 @@ StreamKernelResult _wDemosaicBilinear(
 /// kneePt = clamp01(knee) × max_value；未达膝点或邻域全饱和保持原值；
 /// 整数平均 (sum + count/2) / count。
 StreamKernelResult _wHighlightRecover(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   final (_, outPort, step) = _rawWindowForm(ctx);
   final center = access.sample(0, 'x');
   if (ctx.boolParam('bypass')) return _wAlias(access, outPort);
   final knee = ctx.doubleParam('knee').clamp(0.0, 1.0);
-  final kp = '(${cNum(knee)} * (double)max_value)';
+  final fixedMode = ctx.strParam('codegenMode') == 'func_fixed';
+  final kneeQ = (knee * 16384).round();
+  final kp = fixedMode
+      ? '(int)(((int64_t)$kneeQ * max_value + 8192) >> 14)'
+      : '(${cNum(knee)} * (double)max_value)';
   final sum = s.freshVar();
   final count = s.freshVar();
   final o = s.freshVar();
-  final lines = <String>[
-    'int $sum = 0;',
-    'int $count = 0;',
-  ];
-  _emitPhaseLoop(s, lines, step, (dy) => access.rowPtrs[access.radius + dy],
-      (lines, nb) {
+  final lines = <String>['int $sum = 0;', 'int $count = 0;'];
+  _emitPhaseLoop(s, lines, step, (dy) => access.rowPtrs[access.radius + dy], (
+    lines,
+    nb,
+  ) {
     // 只用未饱和邻居（< kneePt）。
     lines.addAll([
-      'if ((double)$nb < $kp) {',
+      'if (${fixedMode ? '' : '(double)'}$nb < $kp) {',
       '  $sum += (int)$nb;',
       '  $count++;',
       '}',
     ]);
   });
   lines.add(
-      'const uint16_t $o = ((double)$center < $kp || $count == 0) ? $center : (uint16_t)(($sum + $count / 2) / $count);');
-  return (lines, {outPort: [o]});
+    'const uint16_t $o = (${fixedMode ? '' : '(double)'}$center < $kp || $count == 0) ? $center : (uint16_t)(($sum + $count / 2) / $count);',
+  );
+  return (
+    lines,
+    {
+      outPort: [o],
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -4622,14 +5492,23 @@ StreamKernelResult _wHighlightRecover(
 /// 中心 tap 恒在界内作初值；与 c_ref 的 y0..y1 循环逐位一致）；极值取自
 /// 原数据，必然在有效范围内，无需钳位。
 StreamKernelResult _wMorphology(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   final mono = _isMonoPath(ctx);
   final outPort = mono ? 'out_mono' : 'out';
   final ch = access.channels;
   if (ctx.boolParam('bypass')) {
-    return (const [], {
-      outPort: [for (var c = 0; c < ch; c++) access.sample(0, ch == 1 ? 'x' : '(x) * $ch + $c')],
-    });
+    return (
+      const [],
+      {
+        outPort: [
+          for (var c = 0; c < ch; c++)
+            access.sample(0, ch == 1 ? 'x' : '(x) * $ch + $c'),
+        ],
+      },
+    );
   }
   final erode = ctx.strParam('mode') != 'dilate';
   final aux = access.auxRowPtrs!;
@@ -4662,7 +5541,10 @@ StreamKernelResult _wMorphology(
 /// (orig + (acc − orig) × strength).round()，写回按 mod 2^16 截断
 /// （(uint16_t)(int)round(...) 同义），无钳位。
 StreamKernelResult _wGaussianBlur(
-    StreamKernelCtx s, CNodeGenCtx ctx, StreamWindowAccess access) {
+  StreamKernelCtx s,
+  CNodeGenCtx ctx,
+  StreamWindowAccess access,
+) {
   final inPort = _activePort(ctx, const ['in', 'in_yuv', 'in_hsl', 'in_mono']);
   final fmt = ctx.inputFormats[inPort] ?? 'rgb';
   final outPort = switch (fmt) {
@@ -4680,7 +5562,8 @@ StreamKernelResult _wGaussianBlur(
   // 权重核构建（单行 prelude；i 升序累加 ksum、随后逐项归一化，与
   // c_ref 完全同序）。
   s.addPrelude(
-      '{ double ksum_ = 0.0; int i_; for (i_ = -$r; i_ <= $r; i_++) { const double kv_ = exp(-(double)(i_ * i_) / (2.0 * ${cNum(sigma)} * ${cNum(sigma)})); ${ident}_gk[i_ + $r] = kv_; ksum_ += kv_; } for (i_ = 0; i_ < $kLen; i_++) { ${ident}_gk[i_] /= ksum_; } }');
+    '{ double ksum_ = 0.0; int i_; for (i_ = -$r; i_ <= $r; i_++) { const double kv_ = exp(-(double)(i_ * i_) / (2.0 * ${cNum(sigma)} * ${cNum(sigma)})); ${ident}_gk[i_ + $r] = kv_; ksum_ += kv_; } for (i_ = 0; i_ < $kLen; i_++) { ${ident}_gk[i_] /= ksum_; } }',
+  );
   final grow = access.auxRowPtrs!;
   final lines = <String>[];
   final outs = <String>[];
@@ -4694,7 +5577,8 @@ StreamKernelResult _wGaussianBlur(
       lines.add('$acc += ${grow[k]}[$colC] * ${ident}_gk[$k];');
     }
     lines.add(
-        'const uint16_t $o = (uint16_t)(int)round((double)$orig + ($acc - (double)$orig) * ${cNum(strength)});');
+      'const uint16_t $o = (uint16_t)(int)round((double)$orig + ($acc - (double)$orig) * ${cNum(strength)});',
+    );
     outs.add(o);
   }
   return (lines, {outPort: outs});

@@ -32,20 +32,20 @@ enum IpSimPattern {
 
   /// 色彩激励的色度空间（仅 isColor24 有意义）。
   String get colorSpace => switch (this) {
-        hsl24Hi || hsl24Lo => 'HSL',
-        rgb24Hi || rgb24Lo => 'RGB',
-        yuv24Hi || yuv24Lo => 'YUV',
-        _ => '',
-      };
+    hsl24Hi || hsl24Lo => 'HSL',
+    rgb24Hi || rgb24Lo => 'RGB',
+    yuv24Hi || yuv24Lo => 'YUV',
+    _ => '',
+  };
 
   /// 色彩激励的字节序：true = 高字节承载第一通道（H/R/Y，默认）；
   /// false = 高字节承载第三通道（L/B/V）。
-  bool get colorHighByteFirst => this == hsl24Hi || this == rgb24Hi || this == yuv24Hi;
+  bool get colorHighByteFirst =>
+      this == hsl24Hi || this == rgb24Hi || this == yuv24Hi;
 }
 
-/// 一键仿真激励参数（默认值：64×8 × 6 帧、帧间隔 10 拍、CLK 100MHz、
-/// LCG 随机、无握手压力——像素总数 3072 与历史固定行为相同，随机序列
-/// 与 golden 哈希不变；帧数/帧间隔只改时序不改数据口径）。
+/// 一键仿真激励参数（默认值：64×8 × 1 帧、帧间隔 10 拍、CLK 25MHz、
+/// LCG 随机、无握手压力；帧数/帧间隔只改时序不改数据口径）。
 class IpSimStimulus {
   /// 帧宽（像素）。
   final int width;
@@ -60,7 +60,7 @@ class IpSimStimulus {
   /// 插入的 in_valid 空闲拍数（0=帧间连续不停流，默认）。
   final int frameGapCycles;
 
-  /// CLK 频率（MHz，默认 100）：烘焙进 tb 的时钟周期（半周期 =
+  /// CLK 频率（MHz，默认 25）：烘焙进 tb 的时钟周期（半周期 =
   /// 500/clkMHz ns，见 [ipClkHalfNs]；只改时序不改 golden 数据口径）。
   final double clkMHz;
 
@@ -80,9 +80,9 @@ class IpSimStimulus {
   const IpSimStimulus({
     this.width = 64,
     this.height = 8,
-    this.frames = 6,
+    this.frames = 1,
     this.frameGapCycles = 10,
-    this.clkMHz = 100,
+    this.clkMHz = 25,
     this.pattern = IpSimPattern.random,
     this.seed = 0x12345678,
     this.inGapPct = 0,
@@ -93,12 +93,12 @@ class IpSimStimulus {
   int get pixelCount => width * height * frames;
 
   /// 工具栏摘要（如「64×48×1帧 隔0拍 随机（LCG） 泡0% 压0%」；
-  /// CLK 非默认 100MHz 时追加「 CLKxxxM」）。
+  /// CLK 非默认 25MHz 时追加「 CLKxxxM」）。
   String summary() =>
       '$width×$height×$frames帧 隔$frameGapCycles拍 ${pattern.displayName} 泡$inGapPct% 压$outStallPct%'
-      '${clkMHz == 100 ? '' : ' CLK${fmtClkMHz(clkMHz)}M'}';
+      '${clkMHz == 25 ? '' : ' CLK${fmtClkMHz(clkMHz)}M'}';
 
-  /// 是否为默认参数（与历史固定行为一致）。
+  /// 是否全部等于当前默认参数。
   bool get isDefault => this == const IpSimStimulus();
 
   /// 参数合法性校验；合法返回 null，否则返回错误说明。
@@ -156,8 +156,17 @@ class IpSimStimulus {
       other.outStallPct == outStallPct;
 
   @override
-  int get hashCode => Object.hash(width, height, frames, frameGapCycles,
-      clkMHz, pattern, seed, inGapPct, outStallPct);
+  int get hashCode => Object.hash(
+    width,
+    height,
+    frames,
+    frameGapCycles,
+    clkMHz,
+    pattern,
+    seed,
+    inGapPct,
+    outStallPct,
+  );
 }
 
 /// CLK 频率（MHz）显示格式：整数不带小数点（100 → '100'，74.25 →
@@ -166,9 +175,9 @@ String fmtClkMHz(double clkMHz) => clkMHz == clkMHz.roundToDouble()
     ? clkMHz.toInt().toString()
     : clkMHz.toString();
 
-/// tb 时钟半周期（ns，timescale 1ns/1ps）：500 / clkMHz。默认 100MHz
-/// 输出 '5'（与历史 `always #5 clk = ~clk;` 逐字节一致）；否则最多 3 位
-/// 小数（1ps 精度）并去尾零（148.5MHz → '3.367'）。
+/// tb 时钟半周期（ns，timescale 1ns/1ps）：500 / clkMHz。默认 25MHz
+/// 输出 '20'；最多 3 位小数（1ps 精度）并去尾零
+///（148.5MHz → '3.367'）。
 String ipClkHalfNs(double clkMHz) {
   if (clkMHz == 100) return '5';
   var s = (500 / clkMHz).toStringAsFixed(3);
@@ -203,8 +212,11 @@ class IpStimulusGen {
     switch (stim.pattern) {
       case IpSimPattern.random:
         // 与历史固定行为同口径：每像素 3 次 LCG 采样，取高 16 位截到域。
-        return ((_next() >> 16) & mv, (_next() >> 16) & mv,
-            (_next() >> 16) & mv);
+        return (
+          (_next() >> 16) & mv,
+          (_next() >> 16) & mv,
+          (_next() >> 16) & mv,
+        );
       case IpSimPattern.hGradient:
         final d = stim.width > 1 ? stim.width - 1 : 1;
         final v = (x * mv) ~/ d;
@@ -238,5 +250,7 @@ class IpStimulusGen {
   /// 按图案字节序打包色彩通道：Hi = (第一, 中间, 第三)；Lo 互换首尾
   ///（高字节承载第三通道 L/B/V）。
   (int, int, int) _pack24(int first, int mid, int third) =>
-      stim.pattern.colorHighByteFirst ? (first, mid, third) : (third, mid, first);
+      stim.pattern.colorHighByteFirst
+      ? (first, mid, third)
+      : (third, mid, first);
 }

@@ -45,7 +45,8 @@ CPort _rawInPort(bool mono) => CPort(mono ? 'in_mono' : 'in');
 CPort _rawOutPort(bool mono) => CPort(mono ? 'out_mono' : 'out');
 
 /// 原地算子公共前奏：out != in 先 memcpy，Bypass 早退直通。
-String _copyAndBypass(CPort input, CPort output, String macro) => '''
+String _copyAndBypass(CPort input, CPort output, String macro) =>
+    '''
 ${copyInToOut(input, output, '  ')}
   if (${macro}_BYPASS) return ISP_OK;''';
 
@@ -91,14 +92,15 @@ CNodeFiles _genBlackLevel(CNodeGenCtx ctx) {
       // 结果逐位一致（见 isp_black_level.h 注释）。
       ? 'return isp_black_level_apply_mono(out_mono, w, h, ${m}_R);'
       : 'return isp_black_level_apply(out, w, h, ${m}_PATTERN,\n'
-          '                                   ${m}_R, ${m}_GR, ${m}_GB, ${m}_B);';
+            '                                   ${m}_R, ${m}_GR, ${m}_GB, ${m}_B);';
   return assembleCNode(
     ctx: ctx,
     algoIncludes: const ['isp_black_level.h'],
     inputs: [input],
     outputs: [output],
     macroLines: macroLines,
-    body: '''
+    body:
+        '''
 ${_copyAndBypass(input, output, m)}
   $applyLine''',
   );
@@ -127,7 +129,8 @@ CNodeFiles _genDpc(CNodeGenCtx ctx) {
       '#define ${m}_MODE $modeEnum',
       if (!mono) '#define ${m}_PATTERN ${_bayerPatternEnum(ctx)}',
     ],
-    body: '''
+    body:
+        '''
 ${_copyAndBypass(input, output, m)}
 ${mono ? '' : '  const IspBayerPattern pattern = ${m}_PATTERN;\n'}  return isp_dpc_apply($outName, w, h, $patternArg, ${m}_THRESHOLD,
                          ${m}_MODE, max_value);''',
@@ -155,7 +158,8 @@ CNodeFiles _genFpn(CNodeGenCtx ctx) {
       '#define ${m}_RADIUS 8',
     ],
     scratchExpr: 'ISP_FPN_SCRATCH_BYTES(w, h)',
-    body: '''
+    body:
+        '''
 ${_copyAndBypass(input, output, m)}
   return isp_fpn_apply($outName, w, h, ${m}_ROW, ${m}_COL, ${m}_MAXCORR,
                        ${m}_RADIUS, scratch,
@@ -181,7 +185,8 @@ CNodeFiles _genLsc(CNodeGenCtx ctx) {
       '#define ${m}_CENTERX ${cNum(ctx.doubleParam('centerX'))}',
       '#define ${m}_CENTERY ${cNum(ctx.doubleParam('centerY'))}',
     ],
-    body: '''
+    body:
+        '''
 ${_copyAndBypass(input, output, m)}
   return isp_lsc_apply($outName, w, h, ${m}_STRENGTH, ${m}_CENTERX,
                        ${m}_CENTERY, max_value);''',
@@ -235,7 +240,8 @@ CNodeFiles _genBayerDnr(CNodeGenCtx ctx) {
       if (!mono) '#define ${m}_PATTERN ${_bayerPatternEnum(ctx)}',
     ],
     scratchExpr: 'ISP_BAYER_DNR_SCRATCH_BYTES(w, h)',
-    body: '''
+    body:
+        '''
 ${_copyAndBypass(input, output, m)}
 ${mono ? '' : '  const IspBayerPattern pattern = ${m}_PATTERN;\n'}  return isp_bayer_dnr_apply($outName, w, h, $patternArg, ${m}_STRENGTH,
                                (uint16_t *)scratch);''',
@@ -259,8 +265,29 @@ CNodeFiles _genHighlight(CNodeGenCtx ctx) {
   // 烘焙（Dart highlightClipLut，膝点/满量程按烘焙域 ctx.lutDomainMax
   // 计算），运行时 max_value 一致走纯查表，不一致回退直算；recover
   // 分支邻域均值不可表化，仍走原实现。
-  final lutMode = ctx.strParam('codegenMode') == 'lut' &&
-      ctx.strParam('mode') == 'clip';
+  if (ctx.strParam('codegenMode') == 'func_fixed') {
+    final kneeQ = (ctx.doubleParam('knee').clamp(0.0, 1.0) * 16384).round();
+    return assembleCNode(
+      ctx: ctx,
+      algoIncludes: const ['isp_highlight.h'],
+      inputs: [input],
+      outputs: [output],
+      macroLines: [
+        '#define ${m}_MODE $modeEnum',
+        '#define ${m}_KNEE_Q14 $kneeQ',
+        if (!mono) '#define ${m}_PATTERN ${_bayerPatternEnum(ctx)}',
+      ],
+      scratchExpr: 'ISP_HIGHLIGHT_SCRATCH_BYTES(w, h)',
+      body:
+          '''
+${_copyAndBypass(input, output, m)}
+${mono ? '' : '  const IspBayerPattern pattern = ${m}_PATTERN;\n'}  return isp_highlight_q14_apply(
+      $outName, w, h, $patternArg, max_value, ${m}_MODE,
+      ${m}_KNEE_Q14, (uint16_t *)scratch);''',
+    );
+  }
+  final lutMode =
+      ctx.strParam('codegenMode') == 'lut' && ctx.strParam('mode') == 'clip';
   if (lutMode) {
     final lut = highlightClipLut(ctx.doubleParam('knee'), ctx.lutDomainMax);
     return assembleCNode(
@@ -274,7 +301,8 @@ CNodeFiles _genHighlight(CNodeGenCtx ctx) {
         if (!mono) '#define ${m}_PATTERN ${_bayerPatternEnum(ctx)}',
       ],
       scratchExpr: 'ISP_HIGHLIGHT_SCRATCH_BYTES(w, h)',
-      body: '''
+      body:
+          '''
   /* LUT 模式：膝点压缩表由生成期按 knee 参数烘焙（Dart
    * highlightClipLut，域 0..${ctx.lutDomainMax}）。 */
   static const uint16_t ${ctx.ident}_clip_lut[${ctx.lutDomainMax + 1}] = {
@@ -299,7 +327,8 @@ ${mono ? '' : '  const IspBayerPattern pattern = ${m}_PATTERN;\n'}  return isp_h
       if (!mono) '#define ${m}_PATTERN ${_bayerPatternEnum(ctx)}',
     ],
     scratchExpr: 'ISP_HIGHLIGHT_SCRATCH_BYTES(w, h)',
-    body: '''
+    body:
+        '''
 ${_copyAndBypass(input, output, m)}
 ${mono ? '' : '  const IspBayerPattern pattern = ${m}_PATTERN;\n'}  return isp_highlight_apply($outName, w, h, $patternArg, max_value,
                                ${m}_MODE, ${m}_KNEE, (uint16_t *)scratch);''',

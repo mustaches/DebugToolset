@@ -10,6 +10,10 @@ uniform float uTexH;
 uniform float uWidth;
 uniform float uMaxValue;
 uniform float uHalf;   // maxValue>>1
+uniform float uCrV;    // BT.601 / BT.709 / BT.2020 Q16 系数 / 65536
+uniform float uCgU;
+uniform float uCgV;
+uniform float uCbU;
 uniform sampler2D uTex;
 
 out vec4 fragColor;
@@ -35,11 +39,11 @@ float kernel(int idx) {
   float v = fetchVal(p * 3 + 2) - uHalf;
   float o;
   if (ch == 0) {
-    o = y + 1.402 * v;
+    o = y + uCrV * v;
   } else if (ch == 1) {
-    o = y - 0.344136 * u - 0.714136 * v;
+    o = y + uCgU * u + uCgV * v;
   } else {
-    o = y + 1.772 * u;
+    o = y + uCbU * u;
   }
   return clamp(floor(o + 0.5), 0.0, uMaxValue);
 }

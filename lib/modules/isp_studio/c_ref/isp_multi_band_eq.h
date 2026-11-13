@@ -11,6 +11,9 @@
  *     级联；单段捷径委派 `hslBandLuts`）
  *   - `applyHslBandLuts`（查表施加：3 次查表 + 2 次乘法 + 1 次取模）
  *   - `_clampTo`（浮点路径的收尾钳位）
+ *   - `multiBandFxBandConst` / `multiBandFxWeightQ14` /
+ *   - `multiBandComposeFx` / `applyMultiBandEqFx`（func_fixed 定点口径
+ *     的 Dart 参考，与本文件 `_fx` 系列逐行镜像、逐位一致）
  * - pipeline_runner.dart 的 `case 'multi_band_eq'`（段参数缺省回退恒等
  *   默认、band_count 钳位 1..24、全段恒等直通）。
  * hsl_band_pool.dart 的条带池并行为 PC 侧调度优化（逐像素无依赖，
@@ -117,6 +120,35 @@ int isp_multi_band_eq_lut_apply(const uint16_t *src, uint16_t *dst,
 int isp_multi_band_eq_apply(const uint16_t *src, uint16_t *dst,
                             int w, int h, int max_value, int serial,
                             int band_count, const IspMultiBandEqBand *bands);
+
+/**
+ * @brief 定点直算施加（func_fixed 模式）：逐像素全整数定点合成调整量
+ *       （不建表、无 FP64、无 libm exp/fmod/lround），面向 A55 等 FP64
+ *        弱的嵌入式核。
+ *
+ * 段参数在帧入口一次性换算为定点常量（色相/偏移 Q16 度、q/45 换算系数
+ * Q20、S/L 增益偏移 Q14），逐像素高斯权重经「角距条件回绕 → x² 整数乘
+ * → 2^(−u) 整数部移位 + 小数部五次多项式（Q16 系数 Horner）」求 Q14
+ * 权重，合成与 clamp 语义同直算版；S/L 施加为 Q14 整数乘加（同
+ * bb_clamp_q14 口径）。与 FP64 口径（isp_multi_band_eq_apply）偏差
+ * ≤1 LSB（max_value ≤ 4095 全 H 域扫描实证，见
+ * test/isp_multi_band_eq_test.dart 与 test/isp_c_ref_compare_adjust_test.dart）。
+ * 与 Dart 参考 applyMultiBandEqFx 逐位一致。
+ * 恒等直通、参数校验与 isp_multi_band_eq_apply 同口径。
+ *
+ * @param src        输入 HSL 交织帧（w*h*3 个 uint16_t）。
+ * @param dst        输出帧（w*h*3，调用方提供，可与 src 同址）。
+ * @param w          帧宽（> 0）。
+ * @param h          帧高（> 0）。
+ * @param max_value  采样最大值（> 0）。
+ * @param serial     0 = 并联，非 0 = 串联。
+ * @param band_count 段数（0..ISP_MULTI_BAND_EQ_MAX_BANDS）。
+ * @param bands      段参数数组（band_count > 0 时非空）。
+ * @return ISP_OK / ISP_ERR_ARG / ISP_ERR_SIZE。
+ */
+int isp_multi_band_eq_fx_apply(const uint16_t *src, uint16_t *dst,
+                               int w, int h, int max_value, int serial,
+                               int band_count, const IspMultiBandEqBand *bands);
 
 #ifdef __cplusplus
 } /* extern "C" */

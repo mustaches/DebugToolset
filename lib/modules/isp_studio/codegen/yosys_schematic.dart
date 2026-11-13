@@ -169,6 +169,9 @@ Future<SchNetlistResult> extractSchematicNetlist(
     final sources = <String>[];
     for (final e in files.entries) {
       if (!e.key.endsWith('.v')) continue;
+      // demo/ 等子目录文件不参与网表提取（演示/仿真用；工作目录不建子
+      // 目录，写入会 PathNotFound，且 demo_top 会引入第二个顶层）。
+      if (e.key.contains('/')) continue;
       await File(
         '$dir${Platform.pathSeparator}${e.key}',
       ).writeAsString(e.value);
@@ -238,6 +241,9 @@ Future<SchNetlistResult> extractSchematicNetlist(
 String schematicTopModule(Map<String, String> files, {String? vendorHint}) {
   String? base(String suffix) {
     for (final name in files.keys) {
+      // 跳过 demo/ 等子目录文件（demo_top.v 同样以 _top.v 结尾，不能当
+      // 顶层封装）。
+      if (name.contains('/')) continue;
       if (name.endsWith(suffix)) return name.substring(0, name.length - 2);
     }
     return null;

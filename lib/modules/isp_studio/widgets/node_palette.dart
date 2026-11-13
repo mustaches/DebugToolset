@@ -39,8 +39,6 @@ const _processTypeIds = [
   'morphology',
   'gamma',
   'ahe',
-  'hsl_debugger',
-  'color_controller',
   'multi_band_eq',
   'rgb_debugger',
   'yuv_debugger',
@@ -86,11 +84,7 @@ const _datapathTypeIds = [
 ];
 
 /// 「Output」分组：预览与导出汇点。
-const _outputTypeIds = [
-  'preview',
-  'image_output',
-  'video_output',
-];
+const _outputTypeIds = ['preview', 'image_output', 'video_output'];
 
 /// 「Instrument」分组：仪器类分析节点（图像仪器 + 音频仪器）。
 const _instrumentTypeIds = [
@@ -142,7 +136,8 @@ const _nodeTooltips = {
   'piqe': 'PIQE 感知质量评价（块级失真估计），无需模型与训练，速度快',
   'lpips': 'LPIPS 学习感知差异（VGG 特征距离），与人眼感知相关性高；需 Python 环境（eval_venv），越小越好',
   'dists': 'DISTS 深度纹理与结构相似度，对纹理替换/重采样稳健；需 Python 环境，越小越好',
-  'fid': 'FID 两路图像的 Inception 特征分布距离（按 299² 块 50% 重叠累计样本，静态图对即可出分）；需 Python 环境，越小越好',
+  'fid':
+      'FID 两路图像的 Inception 特征分布距离（按 299² 块 50% 重叠累计样本，静态图对即可出分）；需 Python 环境，越小越好',
   'kid': 'KID 两路图像分布的 MMD 距离，小样本集偏差小于 FID（按 299² 块累计样本）；需 Python 环境，越小越好',
   'musiq': 'MUSIQ 多尺度 Transformer 无参考质量分（koniq10k 预训练）；需 Python 环境，越大越好',
   'clipiqa': 'CLIPIQA 基于 CLIP 的无参考感知质量分（0..1）；需 Python 环境，越大越好',
@@ -174,29 +169,20 @@ class IspNodePalette extends StatelessWidget {
           padding: const EdgeInsets.all(6),
           children: [
             _expansionGroup('Source', const Color(0xFF263328), [
-              _expansionGroup(
-                'CIS Src',
-                null,
-                [for (final id in _cisTypeIds) _item(state, id)],
-                nested: true,
-              ),
+              _expansionGroup('CIS Src', null, [
+                for (final id in _cisTypeIds) _item(state, id),
+              ], nested: true),
               _item(state, 'image_source'),
               _item(state, 'video_source'),
             ]),
             _expansionGroup('Process', const Color(0xFF2A3040), [
               for (final id in _processTypeIds) _item(state, id),
-              _expansionGroup(
-                'ColorTrans',
-                null,
-                [for (final id in _colorTransTypeIds) _item(state, id)],
-                nested: true,
-              ),
-              _expansionGroup(
-                'Fluorescence',
-                null,
-                [for (final id in _fluorescenceTypeIds) _item(state, id)],
-                nested: true,
-              ),
+              _expansionGroup('ColorTrans', null, [
+                for (final id in _colorTransTypeIds) _item(state, id),
+              ], nested: true),
+              _expansionGroup('Fluorescence', null, [
+                for (final id in _fluorescenceTypeIds) _item(state, id),
+              ], nested: true),
             ]),
             _expansionGroup('Datapath', const Color(0xFF3A3226), [
               for (final id in _datapathTypeIds) _item(state, id),
@@ -208,18 +194,12 @@ class IspNodePalette extends StatelessWidget {
               for (final id in _instrumentTypeIds) _item(state, id),
             ]),
             _expansionGroup('Evaluation', const Color(0xFF332A3E), [
-              _expansionGroup(
-                'Dual-Input',
-                null,
-                [for (final id in _dualEvalTypeIds) _item(state, id)],
-                nested: true,
-              ),
-              _expansionGroup(
-                'Single-Input',
-                null,
-                [for (final id in _singleEvalTypeIds) _item(state, id)],
-                nested: true,
-              ),
+              _expansionGroup('Dual-Input', null, [
+                for (final id in _dualEvalTypeIds) _item(state, id),
+              ], nested: true),
+              _expansionGroup('Single-Input', null, [
+                for (final id in _singleEvalTypeIds) _item(state, id),
+              ], nested: true),
             ]),
             _expansionGroup('Tools', const Color(0xFF2E3A2E), [
               _item(state, 'format_converter'),
@@ -233,8 +213,12 @@ class IspNodePalette extends StatelessWidget {
 
   /// 大类分组：默认收起（收起态固定 32px 高），带边框与分组背景色的
   /// 圆角框（嵌套子组不加框、随父组展开）。
-  Widget _expansionGroup(String title, Color? frameColor, List<Widget> children,
-      {bool nested = false}) {
+  Widget _expansionGroup(
+    String title,
+    Color? frameColor,
+    List<Widget> children, {
+    bool nested = false,
+  }) {
     return _PaletteGroup(
       title: title,
       frameColor: frameColor,
@@ -278,7 +262,10 @@ class IspNodePalette extends StatelessWidget {
                   child: Text(
                     type.displayName,
                     style: const TextStyle(
-                        fontSize: 11, height: 1.0, color: Colors.white70),
+                      fontSize: 11,
+                      height: 1.0,
+                      color: Colors.white70,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -290,7 +277,6 @@ class IspNodePalette extends StatelessWidget {
     );
   }
 }
-
 
 /// 工具栏大类分组框：默认收起（收起态固定 32px 高标题栏），点击展开。
 /// 顶级分组带背景色圆角框；嵌套子组（[nested]）无框且默认展开。
@@ -336,10 +322,11 @@ class _PaletteGroupState extends State<_PaletteGroup> {
                 child: Text(
                   widget.title,
                   style: const TextStyle(
-                      fontSize: 11,
-                      height: 1.0,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white70),
+                    fontSize: 11,
+                    height: 1.0,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white70,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -356,8 +343,7 @@ class _PaletteGroupState extends State<_PaletteGroup> {
         if (_expanded)
           Padding(
             // 嵌套子组右缩进比顶级分组多 10px。
-            padding: EdgeInsets.only(
-                left: widget.nested ? 14 : 4, bottom: 4),
+            padding: EdgeInsets.only(left: widget.nested ? 14 : 4, bottom: 4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,

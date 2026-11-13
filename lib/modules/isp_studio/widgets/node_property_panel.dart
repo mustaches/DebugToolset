@@ -66,12 +66,12 @@ class NodePropertyPanel extends StatelessWidget {
     if (state.selectedNodeIds.length > 1) {
       // 多选（含编组联动全选）：按节点在画布上的纵向位置（同行按横向）
       // 从上到下依次显示所有选中节点的参数。
-      final nodes = [
-        for (final id in state.selectedNodeIds) ?state.graph.nodes[id],
-      ]..sort((a, b) {
-          final dy = a.y.compareTo(b.y);
-          return dy != 0 ? dy : a.x.compareTo(b.x);
-        });
+      final nodes =
+          [for (final id in state.selectedNodeIds) ?state.graph.nodes[id]]
+            ..sort((a, b) {
+              final dy = a.y.compareTo(b.y);
+              return dy != 0 ? dy : a.x.compareTo(b.x);
+            });
       content = ListView(
         padding: const EdgeInsets.all(12),
         children: [
@@ -102,25 +102,46 @@ class NodePropertyPanel extends StatelessWidget {
 
   /// 单个节点的参数区：名称 + 类型 + 各参数编辑器。
   List<Widget> _nodeParamChildren(
-      BuildContext context, IspStudioState state, IspNode node) {
+    BuildContext context,
+    IspStudioState state,
+    IspNode node,
+  ) {
     final type = IspNodeRegistry.byId(node.typeId);
     if (type == null) {
       return [
-        Text(node.name,
-            style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.white)),
+        Text(
+          node.name,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
       ];
     }
     return [
-      Text(node.name,
-          style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.white)),
-      Text(type.typeId,
-          style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      Text(
+        node.name,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      Text(
+        type.typeId,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      if (type.englishName != null) ...[
+        Text(
+          '英文名: ${type.englishName}',
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        Text(
+          'IP: ISP_IP_${type.englishName}',
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+      ],
       Divider(height: 24, color: Colors.grey.shade800),
       for (final spec in type.params)
         // 多段色彩均衡器的 sel_band 不渲染裸数字输入，由下方段选择
@@ -144,8 +165,91 @@ class NodePropertyPanel extends StatelessWidget {
       if (node.typeId == 'format_converter')
         _formatConverterOutputRangeRow(state, node),
       if (node.typeId == 'bayer_source' && state.totalFrames != null)
-        Text('帧数: ${state.totalFrames}',
-            style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        Text(
+          '帧数: ${state.totalFrames}',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      // 色温调节器的测试输出（测量/参考色温、增益、CCM）在右侧面板同样
+      // 可见——与节点卡片上的测量按钮、CCM 小方阵同源。
+      if (node.typeId == 'color_temp_adjuster')
+        ..._colorTempReadout(state, node),
+    ];
+  }
+
+  /// 色温调节器「运行输出」区（只读）：测量色温（运行预览或停播后刷新）、
+  /// 参考色温、目标色温、RGB 相对增益与 CCM 3×3，并提供「目标 = 测量值」
+  /// 按钮（与点击节点上的测量值相同：同时写目标与参考色温）。
+  List<Widget> _colorTempReadout(IspStudioState state, IspNode node) {
+    final measured = state.measuredColorTemps[node.id];
+    final target = (node.paramValues['temperature'] as num?)?.round() ?? 6500;
+    final refCct = (node.paramValues['measured_cct'] as num?)?.toInt() ?? 0;
+    final gains = colorTempGains(target.toDouble(), refCct);
+    final ccm = colorTempCcm(gains);
+    String k(int v) => '$v K';
+    String gx(double g) => '×${g.toStringAsFixed(4)}';
+    Widget row(String label, String value, {Color color = Colors.white}) =>
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: [
+              Expanded(child: Text(label, style: _labelStyle)),
+              // 数值可能较长（增益/参考色温文案），窄面板里等比缩到放得下。
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    value,
+                    style: TextStyle(fontSize: 12, color: color),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+    return [
+      Divider(height: 24, color: Colors.grey.shade800),
+      const Text(
+        '运行输出（只读）',
+        style: TextStyle(fontSize: 12, color: Colors.white),
+      ),
+      const SizedBox(height: 8),
+      row(
+        '测量色温',
+        measured != null ? k(measured) : '未运行',
+        color: measured != null ? const Color(0xFFFFC890) : Colors.grey,
+      ),
+      row(
+        '参考色温',
+        refCct > 0 ? k(refCct) : '未设定（按 6500 K）',
+        color: refCct > 0 ? Colors.white : Colors.grey,
+      ),
+      row('目标色温', k(target)),
+      row(
+        '相对增益',
+        'R${gx(gains[0])}  G${gx(gains[1])}  B${gx(gains[2])}',
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 4, bottom: 2),
+        child: Text('CCM 3×3', style: TextStyle(fontSize: 11, color: Colors.grey)),
+      ),
+      for (var r = 0; r < 3; r++)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: Text(
+            [for (var c = 0; c < 3; c++) ccm[r * 3 + c].toStringAsFixed(4)]
+                .join('   '),
+            style: const TextStyle(fontSize: 12, color: Colors.white),
+          ),
+        ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton(
+          onPressed:
+              measured == null ? null : () => state.applyMeasuredColorTemp(node.id),
+          child: const Text('目标 = 测量值', style: TextStyle(fontSize: 12)),
+        ),
+      ),
     ];
   }
 
@@ -155,13 +259,20 @@ class NodePropertyPanel extends StatelessWidget {
   List<Widget> _multiBandEqChildren(IspStudioState state, IspNode node) {
     final count = ((node.paramValues['band_count'] as num?)?.toInt() ?? 1)
         .clamp(1, kMultiBandEqMaxBands);
-    final sel = ((node.paramValues['sel_band'] as num?)?.toInt() ?? 0)
-        .clamp(0, count - 1);
+    final sel = ((node.paramValues['sel_band'] as num?)?.toInt() ?? 0).clamp(
+      0,
+      count - 1,
+    );
     double v(String suffix, double fallback) =>
         (node.paramValues['b${sel}_$suffix'] as num?)?.toDouble() ?? fallback;
 
     Widget editRow(
-        String label, String suffix, double fallback, double min, double max) {
+      String label,
+      String suffix,
+      double fallback,
+      double min,
+      double max,
+    ) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: _labeled(
@@ -194,9 +305,12 @@ class NodePropertyPanel extends StatelessWidget {
               items: [
                 for (var i = 0; i < count; i++)
                   DropdownMenuItem(
-                      value: i,
-                      child: Text('取色器 ${i + 1}',
-                          style: const TextStyle(fontSize: 12))),
+                    value: i,
+                    child: Text(
+                      '取色器 ${i + 1}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
               ],
               onChanged: (s) {
                 if (s == null) return;
@@ -226,15 +340,17 @@ class NodePropertyPanel extends StatelessWidget {
     if (!state.hwEncoderProbing && state.hwEncoders.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         state.probeHwEncoders(
-            ffmpegPath: node.paramValues['ffmpegPath']?.toString() ??
-                'tools/ffmpeg/ffmpeg.exe');
+          ffmpegPath:
+              node.paramValues['ffmpegPath']?.toString() ??
+              'tools/ffmpeg/ffmpeg.exe',
+        );
       });
     }
     String labelOf(String id) => switch (id) {
-          'auto' => '自动（硬件优先）',
-          'libx264' => 'CPU libx264',
-          _ => hwEncoderDisplayName(id),
-        };
+      'auto' => '自动（硬件优先）',
+      'libx264' => 'CPU libx264',
+      _ => hwEncoderDisplayName(id),
+    };
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -243,8 +359,10 @@ class NodePropertyPanel extends StatelessWidget {
           if (state.hwEncoderProbing)
             const Padding(
               padding: EdgeInsets.only(right: 6),
-              child:
-                  Text('探测中…', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              child: Text(
+                '探测中…',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
             ),
           DropdownButton<String>(
             value: current,
@@ -252,9 +370,9 @@ class NodePropertyPanel extends StatelessWidget {
             items: [
               for (final o in options)
                 DropdownMenuItem(
-                    value: o,
-                    child:
-                        Text(labelOf(o), style: const TextStyle(fontSize: 12))),
+                  value: o,
+                  child: Text(labelOf(o), style: const TextStyle(fontSize: 12)),
+                ),
             ],
             onChanged: (v) {
               if (v == null) return;
@@ -286,16 +404,17 @@ class NodePropertyPanel extends StatelessWidget {
       _ => 'SDR',
     };
     final isHdrIn = transfer != null && transfer > 0;
-    final options =
-        isHdrIn ? const ['auto', 'sdr', 'hdr'] : const ['auto', 'sdr'];
+    final options = isHdrIn
+        ? const ['auto', 'sdr', 'hdr']
+        : const ['auto', 'sdr'];
     var current = node.paramValues['outputRange']?.toString() ?? 'auto';
     // 当前值被过滤掉（如换 SDR 片后残留 hdr）时回退显示 auto。
     if (!options.contains(current)) current = 'auto';
     String labelOf(String id) => switch (id) {
-          'auto' => '自动（跟随片源）',
-          'sdr' => 'SDR',
-          _ => 'HDR',
-        };
+      'auto' => '自动（跟随片源）',
+      'sdr' => 'SDR',
+      _ => 'HDR',
+    };
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -303,8 +422,10 @@ class NodePropertyPanel extends StatelessWidget {
           Expanded(child: Text('输出动态范围', style: _labelStyle)),
           Padding(
             padding: const EdgeInsets.only(right: 6),
-            child: Text('输入: $inputTag',
-                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            child: Text(
+              '输入: $inputTag',
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+            ),
           ),
           DropdownButton<String>(
             value: current,
@@ -312,9 +433,9 @@ class NodePropertyPanel extends StatelessWidget {
             items: [
               for (final o in options)
                 DropdownMenuItem(
-                    value: o,
-                    child:
-                        Text(labelOf(o), style: const TextStyle(fontSize: 12))),
+                  value: o,
+                  child: Text(labelOf(o), style: const TextStyle(fontSize: 12)),
+                ),
             ],
             onChanged: (v) {
               if (v == null) return;
@@ -326,8 +447,12 @@ class NodePropertyPanel extends StatelessWidget {
     );
   }
 
-  Widget _editorFor(BuildContext context, IspStudioState state, IspNode node,
-      IspParamSpec spec) {
+  Widget _editorFor(
+    BuildContext context,
+    IspStudioState state,
+    IspNode node,
+    IspParamSpec spec,
+  ) {
     // 参数缺失时回退默认值：旧版 .ispflow 存档的节点没有后加的参数
     //（如曲线调节器的 curveMode/gamma），缺省下拉框会显示为空白，
     // 与运行时的缺省口径（levelsCurveModeFromParam 回退 spline）一致。
@@ -358,8 +483,7 @@ class NodePropertyPanel extends StatelessWidget {
       case IspParamType.boolean:
         return Row(
           children: [
-            Expanded(
-                child: Text(spec.label, style: _labelStyle)),
+            Expanded(child: Text(spec.label, style: _labelStyle)),
             Switch(
               value: value == true,
               onChanged: (v) => state.setParam(node.id, spec.key, v),
@@ -369,45 +493,74 @@ class NodePropertyPanel extends StatelessWidget {
       case IspParamType.choice:
         final current = value.toString();
         final options = spec.options ?? const <String>[];
+        String itemLabel(String o) => spec.optionLabels?[o] ?? o;
         return Row(
           children: [
             Expanded(
-                child: Text(spec.label, style: _labelStyle)),
-            DropdownButton<String>(
-              value: options.contains(current) ? current : null,
-              isDense: true,
-              items: [
-                for (final o in options)
-                  DropdownMenuItem(
+              child: Text(
+                spec.label,
+                style: _labelStyle,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+            // 选项文案可能很长（如 multi_band_eq 的 codegenMode）：下拉按
+            // 钮限宽 + 收起态省略号，展开菜单项仍显示完整文本。
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 168),
+              child: DropdownButton<String>(
+                value: options.contains(current) ? current : null,
+                isDense: true,
+                isExpanded: true,
+                selectedItemBuilder: (ctx) => [
+                  for (final o in options)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        itemLabel(o),
+                        style: const TextStyle(fontSize: 12),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                ],
+                items: [
+                  for (final o in options)
+                    DropdownMenuItem(
                       value: o,
-                      child: Text(spec.optionLabels?[o] ?? o,
-                          style: const TextStyle(fontSize: 12))),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                state.setParam(node.id, spec.key, v);
-                // 曲线调节器的生成公式：切换后立即重跑预览看效果
-                //（与拖动控制点松手重跑一致）。切到 gamma 时把控制点
-                // 收敛为唯一中间点：保留首个中间点的 x（缺省 1024），
-                // y 由 gamma 曲线推出（点恒落在曲线上）。
-                if (node.typeId == 'levels_curves' &&
-                    spec.key == 'curveMode') {
-                  if (v == 'gamma') {
-                    final pts =
-                        levelsPointsFromParam(node.paramValues['points']);
-                    final x = pts.length > 2 ? pts[1][0] : 1024.0;
-                    final g =
-                        (node.paramValues['gamma'] as num?)?.toDouble() ??
-                            1.0;
-                    state.setParam(node.id, 'points', [
-                      [0.0, 0.0],
-                      [x, gammaCurveEval(x, g)],
-                      [kLevelsMax.toDouble(), kLevelsMax.toDouble()],
-                    ]);
+                      child: Text(
+                        itemLabel(o),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  state.setParam(node.id, spec.key, v);
+                  // 曲线调节器的生成公式：切换后立即重跑预览看效果
+                  //（与拖动控制点松手重跑一致）。切到 gamma 时把控制点
+                  // 收敛为唯一中间点：保留首个中间点的 x（缺省 1024），
+                  // y 由 gamma 曲线推出（点恒落在曲线上）。
+                  if (node.typeId == 'levels_curves' &&
+                      spec.key == 'curveMode') {
+                    if (v == 'gamma') {
+                      final pts = levelsPointsFromParam(
+                        node.paramValues['points'],
+                      );
+                      final x = pts.length > 2 ? pts[1][0] : 1024.0;
+                      final g =
+                          (node.paramValues['gamma'] as num?)?.toDouble() ??
+                          1.0;
+                      state.setParam(node.id, 'points', [
+                        [0.0, 0.0],
+                        [x, gammaCurveEval(x, g)],
+                        [kLevelsMax.toDouble(), kLevelsMax.toDouble()],
+                      ]);
+                    }
+                    state.runPreview();
                   }
-                  state.runPreview();
-                }
-              },
+                },
+              ),
             ),
           ],
         );
@@ -435,8 +588,7 @@ class NodePropertyPanel extends StatelessWidget {
               TextButton(
                 style: _compactTextButtonStyle,
                 onPressed: () => _browsePath(state, node, spec),
-                child:
-                    const Text('浏览…', style: TextStyle(fontSize: 12)),
+                child: const Text('浏览…', style: TextStyle(fontSize: 12)),
               ),
               // 在资源管理器中定位：文件存在则选中，否则打开所在目录。
               TextButton.icon(
@@ -444,18 +596,18 @@ class NodePropertyPanel extends StatelessWidget {
                 onPressed: value.toString().trim().isEmpty
                     ? null
                     : () async {
-                        final err =
-                            await revealInExplorer(value.toString());
+                        final err = await revealInExplorer(value.toString());
                         if (err != null && context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                  content: Text(err),
-                                  duration: const Duration(seconds: 2)));
+                            SnackBar(
+                              content: Text(err),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
                         }
                       },
                 icon: const Icon(Icons.folder_open, size: 14),
-                label:
-                    const Text('打开目录', style: TextStyle(fontSize: 12)),
+                label: const Text('打开目录', style: TextStyle(fontSize: 12)),
               ),
             ],
           ),
@@ -493,7 +645,8 @@ class NodePropertyPanel extends StatelessWidget {
   Future<String> _bayerRawDir() async {
     final sep = Platform.pathSeparator;
     final dir = Directory(
-        '${Directory.current.path}${sep}IspFlow${sep}BayerRGGB');
+      '${Directory.current.path}${sep}IspFlow${sep}BayerRGGB',
+    );
     if (!dir.existsSync()) await dir.create(recursive: true);
     return dir.path;
   }
@@ -518,7 +671,10 @@ class NodePropertyPanel extends StatelessWidget {
 
   /// 按 (节点类型, 参数 key) 选择文件/目录/保存位置对话框。
   Future<void> _browsePath(
-      IspStudioState state, IspNode node, IspParamSpec spec) async {
+    IspStudioState state,
+    IspNode node,
+    IspParamSpec spec,
+  ) async {
     String? path;
     if (node.typeId == 'image_output' && spec.key == 'directory') {
       path = await getDirectoryPath();
@@ -534,17 +690,22 @@ class NodePropertyPanel extends StatelessWidget {
       );
       path = file?.path;
     } else if (node.typeId == 'image_source' && spec.key == 'filePath') {
-      final file = await openFile(acceptedTypeGroups: [
-        const XTypeGroup(
-            label: '图片', extensions: ['bmp', 'jpg', 'jpeg', 'png', 'gif']),
-      ]);
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(
+            label: '图片',
+            extensions: ['bmp', 'jpg', 'jpeg', 'png', 'gif'],
+          ),
+        ],
+      );
       path = file?.path;
     } else if (node.typeId == 'video_source' && spec.key == 'filePath') {
       final file = await openFile(
         acceptedTypeGroups: [
           const XTypeGroup(
-              label: '视频',
-              extensions: ['mp4', 'mkv', 'avi', 'mov', 'ts', 'flv', 'wmv']),
+            label: '视频',
+            extensions: ['mp4', 'mkv', 'avi', 'mov', 'ts', 'flv', 'wmv'],
+          ),
         ],
         initialDirectory: _videoInitialDir(node),
       );
@@ -554,27 +715,27 @@ class NodePropertyPanel extends StatelessWidget {
       final file = await openFile(
         acceptedTypeGroups: [
           const XTypeGroup(
-              label: 'WebM 视频',
-              extensions: ['webm', 'mkv', 'mp4', 'avi', 'mov']),
+            label: 'WebM 视频',
+            extensions: ['webm', 'mkv', 'mp4', 'avi', 'mov'],
+          ),
         ],
         initialDirectory: _videoInitialDir(node),
       );
       path = file?.path;
       if (path != null) _lastVideoDir = File(path).parent.path;
-    } else if (node.typeId == 'video_health_check' &&
-        spec.key == 'inputFile') {
+    } else if (node.typeId == 'video_health_check' && spec.key == 'inputFile') {
       final file = await openFile(
         acceptedTypeGroups: [
           const XTypeGroup(
-              label: '视频',
-              extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'ts', 'm2ts']),
+            label: '视频',
+            extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'ts', 'm2ts'],
+          ),
         ],
         initialDirectory: _videoInitialDir(node),
       );
       path = file?.path;
       if (path != null) _lastVideoDir = File(path).parent.path;
-    } else if (node.typeId == 'format_converter' &&
-        spec.key == 'outputFile') {
+    } else if (node.typeId == 'format_converter' && spec.key == 'outputFile') {
       final loc = await getSaveLocation(suggestedName: 'output.mp4');
       path = loc?.path;
     } else {
@@ -586,8 +747,7 @@ class NodePropertyPanel extends StatelessWidget {
     }
   }
 
-  Widget _matrix3Editor(
-      IspStudioState state, IspNode node, IspParamSpec spec) {
+  Widget _matrix3Editor(IspStudioState state, IspNode node, IspParamSpec spec) {
     final raw = node.paramValues[spec.key];
     final values = raw is List
         ? raw.map((e) => (e as num).toDouble()).toList()
@@ -640,23 +800,28 @@ class _FlowSummaryPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final sinks = [
       for (final n in state.graph.nodes.values)
-        if (_flowSinkTypeIds.contains(n.typeId)) n
+        if (_flowSinkTypeIds.contains(n.typeId)) n,
     ];
     if (sinks.isEmpty) {
       return const Center(
-        child: Text('点击节点查看参数',
-            style: TextStyle(fontSize: 12, color: Colors.grey)),
+        child: Text(
+          '点击节点查看参数',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
       );
     }
     final ranOnce = state.nodeRunTimesUs.isNotEmpty;
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        const Text('节点流程图',
-            style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.white)),
+        const Text(
+          '节点流程图',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
         Text(
           ranOnce ? '最近一次运行的实际链路与耗时' : '尚未运行预览（耗时待运行后显示）',
           style: const TextStyle(fontSize: 11, color: Colors.grey),
@@ -664,8 +829,10 @@ class _FlowSummaryPanel extends StatelessWidget {
         Divider(height: 20, color: Colors.grey.shade800),
         for (final sink in sinks) ..._chainSection(sink),
         const SizedBox(height: 8),
-        const Text('点击节点查看参数；点击上方链路选中高亮该链',
-            style: TextStyle(fontSize: 11, color: Colors.grey)),
+        const Text(
+          '点击节点查看参数；点击上方链路选中高亮该链',
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
       ],
     );
   }
@@ -676,16 +843,20 @@ class _FlowSummaryPanel extends StatelessWidget {
       chain = compileChain(state.graph, sink.id);
     } catch (e) {
       return [
-        Text(sink.name,
-            style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.white70)),
+        Text(
+          sink.name,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white70,
+          ),
+        ),
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: Text(
-              e.toString().replaceFirst('Bad state: ', ''),
-              style: const TextStyle(fontSize: 11, color: Colors.redAccent)),
+            e.toString().replaceFirst('Bad state: ', ''),
+            style: const TextStyle(fontSize: 11, color: Colors.redAccent),
+          ),
         ),
       ];
     }
@@ -696,11 +867,14 @@ class _FlowSummaryPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(sink.name,
-                style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white70)),
+            Text(
+              sink.name,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white70,
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Column(
@@ -727,14 +901,17 @@ class _FlowSummaryPanel extends StatelessWidget {
         children: [
           SizedBox(
             width: 16,
-            child: Text('${index + 1}',
-                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            child: Text(
+              '${index + 1}',
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+            ),
           ),
           Expanded(
-            child: Text(node.name,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontSize: 11, color: Colors.white70)),
+            child: Text(
+              node.name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11, color: Colors.white70),
+            ),
           ),
           _backendBadge(onGpu),
           const SizedBox(width: 6),
@@ -754,10 +931,13 @@ class _FlowSummaryPanel extends StatelessWidget {
   Widget _backendBadge(bool? onGpu) {
     if (onGpu == null) {
       return const SizedBox(
-          width: 30,
-          child: Text('—',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 9, color: Colors.grey)));
+        width: 30,
+        child: Text(
+          '—',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 9, color: Colors.grey),
+        ),
+      );
     }
     return Container(
       width: 30,
@@ -830,8 +1010,7 @@ class _NumberFieldState extends State<_NumberField> {
 
   void _commit() {
     final text = _controller.text.trim();
-    num? parsed =
-        widget.isInt ? int.tryParse(text) : double.tryParse(text);
+    num? parsed = widget.isInt ? int.tryParse(text) : double.tryParse(text);
     if (parsed == null) {
       _controller.text = _format(widget.value); // 非法输入回退
       return;

@@ -224,6 +224,12 @@ int isp_fluoro_pseudo_color_apply(const uint16_t *mono, uint16_t *out_rgb,
                                   IspFluoroColormap colormap, double gain,
                                   int max_value);
 
+/* func_fixed：gain_q14 = round(gain × 2^14)，全整数伪彩映射。 */
+int isp_fluoro_pseudo_color_q14_apply(const uint16_t *mono, uint16_t *out_rgb,
+                                      int width, int height,
+                                      IspFluoroColormap colormap,
+                                      int32_t gain_q14, int max_value);
+
 /**
  * @brief 荧光融合（节点 fluoro_fusion）：白光 RGB 与荧光 mono 融合出图。
  *

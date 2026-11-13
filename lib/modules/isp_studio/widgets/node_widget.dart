@@ -1075,9 +1075,14 @@ class IspNodeWidget extends StatelessWidget {
                 ),
                 SizedBox(
                   height: 36,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
+                  // 控制行（打开/前帧/播放/倍速/后帧）在窄节点里会超出可用
+                  // 宽度：FittedBox 等比缩放兜底，避免 RenderFlex overflow。
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
                       _videoCtlBtn(
                         Icons.folder_open,
                         '打开视频文件',
@@ -1128,7 +1133,8 @@ class IspNodeWidget extends StatelessWidget {
                             ? () => state.stepPreviewFrame(1)
                             : null,
                       ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -1982,6 +1988,67 @@ class IspNodeWidget extends StatelessWidget {
     );
   }
 
+  /// 播放控制条（预览节点 / 多段色彩均衡器 / 色温调节器附加区共用）：
+  /// 播放/暂停按钮 + 帧进度滑条；多帧源（视频/图像序列，
+  /// totalFrames > 1）才显示滑条。播放/暂停与帧推进的状态刷新分别走
+  /// notifyListeners（父级节点卡片重建）与 [IspStudioState.frameTick]
+  ///（附加区 ValueListenableBuilder）。
+  Widget _buildPlaybackBar(IspStudioState state) {
+    final total = state.totalFrames ?? 1;
+    return SizedBox(
+      height: 26,
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(state.isPlaying ? Icons.pause : Icons.play_arrow,
+                size: 16),
+            padding: EdgeInsets.zero,
+            tooltip: state.isPlaying ? '暂停' : '连续播放',
+            // 导出等处理中禁用；播放中点击为暂停。
+            onPressed: state.isProcessing && !state.isPlaying
+                ? null
+                : () => state.togglePlayback(),
+          ),
+          // HDR/SDR 切换（与预览节点控制条同款同逻辑）：SDR 片源只显示
+          // 静态标识；HDR 片源（PQ/HLG）两段互斥——SDR=直解对比 /
+          // HDR=色调映射显示（默认）。
+          if (state.playbackSrcTransfer == 0)
+            const Padding(
+              padding: EdgeInsets.only(right: 2),
+              child: Text('SDR',
+                  style: TextStyle(fontSize: 10, color: Colors.grey)),
+            )
+          else
+            _buildHdrToneMapToggle(state),
+          if (total > 1)
+            Expanded(
+              child: SliderTheme(
+                data: kIspSliderTheme,
+                child: Slider(
+                  value: state.previewFrame.clamp(0, total - 1).toDouble(),
+                  min: 0,
+                  max: (total - 1).toDouble(),
+                  // 播放中禁用拖帧。
+                  onChanged: state.isPlaying
+                      ? null
+                      : (v) => state.setPreviewFrame(v.round()),
+                  onChangeEnd:
+                      state.isPlaying ? null : (_) => state.runPreview(),
+                ),
+              ),
+            ),
+          // 进度滑条右侧：已播放时间/总时间（视频源播放时显示）。
+          if (total > 1 && state.playbackSrcFps > 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Text(playbackTimeText(state, total),
+                  style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// 色温调节器附加区：双联对比预览（左调整前/右调整后）+ 实测色温
   /// 按钮（点击把滑块设为测量值）/目标色温行 + 暖→冷渐变色温滑杆
   ///（1800~12000K）+ 底行（左下 CCM 3x3 方框 / 右下调整后 RGB 直方图）
@@ -2004,9 +2071,9 @@ class IspNodeWidget extends StatelessWidget {
         (node.paramValues['temperature'] as num?)?.toDouble() ?? 6500.0;
     final refCct = (node.paramValues['measured_cct'] as num?)?.toInt() ?? 0;
     final ccm = colorTempCcm(colorTempGains(target, refCct));
-    // 温度行 24 + 滑杆行 24 + 底行（CCM 方框 / 直方图）64，顶部留白 4，
-    // 底部手柄 10，其余归预览图区。
-    final imageHeight = math.max(0.0, extra - 4 - 24 - 24 - 64 - 10);
+    // 温度行 24 + 滑杆行 24 + 底行（CCM 方框 / 直方图）64 + 播放控制条
+    // 26，顶部留白 4，底部手柄 10，其余归预览图区。
+    final imageHeight = math.max(0.0, extra - 4 - 24 - 24 - 64 - 26 - 10);
     const textStyle = TextStyle(fontSize: 10, color: Colors.white70);
     return SizedBox(
       height: extra,
@@ -2109,6 +2176,9 @@ class IspNodeWidget extends StatelessWidget {
               ),
             ),
           ),
+          // 播放控制条（与预览节点/均衡器附加区同款）：视频源接入时
+          // 可直接在本节点连续播放，双联预览逐帧刷新（调整前/调整后）。
+          _buildPlaybackBar(state),
           _buildResizeBar(state),
         ],
       ),
@@ -2218,9 +2288,10 @@ class IspNodeWidget extends StatelessWidget {
                     value: value.clamp(1800.0, 12000.0),
                     min: 1800,
                     max: 12000,
-                    // 拖动中只写参数（实时刷新数值），松手才重跑。
+                    // 拖动中只写参数（实时刷新数值），松手才重跑；色温整数化
+                    //（开尔文无小数意义，面板字段也是整数输入）。
                     onChanged: (v) =>
-                        state.setParam(node.id, 'temperature', v),
+                        state.setParam(node.id, 'temperature', v.round()),
                     onChangeEnd: (_) => state.runPreview(),
                   ),
                 ),
@@ -5274,7 +5345,7 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
                 labelWidth: 34, livePreview: true),
             // 播放控制条（与预览节点附加区同款）：播放/暂停 + 帧进度
             // 滑条（播放中禁拖；暂停时拖动定位、松手重跑预览）。
-            _buildPlaybackBar(),
+            widget.host._buildPlaybackBar(state),
             // 节点尺寸锁定（1920x1770），无底部拖动手柄。
           ],
         ),
@@ -5282,66 +5353,6 @@ class _MultiBandEqExtraState extends State<_MultiBandEqExtra> {
     );
   }
 
-  /// 播放控制条（样式与预览节点附加区一致）：播放/暂停按钮 + 帧进度
-  /// 滑条；多帧源（视频/图像序列，totalFrames > 1）才显示滑条。
-  /// 播放/暂停与帧推进的状态刷新分别走 notifyListeners（父级节点卡片
-  /// 重建）与 [IspStudioState.frameTick]（本区 ValueListenableBuilder）。
-  Widget _buildPlaybackBar() {
-    final total = state.totalFrames ?? 1;
-    return SizedBox(
-      height: 26,
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(state.isPlaying ? Icons.pause : Icons.play_arrow,
-                size: 16),
-            padding: EdgeInsets.zero,
-            tooltip: state.isPlaying ? '暂停' : '连续播放',
-            // 导出等处理中禁用；播放中点击为暂停。
-            onPressed: state.isProcessing && !state.isPlaying
-                ? null
-                : () => state.togglePlayback(),
-          ),
-          // HDR/SDR 切换（与预览节点控制条同款同逻辑）：SDR 片源只显示
-          // 静态标识；HDR 片源（PQ/HLG）两段互斥——SDR=直解对比 /
-          // HDR=色调映射显示（默认）。
-          if (state.playbackSrcTransfer == 0)
-            const Padding(
-              padding: EdgeInsets.only(right: 2),
-              child: Text('SDR',
-                  style: TextStyle(fontSize: 10, color: Colors.grey)),
-            )
-          else
-            widget.host._buildHdrToneMapToggle(state),
-          if (total > 1)
-            Expanded(
-              child: SliderTheme(
-                data: kIspSliderTheme,
-                child: Slider(
-                  value:
-                      state.previewFrame.clamp(0, total - 1).toDouble(),
-                  min: 0,
-                  max: (total - 1).toDouble(),
-                  // 播放中禁用拖帧。
-                  onChanged: state.isPlaying
-                      ? null
-                      : (v) => state.setPreviewFrame(v.round()),
-                  onChangeEnd:
-                      state.isPlaying ? null : (_) => state.runPreview(),
-                ),
-              ),
-            ),
-          // 进度滑条右侧：已播放时间/总时间（视频源播放时显示）。
-          if (total > 1 && state.playbackSrcFps > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Text(playbackTimeText(state, total),
-                  style: const TextStyle(fontSize: 10, color: Colors.grey)),
-            ),
-        ],
-      ),
-    );
-  }
 
   /// comp 模式工具栏（与取色器工具栏同规格：总高 64 = 顶部留白 4 +
   /// 内容 60，按钮 56x56、图标 48px，居中）：[comp]（释放=调整前，

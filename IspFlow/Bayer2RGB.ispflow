@@ -4,8 +4,8 @@
     {
       "id": "n1",
       "typeId": "cis_bayer_rggb",
-      "x": -340.0,
-      "y": 290.0,
+      "x": -300.0,
+      "y": 450.0,
       "width": 190.0,
       "extraHeight": 160.0,
       "name": "Bayer RGGB#1",
@@ -23,7 +23,7 @@
     {
       "id": "n2",
       "typeId": "demosaic",
-      "x": 110.0,
+      "x": 400.0,
       "y": 450.0,
       "width": 190.0,
       "extraHeight": 160.0,
@@ -35,7 +35,7 @@
     {
       "id": "n3",
       "typeId": "preview",
-      "x": -330.0,
+      "x": -40.0,
       "y": 600.0,
       "width": 480.0,
       "extraHeight": 382.0,
@@ -75,8 +75,8 @@
     {
       "id": "n13",
       "typeId": "black_level",
-      "x": -340.0,
-      "y": 380.0,
+      "x": -40.0,
+      "y": 450.0,
       "width": 190.0,
       "extraHeight": 160.0,
       "name": "黑电平校正#1",
@@ -90,7 +90,7 @@
     {
       "id": "n17",
       "typeId": "white_balance",
-      "x": 330.0,
+      "x": 620.0,
       "y": 450.0,
       "width": 190.0,
       "extraHeight": 160.0,
@@ -100,40 +100,6 @@
         "rGain": 1.0,
         "bGain": 1.0
       }
-    },
-    {
-      "id": "n21",
-      "typeId": "hsl_debugger",
-      "x": 180.0,
-      "y": 600.0,
-      "width": 1280.0,
-      "extraHeight": 570.0,
-      "name": "HSL调节器#1",
-      "params": {
-        "h_shift": 0.0,
-        "s_gain": 1.0,
-        "l_gain": 5.0
-      }
-    },
-    {
-      "id": "n22",
-      "typeId": "csc_rgb2hsl",
-      "x": 550.0,
-      "y": 450.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "RGB→HSL 转换#1",
-      "params": {}
-    },
-    {
-      "id": "n35",
-      "typeId": "csc_hsl2yuv",
-      "x": 870.0,
-      "y": 450.0,
-      "width": 190.0,
-      "extraHeight": 160.0,
-      "name": "HSL→YUV 转换#1",
-      "params": {}
     },
     {
       "id": "n36",
@@ -182,7 +148,7 @@
     {
       "id": "n52",
       "typeId": "grgb_balance",
-      "x": -110.0,
+      "x": 180.0,
       "y": 450.0,
       "width": 190.0,
       "extraHeight": 160.0,
@@ -210,6 +176,20 @@
       "extraHeight": 264.0,
       "name": "直方图#2",
       "params": {}
+    },
+    {
+      "id": "n61",
+      "typeId": "csc_rgb2yuv",
+      "x": 850.0,
+      "y": 450.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "RGB→YUV 转换#1",
+      "params": {
+        "bypass": false,
+        "standard": "bt601",
+        "range": "full"
+      }
     }
   ],
   "connections": [
@@ -240,34 +220,6 @@
       "fromPort": "out",
       "to": "n3",
       "toPort": "in_raw"
-    },
-    {
-      "id": "c23",
-      "from": "n17",
-      "fromPort": "out",
-      "to": "n22",
-      "toPort": "in"
-    },
-    {
-      "id": "c27",
-      "from": "n22",
-      "fromPort": "out",
-      "to": "n21",
-      "toPort": "in"
-    },
-    {
-      "id": "c39",
-      "from": "n21",
-      "fromPort": "out",
-      "to": "n35",
-      "toPort": "in"
-    },
-    {
-      "id": "c40",
-      "from": "n35",
-      "fromPort": "out",
-      "to": "n36",
-      "toPort": "in"
     },
     {
       "id": "c41",
@@ -338,7 +290,22 @@
       "fromPort": "out_mono",
       "to": "n56",
       "toPort": "in_mono"
+    },
+    {
+      "id": "c62",
+      "from": "n17",
+      "fromPort": "out",
+      "to": "n61",
+      "toPort": "in"
+    },
+    {
+      "id": "c63",
+      "from": "n61",
+      "fromPort": "out",
+      "to": "n36",
+      "toPort": "in"
     }
   ],
-  "nextId": 61
+  "groups": [],
+  "nextId": 64
 }

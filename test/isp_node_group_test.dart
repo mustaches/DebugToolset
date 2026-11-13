@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
+import 'package:debug_tool_set/modules/isp_studio/codegen/node_c_gen.dart';
 import 'package:debug_tool_set/modules/isp_studio/models/isp_graph.dart';
+import 'package:debug_tool_set/modules/isp_studio/models/isp_node.dart';
 import 'package:debug_tool_set/modules/isp_studio/isp_studio_view.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_canvas.dart';
 import 'package:debug_tool_set/modules/isp_studio/widgets/node_layout.dart';
@@ -153,9 +155,39 @@ void main() {
       // 其他类型的单成员编组（旧数据/异常数据）仍丢弃。
       final n2 = graph.addNode('histogram', 0, 0);
       final json = graph.toJson();
-      (json['groups'] as List)
-          .add({'id': 'g9', 'name': '坏组', 'nodes': [n2]});
+      (json['groups'] as List).add({
+        'id': 'g9',
+        'name': '坏组',
+        'nodes': [n2],
+      });
       expect(IspGraph.fromJson(json).groups.single.nodeIds, {eq});
+    });
+
+    test('Process 与 Datapath 全部类型支持单节点编组及序列化', () {
+      expect(IspNodeRegistry.singleNodeGroupTypeIds, cExportSupportedTypeIds);
+      for (final typeId in cExportSupportedTypeIds) {
+        final s = IspStudioState.empty();
+        s.addNodeAt(typeId, const Offset(100, 100));
+        final id = s.graph.nodes.keys.single;
+        s.selectNode(id);
+        expect(s.canGroupSelectedNodes, isTrue, reason: typeId);
+        s.groupSelectedNodes();
+        expect(s.graph.groups.single.nodeIds, {id}, reason: typeId);
+
+        final restored = IspGraph.fromJson(s.graph.toJson());
+        expect(restored.groups.single.nodeIds, {id}, reason: typeId);
+
+        s.addNodeAt('histogram', const Offset(400, 100));
+        s.removeNode(s.graph.nodes.keys.last);
+        expect(s.graph.groups.single.nodeIds, {id}, reason: typeId);
+      }
+
+      for (final typeId in const ['image_source', 'preview', 'histogram']) {
+        final s = IspStudioState.empty();
+        s.addNodeAt(typeId, Offset.zero);
+        s.selectNode(s.graph.nodes.keys.single);
+        expect(s.canGroupSelectedNodes, isFalse, reason: typeId);
+      }
     });
 
     test('删除无关节点不解散均衡器单节点编组', () {
@@ -195,7 +227,8 @@ void main() {
       expect(state.graph.groups.single.name, 'EQ组');
     });
 
-    test('编组默认名自动编号与重命名', () {      final ids = addThree();
+    test('编组默认名自动编号与重命名', () {
+      final ids = addThree();
       // 再加一个节点，使两个编组可以共存验证序号递增。
       state.addNodeAt('histogram', const Offset(700, 100));
       final n4 = state.graph.nodes.keys.last;
@@ -294,16 +327,16 @@ void main() {
   group('节点编组（右键菜单）', () {
     Future<Offset> titleCenterOf(WidgetTester tester, String nameText) async {
       final finder = find.ancestor(
-          of: find.textContaining(nameText),
-          matching: find.byType(IspNodeWidget));
+        of: find.textContaining(nameText),
+        matching: find.byType(IspNodeWidget),
+      );
       expect(finder, findsOneWidget);
       return tester.getTopLeft(finder) +
           Offset(tester.getSize(finder).width / 2, kNodeTitleHeight / 2);
     }
 
     Future<void> rightClick(WidgetTester tester, Offset pos) async {
-      final gesture =
-          await tester.startGesture(pos, buttons: kSecondaryButton);
+      final gesture = await tester.startGesture(pos, buttons: kSecondaryButton);
       await gesture.up();
       await tester.pumpAndSettle();
     }
@@ -394,8 +427,10 @@ void main() {
       state.groupSelectedNodes();
       state.selectNode(null);
       await tester.pump();
-      await rightClick(tester,
-          globalOf(Offset(150, 100 + kNodeTitleHeight + 20)));
+      await rightClick(
+        tester,
+        globalOf(Offset(150, 100 + kNodeTitleHeight + 20)),
+      );
       expect(find.text('取消编组'), findsOneWidget);
       await tester.tap(find.text('取消编组'));
       await tester.pumpAndSettle();
@@ -461,11 +496,14 @@ void main() {
       // 编组框内、两节点卡片之间的空隙（画布坐标 340,110：n1 卡片
       // 右缘 290、n2 卡片左缘 400）。
       final canvasOrigin = tester.getTopLeft(find.byType(IspNodeCanvas));
-      final global = canvasOrigin +
+      final global =
+          canvasOrigin +
           state.canvasOffset +
           const Offset(340, 110) * state.canvasZoom;
-      final gesture =
-          await tester.startGesture(global, buttons: kPrimaryButton);
+      final gesture = await tester.startGesture(
+        global,
+        buttons: kPrimaryButton,
+      );
       await gesture.moveBy(const Offset(50, 30));
       await gesture.up();
       await tester.pumpAndSettle();
@@ -505,7 +543,9 @@ void main() {
 
       // 直接按住 n2 标题栏拖动（此前未点选，选中集为空）。
       final gesture = await tester.startGesture(
-          await titleCenterOf(tester, '预览'), buttons: kPrimaryButton);
+        await titleCenterOf(tester, '预览'),
+        buttons: kPrimaryButton,
+      );
       await gesture.moveBy(const Offset(50, 30));
       await gesture.up();
       await tester.pumpAndSettle();
@@ -519,6 +559,22 @@ void main() {
   });
 
   group('节点编组（属性面板）', () {
+    testWidgets('属性面板显示节点英文名与 IP 名称', (tester) async {
+      final state = IspStudioState.empty();
+      state.addNodeAt('multi_band_eq', Offset.zero);
+      state.selectNode(state.graph.nodes.keys.single);
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: state,
+          child: const MaterialApp(home: Scaffold(body: NodePropertyPanel())),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('multi_band_eq'), findsOneWidget);
+      expect(find.text('英文名: MBC_EQ'), findsOneWidget);
+      expect(find.text('IP: ISP_IP_MBC_EQ'), findsOneWidget);
+    });
+
     testWidgets('选中编组时右侧面板从上到下显示全部成员节点参数', (tester) async {
       final state = IspStudioState.empty();
       // n1 在下方（y=400），n2 在上方（y=100）：验证面板按画布纵向

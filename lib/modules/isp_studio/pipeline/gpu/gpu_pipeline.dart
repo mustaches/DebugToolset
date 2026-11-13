@@ -164,15 +164,10 @@ class GpuPipeline {
   /// 与 CPU 路径 pipeline_runner._temporalHistory 一致（帧序连续 +
   /// 尺寸/参数不变才复用）。
   final Map<
-      String,
-      ({
-        ui.Image tex,
-        int frame,
-        int w,
-        int h,
-        double alpha,
-        bool motion
-      })> _temporalHistory = {};
+    String,
+    ({ui.Image tex, int frame, int w, int h, double alpha, bool motion})
+  >
+  _temporalHistory = {};
 
   /// 源纹理缓存（跨 run() 存活，增量重跑用）：拖动下游参数等场景源帧不变，
   /// 命中后跳过解码 + rgba8ToRgb16 转换 + 上传 + 源头 CSC（4K 帧为百毫秒
@@ -185,11 +180,18 @@ class GpuPipeline {
     int h,
     int maxValue,
     BayerPattern? pattern,
-  })? _srcCache;
+  })?
+  _srcCache;
 
   /// 视频格式输入组端口名（与 CPU 路径 pipeline_runner 一致）：
   /// 分支感知取帧时按此顺序找第一个已连接的视频组输入。
-  static const _kVideoInputPorts = ['in', 'in_yuv', 'in_hsl', 'in_mono', 'in_raw'];
+  static const _kVideoInputPorts = [
+    'in',
+    'in_yuv',
+    'in_hsl',
+    'in_mono',
+    'in_raw',
+  ];
 
   static const _shaderAssets = {
     'black_level': 'shaders/isp/isp_black_level.frag',
@@ -340,11 +342,20 @@ class GpuPipeline {
 
   /// 把 16 位帧（交织 [channels] 通道）零拷贝上传为打包纹理。
   static Future<ui.Image> uploadPacked(
-      Uint16List data, int width, int height, int channels) {
+    Uint16List data,
+    int width,
+    int height,
+    int channels,
+  ) {
     final texW = width * channels ~/ 2;
     final completer = Completer<ui.Image>();
-    ui.decodeImageFromPixels(data.buffer.asUint8List(), texW, height,
-        ui.PixelFormat.rgba8888, completer.complete);
+    ui.decodeImageFromPixels(
+      data.buffer.asUint8List(),
+      texW,
+      height,
+      ui.PixelFormat.rgba8888,
+      completer.complete,
+    );
     return completer.future;
   }
 
@@ -357,28 +368,42 @@ class GpuPipeline {
   /// [width] 须为 4 的倍数、[height] 为偶数（调用方已保证，见导出分支）。
   Future<ui.Image> rgba8ToYuv420p(ui.Image src, int width, int height) async {
     final packedW = width ~/ 4, packedH = height * 3 ~/ 2;
-    return runPass(_progs['rgba8_to_yuv420p']!, [
-      packedW.toDouble(),
-      packedH.toDouble(),
-      width.toDouble(),
-      height.toDouble(),
-    ], [
-      src,
-    ], packedW, packedH);
+    return runPass(
+      _progs['rgba8_to_yuv420p']!,
+      [
+        packedW.toDouble(),
+        packedH.toDouble(),
+        width.toDouble(),
+        height.toDouble(),
+      ],
+      [src],
+      packedW,
+      packedH,
+    );
   }
 
   /// RGBA8 帧原样上传为 RGBA8888 纹理（播放流式路径用，CPU 零转换）。
   static Future<ui.Image> uploadRgba8(Uint8List rgba, int width, int height) {
     final completer = Completer<ui.Image>();
     ui.decodeImageFromPixels(
-        rgba, width, height, ui.PixelFormat.rgba8888, completer.complete);
+      rgba,
+      width,
+      height,
+      ui.PixelFormat.rgba8888,
+      completer.complete,
+    );
     return completer.future;
   }
 
   /// 全屏 pass：绑定 float uniform（按声明顺序）与 sampler，离屏渲染
   /// 到 [outW]×[outH] 纹理并返回（GPU 驻留）。
-  static ui.Image runPass(ui.FragmentProgram prog, List<double> uniforms,
-      List<ui.Image> samplers, int outW, int outH) {
+  static ui.Image runPass(
+    ui.FragmentProgram prog,
+    List<double> uniforms,
+    List<ui.Image> samplers,
+    int outW,
+    int outH,
+  ) {
     final shader = prog.fragmentShader();
     for (var i = 0; i < uniforms.length; i++) {
       shader.setFloat(i, uniforms[i]);
@@ -388,8 +413,9 @@ class GpuPipeline {
     }
     final recorder = ui.PictureRecorder();
     ui.Canvas(recorder).drawRect(
-        ui.Rect.fromLTWH(0, 0, outW.toDouble(), outH.toDouble()),
-        ui.Paint()..shader = shader);
+      ui.Rect.fromLTWH(0, 0, outW.toDouble(), outH.toDouble()),
+      ui.Paint()..shader = shader,
+    );
     final picture = recorder.endRecording();
     final img = picture.toImageSync(outW, outH);
     picture.dispose();
@@ -464,7 +490,8 @@ class GpuPipeline {
     // （streamFormat 非空）的注入帧缓冲会被回收复用，跳过缓存读写。
     final injected = imageSources[firstNodeId];
     final outFormat = first['outFormat'] as String? ?? 'rgb';
-    final srcKey = '$firstNodeId|$firstType|$frameIndex|$sp|$outFormat|'
+    final srcKey =
+        '$firstNodeId|$firstType|$frameIndex|$sp|$outFormat|'
         '${injected == null ? 0 : identityHashCode(injected.$1)}';
     if (streamFormat == null && _srcCache != null && _srcCache!.key == srcKey) {
       final c = _srcCache!;
@@ -479,7 +506,8 @@ class GpuPipeline {
       // 路径，经 ffmpeg 解码当前帧）→ 16 位 RGB 三通道上传。
       // 两者本身都是 sRGB 显示数据，出图默认 gamma 1.0 直通（见链末）。
       final maxV = bayerMaxValue(
-          int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')));
+        int.parse(_str(sp, 'bitDepth').isEmpty ? '8' : _str(sp, 'bitDepth')),
+      );
       if (injected != null && streamFormat == 'yuv420p') {
         // 流式播放直传（首选）：解码器原生 yuv420p 平面（数据量为 RGBA 的
         // 1/2.67）原样打包为 (w/4)x(h*3/2) RGBA 纹理上传，BT.601 CSC +
@@ -499,18 +527,38 @@ class GpuPipeline {
         if (outFormat == 'hsl') {
           // 出边为 HSL 时走融合 pass（420→HSL 单 pass 完成 CSC + 转换，
           // 省掉 420→rgb16 中间纹理与 rgb2hsl pass）。
-          srcTex = runPass(_progs['yuv420p_to_hsl16']!, [
-            packedW.toDouble(), packedH.toDouble(), w * 3 / 2,
-            w.toDouble(), h.toDouble(), maxValue.toDouble(),
-            streamLimited ? 1.0 : 0.0,
-          ], [yuvTex], w * 3 ~/ 2, h);
+          srcTex = runPass(
+            _progs['yuv420p_to_hsl16']!,
+            [
+              packedW.toDouble(),
+              packedH.toDouble(),
+              w * 3 / 2,
+              w.toDouble(),
+              h.toDouble(),
+              maxValue.toDouble(),
+              streamLimited ? 1.0 : 0.0,
+            ],
+            [yuvTex],
+            w * 3 ~/ 2,
+            h,
+          );
           frame = _Port(srcTex, w * 3 ~/ 2, h, 'hsl');
         } else {
-          srcTex = runPass(_progs['yuv420p_to_rgb16']!, [
-            packedW.toDouble(), packedH.toDouble(), w * 3 / 2,
-            w.toDouble(), h.toDouble(), maxValue.toDouble(),
-            streamLimited ? 1.0 : 0.0,
-          ], [yuvTex], w * 3 ~/ 2, h);
+          srcTex = runPass(
+            _progs['yuv420p_to_rgb16']!,
+            [
+              packedW.toDouble(),
+              packedH.toDouble(),
+              w * 3 / 2,
+              w.toDouble(),
+              h.toDouble(),
+              maxValue.toDouble(),
+              streamLimited ? 1.0 : 0.0,
+            ],
+            [yuvTex],
+            w * 3 ~/ 2,
+            h,
+          );
           frame = _Port(srcTex, w * 3 ~/ 2, h, 'rgb');
         }
       } else if (injected != null && streamFormat == 'rgba') {
@@ -524,22 +572,28 @@ class GpuPipeline {
         }
         final rgba8Tex = await uploadRgba8(injected.$1, w, h);
         srcRgba8Tex = rgba8Tex;
-        srcTex = runPass(_progs['rgba8_to_rgb16']!, [
-          w.toDouble(), h.toDouble(), w * 3 / 2, maxValue.toDouble(),
-        ], [rgba8Tex], w * 3 ~/ 2, h);
+        srcTex = runPass(
+          _progs['rgba8_to_rgb16']!,
+          [w.toDouble(), h.toDouble(), w * 3 / 2, maxValue.toDouble()],
+          [rgba8Tex],
+          w * 3 ~/ 2,
+          h,
+        );
         frame = _Port(srcTex, w * 3 ~/ 2, h, 'rgb');
       } else {
         final (rgb, w0, h0) = injected != null
             ? rgba8ToRgb16(injected.$1, injected.$2, injected.$3, maxV)
             : firstType == 'image_source'
-                ? await decodeImageFileToRgb16(_str(sp, 'filePath'),
-                    maxValue: maxV)
-                : await decodeVideoFrameToRgb16(_str(sp, 'filePath'), frameIndex,
-                    maxValue: maxV,
-                    ffmpegPath: _str(sp, 'ffmpegPath'),
-                    // 预览 HDR/SDR 开关（链参数 '_toneMapHdr'，与 CPU
-                    // 路径同口径；缺省 true=映射）。
-                    toneMapHdr: sp['_toneMapHdr'] != false);
+            ? await decodeImageFileToRgb16(_str(sp, 'filePath'), maxValue: maxV)
+            : await decodeVideoFrameToRgb16(
+                _str(sp, 'filePath'),
+                frameIndex,
+                maxValue: maxV,
+                ffmpegPath: _str(sp, 'ffmpegPath'),
+                // 预览 HDR/SDR 开关（链参数 '_toneMapHdr'，与 CPU
+                // 路径同口径；缺省 true=映射）。
+                toneMapHdr: sp['_toneMapHdr'] != false,
+              );
         if (w0.isOdd) {
           throw StateError('GPU 路径要求偶数宽（当前 $w0 x $h0）');
         }
@@ -553,28 +607,50 @@ class GpuPipeline {
       // 转换色彩空间——out_hsl/out_yuv 直连的下游算子（如 HSL 调节器）
       // 拿到的帧格式与 CPU 路径相同。yuv420p 直传的 HSL 出边已在上面的
       // 融合 pass 完成，跳过。
-      final alreadyHsl = injected != null &&
+      final alreadyHsl =
+          injected != null &&
           streamFormat == 'yuv420p' &&
           frame.format == 'hsl';
       if (outFormat == 'hsl' && !alreadyHsl) {
         frame = _Port(
-          runPass(_progs['rgb2hsl']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(),
-            w.toDouble(), maxValue.toDouble(),
-          ], [srcTex], frame.texW, frame.texH),
-          frame.texW, frame.texH, 'hsl');
+          runPass(
+            _progs['rgb2hsl']!,
+            [
+              frame.texW.toDouble(),
+              frame.texH.toDouble(),
+              w.toDouble(),
+              maxValue.toDouble(),
+            ],
+            [srcTex],
+            frame.texW,
+            frame.texH,
+          ),
+          frame.texW,
+          frame.texH,
+          'hsl',
+        );
       } else if (outFormat == 'yuv') {
         frame = _Port(
-          runPass(_progs['rgb2yuv']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-            maxValue.toDouble(),
-            ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
-          ], [srcTex], frame.texW, frame.texH),
-          frame.texW, frame.texH, 'yuv');
+          runPass(
+            _progs['rgb2yuv']!,
+            [
+              frame.texW.toDouble(),
+              frame.texH.toDouble(),
+              w.toDouble(),
+              maxValue.toDouble(),
+              ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
+            ],
+            [srcTex],
+            frame.texW,
+            frame.texH,
+          ),
+          frame.texW,
+          frame.texH,
+          'yuv',
+        );
       }
     } else {
-      final src =
-          await decodeRawSourceFrame(firstType, sp, frameIndex);
+      final src = await decodeRawSourceFrame(firstType, sp, frameIndex);
       w = src.width;
       h = src.height;
       maxValue = src.maxValue;
@@ -587,7 +663,8 @@ class GpuPipeline {
     }
     // 缓存命中的源未走上面的解码分支，只有新解码的源才写入缓存；
     // 流式直传帧（缓冲会被回收复用）不读写缓存。
-    if (streamFormat == null && (_srcCache == null || _srcCache!.key != srcKey)) {
+    if (streamFormat == null &&
+        (_srcCache == null || _srcCache!.key != srcKey)) {
       // 替换旧缓存：旧纹理在其所属 run 末端被排除回收（由缓存持有），
       // 此处 dispose（srcTex 与 frame.tex 可能同源，按身份去重）。
       final old = _srcCache;
@@ -650,9 +727,16 @@ class GpuPipeline {
         // 的汇点预览），此处 += 后会被本节点算子耗时覆盖——算子墙钟
         // 已包含该捕获，语义不丢。
         final csw = Stopwatch()..start();
-        displayImages[key] = _tonemap(frame, w, h, maxValue, defaultGamma, 0,
-            1.0,
-            srcStep: displayDownscale);
+        displayImages[key] = _tonemap(
+          frame,
+          w,
+          h,
+          maxValue,
+          defaultGamma,
+          0,
+          1.0,
+          srcStep: displayDownscale,
+        );
         if (!key.endsWith('#in')) {
           timings[key] = (timings[key] ?? 0) + csw.elapsedMicroseconds;
         }
@@ -667,7 +751,8 @@ class GpuPipeline {
       final typeId = op['typeId'] as String;
       final nodeId = op['nodeId'] as String;
       final p = (op['params'] as Map?)?.cast<String, Object?>() ?? const {};
-      final inputs = (op['inputs'] as Map?)?.cast<String, Object?>() ?? const {};
+      final inputs =
+          (op['inputs'] as Map?)?.cast<String, Object?>() ?? const {};
       onNodeStart?.call(nodeId);
       sw = Stopwatch()..start();
 
@@ -677,8 +762,10 @@ class GpuPipeline {
       if (rawSourceTypes.contains(typeId)) {
         final src2 = await decodeRawSourceFrame(typeId, p, frameIndex);
         if (src2.width != w || src2.height != h) {
-          throw StateError('GPU 路径：双源分辨率必须一致'
-              '（主源 $w×$h，支路 ${src2.width}×${src2.height}）');
+          throw StateError(
+            'GPU 路径：双源分辨率必须一致'
+            '（主源 $w×$h，支路 ${src2.width}×${src2.height}）',
+          );
         }
         if (src2.maxValue != maxValue) {
           throw StateError('GPU 路径：双源位深必须一致');
@@ -689,8 +776,13 @@ class GpuPipeline {
         if (src2.format == 'mono') ports['$nodeId:out_mono'] = frame;
         await captureDisplays(nodeId);
         if (captureSamples) {
-          captures[nodeId] =
-              await _sampleCapture(frame, display, w, h, maxValue);
+          captures[nodeId] = await _sampleCapture(
+            frame,
+            display,
+            w,
+            h,
+            maxValue,
+          );
         }
         timings[nodeId] = sw.elapsedMicroseconds;
         continue;
@@ -731,8 +823,13 @@ class GpuPipeline {
         }
         await captureDisplays(nodeId);
         if (captureSamples) {
-          captures[nodeId] =
-              await _sampleCapture(frame, display, w, h, maxValue);
+          captures[nodeId] = await _sampleCapture(
+            frame,
+            display,
+            w,
+            h,
+            maxValue,
+          );
         }
         timings[nodeId] = sw.elapsedMicroseconds;
         continue;
@@ -764,11 +861,26 @@ class GpuPipeline {
             break;
           }
           frame = _Port(
-            runPass(_progs['black_level']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              isMono ? 1.0 : 0.0, off0, off1, off2, off3,
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, frame.format);
+            runPass(
+              _progs['black_level']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                isMono ? 1.0 : 0.0,
+                off0,
+                off1,
+                off2,
+                off3,
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            frame.format,
+          );
           ports['$nodeId:out'] = frame;
         case 'grgb_balance':
           final strength = _num(p, 'strength');
@@ -780,30 +892,61 @@ class GpuPipeline {
           // 当前帧）；抽样统计与 CPU 全帧统计的增益差在亚 LSB 量级。
           final grgbBytes = await readbackBytes(frame.tex);
           final (gainGr, gainGb) = _grGbGains(
-              grgbBytes.buffer.asUint16List(), w, h, pc, strength);
+            grgbBytes.buffer.asUint16List(),
+            w,
+            h,
+            pc,
+            strength,
+          );
           if (gainGr == 1.0 && gainGb == 1.0) {
             ports['$nodeId:out'] = frame;
             break;
           }
           frame = _Port(
-            runPass(_progs['grgb_balance']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              gainGr, gainGb,
-              pc[0].toDouble(), pc[1].toDouble(),
-              pc[2].toDouble(), pc[3].toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, frame.format);
+            runPass(
+              _progs['grgb_balance']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                gainGr,
+                gainGb,
+                pc[0].toDouble(),
+                pc[1].toDouble(),
+                pc[2].toDouble(),
+                pc[3].toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            frame.format,
+          );
           ports['$nodeId:out'] = frame;
         case 'dpc':
           // median 模式（directional 已在 isSupportedChain 排除）。
           final thr = _num(p, 'threshold') / 100 * maxValue;
           frame = _Port(
-            runPass(_progs['dpc']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(),
-              frame.format == 'mosaic' ? 2.0 : 1.0, thr,
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, frame.format);
+            runPass(
+              _progs['dpc']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                frame.format == 'mosaic' ? 2.0 : 1.0,
+                thr,
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            frame.format,
+          );
           ports['$nodeId:out'] = frame;
         case 'fpn':
           final doRow = p['row'] != false;
@@ -821,13 +964,15 @@ class GpuPipeline {
           {
             final bytes = await readbackBytes(frame.tex);
             final data = bytes.buffer.asUint16List();
-            applyFpn(data,
-                width: w,
-                height: h,
-                pattern: frame.format == 'mosaic' ? pattern : null,
-                row: doRow,
-                col: doCol,
-                maxCorr: maxCorr);
+            applyFpn(
+              data,
+              width: w,
+              height: h,
+              pattern: frame.format == 'mosaic' ? pattern : null,
+              row: doRow,
+              col: doCol,
+              maxCorr: maxCorr,
+            );
             final tex = await uploadPacked(data, w, h, 1);
             frame = _Port(tex, frame.texW, frame.texH, frame.format);
           }
@@ -848,12 +993,27 @@ class GpuPipeline {
             break;
           }
           frame = _Port(
-            runPass(_progs['lsc']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(), cx, cy, rMax2, strength,
-              maxValue.toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, frame.format);
+            runPass(
+              _progs['lsc']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                cx,
+                cy,
+                rMax2,
+                strength,
+                maxValue.toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            frame.format,
+          );
           ports['$nodeId:out'] = frame;
         case 'bayer_dnr':
           final strength = _num(p, 'strength');
@@ -862,29 +1022,54 @@ class GpuPipeline {
             break;
           }
           frame = _Port(
-            runPass(_progs['bayer_dnr']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(),
-              frame.format == 'mosaic' ? 2.0 : 1.0, strength,
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, frame.format);
+            runPass(
+              _progs['bayer_dnr']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                frame.format == 'mosaic' ? 2.0 : 1.0,
+                strength,
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            frame.format,
+          );
           ports['$nodeId:out'] = frame;
         case 'highlight':
-          final kneePt =
-              _num(p, 'knee').clamp(0.0, 1.0) * maxValue.toDouble();
+          final kneePt = _num(p, 'knee').clamp(0.0, 1.0) * maxValue.toDouble();
           final mode = _str(p, 'mode');
           frame = _Port(
-            runPass(_progs['highlight']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(),
-              frame.format == 'mosaic' ? 2.0 : 1.0,
-              mode == 'clip' ? 1.0 : 0.0, kneePt, maxValue.toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, frame.format);
+            runPass(
+              _progs['highlight']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                frame.format == 'mosaic' ? 2.0 : 1.0,
+                mode == 'clip' ? 1.0 : 0.0,
+                kneePt,
+                maxValue.toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            frame.format,
+          );
           ports['$nodeId:out'] = frame;
         case 'ccm':
           _requireFormat(frame, 'rgb', 'CCM');
-          final m = (p['matrix'] as List?)
+          final m =
+              (p['matrix'] as List?)
                   ?.map((e) => (e as num).toDouble())
                   .toList() ??
               const [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0];
@@ -899,11 +1084,23 @@ class GpuPipeline {
           }
           if (!isIdentity) {
             frame = _Port(
-              runPass(_progs['ccm']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), ...m,
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'rgb');
+              runPass(
+                _progs['ccm']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  ...m,
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'rgb',
+            );
           }
           ports['$nodeId:out'] = frame;
         case 'rgb_dnr':
@@ -915,32 +1112,69 @@ class GpuPipeline {
             break;
           }
           // rgb→yuv →（亮度保边）→（色度盒式混合）→ yuv→rgb。
-          var yuvTex = runPass(_progs['rgb2yuv']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-            maxValue.toDouble(),
-            ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
-          ], [frame.tex], frame.texW, frame.texH);
+          var yuvTex = runPass(
+            _progs['rgb2yuv']!,
+            [
+              frame.texW.toDouble(),
+              frame.texH.toDouble(),
+              w.toDouble(),
+              maxValue.toDouble(),
+              ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
+            ],
+            [frame.tex],
+            frame.texW,
+            frame.texH,
+          );
           if (luma > 0) {
-            final out = runPass(_progs['rgb_dnr_luma']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(), luma, maxValue.toDouble(),
-            ], [yuvTex], frame.texW, frame.texH);
+            final out = runPass(
+              _progs['rgb_dnr_luma']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                luma,
+                maxValue.toDouble(),
+              ],
+              [yuvTex],
+              frame.texW,
+              frame.texH,
+            );
             transients.add(yuvTex);
             yuvTex = out;
           }
           if (chroma > 0) {
             final blend = chroma.clamp(0.0, 1.0);
-            final out = runPass(_progs['rgb_dnr_chroma']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(), blend, maxValue.toDouble(),
-            ], [yuvTex], frame.texW, frame.texH);
+            final out = runPass(
+              _progs['rgb_dnr_chroma']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                blend,
+                maxValue.toDouble(),
+              ],
+              [yuvTex],
+              frame.texW,
+              frame.texH,
+            );
             transients.add(yuvTex);
             yuvTex = out;
           }
-          final rgbTex = runPass(_progs['yuv2rgb']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-            maxValue.toDouble(), (maxValue >> 1).toDouble(),
-          ], [yuvTex], frame.texW, frame.texH);
+          final rgbTex = runPass(
+            _progs['yuv2rgb']!,
+            _yuv2RgbUniforms(
+              frame.texW.toDouble(),
+              frame.texH.toDouble(),
+              w.toDouble(),
+              maxValue,
+              'bt601',
+            ),
+            [yuvTex],
+            frame.texW,
+            frame.texH,
+          );
           transients.add(yuvTex);
           frame = _Port(rgbTex, frame.texW, frame.texH, 'rgb');
           ports['$nodeId:out'] = frame;
@@ -951,16 +1185,35 @@ class GpuPipeline {
             ports['$nodeId:out'] = frame;
             break;
           }
-          final yTex = runPass(_progs['luma_extract']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-            (w ~/ 2).toDouble(),
-          ], [frame.tex], w ~/ 2, h);
-          final sharpTex = runPass(_progs['sharpen_apply']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(),
-            (w ~/ 2).toDouble(), h.toDouble(),
-            w.toDouble(), h.toDouble(),
-            amount, _num(p, 'threshold'), maxValue.toDouble(),
-          ], [frame.tex, yTex], frame.texW, frame.texH);
+          final yTex = runPass(
+            _progs['luma_extract']!,
+            [
+              frame.texW.toDouble(),
+              frame.texH.toDouble(),
+              w.toDouble(),
+              (w ~/ 2).toDouble(),
+            ],
+            [frame.tex],
+            w ~/ 2,
+            h,
+          );
+          final sharpTex = runPass(
+            _progs['sharpen_apply']!,
+            [
+              frame.texW.toDouble(),
+              frame.texH.toDouble(),
+              (w ~/ 2).toDouble(),
+              h.toDouble(),
+              w.toDouble(),
+              h.toDouble(),
+              amount,
+              _num(p, 'threshold'),
+              maxValue.toDouble(),
+            ],
+            [frame.tex, yTex],
+            frame.texW,
+            frame.texH,
+          );
           transients.add(yTex);
           frame = _Port(sharpTex, frame.texW, frame.texH, 'rgb');
           ports['$nodeId:out'] = frame;
@@ -977,22 +1230,44 @@ class GpuPipeline {
           final edgeGain = (p['gain'] as num?)?.toDouble() ?? 1.0;
           final edgeThr = (p['threshold'] as num?)?.toDouble() ?? 4.0;
           frame = _Port(
-            runPass(_progs['edge_extract']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              edgeFmt == 'rgb' ? 0.0 : (edgeFmt == 'yuv' ? 1.0 : 2.0),
-              edgeGain, edgeThr / maxValue, maxValue.toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, edgeFmt);
+            runPass(
+              _progs['edge_extract']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                edgeFmt == 'rgb' ? 0.0 : (edgeFmt == 'yuv' ? 1.0 : 2.0),
+                edgeGain,
+                edgeThr / maxValue,
+                maxValue.toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            edgeFmt,
+          );
           ports['$nodeId:out'] = frame;
           // 三格式输出端口同名别名（帧格式同输入，与 CPU 一致）。
           ports['$nodeId:out_rgb'] = frame;
           ports['$nodeId:out_yuv'] = frame;
           ports['$nodeId:out_hsl'] = frame;
           // out_mono：边缘亮度单通道（rgb/yuv 在 0 通道，hsl 在 L=2 通道）。
-          final edgeMono = runPass(_progs['extract_channel']!, [
-            frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-            edgeFmt == 'hsl' ? 2.0 : 0.0, (w ~/ 2).toDouble(),
-          ], [frame.tex], w ~/ 2, h);
+          final edgeMono = runPass(
+            _progs['extract_channel']!,
+            [
+              frame.texW.toDouble(),
+              frame.texH.toDouble(),
+              w.toDouble(),
+              edgeFmt == 'hsl' ? 2.0 : 0.0,
+              (w ~/ 2).toDouble(),
+            ],
+            [frame.tex],
+            w ~/ 2,
+            h,
+          );
           ports['$nodeId:out_mono'] = _Port(edgeMono, w ~/ 2, h, 'mono');
         // ---- 腐蚀/膨胀：可分离两趟（水平+垂直）逐通道极小/极大滤波
         // （morphology shader 跑两遍，uDir 0/1，与 CPU applyMorphology
@@ -1003,15 +1278,25 @@ class GpuPipeline {
           if (radius < 1) radius = 1;
           _Port morphPass(_Port src, int channels) {
             final base = [
-              src.texW.toDouble(), src.texH.toDouble(), w.toDouble(),
+              src.texW.toDouble(),
+              src.texH.toDouble(),
+              w.toDouble(),
               channels.toDouble(),
             ];
-            final hTex = runPass(_progs['morphology']!, [
-              ...base, 0.0, erode ? 1.0 : 0.0, radius.toDouble(),
-            ], [src.tex], src.texW, src.texH);
-            final vTex = runPass(_progs['morphology']!, [
-              ...base, 1.0, erode ? 1.0 : 0.0, radius.toDouble(),
-            ], [hTex], src.texW, src.texH);
+            final hTex = runPass(
+              _progs['morphology']!,
+              [...base, 0.0, erode ? 1.0 : 0.0, radius.toDouble()],
+              [src.tex],
+              src.texW,
+              src.texH,
+            );
+            final vTex = runPass(
+              _progs['morphology']!,
+              [...base, 1.0, erode ? 1.0 : 0.0, radius.toDouble()],
+              [hTex],
+              src.texW,
+              src.texH,
+            );
             transients.add(hTex);
             return _Port(vTex, src.texW, src.texH, src.format);
           }
@@ -1042,17 +1327,27 @@ class GpuPipeline {
           final gStrength = (p['strength'] as num?)?.toDouble() ?? 1.0;
           _Port blurPass(_Port src, int channels) {
             final base = [
-              src.texW.toDouble(), src.texH.toDouble(), w.toDouble(),
+              src.texW.toDouble(),
+              src.texH.toDouble(),
+              w.toDouble(),
               channels.toDouble(),
             ];
             // 水平趟：单输入（不混合）；垂直趟：读水平趟结果 + 原帧
             // （uTexOrig）做强度混合。
-            final hTex = runPass(_progs['gaussian_blur']!, [
-              ...base, 0.0, gSigma, gStrength,
-            ], [src.tex, src.tex], src.texW, src.texH);
-            final vTex = runPass(_progs['gaussian_blur']!, [
-              ...base, 1.0, gSigma, gStrength,
-            ], [hTex, src.tex], src.texW, src.texH);
+            final hTex = runPass(
+              _progs['gaussian_blur']!,
+              [...base, 0.0, gSigma, gStrength],
+              [src.tex, src.tex],
+              src.texW,
+              src.texH,
+            );
+            final vTex = runPass(
+              _progs['gaussian_blur']!,
+              [...base, 1.0, gSigma, gStrength],
+              [hTex, src.tex],
+              src.texW,
+              src.texH,
+            );
             transients.add(hTex);
             return _Port(vTex, src.texW, src.texH, src.format);
           }
@@ -1074,10 +1369,19 @@ class GpuPipeline {
             if (w.isOdd) {
               throw StateError('GPU 路径：高斯模糊 mono 输出要求偶数宽');
             }
-            final blurMono = runPass(_progs['extract_channel']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              frame.format == 'hsl' ? 2.0 : 0.0, (w ~/ 2).toDouble(),
-            ], [frame.tex], w ~/ 2, h);
+            final blurMono = runPass(
+              _progs['extract_channel']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                frame.format == 'hsl' ? 2.0 : 0.0,
+                (w ~/ 2).toDouble(),
+              ],
+              [frame.tex],
+              w ~/ 2,
+              h,
+            );
             ports['$nodeId:out_mono'] = _Port(blurMono, w ~/ 2, h, 'mono');
           } else {
             throw StateError('GPU 路径：高斯模糊需要 RGB/YUV/HSL/Mono 输入');
@@ -1101,11 +1405,23 @@ class GpuPipeline {
             throw StateError('乘法器两路输入分辨率必须一致');
           }
           frame = _Port(
-            runPass(_progs['multiply_mono']!, [
-              mulA.texW.toDouble(), mulA.texH.toDouble(),
-              _num(p, 'offset1'), _num(p, 'offset2'), maxValue.toDouble(),
-            ], [mulA.tex, mulB.tex], mulA.texW, mulA.texH),
-            mulA.texW, mulA.texH, 'mono');
+            runPass(
+              _progs['multiply_mono']!,
+              [
+                mulA.texW.toDouble(),
+                mulA.texH.toDouble(),
+                _num(p, 'offset1'),
+                _num(p, 'offset2'),
+                maxValue.toDouble(),
+              ],
+              [mulA.tex, mulB.tex],
+              mulA.texW,
+              mulA.texH,
+            ),
+            mulA.texW,
+            mulA.texH,
+            'mono',
+          );
           ports['$nodeId:out'] = frame;
           ports['$nodeId:out_mono'] = frame;
         // ---- 加法器：源1×balance + 源2×(1−balance)，两路 mono 纹理
@@ -1127,13 +1443,22 @@ class GpuPipeline {
             throw StateError('加法器两路输入分辨率必须一致');
           }
           frame = _Port(
-            runPass(_progs['blend_mono']!, [
-              addA.texW.toDouble(), addA.texH.toDouble(),
-              // 缺省按平衡中点 0.5（与 CPU 一致）。
-              (p['balance'] as num?)?.toDouble() ?? 0.5,
-              maxValue.toDouble(),
-            ], [addA.tex, addB.tex], addA.texW, addA.texH),
-            addA.texW, addA.texH, 'mono');
+            runPass(
+              _progs['blend_mono']!,
+              [
+                addA.texW.toDouble(), addA.texH.toDouble(),
+                // 缺省按平衡中点 0.5（与 CPU 一致）。
+                (p['balance'] as num?)?.toDouble() ?? 0.5,
+                maxValue.toDouble(),
+              ],
+              [addA.tex, addB.tex],
+              addA.texW,
+              addA.texH,
+            ),
+            addA.texW,
+            addA.texH,
+            'mono',
+          );
           ports['$nodeId:out'] = frame;
           ports['$nodeId:out_mono'] = frame;
         // ---- 多路选择器（4选1）：select 选中的那路源输入透传到输出
@@ -1162,7 +1487,9 @@ class GpuPipeline {
         // 混叠图逐通道对应叠加，与 CPU blendMaskMono 一致）----
         case 'blender':
           final blFmt = frame.format;
-          if (blFmt != 'rgb' && blFmt != 'yuv' && blFmt != 'hsl' &&
+          if (blFmt != 'rgb' &&
+              blFmt != 'yuv' &&
+              blFmt != 'hsl' &&
               blFmt != 'mono') {
             throw StateError('GPU 路径：混叠器需要 RGB/YUV/HSL/Mono 基图输入');
           }
@@ -1175,7 +1502,11 @@ class GpuPipeline {
           }
           _Port? blendP;
           for (final bp in const [
-            'in_blend', 'in_blend_yuv', 'in_blend_hsl', 'in_blend_mono']) {
+            'in_blend',
+            'in_blend_yuv',
+            'in_blend_hsl',
+            'in_blend_mono',
+          ]) {
             if (inputs[bp] != null) {
               blendP = port(bp);
               break;
@@ -1189,8 +1520,8 @@ class GpuPipeline {
           final blendChs = blendP.texW * 2 == w * 3
               ? 3
               : blendP.texW * 2 == w
-                  ? 1
-                  : 0;
+              ? 1
+              : 0;
           if (maskP.texW * 2 != w ||
               maskP.texH != h ||
               blendP.texH != h ||
@@ -1198,22 +1529,31 @@ class GpuPipeline {
             throw StateError('混叠器蒙版/混叠图分辨率必须与基图一致');
           }
           frame = _Port(
-            runPass(_progs['blender']!, [
-              frame.texW.toDouble(), blendP.texW.toDouble(),
-              maskP.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              blFmt == 'mono' ? 1.0 : 3.0, blendChs.toDouble(),
-              blFmt == 'rgb'
-                  ? 0.0
-                  : blFmt == 'yuv'
-                      ? 1.0
-                      : blFmt == 'hsl'
-                          ? 2.0
-                          : 3.0,
-              // 缺省按全强度 1.0（与 CPU 一致）。
-              (p['strength'] as num?)?.toDouble() ?? 1.0,
-              maxValue.toDouble(),
-            ], [frame.tex, blendP.tex, maskP.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, blFmt);
+            runPass(
+              _progs['blender']!,
+              [
+                frame.texW.toDouble(), blendP.texW.toDouble(),
+                maskP.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
+                blFmt == 'mono' ? 1.0 : 3.0, blendChs.toDouble(),
+                blFmt == 'rgb'
+                    ? 0.0
+                    : blFmt == 'yuv'
+                    ? 1.0
+                    : blFmt == 'hsl'
+                    ? 2.0
+                    : 3.0,
+                // 缺省按全强度 1.0（与 CPU 一致）。
+                (p['strength'] as num?)?.toDouble() ?? 1.0,
+                maxValue.toDouble(),
+              ],
+              [frame.tex, blendP.tex, maskP.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            blFmt,
+          );
           ports['$nodeId:out'] = frame;
           ports['$nodeId:out_rgb'] = frame;
           ports['$nodeId:out_yuv'] = frame;
@@ -1223,7 +1563,9 @@ class GpuPipeline {
         // bright=100 且 gain=100 恒等直通）----
         case 'bright_contrast_adjuster':
           final bcFmt = frame.format;
-          if (bcFmt != 'rgb' && bcFmt != 'yuv' && bcFmt != 'hsl' &&
+          if (bcFmt != 'rgb' &&
+              bcFmt != 'yuv' &&
+              bcFmt != 'hsl' &&
               bcFmt != 'mono') {
             throw StateError('GPU 路径：亮度/对比度调节器需要 RGB/YUV/HSL/Mono 输入');
           }
@@ -1232,14 +1574,27 @@ class GpuPipeline {
           final gain = (p['gain'] as num?)?.toDouble() ?? 100.0;
           if (bright != 100.0 || gain != 100.0) {
             frame = _Port(
-              runPass(_progs['bright_contrast']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                bcFmt == 'mono' ? 1.0 : 3.0,
-                bcFmt == 'rgb' ? 0.0 : (bcFmt == 'yuv' ? 1.0 : 2.0),
-                bright / 100, baseline / 100 * maxValue, gain / 100,
-                maxValue.toDouble(),
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, bcFmt);
+              runPass(
+                _progs['bright_contrast']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  bcFmt == 'mono' ? 1.0 : 3.0,
+                  bcFmt == 'rgb' ? 0.0 : (bcFmt == 'yuv' ? 1.0 : 2.0),
+                  bright / 100,
+                  baseline / 100 * maxValue,
+                  gain / 100,
+                  maxValue.toDouble(),
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              bcFmt,
+            );
           }
           ports['$nodeId:out'] = frame;
           // 四格式输出端口同名别名（帧格式同输入，与 CPU 一致）。
@@ -1255,15 +1610,31 @@ class GpuPipeline {
               throw StateError('GPU 路径：亮度/对比度调节器的 out_mono 要求偶数宽');
             }
             final bcMono = bcFmt == 'rgb'
-                ? runPass(_progs['luma_extract']!, [
-                    frame.texW.toDouble(), frame.texH.toDouble(),
-                    w.toDouble(), (w ~/ 2).toDouble(),
-                  ], [frame.tex], w ~/ 2, h)
-                : runPass(_progs['extract_channel']!, [
-                    frame.texW.toDouble(), frame.texH.toDouble(),
-                    w.toDouble(), bcFmt == 'hsl' ? 2.0 : 0.0,
-                    (w ~/ 2).toDouble(),
-                  ], [frame.tex], w ~/ 2, h);
+                ? runPass(
+                    _progs['luma_extract']!,
+                    [
+                      frame.texW.toDouble(),
+                      frame.texH.toDouble(),
+                      w.toDouble(),
+                      (w ~/ 2).toDouble(),
+                    ],
+                    [frame.tex],
+                    w ~/ 2,
+                    h,
+                  )
+                : runPass(
+                    _progs['extract_channel']!,
+                    [
+                      frame.texW.toDouble(),
+                      frame.texH.toDouble(),
+                      w.toDouble(),
+                      bcFmt == 'hsl' ? 2.0 : 0.0,
+                      (w ~/ 2).toDouble(),
+                    ],
+                    [frame.tex],
+                    w ~/ 2,
+                    h,
+                  );
             ports['$nodeId:out_mono'] = _Port(bcMono, w ~/ 2, h, 'mono');
           }
         // ---- 激发泄漏扣除：mono 逐像素 v' = max(0, v − min(level,
@@ -1277,10 +1648,17 @@ class GpuPipeline {
           if (leakMaxSub < leakSub) leakSub = leakMaxSub;
           if (leakSub > 0) {
             frame = _Port(
-              runPass(_progs['fluoro_leak']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), leakSub,
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'mono');
+              runPass(
+                _progs['fluoro_leak']!,
+                [frame.texW.toDouble(), frame.texH.toDouble(), leakSub],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'mono',
+            );
           }
           ports['$nodeId:out'] = frame;
           ports['$nodeId:out_mono'] = frame;
@@ -1325,12 +1703,26 @@ class GpuPipeline {
             final meansTex = await uploadPacked(means, bw, by, 1);
             transients.add(meansTex);
             frame = _Port(
-              runPass(_progs['fluoro_bg_sub']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                bgBs.toDouble(), bx.toDouble(), bgStrength,
-                (bw ~/ 2).toDouble(), by.toDouble(),
-              ], [frame.tex, meansTex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'mono');
+              runPass(
+                _progs['fluoro_bg_sub']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  bgBs.toDouble(),
+                  bx.toDouble(),
+                  bgStrength,
+                  (bw ~/ 2).toDouble(),
+                  by.toDouble(),
+                ],
+                [frame.tex, meansTex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'mono',
+            );
           }
           ports['$nodeId:out'] = frame;
           ports['$nodeId:out_mono'] = frame;
@@ -1358,11 +1750,22 @@ class GpuPipeline {
               final gain = reference / mean;
               if (gain != 1.0) {
                 frame = _Port(
-                  runPass(_progs['fluoro_gain']!, [
-                    frame.texW.toDouble(), frame.texH.toDouble(), gain,
-                    maxValue.toDouble(),
-                  ], [frame.tex], frame.texW, frame.texH),
-                  frame.texW, frame.texH, 'mono');
+                  runPass(
+                    _progs['fluoro_gain']!,
+                    [
+                      frame.texW.toDouble(),
+                      frame.texH.toDouble(),
+                      gain,
+                      maxValue.toDouble(),
+                    ],
+                    [frame.tex],
+                    frame.texW,
+                    frame.texH,
+                  ),
+                  frame.texW,
+                  frame.texH,
+                  'mono',
+                );
               }
             }
           }
@@ -1378,7 +1781,8 @@ class GpuPipeline {
           final alpha = _num(p, 'alpha').clamp(0.0, 1.0).toDouble();
           final motion = p['motionAdapt'] != false;
           final hist = _temporalHistory[nodeId];
-          final histValid = hist != null &&
+          final histValid =
+              hist != null &&
               hist.frame == frameIndex - 1 &&
               hist.w == w &&
               hist.h == h &&
@@ -1386,18 +1790,30 @@ class GpuPipeline {
               hist.motion == motion;
           if (histValid) {
             frame = _Port(
-              runPass(_progs['fluoro_temporal']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(),
-                alpha, motion ? maxValue / 16 : 1e9,
-              ], [frame.tex, hist.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'mono');
+              runPass(
+                _progs['fluoro_temporal']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  alpha,
+                  motion ? maxValue / 16 : 1e9,
+                ],
+                [frame.tex, hist.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'mono',
+            );
           }
           final histTex = runPass(
-              _progs['passthrough']!,
-              [frame.texW.toDouble(), frame.texH.toDouble()],
-              [frame.tex],
-              frame.texW,
-              frame.texH);
+            _progs['passthrough']!,
+            [frame.texW.toDouble(), frame.texH.toDouble()],
+            [frame.tex],
+            frame.texW,
+            frame.texH,
+          );
           if (hist != null) transients.add(hist.tex); // 旧历史延迟回收
           _temporalHistory[nodeId] = (
             tex: histTex,
@@ -1417,16 +1833,29 @@ class GpuPipeline {
           }
           final pcTexW = w * 3 ~/ 2;
           frame = _Port(
-            runPass(_progs['pseudo_color']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              switch (_str(p, 'colormap')) {
-                'magenta' => 1.0,
-                'hot' => 2.0,
-                _ => 0.0,
-              },
-              _num(p, 'gain'), maxValue.toDouble(), pcTexW.toDouble(),
-            ], [frame.tex], pcTexW, h),
-            pcTexW, h, 'rgb');
+            runPass(
+              _progs['pseudo_color']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                switch (_str(p, 'colormap')) {
+                  'magenta' => 1.0,
+                  'hot' => 2.0,
+                  _ => 0.0,
+                },
+                _num(p, 'gain'),
+                maxValue.toDouble(),
+                pcTexW.toDouble(),
+              ],
+              [frame.tex],
+              pcTexW,
+              h,
+            ),
+            pcTexW,
+            h,
+            'rgb',
+          );
           ports['$nodeId:out'] = frame;
         // ---- 荧光融合：白光 RGB × 荧光 mono（fluoro_fusion shader）；
         // 荧光输入未连接或尺寸不符：白光直通（与 CPU 一致）----
@@ -1441,19 +1870,34 @@ class GpuPipeline {
             break;
           }
           frame = _Port(
-            runPass(_progs['fluoro_fusion']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(), flIn.texW.toDouble(),
-              _str(p, 'mode') == 'contour' ? 1.0 : 0.0,
-              _num(p, 'threshold'), _num(p, 'alphaMax'),
-              switch (_str(p, 'colormap')) {
-                'magenta' => 1.0,
-                'hot' => 2.0,
-                _ => 0.0,
-              },
-              _num(p, 'offsetX'), _num(p, 'offsetY'), maxValue.toDouble(),
-            ], [frame.tex, flIn.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, 'rgb');
+            runPass(
+              _progs['fluoro_fusion']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                flIn.texW.toDouble(),
+                _str(p, 'mode') == 'contour' ? 1.0 : 0.0,
+                _num(p, 'threshold'),
+                _num(p, 'alphaMax'),
+                switch (_str(p, 'colormap')) {
+                  'magenta' => 1.0,
+                  'hot' => 2.0,
+                  _ => 0.0,
+                },
+                _num(p, 'offsetX'),
+                _num(p, 'offsetY'),
+                maxValue.toDouble(),
+              ],
+              [frame.tex, flIn.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            'rgb',
+          );
           ports['$nodeId:out'] = frame;
         // ---- 曲线调节器：RGB 逐通道 LUT 映射。LUT（4096 级）由 CPU 侧
         // levelsCurveLut 生成（与 CPU 同一函数，四种曲线公式一致），
@@ -1469,16 +1913,26 @@ class GpuPipeline {
               ? lvGamma == 1.0
               : levelsCurveIsIdentity(lvPoints);
           if (!lvIdentity) {
-            final lut =
-                levelsCurveLut(lvPoints, mode: lvMode, gamma: lvGamma);
+            final lut = levelsCurveLut(lvPoints, mode: lvMode, gamma: lvGamma);
             final lutTex = await uploadPacked(lut, kLevelsMax + 1, 1, 1);
             transients.add(lutTex);
             frame = _Port(
-              runPass(_progs['levels_curve']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(),
-                maxValue.toDouble(), ((kLevelsMax + 1) ~/ 2).toDouble(),
-              ], [frame.tex, lutTex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'rgb');
+              runPass(
+                _progs['levels_curve']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  maxValue.toDouble(),
+                  ((kLevelsMax + 1) ~/ 2).toDouble(),
+                ],
+                [frame.tex, lutTex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'rgb',
+            );
           }
           ports['$nodeId:out'] = frame;
         case 'demosaic':
@@ -1487,13 +1941,27 @@ class GpuPipeline {
           }
           final outTexW = w * 3 ~/ 2;
           frame = _Port(
-            runPass(_progs['demosaic']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), h.toDouble(), outTexW.toDouble(),
-              pc[0].toDouble(), pc[1].toDouble(),
-              pc[2].toDouble(), pc[3].toDouble(),
-            ], [frame.tex], outTexW, h),
-            outTexW, h, 'rgb');
+            runPass(
+              _progs['demosaic']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                h.toDouble(),
+                outTexW.toDouble(),
+                pc[0].toDouble(),
+                pc[1].toDouble(),
+                pc[2].toDouble(),
+                pc[3].toDouble(),
+              ],
+              [frame.tex],
+              outTexW,
+              h,
+            ),
+            outTexW,
+            h,
+            'rgb',
+          );
           ports['$nodeId:out'] = frame;
         case 'white_balance':
           var rGain = _num(p, 'rGain'), bGain = _num(p, 'bGain');
@@ -1502,8 +1970,9 @@ class GpuPipeline {
             // 帧，直接调 autoWhiteBalanceGains。GPU 去马赛克与 CPU 逐点
             // 一致（e2e 验证 maxDiff=0），故增益与 CPU 路径严格相同。
             final rgbBytes = await readbackBytes(frame.tex);
-            final (r, b) =
-                autoWhiteBalanceGains(rgbBytes.buffer.asUint16List());
+            final (r, b) = autoWhiteBalanceGains(
+              rgbBytes.buffer.asUint16List(),
+            );
             rGain = r;
             bGain = b;
           }
@@ -1514,49 +1983,111 @@ class GpuPipeline {
             break;
           }
           frame = _Port(
-            runPass(_progs['apply_gains']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              maxValue.toDouble(), rGain, 1.0, bGain,
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, frame.format);
+            runPass(
+              _progs['apply_gains']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                maxValue.toDouble(),
+                rGain,
+                1.0,
+                bGain,
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            frame.format,
+          );
           ports['$nodeId:out'] = frame;
         case 'csc_rgb2yuv':
           _requireFormat(frame, 'rgb', 'RGB→YUV 转换');
           frame = _Port(
-            runPass(_progs['rgb2yuv']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              maxValue.toDouble(),
-              ..._rgb2yuvCscUniforms(_str(p, 'standard'), _str(p, 'range'),
-                  maxValue),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, 'yuv');
+            runPass(
+              _progs['rgb2yuv']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                maxValue.toDouble(),
+                ..._rgb2yuvCscUniforms(
+                  _str(p, 'standard').isEmpty ? 'bt2020' : _str(p, 'standard'),
+                  _str(p, 'range'),
+                  maxValue,
+                ),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            'yuv',
+          );
           ports['$nodeId:out'] = frame;
         case 'csc_yuv2hsl':
           _requireFormat(frame, 'yuv', 'YUV→HSL 转换');
           frame = _Port(
-            runPass(_progs['yuv2hsl']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              maxValue.toDouble(), (maxValue >> 1).toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, 'hsl');
+            runPass(
+              _progs['yuv2hsl']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                maxValue.toDouble(),
+                (maxValue >> 1).toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            'hsl',
+          );
           ports['$nodeId:out'] = frame;
         case 'csc_hsl2rgb':
           _requireFormat(frame, 'hsl', 'HSL→RGB 转换');
           frame = _Port(
-            runPass(_progs['hsl2rgb']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              maxValue.toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, 'rgb');
+            runPass(
+              _progs['hsl2rgb']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                maxValue.toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            'rgb',
+          );
           ports['$nodeId:out'] = frame;
         case 'csc_rgb2hsl':
           _requireFormat(frame, 'rgb', 'RGB→HSL 转换');
           frame = _Port(
-            runPass(_progs['rgb2hsl']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(),
-              w.toDouble(), maxValue.toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, 'hsl');
+            runPass(
+              _progs['rgb2hsl']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                maxValue.toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            'hsl',
+          );
           ports['$nodeId:out'] = frame;
         case 'hsl_debugger':
           _requireFormat(frame, 'hsl', 'HSL调节器');
@@ -1566,11 +2097,25 @@ class GpuPipeline {
           if (hShift != 0 || sGain != 1.0 || lGain != 1.0) {
             final shift = (hShift / 360 * maxValue).roundToDouble();
             frame = _Port(
-              runPass(_progs['hsl_adjust']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), shift, sGain, lGain,
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'hsl');
+              runPass(
+                _progs['hsl_adjust']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  shift,
+                  sGain,
+                  lGain,
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'hsl',
+            );
           }
           ports['$nodeId:out'] = frame;
         case 'color_controller':
@@ -1584,12 +2129,27 @@ class GpuPipeline {
             // GPU 直求 exp，σ 按 45°/q 折算为度数传入（CPU 为 LUT 插值，
             // 对拍口径 ±2 LSB）。
             frame = _Port(
-              runPass(_progs['hsl_band']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), hCenter, 45.0 / q, bandShift,
-                bandSGain, bandLGain,
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'hsl');
+              runPass(
+                _progs['hsl_band']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  hCenter,
+                  45.0 / q,
+                  bandShift,
+                  bandSGain,
+                  bandLGain,
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'hsl',
+            );
           }
           ports['$nodeId:out'] = frame;
         case 'multi_band_eq':
@@ -1621,12 +2181,25 @@ class GpuPipeline {
             // GPU 直求 exp（CPU 为 double 烘焙 LUT 查表），σ 按 45°/q
             // 折算为度数传入（对拍口径 ±2 LSB）。
             frame = _Port(
-              runPass(_progs['hsl_bands']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), active.toDouble(), serial ? 1.0 : 0.0,
-                ...bandFloats,
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'hsl');
+              runPass(
+                _progs['hsl_bands']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  active.toDouble(),
+                  serial ? 1.0 : 0.0,
+                  ...bandFloats,
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'hsl',
+            );
           }
           ports['$nodeId:out'] = frame;
         case 'rgb_debugger':
@@ -1636,11 +2209,25 @@ class GpuPipeline {
           final bGain = (p['b_gain'] as num?)?.toDouble() ?? 1.0;
           if (rGain != 1.0 || gGain != 1.0 || bGain != 1.0) {
             frame = _Port(
-              runPass(_progs['apply_gains']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), rGain, gGain, bGain,
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'rgb');
+              runPass(
+                _progs['apply_gains']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  rGain,
+                  gGain,
+                  bGain,
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'rgb',
+            );
           }
           ports['$nodeId:out'] = frame;
         case 'color_temp_adjuster':
@@ -1648,15 +2235,30 @@ class GpuPipeline {
           // von Kries 对角增益（color_temp.dart），复用白平衡/RGB 调节器
           // 的 apply_gains shader（与 CPU 的 adjustRgb 同一语义）。
           final gains = colorTempGains(
-              (p['temperature'] as num?)?.toDouble() ?? kColorTempDefault,
-              (p['measured_cct'] as num?)?.toInt() ?? 0);
+            (p['temperature'] as num?)?.toDouble() ?? kColorTempDefault,
+            (p['measured_cct'] as num?)?.toInt() ?? 0,
+          );
           if (gains[0] != 1.0 || gains[1] != 1.0 || gains[2] != 1.0) {
             frame = _Port(
-              runPass(_progs['apply_gains']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), gains[0], gains[1], gains[2],
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'rgb');
+              runPass(
+                _progs['apply_gains']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  gains[0],
+                  gains[1],
+                  gains[2],
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'rgb',
+            );
           }
           ports['$nodeId:out'] = frame;
           // 声明端口名为 out_rgb：同时按声明名注册，供下游端口查找。
@@ -1668,33 +2270,70 @@ class GpuPipeline {
           final vGain = (p['v_gain'] as num?)?.toDouble() ?? 1.0;
           if (yGain != 1.0 || uGain != 1.0 || vGain != 1.0) {
             frame = _Port(
-              runPass(_progs['yuv_gains']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), (maxValue >> 1).toDouble(),
-                yGain, uGain, vGain,
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'yuv');
+              runPass(
+                _progs['yuv_gains']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  (maxValue >> 1).toDouble(),
+                  yGain,
+                  uGain,
+                  vGain,
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'yuv',
+            );
           }
           ports['$nodeId:out'] = frame;
         case 'csc_hsl2yuv':
           _requireFormat(frame, 'hsl', 'HSL→YUV 转换');
           frame = _Port(
-            runPass(_progs['hsl2yuv']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              maxValue.toDouble(), (maxValue >> 1).toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, 'yuv');
+            runPass(
+              _progs['hsl2yuv']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                maxValue.toDouble(),
+                (maxValue >> 1).toDouble(),
+              ],
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            'yuv',
+          );
           ports['$nodeId:out'] = frame;
         case 'yuv_splitter':
           if (frame.format == 'rgb') {
             // 与 CPU 一致：RGB 输入先内部转 YUV（BT.601 全范围）。
             frame = _Port(
-              runPass(_progs['rgb2yuv']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(),
-                ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'yuv');
+              runPass(
+                _progs['rgb2yuv']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                  ..._rgb2yuvCscUniforms('bt601', 'full', maxValue),
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'yuv',
+            );
           }
           if (frame.format != 'yuv') {
             throw StateError('GPU 路径：YUV 分路器需要 YUV 输入');
@@ -1703,12 +2342,20 @@ class GpuPipeline {
           // 取用；与 HSL/RGB 分路器同一形态，下游可任意中转）。
           const yuvOutPorts = ['out_y', 'out_u', 'out_v'];
           for (var ch = 0; ch < 3; ch++) {
-            final tex = runPass(_progs['extract_channel']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              ch.toDouble(), (w ~/ 2).toDouble(),
-            ], [frame.tex], w ~/ 2, h);
-            ports['$nodeId:${yuvOutPorts[ch]}'] =
-                _Port(tex, w ~/ 2, h, 'mono');
+            final tex = runPass(
+              _progs['extract_channel']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                ch.toDouble(),
+                (w ~/ 2).toDouble(),
+              ],
+              [frame.tex],
+              w ~/ 2,
+              h,
+            );
+            ports['$nodeId:${yuvOutPorts[ch]}'] = _Port(tex, w ~/ 2, h, 'mono');
           }
           ports['$nodeId:out'] = frame;
         case 'ahe':
@@ -1725,14 +2372,28 @@ class GpuPipeline {
             if (strength <= 0) {
               ports['$nodeId:out_mono'] = monoIn; // 直通（不拷贝，纹理所见略同）
             } else {
-              ports['$nodeId:out_mono'] = await _claheMono(monoIn.tex, w, h,
-                  blockSize, clipLimit, strength, maxValue);
+              ports['$nodeId:out_mono'] = await _claheMono(
+                monoIn.tex,
+                w,
+                h,
+                blockSize,
+                clipLimit,
+                strength,
+                maxValue,
+              );
             }
             ports['$nodeId:out'] = frame; // 主帧透传
           } else if (frame.format == 'mono') {
             if (strength > 0) {
-              frame = await _claheMono(frame.tex, w, h, blockSize, clipLimit,
-                  strength, maxValue);
+              frame = await _claheMono(
+                frame.tex,
+                w,
+                h,
+                blockSize,
+                clipLimit,
+                strength,
+                maxValue,
+              );
             }
             ports['$nodeId:out'] = frame;
             ports['$nodeId:out_mono'] = frame;
@@ -1758,42 +2419,73 @@ class GpuPipeline {
           final yuvOutTexW = w * 3 ~/ 2;
           final uMid = (maxValue >> 1).toDouble();
           frame = _Port(
-            runPass(_progs['combine_3ch']!, [
-              (w ~/ 2).toDouble(), h.toDouble(),
-              yIn != null ? 1.0 : 0.0,
-              uIn != null ? 1.0 : 0.0,
-              vIn != null ? 1.0 : 0.0,
-              0.0, uMid, uMid,
-              yuvOutTexW.toDouble(),
-            ], [
-              yIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
-              uIn?.tex ?? frame.tex,
-              vIn?.tex ?? frame.tex,
-            ], yuvOutTexW, h),
-            yuvOutTexW, h, 'yuv');
+            runPass(
+              _progs['combine_3ch']!,
+              [
+                (w ~/ 2).toDouble(),
+                h.toDouble(),
+                yIn != null ? 1.0 : 0.0,
+                uIn != null ? 1.0 : 0.0,
+                vIn != null ? 1.0 : 0.0,
+                0.0,
+                uMid,
+                uMid,
+                yuvOutTexW.toDouble(),
+              ],
+              [
+                yIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
+                uIn?.tex ?? frame.tex,
+                vIn?.tex ?? frame.tex,
+              ],
+              yuvOutTexW,
+              h,
+            ),
+            yuvOutTexW,
+            h,
+            'yuv',
+          );
           ports['$nodeId:out'] = frame;
         // ---- HSL 分路器：RGB 输入先内部转 HSL（与 CPU 一致），H/S/L
         // 各抽取为独立 mono 纹理（下游预览/仪器/合路器取用）----
         case 'hsl_splitter':
           if (frame.format == 'rgb') {
             frame = _Port(
-              runPass(_progs['rgb2hsl']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(),
-                w.toDouble(), maxValue.toDouble(),
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'hsl');
+              runPass(
+                _progs['rgb2hsl']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'hsl',
+            );
           }
           if (frame.format != 'hsl') {
             throw StateError('GPU 路径：HSL 分路器需要 HSL 输入');
           }
           const hslOutPorts = ['out_h', 'out_s', 'out_l'];
           for (var ch = 0; ch < 3; ch++) {
-            final tex = runPass(_progs['extract_channel']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              ch.toDouble(), (w ~/ 2).toDouble(),
-            ], [frame.tex], w ~/ 2, h);
-            ports['$nodeId:${hslOutPorts[ch]}'] =
-                _Port(tex, w ~/ 2, h, 'mono');
+            final tex = runPass(
+              _progs['extract_channel']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                ch.toDouble(),
+                (w ~/ 2).toDouble(),
+              ],
+              [frame.tex],
+              w ~/ 2,
+              h,
+            );
+            ports['$nodeId:${hslOutPorts[ch]}'] = _Port(tex, w ~/ 2, h, 'mono');
           }
           ports['$nodeId:out'] = frame;
         // ---- HSL 合路器：三路 mono 打包纹理交织为 HSL 三通道帧
@@ -1813,49 +2505,89 @@ class GpuPipeline {
           }
           final outTexW = w * 3 ~/ 2;
           frame = _Port(
-            runPass(_progs['combine_3ch']!, [
-              (w ~/ 2).toDouble(), h.toDouble(),
-              hIn != null ? 1.0 : 0.0,
-              sIn != null ? 1.0 : 0.0,
-              lIn != null ? 1.0 : 0.0,
-              0.0, 0.0, 0.0, // 未连接通道填 0（HSL 语义）
-              outTexW.toDouble(),
-            ], [
-              hIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
-              sIn?.tex ?? frame.tex,
-              lIn?.tex ?? frame.tex,
-            ], outTexW, h),
-            outTexW, h, 'hsl');
+            runPass(
+              _progs['combine_3ch']!,
+              [
+                (w ~/ 2).toDouble(), h.toDouble(),
+                hIn != null ? 1.0 : 0.0,
+                sIn != null ? 1.0 : 0.0,
+                lIn != null ? 1.0 : 0.0,
+                0.0, 0.0, 0.0, // 未连接通道填 0（HSL 语义）
+                outTexW.toDouble(),
+              ],
+              [
+                hIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
+                sIn?.tex ?? frame.tex,
+                lIn?.tex ?? frame.tex,
+              ],
+              outTexW,
+              h,
+            ),
+            outTexW,
+            h,
+            'hsl',
+          );
           ports['$nodeId:out'] = frame;
         // ---- RGB 分路器：YUV/HSL 输入先转 RGB（与 CPU 一致），R/G/B
         // 各抽取为独立 mono 纹理（extract_channel，同 HSL 分路器）----
         case 'rgb_splitter':
           if (frame.format == 'yuv') {
             frame = _Port(
-              runPass(_progs['yuv2rgb']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-                maxValue.toDouble(), (maxValue >> 1).toDouble(),
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'rgb');
+              runPass(
+                _progs['yuv2rgb']!,
+                _yuv2RgbUniforms(
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue,
+                  'bt601',
+                ),
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'rgb',
+            );
           } else if (frame.format == 'hsl') {
             frame = _Port(
-              runPass(_progs['hsl2rgb']!, [
-                frame.texW.toDouble(), frame.texH.toDouble(),
-                w.toDouble(), maxValue.toDouble(),
-              ], [frame.tex], frame.texW, frame.texH),
-              frame.texW, frame.texH, 'rgb');
+              runPass(
+                _progs['hsl2rgb']!,
+                [
+                  frame.texW.toDouble(),
+                  frame.texH.toDouble(),
+                  w.toDouble(),
+                  maxValue.toDouble(),
+                ],
+                [frame.tex],
+                frame.texW,
+                frame.texH,
+              ),
+              frame.texW,
+              frame.texH,
+              'rgb',
+            );
           }
           if (frame.format != 'rgb') {
             throw StateError('GPU 路径：RGB 分路器需要 RGB 输入');
           }
           const rgbOutPorts = ['out_r', 'out_g', 'out_b'];
           for (var ch = 0; ch < 3; ch++) {
-            final tex = runPass(_progs['extract_channel']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              ch.toDouble(), (w ~/ 2).toDouble(),
-            ], [frame.tex], w ~/ 2, h);
-            ports['$nodeId:${rgbOutPorts[ch]}'] =
-                _Port(tex, w ~/ 2, h, 'mono');
+            final tex = runPass(
+              _progs['extract_channel']!,
+              [
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                ch.toDouble(),
+                (w ~/ 2).toDouble(),
+              ],
+              [frame.tex],
+              w ~/ 2,
+              h,
+            );
+            ports['$nodeId:${rgbOutPorts[ch]}'] = _Port(tex, w ~/ 2, h, 'mono');
           }
           ports['$nodeId:out'] = frame;
         // ---- RGB 合路器：三路 mono 打包纹理交织为 RGB 三通道帧
@@ -1875,42 +2607,71 @@ class GpuPipeline {
           }
           final rgbOutTexW = w * 3 ~/ 2;
           frame = _Port(
-            runPass(_progs['combine_3ch']!, [
-              (w ~/ 2).toDouble(), h.toDouble(),
-              rIn != null ? 1.0 : 0.0,
-              gIn != null ? 1.0 : 0.0,
-              bIn != null ? 1.0 : 0.0,
-              0.0, 0.0, 0.0, // 未连接通道填 0（RGB 语义）
-              rgbOutTexW.toDouble(),
-            ], [
-              rIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
-              gIn?.tex ?? frame.tex,
-              bIn?.tex ?? frame.tex,
-            ], rgbOutTexW, h),
-            rgbOutTexW, h, 'rgb');
+            runPass(
+              _progs['combine_3ch']!,
+              [
+                (w ~/ 2).toDouble(), h.toDouble(),
+                rIn != null ? 1.0 : 0.0,
+                gIn != null ? 1.0 : 0.0,
+                bIn != null ? 1.0 : 0.0,
+                0.0, 0.0, 0.0, // 未连接通道填 0（RGB 语义）
+                rgbOutTexW.toDouble(),
+              ],
+              [
+                rIn?.tex ?? frame.tex, // 占位 sampler（uHas=0 不采样）
+                gIn?.tex ?? frame.tex,
+                bIn?.tex ?? frame.tex,
+              ],
+              rgbOutTexW,
+              h,
+            ),
+            rgbOutTexW,
+            h,
+            'rgb',
+          );
           ports['$nodeId:out'] = frame;
         case 'csc_yuv2rgb':
           _requireFormat(frame, 'yuv', 'YUV→RGB 转换');
           frame = _Port(
-            runPass(_progs['yuv2rgb']!, [
-              frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-              maxValue.toDouble(), (maxValue >> 1).toDouble(),
-            ], [frame.tex], frame.texW, frame.texH),
-            frame.texW, frame.texH, 'rgb');
+            runPass(
+              _progs['yuv2rgb']!,
+              _yuv2RgbUniforms(
+                frame.texW.toDouble(),
+                frame.texH.toDouble(),
+                w.toDouble(),
+                maxValue,
+                _str(p, 'standard').isEmpty ? 'bt2020' : _str(p, 'standard'),
+              ),
+              [frame.tex],
+              frame.texW,
+              frame.texH,
+            ),
+            frame.texW,
+            frame.texH,
+            'rgb',
+          );
           ports['$nodeId:out'] = frame;
         case 'gamma':
           _requireFormat(frame, 'rgb', 'Gamma');
           final gamma = _num(p, 'gamma') <= 0 ? 2.2 : _num(p, 'gamma');
           final contrast = _num(p, 'contrast') <= 0 ? 1.0 : _num(p, 'contrast');
           display = _tonemap(
-              frame, w, h, maxValue, gamma, _num(p, 'brightness'), contrast,
-              srcStep: displayDownscale);
+            frame,
+            w,
+            h,
+            maxValue,
+            gamma,
+            _num(p, 'brightness'),
+            contrast,
+            srcStep: displayDownscale,
+          );
           ports['$nodeId:out'] = frame; // 主帧不变（CPU 同）
         case 'preview':
         case 'histogram':
           // 汇点：主帧透传，链末统一出图。mono 仪器端口登记引用。
-          final monoIn =
-              inputs['in_mono'] != null ? ports['${(inputs['in_mono'] as Map)['fromNodeId']}:${(inputs['in_mono'] as Map)['fromPort']}'] : null;
+          final monoIn = inputs['in_mono'] != null
+              ? ports['${(inputs['in_mono'] as Map)['fromNodeId']}:${(inputs['in_mono'] as Map)['fromPort']}']
+              : null;
           if (monoIn != null) ports['$nodeId:out_mono'] = monoIn;
           ports['$nodeId:out'] = frame;
         default:
@@ -1938,12 +2699,26 @@ class GpuPipeline {
     // gamma 2.2，图片源 gamma 1.0 直通）----
     final opsUs = opsSw.elapsedMicroseconds;
     sw = Stopwatch()..start();
-    display ??= _tonemap(frame, w, h, maxValue, defaultGamma, 0, 1.0,
-        srcStep: displayDownscale);
+    display ??= _tonemap(
+      frame,
+      w,
+      h,
+      maxValue,
+      defaultGamma,
+      0,
+      1.0,
+      srcStep: displayDownscale,
+    );
     final sinkNodeId = chain.last['nodeId'] as String;
     timings[sinkNodeId] = (timings[sinkNodeId] ?? 0) + sw.elapsedMicroseconds;
     if (captureSamples) {
-      captures[sinkNodeId] = await _sampleCapture(frame, display, w, h, maxValue);
+      captures[sinkNodeId] = await _sampleCapture(
+        frame,
+        display,
+        w,
+        h,
+        maxValue,
+      );
     }
 
     // ---- 仪器馈源端口回读（默认色调映射 RGBA8）----
@@ -1977,8 +2752,10 @@ class GpuPipeline {
 
     if (debugTiming) {
       // ignore: avoid_print
-      print('[gpu] 源 $srcUs us, 算子循环 $opsUs us, 末端出图+回读 '
-          '${sw.elapsedMicroseconds} us（帧 $frameIndex）');
+      print(
+        '[gpu] 源 $srcUs us, 算子循环 $opsUs us, 末端出图+回读 '
+        '${sw.elapsedMicroseconds} us（帧 $frameIndex）',
+      );
     }
 
     return GpuChainResult(
@@ -1998,35 +2775,64 @@ class GpuPipeline {
     }
   }
 
+  /// YUV→RGB 的浮点系数 uniforms，与 Dart/C 定点系数同源（/65536）。
+  static List<double> _yuv2RgbUniforms(
+    double texW,
+    double texH,
+    double width,
+    int maxValue,
+    String standard,
+  ) {
+    final c = yuvToRgbCoefficients(standard);
+    return [
+      texW,
+      texH,
+      width,
+      maxValue.toDouble(),
+      (maxValue >> 1).toDouble(),
+      c.crV / 65536.0,
+      c.cgU / 65536.0,
+      c.cgV / 65536.0,
+      c.cbU / 65536.0,
+    ];
+  }
+
   /// csc_rgb2yuv 的浮点系数 uniforms（uHalf 起，与 convertRgbToYuvCsc
   /// 的 16 位定点系数同源：系数/65536）。
   static List<double> _rgb2yuvCscUniforms(
-      String standard, String range, int maxValue) {
+    String standard,
+    String range,
+    int maxValue,
+  ) {
     const q = 1.0 / 65536;
-    var cyR = 19595 * q, cyG = 38470 * q, cyB = 7471 * q;
-    var cuR = -11058 * q, cuG = -21710 * q, cvG = -27439 * q, cvB = -5329 * q;
-    if (standard == 'bt709') {
-      cyR = 13933 * q;
-      cyG = 46871 * q;
-      cyB = 4732 * q;
-      cuR = -7509 * q;
-      cuG = -25260 * q;
-      cvG = -29759 * q;
-      cvB = -3009 * q;
-    }
+    final c = rgbToYuvCoefficients(standard);
     final offY = ((maxValue * 16 + 127) ~/ 255).toDouble();
     return [
       (maxValue >> 1).toDouble(),
-      cyR, cyG, cyB, cuR, cuG, cvG, cvB,
-      offY, range == 'limited' ? 1.0 : 0.0,
+      c.cyR * q,
+      c.cyG * q,
+      c.cyB * q,
+      c.cuR * q,
+      c.cuG * q,
+      c.cvG * q,
+      c.cvB * q,
+      offY,
+      range == 'limited' ? 1.0 : 0.0,
     ];
   }
 
   /// 色调映射出图 pass（RGBA8，w×h，可直接作为预览 ui.Image）。
   /// [srcStep] > 1 时按整数步长最近邻降采样出图（播放路径省纹理/光栅）。
-  ui.Image _tonemap(_Port frame, int w, int h, int maxValue, double gamma,
-      double brightness, double contrast,
-      {int srcStep = 1}) {
+  ui.Image _tonemap(
+    _Port frame,
+    int w,
+    int h,
+    int maxValue,
+    double gamma,
+    double brightness,
+    double contrast, {
+    int srcStep = 1,
+  }) {
     final format = switch (frame.format) {
       'rgb' => 0.0,
       'mono' || 'mosaic' => 1.0,
@@ -2034,17 +2840,37 @@ class GpuPipeline {
       'hsl' => 3.0,
       _ => throw StateError('GPU 路径：未知格式 ${frame.format}'),
     };
-    return runPass(_progs['tonemap']!, [
-      frame.texW.toDouble(), frame.texH.toDouble(), w.toDouble(),
-      maxValue.toDouble(), format, 1.0 / gamma, brightness, contrast,
-      (maxValue >> 1).toDouble(), srcStep.toDouble(),
-    ], [frame.tex], w ~/ srcStep, h ~/ srcStep);
+    return runPass(
+      _progs['tonemap']!,
+      [
+        frame.texW.toDouble(),
+        frame.texH.toDouble(),
+        w.toDouble(),
+        maxValue.toDouble(),
+        format,
+        1.0 / gamma,
+        brightness,
+        contrast,
+        (maxValue >> 1).toDouble(),
+        srcStep.toDouble(),
+      ],
+      [frame.tex],
+      w ~/ srcStep,
+      h ~/ srcStep,
+    );
   }
 
   /// 单通道 CLAHE：回读 mono（CPU 算 tile 直方图/CDF）→ LUT 打包上传 →
   /// GPU 逐像素双线性插值。返回新的 mono 端口。
-  Future<_Port> _claheMono(ui.Image monoTex, int w, int h, int blockSize,
-      double clipLimit, double strength, int maxValue) async {
+  Future<_Port> _claheMono(
+    ui.Image monoTex,
+    int w,
+    int h,
+    int blockSize,
+    double clipLimit,
+    double strength,
+    int maxValue,
+  ) async {
     final bytes = await readbackBytes(monoTex);
     final ys = bytes.buffer.asUint16List();
     final tilesX = (w + blockSize - 1) ~/ blockSize;
@@ -2061,24 +2887,47 @@ class GpuPipeline {
       lut16[i] = v < 0 ? 0 : (v > 65535 ? 65535 : v);
     }
     final lutTex = await uploadPacked(lut16, lutTexW * 2, lutTexH, 1);
-    final out = runPass(_progs['clahe_apply']!, [
-      (w ~/ 2).toDouble(), h.toDouble(), w.toDouble(), h.toDouble(),
-      blockSize.toDouble(), tilesX.toDouble(), tilesY.toDouble(),
-      strength, maxValue.toDouble(),
-      lutTexW.toDouble(), lutTexH.toDouble(),
-    ], [monoTex, lutTex], w ~/ 2, h);
+    final out = runPass(
+      _progs['clahe_apply']!,
+      [
+        (w ~/ 2).toDouble(),
+        h.toDouble(),
+        w.toDouble(),
+        h.toDouble(),
+        blockSize.toDouble(),
+        tilesX.toDouble(),
+        tilesY.toDouble(),
+        strength,
+        maxValue.toDouble(),
+        lutTexW.toDouble(),
+        lutTexH.toDouble(),
+      ],
+      [monoTex, lutTex],
+      w ~/ 2,
+      h,
+    );
     lutTex.dispose();
     return _Port(out, w ~/ 2, h, 'mono');
   }
 
   /// 调试变量表采样：微回读前 256 个值（512 字节 = 128 纹素的一条 1px
   /// 横带；gamma 之后的 RGBA 为 256 字节）。与 CPU captures 同构。
-  Future<Map<String, Object?>> _sampleCapture(_Port frame, ui.Image? display,
-      int w, int h, int maxValue) async {
+  Future<Map<String, Object?>> _sampleCapture(
+    _Port frame,
+    ui.Image? display,
+    int w,
+    int h,
+    int maxValue,
+  ) async {
     if (display != null) {
       // gamma 已出图：节点输出视为 RGBA。
-      final band = runPass(_progs['passthrough']!,
-          [w.toDouble(), h.toDouble()], [display], 64, 1);
+      final band = runPass(
+        _progs['passthrough']!,
+        [w.toDouble(), h.toDouble()],
+        [display],
+        64,
+        1,
+      );
       final bytes = await readbackBytes(band);
       band.dispose();
       return {
@@ -2092,9 +2941,13 @@ class GpuPipeline {
     final channels = frame.format == 'mono' || frame.format == 'mosaic' ? 1 : 3;
     final total = w * h * channels;
     final values = total < 256 ? total : 256;
-    final band = runPass(_progs['passthrough']!,
-        [frame.texW.toDouble(), frame.texH.toDouble()], [frame.tex],
-        values ~/ 2, 1);
+    final band = runPass(
+      _progs['passthrough']!,
+      [frame.texW.toDouble(), frame.texH.toDouble()],
+      [frame.tex],
+      values ~/ 2,
+      1,
+    );
     final bytes = await readbackBytes(band);
     band.dispose();
     final sample = bytes.buffer.asUint16List().sublist(0, values);
@@ -2110,7 +2963,12 @@ class GpuPipeline {
   /// Gr/Gb 增益统计（CPU 侧，对当前帧按绿相位抽 1/8 样）：与
   /// applyGrGbBalance 的全帧双均值逻辑统计等效（增益差亚 LSB）。
   static (double, double) _grGbGains(
-      Uint16List src, int w, int h, List<int> pc, double strength) {
+    Uint16List src,
+    int w,
+    int h,
+    List<int> pc,
+    double strength,
+  ) {
     var sumGr = 0, cntGr = 0, sumGb = 0, cntGb = 0;
     // 逐相位抽样：绿相位行 step 2、列 step 4（1/8 密度，两绿相位全覆盖）。
     for (var ph = 0; ph < 4; ph++) {
@@ -2136,7 +2994,7 @@ class GpuPipeline {
     final target = (meanGr + meanGb) / 2;
     return (
       1 + (target / meanGr - 1) * strength,
-      1 + (target / meanGb - 1) * strength
+      1 + (target / meanGb - 1) * strength,
     );
   }
 }

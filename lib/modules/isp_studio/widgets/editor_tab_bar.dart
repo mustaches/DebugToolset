@@ -46,49 +46,53 @@ class IspEditorTabBar extends StatelessWidget {
                   // codicon file-code（白色 PNG，随激活态着色）；电路图
                   // （sch:）用 circuit-board；其余为 Material 图标。
                   ? (fg) => Image.asset(
-                        'icons/file-code.png',
-                        width: 26,
-                        height: 26,
-                        color: fg,
-                        colorBlendMode: BlendMode.srcIn,
-                      )
+                      'icons/file-code.png',
+                      width: 26,
+                      height: 26,
+                      color: fg,
+                      colorBlendMode: BlendMode.srcIn,
+                    )
                   : tab.startsWith('sch:')
-                      ? (fg) => Image.asset(
-                            'icons/circuit-board.png',
-                            width: 26,
-                            height: 26,
-                            color: fg,
-                            colorBlendMode: BlendMode.srcIn,
-                          )
-                      : tab.startsWith('gip:')
-                      // Verilog IP 标签用 codicon kimi（白色 PNG）。
-                      ? (fg) => Image.asset(
-                            'icons/kimi.png',
-                            width: 26,
-                            height: 26,
-                            color: fg,
-                            colorBlendMode: BlendMode.srcIn,
-                          )
-                      : tab.startsWith('wave:')
-                          // 仿真波形标签用 codicon telescope（白色 PNG）。
-                          ? (fg) => Image.asset(
-                                'icons/telescope.png',
-                                width: 26,
-                                height: 26,
-                                color: fg,
-                                colorBlendMode: BlendMode.srcIn,
-                              )
-                          : (fg) => Image.asset(
-                                // 节点「查看代码」标签用 codicon
-                                // code-oss（白色 PNG，随激活态着色）。
-                                'icons/code-oss.png',
-                                width: 26,
-                                height: 26,
-                                color: fg,
-                                colorBlendMode: BlendMode.srcIn,
-                              ),
+                  ? (fg) => Image.asset(
+                      'icons/circuit-board.png',
+                      width: 26,
+                      height: 26,
+                      color: fg,
+                      colorBlendMode: BlendMode.srcIn,
+                    )
+                  : tab.startsWith('gip:')
+                  // Verilog IP 标签用 codicon kimi（白色 PNG）。
+                  ? (fg) => Image.asset(
+                      'icons/kimi.png',
+                      width: 26,
+                      height: 26,
+                      color: fg,
+                      colorBlendMode: BlendMode.srcIn,
+                    )
+                  : tab.startsWith('demo:')
+                  ? (fg) => Icon(Icons.terminal, size: 18, color: fg)
+                  : tab.startsWith('wave:')
+                  // 仿真波形标签用 codicon telescope（白色 PNG）。
+                  ? (fg) => Image.asset(
+                      'icons/telescope.png',
+                      width: 26,
+                      height: 26,
+                      color: fg,
+                      colorBlendMode: BlendMode.srcIn,
+                    )
+                  : (fg) => Image.asset(
+                      // 节点「查看代码」标签用 codicon
+                      // code-oss（白色 PNG，随激活态着色）。
+                      'icons/code-oss.png',
+                      width: 26,
+                      height: 26,
+                      color: fg,
+                      colorBlendMode: BlendMode.srcIn,
+                    ),
               title: _tabTitle(state, tab),
-              tooltip: tab.startsWith('wave:')
+              tooltip: tab.startsWith('demo:')
+                  ? 'Vivado 工程生成日志'
+                  : tab.startsWith('wave:')
                   ? 'SimWave(VCD)（内嵌波形查看器）'
                   : '$tab — 只读代码',
               active: state.activeTab == i + 1,
@@ -111,7 +115,7 @@ class IspEditorTabBar extends StatelessWidget {
       if (at < 0) return (rest, null);
       return (
         rest.substring(0, at),
-        GroupCTarget.values.asNameMap()[rest.substring(at + 1)]
+        GroupCTarget.values.asNameMap()[rest.substring(at + 1)],
       );
     }
 
@@ -121,10 +125,14 @@ class IspEditorTabBar extends StatelessWidget {
       if (at < 0) return (rest, null);
       return (
         rest.substring(0, at),
-        IpVendor.values.asNameMap()[rest.substring(at + 1)]
+        IpVendor.values.asNameMap()[rest.substring(at + 1)],
       );
     }
 
+    if (tab.startsWith('demo:')) {
+      final session = state.demoPrjSessions[tab];
+      return '${session?.projectName ?? tab.substring(5)}·Vivado 日志';
+    }
     if (tab.startsWith('wave:')) return 'SimWave(VCD)';
     if (tab.startsWith('sch:')) {
       final (groupId, vendor) = splitVendor(tab.substring(4));
@@ -199,17 +207,14 @@ class _EditorTab extends StatelessWidget {
             : null,
         border: Border(
           left: BorderSide(
-              color: active
-                  ? const Color(0xFF3A3A3A)
-                  : const Color(0xFF2A2A2A)),
+            color: active ? const Color(0xFF3A3A3A) : const Color(0xFF2A2A2A),
+          ),
           right: BorderSide(
-              color: active
-                  ? const Color(0xFF3A3A3A)
-                  : const Color(0xFF2A2A2A)),
+            color: active ? const Color(0xFF3A3A3A) : const Color(0xFF2A2A2A),
+          ),
           top: BorderSide(
-              color: active
-                  ? const Color(0xFF3A3A3A)
-                  : Colors.transparent),
+            color: active ? const Color(0xFF3A3A3A) : Colors.transparent,
+          ),
         ),
       ),
       margin: const EdgeInsets.only(left: 2, top: 3),
@@ -237,9 +242,10 @@ class _EditorTab extends StatelessWidget {
     return Tooltip(
       message: tooltip ?? title,
       child: InkWell(
-          onTap: onTap,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-          child: tab),
+        onTap: onTap,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+        child: tab,
+      ),
     );
   }
 }

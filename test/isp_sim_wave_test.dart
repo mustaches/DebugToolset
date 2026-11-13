@@ -43,6 +43,40 @@ void main() {
       expect(formatBusBits('10x1', BusDisplayFormat.binary, width: 8),
           '0000 10x1');
     });
+
+    test('float：IEEE 754 半精度/单精度/双精度解释', () {
+      // 单精度 1.0 = 0x3F800000；−2.5 = 0xC0200000。
+      expect(
+          formatBusBits('00111111100000000000000000000000',
+              BusDisplayFormat.float,
+              width: 32),
+          '1.0');
+      expect(
+          formatBusBits('11000000001000000000000000000000',
+              BusDisplayFormat.float,
+              width: 32),
+          '-2.5');
+      // 半精度 1.0 = 0x3C00；0.333251953125 ≈ 0x3555（1/3 最近半精度值）。
+      expect(formatBusBits('0011110000000000', BusDisplayFormat.float),
+          '1.0');
+      expect(formatBusBits('0011010101010101', BusDisplayFormat.float),
+          '0.333251953125');
+      // 双精度 1.0 = 0x3FF0000000000000。
+      expect(
+          formatBusBits(
+              '0011111111110000000000000000000000000000000000000000'
+              '000000000000',
+              BusDisplayFormat.float,
+              width: 64),
+          '1.0');
+      // 特殊值：半精度 Inf/NaN。
+      expect(formatBusBits('0111110000000000', BusDisplayFormat.float),
+          'Infinity');
+      expect(formatBusBits('0111110000000001', BusDisplayFormat.float), 'NaN');
+      // 非 16/32/64 位宽显示 —；含 x/z 显示 x。
+      expect(formatBusBits('101', BusDisplayFormat.float, width: 8), '—');
+      expect(formatBusBits('10x1', BusDisplayFormat.float, width: 16), 'x');
+    });
   });
 
   group('parseBusValueInput 总线值解析（Bus Search）', () {

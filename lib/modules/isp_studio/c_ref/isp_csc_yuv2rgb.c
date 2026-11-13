@@ -17,7 +17,7 @@ int isp_csc_yuv_to_rgb(const uint16_t *yuv, int w, int h, int max_value,
   if (rc != ISP_OK) return rc;
   for (p = 0, i = 0; p < pixels; p++, i += 3) {
     int r, g, b;
-    isp_csc_yuv_to_rgb_px(yuv[i], yuv[i + 1], yuv[i + 2], half, max_value,
+    isp_csc_yuv_to_rgb_px_s(yuv[i], yuv[i + 1], yuv[i + 2], half, max_value, ISP_CSC_STD_601,
                           &r, &g, &b);
     out[i] = (uint16_t)r;
     out[i + 1] = (uint16_t)g;

@@ -1,0 +1,88 @@
+{
+  "name": "RGB2YUV",
+  "nodes": [
+    {
+      "id": "n1",
+      "typeId": "video_source",
+      "x": -1180.0,
+      "y": -840.0,
+      "width": 260.0,
+      "extraHeight": 160.0,
+      "name": "Video#1",
+      "params": {
+        "filePath": "G:\\DebugToolSet\\4k60VRec\\The Best OLED Test You Will Ever Watch  4K HDR 60FPS Dolby Vision Demo.MP4",
+        "bitDepth": "8",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n2",
+      "typeId": "video_output",
+      "x": -550.0,
+      "y": -170.0,
+      "width": 860.0,
+      "extraHeight": 254.0,
+      "name": "视频输出#1",
+      "params": {
+        "fps": 60,
+        "crf": 25,
+        "encoder": "auto",
+        "filePath": "IspFlow/VideoOut/output.mp4",
+        "ffmpegPath": "tools/ffmpeg/ffmpeg.exe"
+      }
+    },
+    {
+      "id": "n3",
+      "typeId": "preview",
+      "x": -550.0,
+      "y": -860.0,
+      "width": 860.0,
+      "extraHeight": 514.75,
+      "name": "预览#1",
+      "params": {
+        "fps": 60,
+        "frameCount": 20706
+      }
+    },
+    {
+      "id": "n15",
+      "typeId": "csc_rgb2yuv",
+      "x": -860.0,
+      "y": -840.0,
+      "width": 190.0,
+      "extraHeight": 160.0,
+      "name": "RGB→YUV 转换#1",
+      "params": {
+        "bypass": false,
+        "standard": "bt2020",
+        "range": "full",
+        "codegenMode": "func_fixed"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c16",
+      "from": "n1",
+      "fromPort": "out_rgb",
+      "to": "n15",
+      "toPort": "in"
+    },
+    {
+      "id": "c17",
+      "from": "n15",
+      "fromPort": "out",
+      "to": "n3",
+      "toPort": "in_yuv"
+    },
+    {
+      "id": "c18",
+      "from": "n3",
+      "fromPort": "out_yuv",
+      "to": "n2",
+      "toPort": "in_yuv"
+    }
+  ],
+  "groups": [],
+  "nextId": 19
+}

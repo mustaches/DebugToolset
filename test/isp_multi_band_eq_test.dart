@@ -2,6 +2,7 @@
 // （并联求和/串联级联/单段退化/色环环绕/恒等段）与 pipeline_runner 集成。
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:debug_tool_set/modules/isp_studio/models/isp_node.dart';
@@ -621,5 +622,90 @@ void main() {
           lMulLut: lMul);
       expect(actual, equals(expected));
     });
+  });
+
+  group('func_fixed 定点口径（codegenMode=func_fixed 的 Dart 参考）', () {
+    // 与 FP64 口径（multiBandLuts + applyHslBandLuts）全 H 域对比：
+    // 偏差必须 ≤1 LSB（同 lut_fixed 验收口径）。
+    void expectFxDeviation(String context,
+        List<({double h, double q, double dh, double s, double l})> bands,
+        {required bool serial, required int maxValue}) {
+      final (shift, sMul, lMul) =
+          multiBandLuts(bands, serial: serial, maxValue: maxValue);
+      // 覆盖全 H 域 + 多档 S/L 输入的合成帧。
+      final px = (maxValue + 1) * 4;
+      final hsl = Uint16List(px * 3);
+      for (var hv = 0; hv <= maxValue; hv++) {
+        for (var k = 0; k < 4; k++) {
+          final j = (hv * 4 + k) * 3;
+          hsl[j] = hv;
+          hsl[j + 1] = (maxValue * (k + 1)) ~/ 5;
+          hsl[j + 2] = maxValue - (maxValue * (k + 1)) ~/ 5;
+        }
+      }
+      final fp64 = applyHslBandLuts(hsl, 0, px,
+          maxValue: maxValue, shiftLut: shift, sMulLut: sMul, lMulLut: lMul);
+      final fx = applyMultiBandEqFx(hsl, 0, px,
+          maxValue: maxValue, bands: bands, serial: serial);
+      var maxDev = 0;
+      for (var j = 0; j < fx.length; j++) {
+        final dev = (fx[j] - fp64[j]).abs();
+        if (dev > maxDev) maxDev = dev;
+      }
+      expect(maxDev, lessThanOrEqualTo(1),
+          reason: '$context（serial=$serial max=$maxValue）偏差超 1 LSB');
+    }
+
+    test('权重 helper：全角距扫描与 FP64 exp 偏差 ≤1 ulp(Q14)', () {
+      for (final q in [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 24.0]) {
+        final kq = (q / 45.0 * 1048576.0).round();
+        for (var dMilli = 0; dMilli <= 180000; dMilli += 37) {
+          final dQ16 = ((dMilli / 1000.0) * 65536.0).round();
+          final wFx = multiBandFxWeightQ14(dQ16, 0, kq);
+          final x = dMilli / 1000.0 / (45.0 / q);
+          final wFp = (exp(-0.5 * x * x) * 16384.0).round();
+          expect((wFx - wFp).abs(), lessThanOrEqualTo(1),
+              reason: 'q=$q d=${dMilli / 1000.0}°');
+        }
+      }
+    });
+
+    for (final maxValue in [255, 1023, 4095]) {
+      test('单段无钳位捷径（max=$maxValue）', () {
+        for (final serial in [false, true]) {
+          expectFxDeviation('单段', [band(37.5, 7.3, -42.5, 1.8, 0.6)],
+              serial: serial, maxValue: maxValue);
+        }
+      });
+
+      test('并联两段（max=$maxValue）', () {
+        expectFxDeviation('并联两段', [
+          band(120.0, 2.0, 30.0, 1.5, 0.8),
+          band(200.0, 4.0, -20.0, 0.7, 1.2),
+        ], serial: false, maxValue: maxValue);
+      });
+
+      test('并联 clamp（dh 180+180、s 5+5，max=$maxValue）', () {
+        expectFxDeviation('并联clamp', [
+          band(100.0, 2.0, 180.0, 5.0, 5.0),
+          band(100.0, 2.0, 180.0, 5.0, 5.0),
+        ], serial: false, maxValue: maxValue);
+      });
+
+      test('串联两段（max=$maxValue）', () {
+        expectFxDeviation('串联两段', [
+          band(0.0, 2.0, 90.0, 1.0, 1.0),
+          band(90.0, 2.0, 90.0, 2.0, 0.9),
+        ], serial: true, maxValue: maxValue);
+      });
+
+      test('串联环绕边界（max=$maxValue）', () {
+        expectFxDeviation('串联环绕', [
+          band(350.0, 2.0, -60.0, 1.0, 1.0),
+          band(100.0, 2.0, 0.0, 1.0, 1.0),
+          band(200.0, 8.0, 45.0, 0.5, 1.5),
+        ], serial: true, maxValue: maxValue);
+      });
+    }
   });
 }
