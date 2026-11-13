@@ -82,7 +82,14 @@ final _recM = _Rec()
   ..add('d', _nvW)
   ..add('den', _denW)
   ..add('dfa', _nvW)
-  ..add('dfn', 1);
+  ..add('dfn', 1)
+  // 规格化结果与种子 ROM 索引：在 m 级算好、随 rec M 同拍寄存，好让种子表
+  // 的**读取**放进 m→q 这一个时钟沿（BRAM 同步读 / case 函数走同一组寄存
+  // 器），整链 LAT 不变。
+  ..add('shs', _shW)
+  ..add('sht', _shW)
+  ..add('sid', 8)
+  ..add('tid', 8);
 
 final _recQ = _Rec()
   ..add('l', _lW)
@@ -108,8 +115,107 @@ final _recOut = _Rec()
   ..add('s', _lW)
   ..add('l', _lW);
 
-/// `f_hsl_seed` / `f_hsl_normk`：`<top>_hsl_q` 模块内部使用的两个纯函数。
-String _hslSeedFunctions() {
+/// `h = round(tv/6)` 的折叠实现（tv 为 18 位有符号，可达域 [16384, 98304]）。
+/// 先 +3 得 y，再 floor(y/3)（Mersenne 折叠：3 = 2^2−1，按 2 位切段）后 >>1
+/// 即 floor(y/6)；与原常数乘 43691 取高位逐位一致（[0, 131071] 穷举对拍）。
+/// 不用 DSP 推断那版：虽然同样省 LUT（171→111），但会引入 DPOP-3/DPOP-4
+///（DSP 未流水）警告，本工程要求 DRC 只留 I/O 两条 Advisory。
+String _div6FoldBlock() {
+  const w = 20; // y 位宽（含余量）
+  const k = 10; // 2 位一段
+  const q = "'"; // Verilog 位宽基数字面量的撇号
+  final b = StringBuffer();
+  b.writeln("  wire [${w - 1}:0] hy = {2${q}b00, tv} + $w${q}d3;");
+  for (var i = 0; i < k; i++) {
+    b.writeln('  wire [1:0] hy_d$i = hy[${2 * i + 1}:${2 * i}];');
+  }
+  // S = Σ dᵢ（≤ 3k）
+  final sTerms = [for (var i = 0; i < k; i++) "{3${q}d0, hy_d$i}"];
+  b.writeln('  wire [4:0] hy_s = ${sTerms.join(' + ')};');
+  // floor(S/3)：k−1 个比较器
+  final cTerms = [
+    for (var j = 1; j < k; j++) "(hy_s >= 5${q}d${3 * j} ? 4${q}d1 : 4${q}d0)",
+  ];
+  b.writeln('  wire [3:0] hy_c = ${cTerms.join(' + ')};');
+  // q = Σ_{i≥1} dᵢ·Gᵢ + carry，Gᵢ = 1 + 4 + … + 4^{i−1}
+  final terms = <String>[];
+  for (var i = 1; i < k; i++) {
+    for (var j = 0; j < i; j++) {
+      final shift = 2 * j;
+      final pad = w - 2 - shift;
+      final padLit = "$pad${q}d0";
+      final shiftLit = "$shift${q}d0";
+      terms.add(pad > 0
+          ? "{$padLit, hy_d$i${shift > 0 ? ", $shiftLit" : ''}}"
+          : "{hy_d$i, $shiftLit}");
+    }
+  }
+  terms.add("{${w - 4}${q}d0, hy_c}");
+  b.writeln('  wire [${w - 1}:0] hy_q = ${terms.join(' + ')};');
+  b.writeln('  wire [14:0] h_q14 = hy_q[15:1];');
+  return b.toString();
+}
+
+/// `f_hsl_normk`：`<top>_hsl_m` 里算规格化移位量用（种子索引也在那一级算）。
+String _hslNormkFunction() => '''
+  function [4:0] f_hsl_normk;
+    input [16:0] den;
+    integer i;
+    begin
+      f_hsl_normk = 5'd16;
+      for (i = 1; i <= 16; i = i + 1)
+        if (den >= (1 << i)) f_hsl_normk = 16 - i;
+    end
+  endfunction''';
+
+/// `floor(x / MAXV)`（MAXV = 2^PIX_BITS − 1）的 **Mersenne 折叠** Verilog
+/// 函数，替代常量除法的「乘倒数 + 截取」LUT 写法（单除法实测 218 → 72 LUT，
+/// 纯加/移位，不占 DSP、不加拍；`PIX_BITS` 仍是 IP 参数，循环次数/常数随它
+/// 展开）。
+///
+/// 恒等式（x 按 pb 位切段 d₀..d_{k−1}）：
+///   x − Σdᵢ = MAXV · Σ_{i≥1} dᵢ·Gᵢ,  Gᵢ = 1 + 2^pb + … + 2^{pb(i−1)}
+/// 故 floor(x/MAXV) = Σ_{i≥1} dᵢ·Gᵢ + floor(Σdᵢ / MAXV)；后者只需 k−1 个
+/// 比较器（Σdᵢ ≤ k·MAXV）。`DV_W` 为输入位宽（= PIX_BITS + 15），返回值同宽，
+/// 调用方取 `[14:0]`（商 ≤ 16384）。
+String divMaxvFunction() => r"""
+  localparam integer DV_W = PIX_BITS + 15;
+  localparam integer DV_N = (DV_W + PIX_BITS - 1) / PIX_BITS;
+  // floor(x / (2^PIX_BITS - 1)) via Mersenne folding: split x into PIX_BITS-bit
+  // limbs d<i>, then x - sum(d<i>) = MAXV * sum(d<i> * G<i>) with
+  // G<i> = 1 + 2^PIX_BITS + ... + 2^(PIX_BITS*(i-1)), hence
+  // floor(x/MAXV) = sum(d<i>*G<i>) + floor(sum(d<i>)/MAXV); the last term needs
+  // only DV_N-1 comparators (sum <= DV_N*MAXV). No divider, no DSP, no extra
+  // pipeline stage; bit-exact against integer division.
+  function [14:0] f_div_maxv;
+    input [DV_W-1:0] x;
+    integer i, j;
+    reg [DV_W-1:0] sum, g, d;
+    reg [14:0] acc;
+    begin
+      sum = 0;
+      for (i = 0; i < DV_N; i = i + 1)
+        sum = sum + ((x >> (PIX_BITS * i)) & MAXV);
+      acc = 0;
+      for (i = 1; i < DV_N; i = i + 1) begin
+        d = (x >> (PIX_BITS * i)) & MAXV;
+        g = 0;
+        for (j = 0; j < i; j = j + 1) g = g + (d << (PIX_BITS * j));
+        acc = acc + g;
+      end
+      for (i = 1; i < DV_N; i = i + 1)
+        if (sum >= (MAXV * i)) acc = acc + 1;
+      f_div_maxv = acc[14:0];
+    end
+  endfunction
+""";
+
+/// `f_hsl_seed`：种子表（256 项 × 17 位）。`USE_BRAM=0` 时以 case 函数形式
+/// 放在 core 里（综合成 LUT 逻辑）；`USE_BRAM=1` 时同一组数值放到 BRAM ROM，
+/// 两者的**读取口径一致**（都在 m→q 的时钟沿取样），因此结果逐位相同。
+/// [asRom] 为 true 时返回 ROM 初始化串（供 core 的 `initial` 使用）。
+/// 种子表 `f_hsl_seed` 的 case 函数版（`USE_BRAM=0` 时放在 core 模块里）。
+String hslSeedFunction() {
   final b = StringBuffer('''
   function [16:0] f_hsl_seed;
     input [8:0] idx;
@@ -124,16 +230,19 @@ String _hslSeedFunctions() {
         default: f_hsl_seed = 17'd130563;
       endcase
     end
-  endfunction
-  function [4:0] f_hsl_normk;
-    input [16:0] den;
-    integer i;
-    begin
-      f_hsl_normk = 5'd16;
-      for (i = 1; i <= 16; i = i + 1)
-        if (den >= (1 << i)) f_hsl_normk = 16 - i;
-    end
   endfunction''');
+  return b.toString();
+}
+
+/// 种子 ROM 的 `initial` 初始化串（256 项，索引 0 对应归一化值 0x100）。
+/// 种子 ROM 的 `initial` 初始化串（`USE_BRAM=1` 时用）。
+String hslSeedRomInit(String romName) {
+  final b = StringBuffer('    $romName[0] = 17\'d130563;\n');
+  for (var i = 0; i < 256; i++) {
+    final up = ((i + 256) << 8) + 255;
+    final v = (1 << 33) ~/ up;
+    b.writeln('    $romName[$i] = 17\'d$v;');
+  }
   return b.toString();
 }
 
@@ -156,15 +265,17 @@ module ${top}_hsl_m #(
     output wire [${wm - 1}:0] rec
 );
   localparam integer MAXV = (1 << PIX_BITS) - 1;
-  wire [PIX_BITS+13:0] rs = px[3*PIX_BITS-1 -: PIX_BITS] * 15'd16384;
+${_hslNormkFunction()}${divMaxvFunction()}
+  // Q14 normalize (round v*16384 over MAXV) via Mersenne folding, no divider.
+  wire [PIX_BITS+13:0] rs = px[3*PIX_BITS-1 -: PIX_BITS] << 14;
   wire [PIX_BITS+14:0] rd = {1'b0, rs} + (MAXV >> 1);
-  wire [14:0] r = rd / MAXV;
-  wire [PIX_BITS+13:0] gs = px[2*PIX_BITS-1 -: PIX_BITS] * 15'd16384;
+  wire [14:0] r = f_div_maxv(rd);
+  wire [PIX_BITS+13:0] gs = px[2*PIX_BITS-1 -: PIX_BITS] << 14;
   wire [PIX_BITS+14:0] gd = {1'b0, gs} + (MAXV >> 1);
-  wire [14:0] g = gd / MAXV;
-  wire [PIX_BITS+13:0] bs = px[PIX_BITS-1:0] * 15'd16384;
+  wire [14:0] g = f_div_maxv(gd);
+  wire [PIX_BITS+13:0] bs = px[PIX_BITS-1:0] << 14;
   wire [PIX_BITS+14:0] bd = {1'b0, bs} + (MAXV >> 1);
-  wire [14:0] b = bd / MAXV;
+  wire [14:0] b = f_div_maxv(bd);
   wire [14:0] mx01 = g > b ? g : b;
   wire [14:0] mn01 = g < b ? g : b;
   wire [14:0] mx = r > mx01 ? r : mx01;
@@ -182,26 +293,34 @@ module ${top}_hsl_m #(
           : (\$signed({1'b0, r}) - \$signed({1'b0, g})));
   wire [15:0] dfa16 = dfs[15] ? (-dfs) : {1'b0, dfs[14:0]};
   wire [14:0] dfa = dfa16[14:0];
-  assign rec = {dfs[15], dfa, den, d, sel, l};
+  // 规格化 + 种子 ROM 索引提前到本级算（与本级 rec 同拍寄存）：种子表的
+  // **读取**因此能落在 m→q 这一个时钟沿上（BRAM 同步读），不必在 q 级组合
+  // 读表，整链 LAT 与数值都不变。
+  wire [16:0] dent = {2'd0, d};
+  wire [4:0]  shs = 5'd19 - f_hsl_normk(den);
+  wire [4:0]  sht = 5'd19 - f_hsl_normk(dent);
+  wire [16:0] dns = den << (5'd19 - shs);
+  wire [16:0] dnt = dent << (5'd19 - sht);
+  assign rec = {dnt[15:8], dns[15:8], sht, shs,
+      dfs[15], dfa, den, d, sel, l};
 endmodule
 ''';
   final q = '''
 (* keep_hierarchy = "yes" *)
 module ${top}_hsl_q (
     input wire [${wm - 1}:0] rec,
+    input wire [16:0] a0s,
+    input wire [16:0] a0t,
     output wire [${wq - 1}:0] q
 );
-${_hslSeedFunctions()}
   wire [16:0] dens = ${mf('den')};
   wire [16:0] dent = {2'd0, ${mf('d')}};
   wire [14:0] nvs = ${mf('d')};
   wire [14:0] nvt = ${mf('dfa')};
-  wire [4:0]  shs = 5'd19 - f_hsl_normk(dens);
-  wire [4:0]  sht = 5'd19 - f_hsl_normk(dent);
+  wire [4:0]  shs = ${mf('shs')};
+  wire [4:0]  sht = ${mf('sht')};
   wire [16:0] dns = dens << (5'd19 - shs);
   wire [16:0] dnt = dent << (5'd19 - sht);
-  wire [16:0] a0s = f_hsl_seed(dns[16:8]);
-  wire [16:0] a0t = f_hsl_seed(dnt[16:8]);
   wire nzs = (dens != 17'd0);
   wire nzt = (dent != 17'd0);
   assign q = {${mf('dfn')}, 17'd0, 17'd0, a0t, a0s, nzt, nzs, sht, shs,
@@ -226,22 +345,27 @@ module ${top}_hsl_corr (
   wire signed [31:0] p4tv = \$signed({1'b0, p4t[30:0]});
   wire [30:0] mg_s = {15'd0, nv_s} << 14;
   wire [30:0] mg_t = {15'd0, nv_t} << 14;
+  // 余数链只保留低 19 位：rm = mg - q0*den ∈ (-den, den) 且 den ≤ 2^17，
+  // 19 位有符号（±2^18）留一倍余量；后续三项修正/比较都在这条窄总线上算
+  // （原写法 32 位，每级多花 ~13 LUT）。
   wire signed [31:0] rm_s0 = \$signed({1'b0, mg_s}) - p4sv;
   wire signed [31:0] rm_t0 = \$signed({1'b0, mg_t}) - p4tv;
-  wire signed [31:0] dnsx = \$signed({15'd0, dn_s});
-  wire signed [31:0] dntx = \$signed({15'd0, dn_t});
-  wire signed [31:0] rm_s1 = (rm_s0 < 32'sd0) ? (rm_s0 + dnsx) : rm_s0;
-  wire signed [31:0] rm_t1 = (rm_t0 < 32'sd0) ? (rm_t0 + dntx) : rm_t0;
-  wire [15:0] qs1 = (rm_s0 < 32'sd0) ? (qe_s - 1'b1) : qe_s;
-  wire [15:0] qt1 = (rm_t0 < 32'sd0) ? (qe_t - 1'b1) : qe_t;
-  wire signed [31:0] rm_s2 = (rm_s1 >= dnsx) ? (rm_s1 - dnsx) : rm_s1;
-  wire signed [31:0] rm_t2 = (rm_t1 >= dntx) ? (rm_t1 - dntx) : rm_t1;
+  wire signed [18:0] r0s = rm_s0[18:0];
+  wire signed [18:0] r0t = rm_t0[18:0];
+  wire signed [18:0] dnsx = \$signed({2'd0, dn_s});
+  wire signed [18:0] dntx = \$signed({2'd0, dn_t});
+  wire signed [18:0] rm_s1 = (r0s < 19'sd0) ? (r0s + dnsx) : r0s;
+  wire signed [18:0] rm_t1 = (r0t < 19'sd0) ? (r0t + dntx) : r0t;
+  wire [15:0] qs1 = (r0s < 19'sd0) ? (qe_s - 1'b1) : qe_s;
+  wire [15:0] qt1 = (r0t < 19'sd0) ? (qe_t - 1'b1) : qe_t;
+  wire signed [18:0] rm_s2 = (rm_s1 >= dnsx) ? (rm_s1 - dnsx) : rm_s1;
+  wire signed [18:0] rm_t2 = (rm_t1 >= dntx) ? (rm_t1 - dntx) : rm_t1;
   wire [15:0] qs2 = (rm_s1 >= dnsx) ? (qs1 + 1'b1) : qs1;
   wire [15:0] qt2 = (rm_t1 >= dntx) ? (qt1 + 1'b1) : qt1;
-  wire [31:0] rm_s3 = {rm_s2[30:0], 1'b0};
-  wire [31:0] rm_t3 = {rm_t2[30:0], 1'b0};
-  wire [15:0] qs3 = (rm_s3 >= {15'd0, dn_s}) ? (qs2 + 1'b1) : qs2;
-  wire [15:0] qt3 = (rm_t3 >= {15'd0, dn_t}) ? (qt2 + 1'b1) : qt2;
+  wire [18:0] rm_s3 = {rm_s2, 1'b0};
+  wire [18:0] rm_t3 = {rm_t2, 1'b0};
+  wire [15:0] qs3 = (rm_s3 >= {2'd0, dn_s}) ? (qs2 + 1'b1) : qs2;
+  wire [15:0] qt3 = (rm_t3 >= {2'd0, dn_t}) ? (qt2 + 1'b1) : qt2;
   wire [14:0] s_q14 = ${qf('nzs')} ? qs3[14:0] : 15'd0;
   wire [15:0] qt4 = ${qf('nzt')} ? qt3 : 16'd0;
   wire signed [17:0] td = ${qf('dfn')}
@@ -251,8 +375,7 @@ module ${top}_hsl_corr (
       ? ((td < 18'sd0) ? 18'sd98304 : 18'sd0)
       : ((selx == 2'd1) ? 18'sd32768 : 18'sd65536);
   wire signed [17:0] tv = td + base;
-  (* use_dsp = "no" *) wire [32:0] hx = ({15'd0, tv} + 33'd3) * 33'd43691;
-  wire [14:0] h_q14 = hx[32:18];
+${_div6FoldBlock()}
   assign out = {${qf('l')}, {1'b0, s_q14}, {1'b0, h_q14}};
 endmodule
 ''';
@@ -391,24 +514,57 @@ List<HslPipeStage> buildHslPipeStages({
   add('in', bw, '', input);
 
   // ---- 1：Q14 归一化 + 最大/最小 + den/差分（子模块，保留层级）----
+  // 种子表的**读取寄存器**也放在这一级：地址取本级组合输出（rec M 的
+  // sid/tid），时钟沿与本级 rec 同拍 → 数据在 q 级有效，整链 LAT 不变。
   add(
     'm',
     _recM.width,
     '''
   wire [${_recM.width - 1}:0] ${id}_m_v;
   ${top}_hsl_m #(.PIX_BITS(PIX_BITS)) ${id}_u_m (
-      .px(${id}_in_reg), .rec(${id}_m_v));''',
+      .px(${id}_in_reg), .rec(${id}_m_v));
+  reg [16:0] ${id}_a0s, ${id}_a0t;
+  generate
+    if (USE_BRAM != 0) begin : g_seed_bram_$id
+      // 种子表放 BRAM（1 个 BRAM18，真双口同时读 S/L 两个地址）。
+      (* rom_style = "block" *) reg [16:0] ${id}_seed_rom [0:255];
+      initial begin
+${hslSeedRomInit('${id}_seed_rom')}      end
+      always @(posedge clk) begin
+        if (stage_ready[$baseStage + 1]) begin
+          ${id}_a0s <= ${id}_seed_rom[${id}_m_v[${_recM.off('sid')} +: 8]];
+          ${id}_a0t <= ${id}_seed_rom[${id}_m_v[${_recM.off('tid')} +: 8]];
+        end
+      end
+    end else begin : g_seed_lut_$id
+      // 组合 ROM（上一版实现，LUT 逻辑）：同一组寄存器承接，时序一致。
+      // 尽量让综合器留在 LUT 逻辑（rom_style=logic 只是提示：Vivado 仍可能
+      // 自行识别成 ROM 并推断成 BRAM，此时与 USE_BRAM=1 结果相同）。
+      (* rom_style = "logic" *) reg [16:0] ${id}_a0s_l, ${id}_a0t_l;
+      always @(posedge clk) begin
+        if (stage_ready[$baseStage + 1]) begin
+          ${id}_a0s_l <= f_hsl_seed({1'b1, ${id}_m_v[${_recM.off('sid')} +: 8]});
+          ${id}_a0t_l <= f_hsl_seed({1'b1, ${id}_m_v[${_recM.off('tid')} +: 8]});
+        end
+      end
+      always @* begin
+        ${id}_a0s = ${id}_a0s_l;
+        ${id}_a0t = ${id}_a0t_l;
+      end
+    end
+  endgenerate''',
     '${id}_m_v',
   );
 
 
-  // ---- 2：除法预备（子模块：种子 ROM / 规格化 / 移位量）----
+  // ---- 2：除法预备（子模块：规格化 / 移位量 / 打包；种子值由上一级寄存）----
   add(
     'q',
     _recQ.width,
     '''
   wire [${_recQ.width - 1}:0] ${id}_q_v;
-  ${top}_hsl_q ${id}_u_q (.rec(${id}_m_reg), .q(${id}_q_v));''',
+  ${top}_hsl_q ${id}_u_q (
+      .rec(${id}_m_reg), .a0s(${id}_a0s), .a0t(${id}_a0t), .q(${id}_q_v));''',
     '${id}_q_v',
   );
 
@@ -591,16 +747,18 @@ module ${top}_hsl2rgb_n #(
     output wire [${wn - 1}:0] rec
 );
   localparam integer MAXV = (1 << PIX_BITS) - 1;
-  wire [PIX_BITS+13:0] hs = px[3*PIX_BITS-1 -: PIX_BITS] * 15'd16384;
+${divMaxvFunction()}
+  // H/S/L Q14 normalize (round v*16384 over MAXV) via Mersenne folding.
+  wire [PIX_BITS+13:0] hs = px[3*PIX_BITS-1 -: PIX_BITS] << 14;
   wire [PIX_BITS+14:0] hd = {1'b0, hs} + (MAXV >> 1);
-  wire [14:0] hn = hd / MAXV;
+  wire [14:0] hn = f_div_maxv(hd);
   wire [13:0] h14 = (hn == 15'd16384) ? 14'd0 : hn[13:0];
-  wire [PIX_BITS+13:0] ss = px[2*PIX_BITS-1 -: PIX_BITS] * 15'd16384;
+  wire [PIX_BITS+13:0] ss = px[2*PIX_BITS-1 -: PIX_BITS] << 14;
   wire [PIX_BITS+14:0] sd = {1'b0, ss} + (MAXV >> 1);
-  wire [14:0] s14 = sd / MAXV;
-  wire [PIX_BITS+13:0] ls = px[PIX_BITS-1:0] * 15'd16384;
+  wire [14:0] s14 = f_div_maxv(sd);
+  wire [PIX_BITS+13:0] ls = px[PIX_BITS-1:0] << 14;
   wire [PIX_BITS+14:0] ld = {1'b0, ls} + (MAXV >> 1);
-  wire [14:0] l14 = ld / MAXV;
+  wire [14:0] l14 = f_div_maxv(ld);
   wire [15:0] h3 = {2'd0, h14} * 3;
   wire [16:0] tr0 = {1'd0, h3} + 17'd16384;
   wire [16:0] tr1 = (tr0 >= 17'd49152) ? (tr0 - 17'd49152) : tr0;

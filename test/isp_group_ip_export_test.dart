@@ -295,7 +295,10 @@ void main() {
         const IpGenOptions(vendor: IpVendor.vivado),
       );
       expect(fxPlan.implMode, 1);
-      expect(fxPlan.fxBandCount, 2);
+      // 段数取自流程本身（示例流程是用户可编辑文件，band_count 会随取色器增减）。
+      final fxNode = graph.nodes.values
+          .firstWhere((n) => n.typeId == 'multi_band_eq');
+      expect(fxPlan.fxBandCount, fxNode.paramValues['band_count']);
       final fxFiles = buildGroupIpFiles(
         graph,
         sampleGroup(graph),
@@ -1484,7 +1487,7 @@ void main() {
       expect(pkg, contains('ipx::add_user_parameter USE_BRAM'));
       expect(pkg, contains('set_property value_validation_pairs'));
       expect(pkg, contains('Block RAM (saves CLB LUTs)" 1'));
-      expect(pkg, contains('Distributed ROM (previous build)" 0'));
+      expect(pkg, contains('Combinational ROM (previous build)" 0'));
       final xgui = vivadoPkg['xgui/ISP_IP_Color_Temperature_v2_0.tcl']!;
       expect(xgui, contains('name "USE_BRAM"'));
       // 关键：用户参数必须同步到模型参数，否则 CONFIG/Customize IP 改了不生效
@@ -1522,7 +1525,55 @@ void main() {
       expect(files['isp_ip_fixed_chain_top.v'], isNot(contains('cct_in')));
     });
 
-    test('RGB2HSL PIX_BITS=8：倒数种子使用函数 ROM 而非寄存器数组', () {
+    test('HSL 方向种子表 USE_BRAM：块 RAM 版省 LUT，两档 golden 逐位一致',
+        () async {
+      // YUV→HSL / RGB→HSL 的全流水通路里有一张 256×17 的牛顿种子表
+      //（f_hsl_seed）。USE_BRAM=1 时放进 BRAM（读口寄存与本级 rec 同拍，
+      // 整链 LAT 不变）；=0 时保留 case 函数写法。两者数值必须一致。
+      Map<String, String> ipOf(String typeId, {required bool useBram}) {
+        final g = IspGraph();
+        final id = g.addNode(typeId, 0, 0);
+        g.nodes[id]!.paramValues['codegenMode'] = 'func_fixed';
+        return buildGroupIpFiles(
+          g,
+          IspNodeGroup('g_$typeId$useBram', {id}, name: 'csc'),
+          IpGenOptions(vendor: IpVendor.generic, useBram: useBram),
+          stimulus: const IpSimStimulus(),
+        );
+      }
+
+      for (final typeId in ['csc_yuv2hsl', 'csc_rgb2hsl']) {
+        final name =
+            typeId == 'csc_yuv2hsl' ? 'YUV_to_HSL' : 'RGB_to_HSL';
+        final bram = ipOf(typeId, useBram: true);
+        final lut = ipOf(typeId, useBram: false);
+        final core = bram['ISP_IP_${name}_core.v']!;
+        // 参数默认值随导出选项；两套实现都在核里（generate 选择）。
+        expect(core, contains('parameter integer USE_BRAM = 1'));
+        expect(core, contains('rom_style = "block"'));
+        expect(core, contains('_seed_rom [0:255]'));
+        expect(core, contains("f_hsl_seed({1'b1"));
+        expect(lut['ISP_IP_${name}_core.v']!,
+            contains('parameter integer USE_BRAM = 0'));
+        // 索引在 hsl_m 子模块里算好、随 rec M 同拍寄存（表读取落在 m→q
+        // 一个时钟沿），hsl_q 只做打包。
+        expect(core, contains('_hsl_m #(.PIX_BITS(PIX_BITS))'));
+        expect(core, contains('f_hsl_normk(den)'));
+        expect(bram['golden_hash.txt'], lut['golden_hash.txt']);
+
+        if (detectIverilog() == null) continue;
+        final rb = await runIpSimulation(bram);
+        final rl = await runIpSimulation(lut);
+        expect(rb.passed, isTrue, reason: rb.output);
+        expect(rl.passed, isTrue, reason: rl.output);
+        String fnv(String s) =>
+            RegExp(r'fnv=([0-9a-f]{8})').firstMatch(s)?.group(1) ?? '?';
+        expect(fnv(rb.output), fnv(rl.output),
+            reason: '$typeId：两种表实现必须逐位一致');
+      }
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('RGB2HSL PIX_BITS=8：牛顿种子表可选 BRAM ROM / case 函数两档', () {
       final graph = IspGraph();
       final id = graph.addNode('csc_rgb2hsl', 0, 0);
       graph.nodes[id]!.paramValues['codegenMode'] = 'func_fixed';
@@ -1533,10 +1584,82 @@ void main() {
         const IpGenOptions(vendor: IpVendor.generic, pixBits: 8),
       );
       final core = files['ISP_IP_RGB_to_HSL_core.v']!;
+      // f_div_round 的倒数种子仍是函数（组合回退通路的实现，不进综合）。
       expect(core, contains('function [31:0] f_recip_seed'));
       expect(core, contains('f_recip_seed(idx)'));
       expect(core, isNot(contains('reg [31:0] f_recip_seed')));
-      expect(core, isNot(contains('initial begin')));
+      // 全流水通路的牛顿种子表：默认 USE_BRAM=1 → 256×17 的 BRAM ROM；
+      // 两套实现同时在核里（generate 选择），所以 case 函数版也在。
+      expect(core, contains('parameter integer USE_BRAM = 1'));
+      expect(core, contains('_seed_rom [0:255]'));
+      expect(core, contains('rom_style = "block"'));
+      expect(core, contains('function [16:0] f_hsl_seed'));
+      expect(core, contains("f_hsl_seed({1'b1"));
+      final g2 = IspGraph();
+      final id2 = g2.addNode('csc_rgb2hsl', 0, 0);
+      g2.nodes[id2]!.paramValues['codegenMode'] = 'func_fixed';
+      final lut = buildGroupIpFiles(
+        g2,
+        IspNodeGroup('g2', {id2}, name: 'csc_rgb2hsl'),
+        const IpGenOptions(
+            vendor: IpVendor.generic, pixBits: 8, useBram: false),
+      )['ISP_IP_RGB_to_HSL_core.v']!;
+      expect(lut, contains('parameter integer USE_BRAM = 0'));
+    });
+
+    test('Q14 归一化用 Mersenne 折叠除法（与整数除法逐位一致，模型级穷举）', () {
+      // 生成物里不应再有 `/ MAXV` 常量除法；改用 f_div_maxv 折叠。
+      for (final typeId in ['csc_rgb2hsl', 'csc_hsl2rgb', 'csc_hsl2yuv']) {
+        final g = IspGraph();
+        final id = g.addNode(typeId, 0, 0);
+        g.nodes[id]!.paramValues['codegenMode'] = 'func_fixed';
+        final core = buildGroupIpFiles(
+          g,
+          IspNodeGroup('g1', {id}, name: 'ip'),
+          const IpGenOptions(vendor: IpVendor.generic),
+        ).entries.firstWhere((e) => e.key.endsWith('_core.v')).value;
+        // 除法运算符不应残留（注释里也不写 ` / MAXV` 形式，便于这条断言）。
+        expect(core, isNot(contains('/ MAXV')), reason: typeId);
+        expect(core, contains('f_div_maxv'), reason: typeId);
+      }
+
+      // 模型级证明：与 `(v*16384 + MAXV/2) / MAXV` 逐位一致（可达域全扫 +
+      // 随机全域），PIX_BITS = 8/10/12/16 各一档。
+      int fold(int x, int pb) {
+        final maxv = (1 << pb) - 1;
+        final dvW = pb + 15;
+        final dvN = (dvW + pb - 1) ~/ pb;
+        var sum = 0;
+        for (var i = 0; i < dvN; i++) {
+          sum += (x >> (pb * i)) & maxv;
+        }
+        var acc = 0;
+        for (var i = 1; i < dvN; i++) {
+          final d = (x >> (pb * i)) & maxv;
+          for (var j = 0; j < i; j++) {
+            acc += d << (pb * j);
+          }
+        }
+        for (var i = 1; i < dvN; i++) {
+          if (sum >= maxv * i) acc += 1;
+        }
+        return acc;
+      }
+
+      for (final pb in [8, 10, 12, 16]) {
+        final maxv = (1 << pb) - 1;
+        for (var v = 0; v <= maxv; v++) {
+          final x = (v << 14) + (maxv >> 1);
+          expect(fold(x, pb), x ~/ maxv, reason: 'pb=$pb v=$v');
+        }
+        // 全域随机（含边界）
+        var seed = 7;
+        for (var i = 0; i < 20000; i++) {
+          seed = (seed * 1664525 + 1013904223) & 0x7fffffff;
+          final x = seed & ((1 << (pb + 15)) - 1);
+          expect(fold(x, pb), x ~/ maxv, reason: 'pb=$pb x=$x');
+        }
+      }
     });
 
     test('RGB2HSL：面积档绑 LUT，平衡/性能档走全流水 DSP 通路', () {

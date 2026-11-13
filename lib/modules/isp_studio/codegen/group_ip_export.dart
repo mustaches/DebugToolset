@@ -297,6 +297,7 @@ Map<String, String> buildGroupIpFiles(
       fxConn: fxConn,
       fxDspPipe: options.dspPipe,
       ctPorts: _ctRuntimePlan(plan, enabled: ctRuntimeEnabled),
+      bramParam: _bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled),
     ),
     'tb_$top.v': _tbV(
       plan,
@@ -347,10 +348,13 @@ Map<String, String> buildGroupIpFiles(
       fxConn: fxConn,
       fxDspPipe: options.dspPipe,
       ctPorts: _ctRuntimePlan(plan, enabled: ctRuntimeEnabled),
+      bramParam: _bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled),
     );
-    files['package_ip.tcl'] = _packageIpTcl(plan);
+    files['package_ip.tcl'] =
+        _packageIpTcl(plan, ctRuntimeEnabled: ctRuntimeEnabled);
     // 定制界面（xgui）：打包时由 package_ip.tcl 拷入组件目录。
-    files['xgui/${top}_v2_0.tcl'] = _xguiTcl(plan);
+    files['xgui/${top}_v2_0.tcl'] =
+        _xguiTcl(plan, ctRuntimeEnabled: ctRuntimeEnabled);
     // 演示工程（demo/）：演示顶层（段参数烘焙为 ispflow 快照常量）+ golden
     // tb（打包容器 IP 实例）+ 一键建工程脚本（位置无关，可重复执行）。
     files['demo/demo_top.v'] = _demoTopV(
@@ -371,7 +375,8 @@ Map<String, String> buildGroupIpFiles(
     );
     files['demo/timing.xdc'] = _timingXdc(plan);
     files['demo/clock_route.tcl'] = _clockRouteTcl();
-    files['demo/create_demo_project.tcl'] = _demoProjectTcl(plan);
+    files['demo/create_demo_project.tcl'] =
+        _demoProjectTcl(plan, ctRuntimeEnabled: ctRuntimeEnabled);
   } else if (options.vendor.isLibero) {
     files['${top}_libero.v'] = _liberoV(
       plan,
@@ -379,6 +384,7 @@ Map<String, String> buildGroupIpFiles(
       fxConn: fxConn,
       fxDspPipe: options.dspPipe,
       ctPorts: _ctRuntimePlan(plan, enabled: ctRuntimeEnabled),
+      bramParam: _bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled),
     );
   }
   final entries = files.entries.toList();
@@ -437,6 +443,26 @@ bool _ctRuntimePlan(IpPlan plan, {bool enabled = true}) {
   return first.typeId == 'color_temp_adjuster' &&
       first.paramValues['bypass'] != true;
 }
+
+/// 该编组的 IP 是否含「RGB/YUV→HSL 的种子表」（`<top>_hsl_q` 用的
+/// `f_hsl_seed`）：只有走全流水（GSTRATEGY≠0、DSP_PIPE=3）且非 lut_fixed
+/// 的 rgb2hsl/yuv2hsl 节点才有这张表——`USE_BRAM` 参数只在这种情况下有意义。
+bool _hslSeedPlan(IpPlan plan) {
+  final o = plan.options;
+  if (o.gstrategy == 0 || o.dspPipe != 3) return false;
+  return plan.cPlan.members.values.any(
+    (n) =>
+        (n.typeId == 'csc_rgb2hsl' || n.typeId == 'csc_yuv2hsl') &&
+        n.paramValues['codegenMode'] != 'lut_fixed' &&
+        n.paramValues['bypass'] != true,
+  );
+}
+
+/// 该 IP 是否带 `USE_BRAM` 参数：色温的白点/倒数表，或 HSL 方向的种子表。
+/// [ctRuntimeEnabled] 与 `ctPorts` 同口径——多节点编组里逐节点建包时色温
+/// 表不发射（`ctRuntimeEnabled: false`），此时不能再暴露这个参数。
+bool _bramParamPlan(IpPlan plan, {bool ctRuntimeEnabled = true}) =>
+    _ctRuntimePlan(plan, enabled: ctRuntimeEnabled) || _hslSeedPlan(plan);
 
 String _headerComment(IpPlan plan) {
   final v = plan.options.vendor;
@@ -708,7 +734,11 @@ endmodule
 }
 
 String _topV(IpPlan plan,
-    {String? fxDecl, String? fxConn, int? fxDspPipe, bool ctPorts = false}) {
+    {String? fxDecl,
+    String? fxConn,
+    int? fxDspPipe,
+    bool ctPorts = false,
+    bool bramParam = false}) {
   final top = plan.topName;
   final pb = plan.pixBits;
   final bw = 3 * pb;
@@ -720,7 +750,7 @@ module ${top}_top #(
     parameter integer PIX_BITS  = $pb,
     parameter integer MAX_WIDTH = ${plan.options.maxWidth},
     parameter integer GSTRATEGY = ${plan.options.gstrategy},
-    parameter integer FOLD      = ${plan.options.fold}${fxDspPipe != null ? ', DSP_PIPE = $fxDspPipe' : ''}${_v2ParamDecl(plan)}${_yuvParamDecl(plan)}${ctPorts ? ', USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
+    parameter integer FOLD      = ${plan.options.fold}${fxDspPipe != null ? ', DSP_PIPE = $fxDspPipe' : ''}${_v2ParamDecl(plan)}${_yuvParamDecl(plan)}${bramParam ? ', USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
 ) (
     input  wire                   clk,
     input  wire                   rst_n,
@@ -741,7 +771,7 @@ module ${top}_top #(
       .PIX_BITS(PIX_BITS),
       .MAX_WIDTH(MAX_WIDTH),
       .GSTRATEGY(GSTRATEGY),
-      .FOLD(FOLD)${fxDspPipe != null ? ', .DSP_PIPE(DSP_PIPE)' : ''}${_v2ParamConn(plan)}${_yuvParamConn(plan)}${ctPorts ? ', .USE_BRAM(USE_BRAM)' : ''}
+      .FOLD(FOLD)${fxDspPipe != null ? ', .DSP_PIPE(DSP_PIPE)' : ''}${_v2ParamConn(plan)}${_yuvParamConn(plan)}${bramParam ? ', .USE_BRAM(USE_BRAM)' : ''}
   ) u_core (
       .clk(clk), .rst_n(rst_n),
       .in_valid(in_valid), .in_ready(in_ready),
@@ -754,7 +784,11 @@ endmodule
 }
 
 String _axisV(IpPlan plan,
-    {String? fxDecl, String? fxConn, int? fxDspPipe, bool ctPorts = false}) {
+    {String? fxDecl,
+    String? fxConn,
+    int? fxDspPipe,
+    bool ctPorts = false,
+    bool bramParam = false}) {
   final top = plan.topName;
   final pb = plan.pixBits;
   final bw = 3 * pb;
@@ -768,7 +802,7 @@ module ${top}_axis #(
     parameter integer PIX_BITS  = $pb,
     parameter integer MAX_WIDTH = ${plan.options.maxWidth},
     parameter integer GSTRATEGY = ${plan.options.gstrategy},
-    parameter integer FOLD      = ${plan.options.fold}${fxDspPipe != null ? ', DSP_PIPE = $fxDspPipe' : ''}${_v2ParamDecl(plan)}${_yuvParamDecl(plan)}${ctPorts ? ', USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
+    parameter integer FOLD      = ${plan.options.fold}${fxDspPipe != null ? ', DSP_PIPE = $fxDspPipe' : ''}${_v2ParamDecl(plan)}${_yuvParamDecl(plan)}${bramParam ? ', USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
 ) (
     input  wire                   aclk,
     input  wire                   aresetn,
@@ -789,7 +823,7 @@ module ${top}_axis #(
       .PIX_BITS(PIX_BITS),
       .MAX_WIDTH(MAX_WIDTH),
       .GSTRATEGY(GSTRATEGY),
-      .FOLD(FOLD)${fxDspPipe != null ? ', .DSP_PIPE(DSP_PIPE)' : ''}${_v2ParamConn(plan)}${_yuvParamConn(plan)}${ctPorts ? ', .USE_BRAM(USE_BRAM)' : ''}
+      .FOLD(FOLD)${fxDspPipe != null ? ', .DSP_PIPE(DSP_PIPE)' : ''}${_v2ParamConn(plan)}${_yuvParamConn(plan)}${bramParam ? ', .USE_BRAM(USE_BRAM)' : ''}
   ) u_core (
       .clk(aclk), .rst_n(aresetn),
       .in_valid(s_axis_tvalid), .in_ready(s_axis_tready),
@@ -802,7 +836,11 @@ endmodule
 }
 
 String _liberoV(IpPlan plan,
-    {String? fxDecl, String? fxConn, int? fxDspPipe, bool ctPorts = false}) {
+    {String? fxDecl,
+    String? fxConn,
+    int? fxDspPipe,
+    bool ctPorts = false,
+    bool bramParam = false}) {
   final top = plan.topName;
   final pb = plan.pixBits;
   final bw = 3 * pb;
@@ -815,7 +853,7 @@ module ${top}_libero #(
     parameter integer PIX_BITS  = $pb,
     parameter integer MAX_WIDTH = ${plan.options.maxWidth},
     parameter integer GSTRATEGY = ${plan.options.gstrategy},
-    parameter integer FOLD      = ${plan.options.fold}${fxDspPipe != null ? ', DSP_PIPE = $fxDspPipe' : ''}${_v2ParamDecl(plan)}${_yuvParamDecl(plan)}${ctPorts ? ', USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
+    parameter integer FOLD      = ${plan.options.fold}${fxDspPipe != null ? ', DSP_PIPE = $fxDspPipe' : ''}${_v2ParamDecl(plan)}${_yuvParamDecl(plan)}${bramParam ? ', USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
 ) (
     input  wire                   clk,
     input  wire                   rst_n,
@@ -836,7 +874,7 @@ module ${top}_libero #(
       .PIX_BITS(PIX_BITS),
       .MAX_WIDTH(MAX_WIDTH),
       .GSTRATEGY(GSTRATEGY),
-      .FOLD(FOLD)${fxDspPipe != null ? ', .DSP_PIPE(DSP_PIPE)' : ''}${_v2ParamConn(plan)}${_yuvParamConn(plan)}${ctPorts ? ', .USE_BRAM(USE_BRAM)' : ''}
+      .FOLD(FOLD)${fxDspPipe != null ? ', .DSP_PIPE(DSP_PIPE)' : ''}${_v2ParamConn(plan)}${_yuvParamConn(plan)}${bramParam ? ', .USE_BRAM(USE_BRAM)' : ''}
   ) u_core (
       .clk(clk), .rst_n(rst_n),
       .in_valid(in_valid), .in_ready(in_ready),
@@ -1161,7 +1199,7 @@ String _tbFxDrivers(
 
 /// Vivado 定制界面（xgui tcl）：分页 + 控件化 + 参数联动，打包时由
 /// package_ip.tcl 拷入组件 xgui/ 目录。标准 init_gui 结构。
-String _xguiTcl(IpPlan plan) {
+String _xguiTcl(IpPlan plan, {bool ctRuntimeEnabled = true}) {
   if (plan.fxBandCount == 0) {
     final yuvGui = _hasYuvMatrix(plan)
         ? r'''
@@ -1187,9 +1225,9 @@ proc init_gui { IPINST } {
   ipgui::add_param $IPINST -name "FOLD" -parent $Page1 -widget comboBox
   ipgui::add_param $IPINST -name "DSP_PIPE" -parent $Page1 -widget comboBox
 ''' +
-        (_ctRuntimePlan(plan)
+        (_bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled)
             ? r'''  ipgui::add_param $IPINST -name "USE_BRAM" -parent $Page1 -display_name "Use Block RAM (USE_BRAM)" -widget comboBox
-  ipgui::add_static_text $IPINST -name "USE_BRAM_help" -parent $Page1 -text "1 = white-point / reciprocal tables in Block RAM (default, saves CLB LUTs); 0 = distributed combinational ROM (previous build). Identical results."
+  ipgui::add_static_text $IPINST -name "USE_BRAM_help" -parent $Page1 -text "1 = on-chip lookup tables (white point / reciprocal / HSL seed) in Block RAM (default, saves CLB LUTs); 0 = combinational case-ROM (previous build). Functionally identical; Vivado may map either setting to BRAM by its own ROM inference."
 '''
             : '') +
         r'''}
@@ -1219,7 +1257,7 @@ proc update_MODELPARAM_VALUE.DSP_PIPE { MODELPARAM_VALUE.DSP_PIPE PARAM_VALUE.DS
 }
 '''
             : '') +
-        (_ctRuntimePlan(plan)
+        (_bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled)
             ? r'''proc update_MODELPARAM_VALUE.USE_BRAM { MODELPARAM_VALUE.USE_BRAM PARAM_VALUE.USE_BRAM } {
   set_property value [get_property value ${PARAM_VALUE.USE_BRAM}] ${MODELPARAM_VALUE.USE_BRAM}
 }
@@ -1448,7 +1486,7 @@ endmodule
 /// 一键生成 Vivado 演示工程（demo/ 目录）：打包 IP（幂等）→ 建工程 →
 /// 例化 IP → 加演示顶层（综合）与 golden tb（行为仿真）。位置无关
 ///（以脚本所在目录为基准），可重复执行（-force 覆盖）。
-String _demoProjectTcl(IpPlan plan) {
+String _demoProjectTcl(IpPlan plan, {bool ctRuntimeEnabled = true}) {
   final top = plan.topName;
   return '''
 # One-shot Vivado demo project generation (select this file via
@@ -1492,7 +1530,7 @@ set_property CONFIG.MAX_WIDTH {${plan.options.maxWidth}} [get_ips $top]
 set_property CONFIG.GSTRATEGY {${plan.options.gstrategy}} [get_ips $top]
 set_property CONFIG.FOLD {${plan.options.fold}} [get_ips $top]
 set_property CONFIG.DSP_PIPE {${plan.options.dspPipe}} [get_ips $top]
-${_ctRuntimePlan(plan) ? 'set_property CONFIG.USE_BRAM {${plan.options.useBram ? 1 : 0}} [get_ips $top]\n' : ''}${_hasYuvMatrix(plan) ? 'set_property CONFIG.YUV_STANDARD {${yuvStandardCode(_effectiveYuvStandard(plan))}} [get_ips $top]\n' : ''}${plan.fxBandCount > 0 ? 'set_property CONFIG.IMPL_MODE {${plan.implMode}} [get_ips $top]\nset_property CONFIG.WORK_MODE {${plan.fxSerial ? 1 : 0}} [get_ips $top]\nset_property CONFIG.NUM_BANDS {${plan.fxBandCount}} [get_ips $top]' : ''}
+${_bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled) ? 'set_property CONFIG.USE_BRAM {${plan.options.useBram ? 1 : 0}} [get_ips $top]\n' : ''}${_hasYuvMatrix(plan) ? 'set_property CONFIG.YUV_STANDARD {${yuvStandardCode(_effectiveYuvStandard(plan))}} [get_ips $top]\n' : ''}${plan.fxBandCount > 0 ? 'set_property CONFIG.IMPL_MODE {${plan.implMode}} [get_ips $top]\nset_property CONFIG.WORK_MODE {${plan.fxSerial ? 1 : 0}} [get_ips $top]\nset_property CONFIG.NUM_BANDS {${plan.fxBandCount}} [get_ips $top]' : ''}
 generate_target all [get_ips $top]
 create_ip_run [get_ips $top]
 # Use timing-oriented strategies for both the parent and the IP OOC run.
@@ -1543,7 +1581,7 @@ puts "============================================================"
 ''';
 }
 
-String _packageIpTcl(IpPlan plan) {
+String _packageIpTcl(IpPlan plan, {bool ctRuntimeEnabled = true}) {
   final top = plan.topName;
   return '''
 # Vivado IP Packager: packages ${top}_axis as a customizable IP (parameters
@@ -1585,8 +1623,8 @@ set_property value ${plan.options.fold} [ipx::get_user_parameters FOLD]
 ipx::add_user_parameter DSP_PIPE [ipx::current_core]
 set_property value_resolve_type user [ipx::get_user_parameters DSP_PIPE]
 set_property value ${plan.options.dspPipe} [ipx::get_user_parameters DSP_PIPE]
-${_ctRuntimePlan(plan) ? '''
-# 色温表存储：1 = Block RAM（省 CLB LUT，默认）；0 = 分布式组合 ROM（上一版）。
+${_bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled) ? '''
+# 表存储：1 = Block RAM（省 CLB LUT，默认）；0 = 分布式组合 ROM（上一版）。
 ipx::add_user_parameter USE_BRAM [ipx::current_core]
 set_property value_resolve_type user [ipx::get_user_parameters USE_BRAM]
 set_property value ${plan.options.useBram ? 1 : 0} [ipx::get_user_parameters USE_BRAM]
@@ -1627,9 +1665,9 @@ set_property enablement_dependency {(spirit:decode(id('PARAM_VALUE.GSTRATEGY')) 
 set_property enablement_resolve_type dependent [ipx::get_user_parameters FOLD]
 set_property value_validation_type pairs [ipx::get_user_parameters DSP_PIPE]
 set_property value_validation_pairs [list "Combinational (lowest latency)" 0 "Pipeline band_pre" 1 "Pipeline band_pre+band_mid" 2 "Full internal DSP pipeline (highest Fmax)" 3] [ipx::get_user_parameters DSP_PIPE]
-${_ctRuntimePlan(plan) ? '''
+${_bramParamPlan(plan, ctRuntimeEnabled: ctRuntimeEnabled) ? '''
 set_property value_validation_type pairs [ipx::get_user_parameters USE_BRAM]
-set_property value_validation_pairs [list "Block RAM (saves CLB LUTs)" 1 "Distributed ROM (previous build)" 0] [ipx::get_user_parameters USE_BRAM]
+set_property value_validation_pairs [list "Block RAM (saves CLB LUTs)" 1 "Combinational ROM (previous build)" 0] [ipx::get_user_parameters USE_BRAM]
 ''' : ''}${_hasYuvMatrix(plan) ? '''
 set_property value_validation_type pairs [ipx::get_user_parameters YUV_STANDARD]
 set_property value_validation_pairs [list "BT.601 (SD)" 0 "BT.709 (HD)" 1 "BT.2020 (UHD)" 2] [ipx::get_user_parameters YUV_STANDARD]
@@ -2414,7 +2452,7 @@ set_property CONFIG.MAX_WIDTH {${nodePlan.options.maxWidth}} [get_ips $instance]
 set_property CONFIG.GSTRATEGY {${nodePlan.options.gstrategy}} [get_ips $instance]
 set_property CONFIG.FOLD {${nodePlan.options.fold}} [get_ips $instance]
 set_property CONFIG.DSP_PIPE {${nodePlan.options.dspPipe}} [get_ips $instance]
-${_hasYuvMatrix(nodePlan) ? 'set_property CONFIG.YUV_STANDARD {${yuvStandardCode(_effectiveYuvStandard(nodePlan))}} [get_ips $instance]\n' : ''}${nodePlan.fxBandCount > 0 ? 'set_property CONFIG.IMPL_MODE {${nodePlan.implMode}} [get_ips $instance]\nset_property CONFIG.WORK_MODE {${nodePlan.fxSerial ? 1 : 0}} [get_ips $instance]\nset_property CONFIG.NUM_BANDS {${nodePlan.fxBandCount}} [get_ips $instance]' : ''}
+${_bramParamPlan(nodePlan, ctRuntimeEnabled: false) ? 'set_property CONFIG.USE_BRAM {${nodePlan.options.useBram ? 1 : 0}} [get_ips $instance]\n' : ''}${_hasYuvMatrix(nodePlan) ? 'set_property CONFIG.YUV_STANDARD {${yuvStandardCode(_effectiveYuvStandard(nodePlan))}} [get_ips $instance]\n' : ''}${nodePlan.fxBandCount > 0 ? 'set_property CONFIG.IMPL_MODE {${nodePlan.implMode}} [get_ips $instance]\nset_property CONFIG.WORK_MODE {${nodePlan.fxSerial ? 1 : 0}} [get_ips $instance]\nset_property CONFIG.NUM_BANDS {${nodePlan.fxBandCount}} [get_ips $instance]' : ''}
 generate_target all [get_ips $instance]
 create_ip_run [get_ips $instance]
 catch {set_property strategy Flow_PerfOptimized_high [get_runs ${instance}_synth_1]}

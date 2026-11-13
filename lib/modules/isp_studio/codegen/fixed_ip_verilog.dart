@@ -930,7 +930,7 @@ $fileHeader$helperModules${hslModuleAttr}module ${top}_core #(
     parameter integer MAX_WIDTH = ${plan.options.maxWidth},
     parameter integer GSTRATEGY = ${plan.options.gstrategy},
     parameter integer FOLD = ${plan.options.fold},
-    parameter integer DSP_PIPE = ${plan.options.dspPipe}${hasYuvMatrix ? ', parameter integer YUV_STANDARD = ${yuvStandardCode(yuvStandard)}' : ''}${ctEnabled ? ', parameter integer USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
+    parameter integer DSP_PIPE = ${plan.options.dspPipe}${hasYuvMatrix ? ', parameter integer YUV_STANDARD = ${yuvStandardCode(yuvStandard)}' : ''}${(ctEnabled || needsRgb2HslBlocks) ? ', parameter integer USE_BRAM = ${plan.options.useBram ? 1 : 0}' : ''}
 ) (
     input wire clk, input wire rst_n,
     input wire in_valid, output wire in_ready,
@@ -943,7 +943,7 @@ $fileHeader$helperModules${hslModuleAttr}module ${top}_core #(
     output wire [13:0] cct_out''' : ''}
 );
   localparam [$pb-1:0] MAXV = (1 << PIX_BITS) - 1;
-${fixedIpCommonFunctions(pb, reciprocal: plan.cPlan.members.values.any((node) => node.typeId == 'csc_rgb2hsl' || node.typeId == 'csc_yuv2hsl'))}
+${fixedIpCommonFunctions(pb, reciprocal: plan.cPlan.members.values.any((node) => node.typeId == 'csc_rgb2hsl' || node.typeId == 'csc_yuv2hsl'))}${needsRgb2HslBlocks ? hslSeedFunction() : ''}
   reg [$count-1:0] valid_pipe, sof_pipe, eol_pipe;
   wire [$count-1:0] stage_ready;
 $nodes

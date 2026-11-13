@@ -2132,3 +2132,173 @@ Cypress EZ-USB FX3 SDK 自带 `arm-none-eabi-gcc` 没有 `nosys.specs`，硬编�
   ffmpeg 现场生成 64×64 4fps 测试视频 + 程序化建图（视频源 → 色温调节器）。
 - `code_variables`：`format_converter` / `video_health_check` 两个工具节点补
   Input/Output 描述；`pipelineSourceFiles` 补 `color_temp_hw.dart`。
+
+## 2026-11-13 YUV→HSL / RGB→HSL：牛顿种子表改 Block RAM（USE_BRAM 参数）
+
+### 现象与定位
+
+`YUV_to_HSL` IP 综合后 2073 LUT / 0 BRAM，其中 `_hsl_q` 一级占了 298 LUT：
+这一级把 `f_hsl_seed`（256×17 的牛顿倒数种子表）写成 **case 函数**
+（`a0s/a0t` 两个读口各一份），综合后是纯 LUT 逻辑。表本身实测
+**124 LUT**（单份 62 × 2 读口），是同 IP 里唯一"表形"的逻辑。
+
+`f_recip_seed`（128×32）看似同类，但它只在 `f_div_round` 里被组合函数据
+调用——那是 `DSP_PIPE!=3` 时的回退数据通路，默认配置下被 elaboration 剪掉，
+**不进综合**，所以不作为优化对象。
+
+### 改动
+
+1. **索引提前一级**：把规格化（`f_hsl_normk`）、移位量与种子 ROM 地址
+   （`sid/tid`）从 `_hsl_q` 移到 `_hsl_m`，作为 rec M 的字段随 M 级寄存器
+   同拍寄存。这样种子表的**读取寄存器**可以放在 m→q 这一个时钟沿上
+   （BRAM 同步读），供 q 级使用——整链 LAT 与数值都不变。
+2. `_hsl_q` 只剩打包（dens/dent 移位、nz、拼 rec Q），不再含表；
+   `f_hsl_seed` 移到 core 模块（`USE_BRAM=0` 的组合 ROM 版用它）。
+3. **USE_BRAM 参数**（沿用色温 IP 的做法）：core 里
+   `generate if (USE_BRAM != 0)` → `(* rom_style = "block" *)` ROM + 双口读；
+   `else` → case 函数 + 同一组寄存器。参数贯通 core/top/AXI/Libero、
+   `package_ip.tcl`（含取值对 0/1）、xgui（Optimization 页下拉 +
+   `update_MODELPARAM_VALUE.USE_BRAM` 同步 proc）、demo tcl 的 CONFIG。
+   判定条件 `_bramParamPlan` = 色温 IP 或「GSTRATEGY≠0 + DSP_PIPE=3 的
+   rgb2hsl/yuv2hsl」——没有表的 IP 不挂这个参数。
+
+### 实测（xczu15eg，IP OOC synth）
+
+| 版本 | CLB LUT | BRAM18 |
+|---|---|---|
+| 改动前 | **2073** | 0 |
+| 改动后（USE_BRAM=1） | **1944**（−129，−6.2%） | 1 |
+| 同源 `RGB_to_HSL` IP（OOC 综合） | 1897 → **1768**（−129，−6.8%） | 1 |
+| 整链 demo 里的 `YUV_to_HSL` IP | 1867 → **1753**（−114） | 1 |
+| 整链 `demo_top`（impl） | 4639 → **4539** LUT、FF 6499→6511、DSP 74 不变 | 0.5 tile |
+| 改动后（USE_BRAM=0） | 1944 | 1 |
+
+注意最后一行：Vivado 会把"case 函数 + 输出寄存器"识别成 ROM 再推断成
+BRAM，所以在本工具链上两档综合结果相同（`rom_style="logic"` 只是提示，
+Vivado 仍可能自行推断）。参数保留的意义：①显式表达意图；②给不会做 ROM
+推断的工具链（Libero/Quartus 等）留组合 ROM 的退路。
+
+整链复测（YUV_MBC_EQ 三 IP demo，xczu15eg）：WNS **+15.996 ns**、TNS 0、
+失败端点 0；三个 IP 综合、顶层综合、实现**全部 0 Warnings / 0 Critical
+Warnings / 0 Errors**；DRC 仍是 2 条（NSTD-1/UCIO-1，未指定 IOSTANDARD/LOC
+的 Advisory 级）。
+
+### 数值与回归
+
+- 两种写法 iverilog 逐位对拍一致：`csc_yuv2hsl` fnv=`79230738`、
+  `csc_rgb2hsl` fnv=`c61fb1fd`，且与**改动前 baseline 完全相同**
+  （用 `git stash` 跑同一份单节点用例对照）——说明索引寄存这一拍没有
+  改动 LAT/行为。
+- 新增用例 `test/isp_group_ip_export_test.dart`「HSL 方向种子表
+  USE_BRAM：块 RAM 版省 LUT，两档 golden 逐位一致」；色温用例的取值标签
+  同步为 "Combinational ROM (previous build)"。
+
+## 2026-11-13 CSC 定点 IP：Q14 归一化改 Mersenne 折叠除法（4 个 IP 各省 ~435 LUT）
+
+### 定位
+
+`HSL_to_RGB` 752 LUT 里 `hsl2rgb_n` 占 **450**、`RGB_to_HSL` 1768 LUT 里
+`hsl_m` 占 674 —— 这两处的大头都是同一形态的三路常量除法：
+
+```verilog
+wire [14:0] hn = ({1'b0, px_h << 14} + (MAXV >> 1)) / MAXV;   // h / s / l 各一次
+```
+
+`MAXV = 2^PIX_BITS − 1` 不是 2 的幂，综合成「乘倒数 + 高位截取」的 LUT 逻辑：
+单除法（26 位 / 255）实测 **218 LUT**。
+
+### 改动
+
+把这两处的三路除法（共 6 处）换成 **Mersenne 折叠**（`divMaxvFunction()`，
+生成一个逐模块的 Verilog 函数 `f_div_maxv`，同时把 `v * 16384` 写成 `v << 14`）：
+
+```text
+x 按 pb 位切段 d<i>  ⇒  x − Σd<i> = MAXV · Σ_{i≥1} d<i>·G<i>
+                       G<i> = 1 + 2^pb + … + 2^{pb(i−1)}
+floor(x/MAXV) = Σ_{i≥1} d<i>·G<i> + floor(Σd<i> / MAXV)
+```
+
+末项只需 `DV_N−1` 个比较器（`Σd<i> ≤ DV_N·MAXV`）。纯加/移位，**无除法器、
+不占 DSP、不加拍**；循环次数与常数随 IP 参数 `PIX_BITS` 展开，所以在
+Customize IP 里改位宽仍然成立。
+
+### 实测（xczu15eg，IP OOC 综合，同一节点同一度量口径）
+
+| IP | 改动前 | 改动后 | Δ |
+|---|---|---|---|
+| `HSL_to_RGB` | 860 LUT / 926 FF / 7 DSP | **425 / 926 / 7** | −435（−51%） |
+| `HSL_to_YUV` | 1205 / 968 / 16 | **770 / 968 / 16** | −435 |
+| `RGB_to_HSL` | 1768 / 3081 / 11 | **1334 / 3081 / 11** | −434 |
+| `YUV_to_HSL` | 1944 / 3186 / 15 | **1510 / 3186 / 15** | −434 |
+
+FF/DSP 完全不变（纯组合替换）。单除法面积：218 → 72（早期探针实测）。
+
+整链复测（YUV_MBC_EQ 三 IP demo，xczu15eg，impl，折叠 + 窄化 + /6 折叠全部生效）：
+`demo_top` **4639 → 3719 LUT**（−920，−19.8%）、FF 6511→6371、DSP 74（不变）、
+BRAM 0.5 tile；WNS **+16.437 ns**、TNS 0、失败端点 0；三个 IP + 顶层综合 +
+实现全部 **0 Warnings**；DRC 仍只 2 条（NSTD-1/UCIO-1，Advisory），无 DPOP/DPIP。
+
+### 第二轮（同一轮继续压）
+
+1. `hsl_corr` 的 `h = round(tv/6)`：原写法是常数乘 `×43691` 挂 `use_dsp="no"`
+   （LUT 实现，单测 **171 LUT / 0 DSP**）。三种实现都量过：
+   - 交给 DSP（去属性）：0 LUT / 1 DSP，但引入 **DPOP-3/DPOP-4**（DSP 未流水）
+     两条 DRC warning；
+   - 纯 Mersenne 折叠（`floor(y/3)` 按 2 位切段再 `>>1`）：**111 LUT / 0 DSP**，
+     DRC 干净；
+   - 原样：171 LUT / 0 DSP。
+   最终取**折叠实现**——少 60 LUT、DSP 数不变、DRC 仍只有 I/O 两条 Advisory
+   （工程要求零 DPOP/DPIP）。
+2. `hsl_corr` 余数链窄化：`rm = mg − q0·den ∈ (−den, den)`、`den ≤ 2^17`，
+   原 32 位运算降到 **19 位**（留一倍余量），三项修正/比较同宽：**−128 LUT**。
+
+累计（本轮两步 + 折叠）：
+
+| IP | 会话前 | 折叠后 | +DSP | +窄化 |
+|---|---|---|---|---|
+| `HSL_to_RGB` | 860 | 425 | 425 | **425**（−51%） |
+| `HSL_to_YUV` | 1205 | 770 | 770 | **770**（−36%） |
+| `RGB_to_HSL` | 1768 | 1334 | 1164 | **1145**（−35%） |
+| `YUV_to_HSL` | 1944 | 1510 | 1340 | **1321**（−32%） |
+
+FF 与 DSP 全程不变（7/16/11/15）。
+
+### 等价性验证
+
+1. **Verilog 级穷举**：`f_div_maxv(x)` vs `x / MAXV`，`PIX_BITS = 8/10/12/16`，
+   可达域全扫（每档 `MAXV+1` 个输入）+ 20 万随机全域 + 边界，**0 失配**；
+2. **四个 IP 的 golden 与改动前完全一致**（`git stash` 对照）：`csc_rgb2hsl`
+   `c61fb1fd`、`csc_yuv2hsl` `79230738`、`csc_hsl2rgb` `ee5fe0a6`、
+   `csc_hsl2yuv` `0e84f032`；
+3. 新增用例「Q14 归一化用 Mersenne 折叠除法（与整数除法逐位一致，模型级穷举）」
+   （Dart 端模型穷举 + 生成物不得残留 `/ MAXV` 除法运算符）；
+4. 窄化/DSP 两步之后，四个 IP 在 **PIX_BITS = 8 / 10 / 16 三档**的 golden 全部
+   PASS，且 pb=10 档与改动前同 hash（`ff6ee8a7`/`c61fb1fd`/`e39fa4e9` 等三档各
+   一组，见 `scratch/div_after5.log`）。
+
+## 2026-11-13 MBC_EQ（6 段）还能挖多少：实测已到顶
+
+6 段配置（NUM_BANDS=6、并联、func_fixed、DSP_PIPE=3、GSTRATEGY=2）OOC 综合：
+**CLB LUT 7333**（其中 LUT-as-Memory/SRL **3425**，纯逻辑约 3908）、FF **6812**、DSP **119**。
+层次构成：
+
+| 单元 | LUT 合计 | 每段 | FF | DSP |
+|---|---|---|---|---|
+| `band_pre_full` ×6 | 2827 | 471 | 1986 | 48 |
+| `band_mid_full` ×6 | 1686 | 281 | 1746 | 30 |
+| `band_par_post_full` ×6 | 573 | 95 | 1530 | 36 |
+| 核心胶水（延迟线 SRL 使能/打包） | ~2013 | — | — | — |
+
+试过的优化与结论（都做了 A/B 实测）：
+
+1. **`band_mid_full` 的 `p1..p5` 加常数链 64 → 35 位**（下游只取 `[33:16]`，
+   `|p| < 2^33.1`）：单模块探针 104 LUT/640 FF → 46/350，看着能省；但**在真实
+   6 段 IP 里 7333 LUT / 6812 FF 与改前完全相同**——Vivado 早已把未用高位裁掉
+   （和 `fr0..fr36` 那条 64 位延迟线一样：64 位与 16 位写法综合出来都是 80 FF）。
+   已回退该改动。
+2. 结论：`mid` 这条池子是假的；`pre`（471/段）同样以算术为主、工具会自动裁位，
+   除非动**结构**（多项式降阶 / 平方复用 / 减少流水级），否则没有免费收益。
+
+所以 MBC_EQ 这一族在本轮 CSC IP 之外**没有可观的免费 LUT 空间**：6 段 7333 LUT
+里 3425 是必须的延迟线 SRL，纯逻辑 3908 分布在 18 个段单元（每段 pre+mid+post
+≈ 636 LUT + 19 DSP）——这是 16 段可运行期调参架构的固有成本。
